@@ -2,22 +2,23 @@ using ONNX_Runner;
 
 WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Swagger is for testing API directly from the browser
+// Add services to the container
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// TODO: Here we will register AI services (Model Manager, Tokenizer, etc.)
-
-// Get a folder with models
+// Define paths for the model assets
+// AppContext.BaseDirectory points to the folder where the .exe is running
 string modelsPath = Path.Combine(AppContext.BaseDirectory, "Models", "Chatterbox");
+string tokenizerPath = Path.Combine(modelsPath, "tokenizer.json");
 
-// Add TtsModelManager as Singleton
+// Register AI services as Singletons
+// This ensures models are loaded into VRAM only once at startup
 builder.Services.AddSingleton(new TtsModelManager(modelsPath));
+builder.Services.AddSingleton(new TextProcessor(tokenizerPath));
 
 WebApplication app = builder.Build();
 
-// Configure the HTTP request pipeline.
+// Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -26,9 +27,31 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-// API Endpoints
+// Basic health check endpoint
 app.MapGet("/", () => "ONNX Runner is working! Go to /swagger to test the API.");
 
-// TODO: Here we will add the OpenAI compatible endpoint: app.MapPost("/v1/audio/speech", ...)
+// OpenAI-compatible endpoint for speech generation
+// Currently used to verify the Tokenizer output
+app.MapPost("/v1/audio/speech", (string text, TtsModelManager modelManager, TextProcessor textProcessor) =>
+{
+    try
+    {
+        // Convert input text into token IDs
+        int[] tokens = textProcessor.Tokenize(text);
+
+        // Return JSON response for verification purposes
+        return Results.Ok(new
+        {
+            Message = "Text tokenized successfully!",
+            OriginalText = text,
+            TokenIds = tokens
+        });
+    }
+    catch (Exception ex)
+    {
+        // Return a standard error response if tokenization fails
+        return Results.Problem(detail: ex.Message, title: "Processing Error");
+    }
+});
 
 app.Run();
