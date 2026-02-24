@@ -1,0 +1,22 @@
+# === Big files of AI models ===
+*.onnx
+*.safetensors
+*.pt
+*.ckpt
+*.bin
+*.h5
+
+# === .NET and C#  ===
+bin/
+obj/
+.vs/
+*.user
+*.suo
+
+# === Audio files ===
+*.wav
+*.mp3
+
+# === Mac/Windows system files ===
+.DS_Store
+Thumbs.db
