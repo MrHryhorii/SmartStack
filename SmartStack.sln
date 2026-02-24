@@ -1,0 +1,24 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ONNX_Runner", "ONNX_Runner\ONNX_Runner.csproj", "{8019890E-C8D2-5C86-930A-6000BDA369FB}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8019890E-C8D2-5C86-930A-6000BDA369FB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8019890E-C8D2-5C86-930A-6000BDA369FB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8019890E-C8D2-5C86-930A-6000BDA369FB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8019890E-C8D2-5C86-930A-6000BDA369FB}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {6F36CC2A-9177-40DA-B8F9-563862FDD148}
+	EndGlobalSection
+EndGlobal

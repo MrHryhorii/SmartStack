@@ -1,11 +1,21 @@
-var builder = WebApplication.CreateBuilder(args);
+using ONNX_Runner;
+
+WebApplicationBuilder builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
+// Swagger is for testing API directly from the browser
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-var app = builder.Build();
+// TODO: Here we will register AI services (Model Manager, Tokenizer, etc.)
+
+// Get a folder with models
+string modelsPath = Path.Combine(AppContext.BaseDirectory, "Models", "Chatterbox");
+
+// Add TtsModelManager as Singleton
+builder.Services.AddSingleton(new TtsModelManager(modelsPath));
+
+WebApplication app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -16,29 +26,9 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+// API Endpoints
+app.MapGet("/", () => "ONNX Runner is working! Go to /swagger to test the API.");
 
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast")
-.WithOpenApi();
+// TODO: Here we will add the OpenAI compatible endpoint: app.MapPost("/v1/audio/speech", ...)
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
