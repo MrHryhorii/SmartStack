@@ -9,12 +9,12 @@ builder.Services.AddSwaggerGen();
 // Define paths for the model assets
 // AppContext.BaseDirectory points to the folder where the .exe is running
 string modelsPath = Path.Combine(AppContext.BaseDirectory, "Models", "Chatterbox");
-string tokenizerPath = Path.Combine(modelsPath, "tokenizer.json");
 
 // Register AI services as Singletons
 // This ensures models are loaded into VRAM only once at startup
 builder.Services.AddSingleton(new TtsModelManager(modelsPath));
-builder.Services.AddSingleton(new TextProcessor(tokenizerPath));
+builder.Services.AddSingleton(new TextProcessor(modelsPath));
+builder.Services.AddSingleton<TtsInferenceEngine>();
 
 WebApplication app = builder.Build();
 
@@ -32,25 +32,18 @@ app.MapGet("/", () => "ONNX Runner is working! Go to /swagger to test the API.")
 
 // OpenAI-compatible endpoint for speech generation
 // Currently used to verify the Tokenizer output
-app.MapPost("/v1/audio/speech", (string text, TtsModelManager modelManager, TextProcessor textProcessor) =>
+app.MapPost("/v1/audio/speech", (string text, TtsInferenceEngine engine) =>
 {
     try
     {
-        // Convert input text into token IDs
-        int[] tokens = textProcessor.Tokenize(text);
+        // This will eventually return the float[] audio data
+        float[] audioWaveform = engine.GenerateSpeech(text);
 
-        // Return JSON response for verification purposes
-        return Results.Ok(new
-        {
-            Message = "Text tokenized successfully!",
-            OriginalText = text,
-            TokenIds = tokens
-        });
+        return Results.Ok(new { Message = "Engine executed successfully.", Samples = audioWaveform.Length });
     }
     catch (Exception ex)
     {
-        // Return a standard error response if tokenization fails
-        return Results.Problem(detail: ex.Message, title: "Processing Error");
+        return Results.Problem(detail: ex.Message, title: "Inference Error");
     }
 });
 
