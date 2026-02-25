@@ -3,43 +3,48 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 
 namespace ONNX_Runner;
 
-/// <summary>
-/// Coordinates the execution of the ONNX models to transform text into an audio waveform.
-/// </summary>
 public class TtsInferenceEngine(TtsModelManager modelManager, TextProcessor textProcessor)
 {
     private readonly TtsModelManager _modelManager = modelManager;
     private readonly TextProcessor _textProcessor = textProcessor;
+    private static readonly float[] memory = [1.0f];
 
-    /// <summary>
-    /// Generates raw audio samples from the provided text.
-    /// </summary>
-    /// <param name="text">The text to synthesize.</param>
-    /// <returns>An array of float values representing the audio waveform.</returns>
     public float[] GenerateSpeech(string text)
     {
         // Tokenize the input text
         int[] tokenIds = _textProcessor.Tokenize(text);
-
-        // Convert integer array to an ONNX Tensor
-        // ONNX expects data in specific dimensional shapes, usually [batch_size, sequence_length]
-        // We cast to Int64 (long) because most ONNX language models expect 64-bit integers for tokens
         long[] longTokens = tokenIds.Select(t => (long)t).ToArray();
 
-        var inputTensor = new DenseTensor<long>(
-            longTokens,
-            [1, longTokens.Length] // Batch size of 1
-        );
+        int batchSize = 1;
+        int sequenceLength = longTokens.Length;
 
-        // 3. Create the input parameters for the first model
-        // The string "input_ids" must exactly match the input name defined inside the ONNX file
-        var inputs = new List<NamedOnnxValue>
+        // Prepare EmbedTokens Inputs
+        var inputIdsTensor = new DenseTensor<long>(longTokens, [batchSize, sequenceLength]);
+
+        // Position IDs are just sequential numbers: 0, 1, 2, 3...
+        long[] positions = Enumerable.Range(0, sequenceLength).Select(x => (long)x).ToArray();
+        var positionIdsTensor = new DenseTensor<long>(positions, [batchSize, sequenceLength]);
+
+        // Exaggeration is a style parameter (often set to 1.0f as default)
+        var exaggerationTensor = new DenseTensor<float>(memory, [batchSize]);
+
+        var embedInputs = new List<NamedOnnxValue>
         {
-            NamedOnnxValue.CreateFromTensor("input_ids", inputTensor)
+            NamedOnnxValue.CreateFromTensor("input_ids", inputIdsTensor),
+            NamedOnnxValue.CreateFromTensor("position_ids", positionIdsTensor),
+            NamedOnnxValue.CreateFromTensor("exaggeration", exaggerationTensor)
         };
 
-        // TODO: Execute models sequentially (EmbedTokens -> LanguageModel -> ConditionalDecoder)
+        // Execute EmbedTokens Model
+        using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> embedOutputs =
+            _modelManager.EmbedTokens.Run(embedInputs);
 
-        return []; // Returning a dummy array until implementation is complete
+        // Extract the inputs_embeds tensor
+        var inputsEmbeds = embedOutputs.First(o => o.Name == "inputs_embeds").AsTensor<float>();
+
+        Console.WriteLine($"Step 1 Complete: Text embedded. Shape: [{string.Join(", ", inputsEmbeds.Dimensions.ToArray())}]");
+
+        // TODO: Next step is the LanguageModel generation loop.
+        return [];
     }
 }

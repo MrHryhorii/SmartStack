@@ -12,7 +12,10 @@ string modelsPath = Path.Combine(AppContext.BaseDirectory, "Models", "Chatterbox
 
 // Register AI services as Singletons
 // This ensures models are loaded into VRAM only once at startup
-builder.Services.AddSingleton(new TtsModelManager(modelsPath));
+// Initialize the manager, print the required model signatures, then register it
+TtsModelManager modelManager = new(modelsPath);
+modelManager.PrintModelSignatures();
+builder.Services.AddSingleton(modelManager);
 builder.Services.AddSingleton(new TextProcessor(modelsPath));
 builder.Services.AddSingleton<TtsInferenceEngine>();
 

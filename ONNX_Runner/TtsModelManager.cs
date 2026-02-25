@@ -48,6 +48,44 @@ public class TtsModelManager : IDisposable
         }
     }
 
+
+    /// <summary>
+    /// Prints the exact input and output names and dimensions required by the loaded ONNX models.
+    /// This is crucial for building the correct tensor inputs in the Inference Engine.
+    /// </summary>
+    public void PrintModelSignatures()
+    {
+        Console.WriteLine("\n================ MODEL SIGNATURES ================");
+        PrintSignature("SpeechEncoder", SpeechEncoder);
+        PrintSignature("EmbedTokens", EmbedTokens);
+        PrintSignature("LanguageModel", LanguageModel);
+        PrintSignature("ConditionalDecoder", ConditionalDecoder);
+        Console.WriteLine("==================================================\n");
+    }
+
+    private void PrintSignature(string modelName, InferenceSession session)
+    {
+        if (session == null) return;
+
+        Console.WriteLine($"--- {modelName} ---");
+        Console.WriteLine("  INPUTS:");
+        foreach (var input in session.InputMetadata)
+        {
+            // Join the dimensions array into a readable string format like [-1, 1024]
+            string shape = string.Join(", ", input.Value.Dimensions);
+            Console.WriteLine($"    Name: '{input.Key}' | Type: {input.Value.ElementType} | Shape: [{shape}]");
+        }
+
+        Console.WriteLine("  OUTPUTS:");
+        foreach (var output in session.OutputMetadata)
+        {
+            string shape = string.Join(", ", output.Value.Dimensions);
+            Console.WriteLine($"    Name: '{output.Key}' | Type: {output.Value.ElementType} | Shape: [{shape}]");
+        }
+        Console.WriteLine();
+    }
+
+
     /// <summary>
     /// Free unmanaged resources (memory) when the application stops.
     /// </summary>
