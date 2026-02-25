@@ -3,7 +3,7 @@ using Microsoft.ML.OnnxRuntime;
 namespace ONNX_Runner;
 
 /// <summary>
-/// Manages the lifecycle and execution of the ONNX models for the TTS pipeline.
+/// Manages model lifecycle with specialized split-execution and automatic hardware fallback.
 /// </summary>
 public class TtsModelManager : IDisposable
 {
@@ -14,45 +14,66 @@ public class TtsModelManager : IDisposable
 
     public TtsModelManager(string modelsDirectory)
     {
-        Microsoft.ML.OnnxRuntime.SessionOptions options = new();
-
-        // Configure Fallback (Try Windows GPU via DirectML, fallback to CPU)
+        // 1. Prepare GPU Options (DirectML)
+        Microsoft.ML.OnnxRuntime.SessionOptions gpuOptions = new();
+        bool isGpuAvailable = false;
         try
         {
-            // 0 - default GPU's index
-            options.AppendExecutionProvider_DML(0);
-            Console.WriteLine("GPU (DirectML) successfully enabled for ONNX!");
+            gpuOptions.AppendExecutionProvider_DML(0);
+            isGpuAvailable = true;
         }
         catch (Exception ex)
         {
-            options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-            Console.WriteLine($"GPU not available, falling back to CPU. Reason: {ex.Message}");
+            Console.WriteLine($"GPU initialization failed, using CPU fallback for all models. Error: {ex.Message}");
         }
 
-        // Load models into memory
-        Console.WriteLine($"Loading ONNX models into memory from: {modelsDirectory}...");
+        // 2. Prepare CPU Options (Optimized for text and KV-cache)
+        Microsoft.ML.OnnxRuntime.SessionOptions cpuOptions = new()
+        {
+            EnableMemoryPattern = false // Prevents static memory planning issues with dynamic shapes
+        };
 
+        Console.WriteLine($"Initializing Hybrid Inference Engine from: {modelsDirectory}");
+
+        // 3. Load models with individual fallback logic
+        // Text models are forced to CPU to avoid the DML GroupQueryAttention bug and PCIe overhead
+        EmbedTokens = new InferenceSession(Path.Combine(modelsDirectory, "embed_tokens.onnx"), cpuOptions);
+        LanguageModel = new InferenceSession(Path.Combine(modelsDirectory, "language_model.onnx"), cpuOptions);
+
+        // Audio models attempt GPU first, then fallback to CPU if VRAM or compatibility fails
+        SpeechEncoder = CreateSessionWithFallback(
+            Path.Combine(modelsDirectory, "speech_encoder.onnx"),
+            isGpuAvailable ? gpuOptions : cpuOptions,
+            cpuOptions,
+            "SpeechEncoder");
+
+        ConditionalDecoder = CreateSessionWithFallback(
+            Path.Combine(modelsDirectory, "conditional_decoder.onnx"),
+            isGpuAvailable ? gpuOptions : cpuOptions,
+            cpuOptions,
+            "ConditionalDecoder");
+
+        Console.WriteLine("Hybrid Model Manager initialized successfully.");
+    }
+
+    /// <summary>
+    /// Attempts to create a session with preferred options, falling back to CPU on failure.
+    /// </summary>
+    private static InferenceSession CreateSessionWithFallback(string path, Microsoft.ML.OnnxRuntime.SessionOptions preferred, Microsoft.ML.OnnxRuntime.SessionOptions fallback, string modelName)
+    {
         try
         {
-            SpeechEncoder = new InferenceSession(Path.Combine(modelsDirectory, "speech_encoder.onnx"), options);
-            EmbedTokens = new InferenceSession(Path.Combine(modelsDirectory, "embed_tokens.onnx"), options);
-            LanguageModel = new InferenceSession(Path.Combine(modelsDirectory, "language_model.onnx"), options);
-            ConditionalDecoder = new InferenceSession(Path.Combine(modelsDirectory, "conditional_decoder.onnx"), options);
-
-            Console.WriteLine("All 4 models loaded successfully!");
+            var session = new InferenceSession(path, preferred);
+            Console.WriteLine($"[{modelName}] loaded with preferred hardware (GPU/DML).");
+            return session;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"CRITICAL ERROR loading models: {ex.Message}");
-            throw; // Stop program if models can't be loaded, since we can't function without them
+            Console.WriteLine($"[{modelName}] failed to load on preferred hardware. Falling back to CPU. Error: {ex.Message}");
+            return new InferenceSession(path, fallback);
         }
     }
 
-
-    /// <summary>
-    /// Prints the exact input and output names and dimensions required by the loaded ONNX models.
-    /// This is crucial for building the correct tensor inputs in the Inference Engine.
-    /// </summary>
     public void PrintModelSignatures()
     {
         Console.WriteLine("\n================ MODEL SIGNATURES ================");
@@ -63,40 +84,22 @@ public class TtsModelManager : IDisposable
         Console.WriteLine("==================================================\n");
     }
 
-    private void PrintSignature(string modelName, InferenceSession session)
+    private static void PrintSignature(string modelName, InferenceSession session)
     {
         if (session == null) return;
-
         Console.WriteLine($"--- {modelName} ---");
-        Console.WriteLine("  INPUTS:");
         foreach (var input in session.InputMetadata)
         {
-            // Join the dimensions array into a readable string format like [-1, 1024]
-            string shape = string.Join(", ", input.Value.Dimensions);
-            Console.WriteLine($"    Name: '{input.Key}' | Type: {input.Value.ElementType} | Shape: [{shape}]");
+            Console.WriteLine($"    Input: '{input.Key}' | Shape: [{string.Join(", ", input.Value.Dimensions)}]");
         }
-
-        Console.WriteLine("  OUTPUTS:");
-        foreach (var output in session.OutputMetadata)
-        {
-            string shape = string.Join(", ", output.Value.Dimensions);
-            Console.WriteLine($"    Name: '{output.Key}' | Type: {output.Value.ElementType} | Shape: [{shape}]");
-        }
-        Console.WriteLine();
     }
 
-
-    /// <summary>
-    /// Free unmanaged resources (memory) when the application stops.
-    /// </summary>
     public void Dispose()
     {
         SpeechEncoder?.Dispose();
         EmbedTokens?.Dispose();
         LanguageModel?.Dispose();
         ConditionalDecoder?.Dispose();
-
-        // Tells the Garbage Collector that we've already cleaned up manually
         GC.SuppressFinalize(this);
     }
 }

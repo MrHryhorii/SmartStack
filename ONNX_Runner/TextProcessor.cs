@@ -4,70 +4,53 @@ using Tokenizers.DotNet;
 
 namespace ONNX_Runner;
 
-/// <summary>
-/// Represents the structure of the tokenizer_config.json file.
-/// </summary>
 public class TokenizerConfig
 {
-    [JsonPropertyName("add_bos_token")]
-    public bool AddBosToken { get; set; }
-
-    [JsonPropertyName("add_eos_token")]
-    public bool AddEosToken { get; set; }
-
-    [JsonPropertyName("model_input_names")]
-    public string[] ModelInputNames { get; set; } = [];
-
-    [JsonPropertyName("model_max_length")]
-    public int ModelMaxLength { get; set; }
+    [JsonPropertyName("add_bos_token")] public bool AddBosToken { get; set; }
+    [JsonPropertyName("add_eos_token")] public bool AddEosToken { get; set; }
 }
 
-/// <summary>
-/// Handles the conversion of raw text into an array of token IDs,
-/// and manages tokenizer configuration parameters.
-/// </summary>
+// Новий клас для параметрів генерації
+public class GenerationConfig
+{
+    [JsonPropertyName("bos_token_id")] public int BosTokenId { get; set; }
+
+    // Може бути одним числом або масивом
+    [JsonPropertyName("eos_token_id")] public JsonElement EosTokenId { get; set; }
+
+    [JsonPropertyName("repetition_penalty")] public float RepetitionPenalty { get; set; }
+
+    public List<long> GetEosIds()
+    {
+        if (EosTokenId.ValueKind == JsonValueKind.Array)
+            return [.. EosTokenId.EnumerateArray().Select(x => (long)x.GetInt32())];
+        if (EosTokenId.ValueKind == JsonValueKind.Number)
+            return [(EosTokenId.GetInt32())];
+        return [2]; // Fallback
+    }
+}
+
 public class TextProcessor
 {
     private readonly Tokenizer _tokenizer;
-
-    // Expose the configuration so the Inference Engine can read it
     public TokenizerConfig Config { get; private set; }
+    public GenerationConfig GenConfig { get; private set; } // Додано
 
     public TextProcessor(string modelsDirectory)
     {
         string tokenizerPath = Path.Combine(modelsDirectory, "tokenizer.json");
         string configPath = Path.Combine(modelsDirectory, "tokenizer_config.json");
+        string genConfigPath = Path.Combine(modelsDirectory, "generation_config.json");
 
-        if (!File.Exists(tokenizerPath))
-        {
-            throw new FileNotFoundException($"Tokenizer file not found at: {tokenizerPath}");
-        }
-
-        if (!File.Exists(configPath))
-        {
-            throw new FileNotFoundException($"Tokenizer config file not found at: {configPath}");
-        }
-
-        // Initialize the Hugging Face tokenizer
         _tokenizer = new Tokenizer(vocabPath: tokenizerPath);
 
-        // Read and deserialize the configuration JSON
-        string configJson = File.ReadAllText(configPath);
-        Config = JsonSerializer.Deserialize<TokenizerConfig>(configJson)
-                 ?? new TokenizerConfig();
+        Config = JsonSerializer.Deserialize<TokenizerConfig>(File.ReadAllText(configPath)) ?? new();
 
-        Console.WriteLine("Tokenizer and configuration loaded successfully.");
+        // Читаємо параметри "машини"
+        GenConfig = JsonSerializer.Deserialize<GenerationConfig>(File.ReadAllText(genConfigPath)) ?? new();
+
+        Console.WriteLine($"Generation config loaded: EOS IDs [{string.Join(", ", GenConfig.GetEosIds())}], Penalty: {GenConfig.RepetitionPenalty}");
     }
 
-    /// <summary>
-    /// Processes the input text and returns an array of integer token IDs.
-    /// </summary>
-    public int[] Tokenize(string text)
-    {
-        var tokens = _tokenizer.Encode(text);
-
-        // Note: The Tokenizers.DotNet library usually applies BOS/EOS automatically 
-        // if they are defined in the tokenizer.json post-processor rules.
-        return [.. tokens.Select(t => (int)t)];
-    }
+    public int[] Tokenize(string text) => [.. _tokenizer.Encode(text).Select(t => (int)t)];
 }

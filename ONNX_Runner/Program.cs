@@ -35,12 +35,16 @@ app.MapGet("/", () => "ONNX Runner is working! Go to /swagger to test the API.")
 
 // OpenAI-compatible endpoint for speech generation
 // Currently used to verify the Tokenizer output
+// OpenAI-compatible endpoint for speech generation
 app.MapPost("/v1/audio/speech", (string text, TtsInferenceEngine engine) =>
 {
     try
     {
+        // Path to the reference voice sample (make sure this file exists in the Models folder!)
+        string voiceSamplePath = Path.Combine(AppContext.BaseDirectory, "Models", "Chatterbox", "default_voice.wav");
+
         // This will eventually return the float[] audio data
-        float[] audioWaveform = engine.GenerateSpeech(text);
+        float[] audioWaveform = engine.GenerateSpeech(text, voiceSamplePath);
 
         return Results.Ok(new { Message = "Engine executed successfully.", Samples = audioWaveform.Length });
     }
