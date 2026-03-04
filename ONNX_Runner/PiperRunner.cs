@@ -23,18 +23,20 @@ public class PiperRunner : IDisposable
         _session = new InferenceSession(modelPath, options);
     }
 
-    public byte[] SynthesizeAudio(string text)
+    // Додаємо параметр speed з дефолтним значенням 1.0f
+    public byte[] SynthesizeAudio(string text, float speed = 1.0f)
     {
-        // Отримуємо ID фонем з тексту
         long[] phonemeIds = _phonemizer.TextToPhonemeIds(text);
 
-        // Створюємо тензори для моделі
         var inputTensor = new DenseTensor<long>(phonemeIds, [1, phonemeIds.Length]);
         var inputLengthsTensor = new DenseTensor<long>(new[] { (long)phonemeIds.Length }, [1]);
 
+        // МАГІЯ ТУТ: Обчислюємо length_scale на основі швидкості
+        float targetLengthScale = _config.Inference.LengthScale / speed;
+
         var scalesTensor = new DenseTensor<float>(new[] {
             _config.Inference.NoiseScale,
-            _config.Inference.LengthScale,
+            targetLengthScale, // Передаємо вирахувану швидкість
             _config.Inference.NoiseW
         }, [3]);
 
@@ -45,11 +47,9 @@ public class PiperRunner : IDisposable
             NamedOnnxValue.CreateFromTensor("scales", scalesTensor)
         };
 
-        // Запускаємо генерацію!
         using var results = _session.Run(inputs);
         var audioOutput = results.First(r => r.Name == "output").AsEnumerable<float>().ToArray();
 
-        // Пакуємо в WAV
         return ConvertToWav(audioOutput);
     }
 

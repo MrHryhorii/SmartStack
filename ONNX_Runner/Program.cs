@@ -87,8 +87,8 @@ app.MapPost("/v1/audio/speech", (
 
     try
     {
-        // МАГІЯ ТУТ: викликаємо реальну генерацію замість заглушки!
-        byte[] audioBytes = piperRunner.SynthesizeAudio(request.Input);
+        // Передаємо і текст, і швидкість із запиту
+        byte[] audioBytes = piperRunner.SynthesizeAudio(request.Input, request.Speed);
 
         return Results.File(audioBytes, "audio/wav", "speech.wav");
     }
