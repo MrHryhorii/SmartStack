@@ -42,8 +42,6 @@ public partial class PiperPhonemizer : IPhonemizer, IDisposable
         string[] tokens = MyRegex().Split(text);
 
         Console.WriteLine($"\n[DEBUG] Original Text: {text}");
-
-        // Рядок для чистого логування
         var debugIpa = new System.Text.StringBuilder();
 
         foreach (string token in tokens)
@@ -51,28 +49,36 @@ public partial class PiperPhonemizer : IPhonemizer, IDisposable
             string cleanToken = token.Trim();
             if (string.IsNullOrEmpty(cleanToken)) continue;
 
-            if (cleanToken.Length == 1 && ".,!?;:-()".Contains(cleanToken))
+            // Перевіряємо, чи це розділовий знак (включаючи іспанські та азіатські)
+            if (cleanToken.Length == 1 && ".,!?;:-()¡¿。！？、，".Contains(cleanToken))
             {
-                string symbol = cleanToken;
-                if (_config.PhonemeIdMap.TryGetValue(symbol, out var ids))
+                char symbolChar = cleanToken[0];
+                string symbolStr = cleanToken;
+
+                // Перевіряємо, чи підтримує ПОТОЧНА МОДЕЛЬ цей знак
+                if (_config.PhonemeIdMap.TryGetValue(symbolStr, out var ids))
                 {
-                    corePhonemes.Add(ids[0]);
+                    corePhonemes.Add(ids[0]); // Додаємо ID знаку з конфігу
 
-                    // Для красивого логу: забираємо пробіл перед знаком, якщо він там є
-                    if (debugIpa.Length > 0 && debugIpa[^1] == ' ')
+                    // ЛОГІКА ВІЗУАЛІЗАЦІЇ ТА ПАУЗ
+                    // Якщо це "відкриваючий" знак (¡ ¿ або дужка)
+                    if ("¡¿(".Contains(symbolChar))
                     {
-                        debugIpa.Length--;
+                        // Знак прилипає до НАСТУПНОГО слова, паузу після нього НЕ ставимо
+                        debugIpa.Append(symbolChar);
                     }
-
-                    // Друкуємо знак і звичайний пробіл ПІСЛЯ нього
-                    debugIpa.Append(symbol).Append(' ');
-
-                    if (symbol == "," || symbol == "-" || symbol == ":" || symbol == ";")
+                    // Якщо це "закриваючий" знак (крапка, кома тощо)
+                    else
                     {
-                        corePhonemes.Add(spaceId);
-                    }
-                    else if (symbol == "." || symbol == "!" || symbol == "?")
-                    {
+                        // Забираємо пробіл ПЕРЕД знаком у лозі
+                        if (debugIpa.Length > 0 && debugIpa[^1] == ' ')
+                        {
+                            debugIpa.Length--;
+                        }
+
+                        debugIpa.Append(symbolChar).Append(' ');
+
+                        // Додаємо реальну паузу в нейромережу ПІСЛЯ знаку
                         corePhonemes.Add(spaceId);
                     }
                 }
@@ -81,7 +87,6 @@ public partial class PiperPhonemizer : IPhonemizer, IDisposable
             {
                 string ipaText = _espeakWrapper.GetIpaPhonemes(cleanToken);
 
-                // Додаємо чисті фонеми слова і звичайний пробіл після нього
                 debugIpa.Append(ipaText).Append(' ');
 
                 foreach (char ipaChar in ipaText)
@@ -108,15 +113,10 @@ public partial class PiperPhonemizer : IPhonemizer, IDisposable
 
         corePhonemes.Add(sentenceEndId);
 
-        // Виводимо наш чистий лог, обрізавши можливий зайвий пробіл в самому кінці
         Console.WriteLine($"[DEBUG] Exact Rhythm:  {debugIpa.ToString().Trim()}");
 
-        // Перемежовування нулями (Pad)
-        var finalIds = new List<long>
-        {
-            padId
-        };
-
+        // Ідеальне математичне перемежовування індексом пустоти (Pad)
+        var finalIds = new List<long> { padId };
         foreach (var id in corePhonemes)
         {
             finalIds.Add(id);
@@ -129,6 +129,10 @@ public partial class PiperPhonemizer : IPhonemizer, IDisposable
         return resultArray;
     }
 
+    // Оновлений Regex, який розпізнає іспанські та азіатські знаки
+    [GeneratedRegex(@"([.,!?;:\(\)\-¡¿。！？、，])")]
+    private static partial Regex MyRegex();
+
     public void Dispose()
     {
         _espeakWrapper?.Dispose();
@@ -136,7 +140,4 @@ public partial class PiperPhonemizer : IPhonemizer, IDisposable
         // Кажемо Garbage Collector не викликати фіналізатор
         GC.SuppressFinalize(this);
     }
-
-    [GeneratedRegex(@"([.,!?;:\(\)\-])")]
-    private static partial Regex MyRegex();
 }
