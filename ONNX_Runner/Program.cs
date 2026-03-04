@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using ONNX_Runner;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
@@ -50,10 +51,18 @@ catch (Exception ex)
     Console.ResetColor();
 }
 
-// TODO: Реєстрація сервісів (PiperRunner, Phonemizer) буде тут
-// builder.Services.AddSingleton<IPhonemizer, ...>();
-// builder.Services.AddSingleton(new PiperRunner(piperModelPath, piperConfig, ...));
+// --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
+// УВАГА: Це ОБОВ'ЯЗКОВО має бути ДО виклику builder.Build()
+if (piperConfig != null && piperModelPath != null)
+{
+    var phonemizer = new PiperPhonemizer(piperConfig);
+    builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
+    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
+    builder.Services.AddSingleton(runner);
+}
+
+// Збираємо застосунок (після цього моменту builder.Services змінювати не можна)
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -63,7 +72,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.MapPost("/v1/audio/speech", (
-    [FromBody] OpenAiSpeechRequest request) =>
+    [FromBody] OpenAiSpeechRequest request,
+    [FromServices] PiperRunner piperRunner) => // Інжектимо наш Runner
 {
     if (string.IsNullOrWhiteSpace(request.Input))
     {
@@ -77,9 +87,10 @@ app.MapPost("/v1/audio/speech", (
 
     try
     {
-        // Тимчасова заглушка
-        byte[] dummyAudio = Array.Empty<byte>();
-        return Results.File(dummyAudio, "audio/wav");
+        // МАГІЯ ТУТ: викликаємо реальну генерацію замість заглушки!
+        byte[] audioBytes = piperRunner.SynthesizeAudio(request.Input);
+
+        return Results.File(audioBytes, "audio/wav", "speech.wav");
     }
     catch (Exception ex)
     {

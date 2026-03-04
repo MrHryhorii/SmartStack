@@ -18,7 +18,8 @@
     <None Update="Model\**\*.onnx;Model\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Update="PhonemizerData\**\*.*">
+    
+    <None Update="PiperNative\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
