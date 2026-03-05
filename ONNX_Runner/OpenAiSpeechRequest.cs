@@ -24,7 +24,7 @@ public class OpenAiSpeechRequest
 
     /// <summary>
     /// Формат аудіо. OpenAI за замовчуванням віддає mp3. 
-    /// Нам поки що найпростіше віддавати wav (через NAudio), але пізніше можна додати конвертацію в mp3, якщо клієнт вимагатиме саме його.
+    /// Нам поки що найпростіше віддавати wav (через NAudio).
     /// </summary>
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "wav";
@@ -34,4 +34,18 @@ public class OpenAiSpeechRequest
     /// </summary>
     [JsonPropertyName("speed")]
     public float Speed { get; set; } = 1.0f;
+
+    // --- НАШІ РОЗШИРЕНІ ПАРАМЕТРИ (Piper/VITS) ---
+
+    /// <summary>
+    /// [Необов'язково] Варіативність висоти тону (експресія). Зазвичай від 0 до 1.
+    /// </summary>
+    [JsonPropertyName("noise_scale")]
+    public float? NoiseScale { get; set; }
+
+    /// <summary>
+    /// [Необов'язково] Варіативність тривалості фонем (ритмічність). Зазвичай від 0 до 1.
+    /// </summary>
+    [JsonPropertyName("noise_w")]
+    public float? NoiseW { get; set; }
 }

@@ -87,8 +87,13 @@ app.MapPost("/v1/audio/speech", (
 
     try
     {
-        // Передаємо і текст, і швидкість із запиту
-        byte[] audioBytes = piperRunner.SynthesizeAudio(request.Input, request.Speed);
+        // Передаємо і текст, і швидкість, і наші нові параметри емоційності
+        byte[] audioBytes = piperRunner.SynthesizeAudio(
+            request.Input,
+            request.Speed,
+            request.NoiseScale,
+            request.NoiseW
+        );
 
         return Results.File(audioBytes, "audio/wav", "speech.wav");
     }

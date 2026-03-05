@@ -24,20 +24,33 @@ public class PiperRunner : IDisposable
     }
 
     // Додаємо параметр speed з дефолтним значенням 1.0f
-    public byte[] SynthesizeAudio(string text, float speed = 1.0f)
+    public byte[] SynthesizeAudio(string text, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
+        // Отримуємо ID фонем з тексту
         long[] phonemeIds = _phonemizer.TextToPhonemeIds(text);
 
         var inputTensor = new DenseTensor<long>(phonemeIds, [1, phonemeIds.Length]);
         var inputLengthsTensor = new DenseTensor<long>(new[] { (long)phonemeIds.Length }, [1]);
 
-        // МАГІЯ ТУТ: Обчислюємо length_scale на основі швидкості
-        float targetLengthScale = _config.Inference.LengthScale / speed;
+        // --- ЗАХИСТ ВІД ДУРНЯ ТА ДЕФОЛТНІ ЗНАЧЕННЯ ---
+        // Швидкість не може бути 0 або від'ємною (запобігаємо діленню на нуль). Мінімально 0.1, максимально 10.
+        float safeSpeed = Math.Clamp(speed, 0.1f, 10.0f);
+        float targetLengthScale = _config.Inference.LengthScale / safeSpeed;
+
+        // Якщо передано NoiseScale, обмежуємо від 0 до 5. Якщо ні - беремо з config.json.
+        float safeNoiseScale = requestNoiseScale.HasValue
+            ? Math.Clamp(requestNoiseScale.Value, 0.0f, 5.0f)
+            : _config.Inference.NoiseScale;
+
+        // Те саме для NoiseW
+        float safeNoiseW = requestNoiseW.HasValue
+            ? Math.Clamp(requestNoiseW.Value, 0.0f, 5.0f)
+            : _config.Inference.NoiseW;
 
         var scalesTensor = new DenseTensor<float>(new[] {
-            _config.Inference.NoiseScale,
-            targetLengthScale, // Передаємо вирахувану швидкість
-            _config.Inference.NoiseW
+            safeNoiseScale,
+            targetLengthScale,
+            safeNoiseW
         }, [3]);
 
         var inputs = new List<NamedOnnxValue>
