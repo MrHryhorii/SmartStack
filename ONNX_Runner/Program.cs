@@ -51,8 +51,10 @@ catch (Exception ex)
     Console.ResetColor();
 }
 
+// Читаємо налаштування з appsettings.json
+var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>();
+
 // --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
-// УВАГА: Це ОБОВ'ЯЗКОВО має бути ДО виклику builder.Build()
 if (piperConfig != null && piperModelPath != null)
 {
     var phonemizer = new PiperPhonemizer(piperConfig);
@@ -61,11 +63,19 @@ if (piperConfig != null && piperModelPath != null)
     var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
     builder.Services.AddSingleton(runner);
 
-    // Додаємо наш новий тестовий Phonemizer (передаємо йому espeak з основного фонемізатора)
-    // Увага: ми тимчасово створимо новий екземпляр EspeakWrapper для нього, щоб не заважати основному
     string dataPath = Path.GetFullPath("PiperNative");
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
-    builder.Services.AddSingleton(new MixedLanguagePhonemizer("languages.txt", piperConfig.Espeak.Voice ?? "en"));
+
+    // Ініціалізуємо змішаний фонемізатор з конфігу (якщо детектор увімкнено)
+    if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
+    {
+        // Передаємо список мов з JSON та поточний голос моделі
+        var mixedPhonemizer = new MixedLanguagePhonemizer(
+            phonemizerConfig.SupportedLanguages,
+            piperConfig.Espeak.Voice ?? "en"
+        );
+        builder.Services.AddSingleton(mixedPhonemizer);
+    }
 }
 
 // Збираємо застосунок (після цього моменту builder.Services змінювати не можна)

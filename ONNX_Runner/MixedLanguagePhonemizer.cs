@@ -12,7 +12,7 @@ public record TextChunk
     public bool IsReliable { get; init; }
     public bool IsPunctuationOrSpace { get; init; }
     public string Script { get; init; } = "None";
-    public List<string> RawTop5 { get; init; } = new();
+    public List<string> RawTop5 { get; init; } = [];
 }
 
 public partial class MixedLanguagePhonemizer
@@ -27,29 +27,41 @@ public partial class MixedLanguagePhonemizer
     private readonly string _modelEspeakCode;
     private readonly Language? _modelLinguaLang;
 
-    public MixedLanguagePhonemizer(string languagesFilePath, string modelEspeakCode)
+    public MixedLanguagePhonemizer(List<string> supportedEspeakCodes, string modelEspeakCode)
     {
         _mapper = new EspeakLinguaMapper();
         _modelEspeakCode = modelEspeakCode.Trim().ToLower();
         _modelLinguaLang = _mapper.GetLinguaLanguage(_modelEspeakCode);
 
-        if (!File.Exists(languagesFilePath))
+        // ФОЛБЕК ДЛЯ ПУСТОГО СПИСКУ
+        if (supportedEspeakCodes == null || supportedEspeakCodes.Count == 0)
         {
-            throw new FileNotFoundException($"Файл зі списком мов не знайдено: {languagesFilePath}");
+            Console.WriteLine($"[WARNING] Список мов пустий. Використовуємо лише мову моделі: {_modelEspeakCode}");
+            supportedEspeakCodes = [_modelEspeakCode];
         }
 
-        string[] espeakCodesFromFile = [.. File.ReadAllLines(languagesFilePath).Where(line => !string.IsNullOrWhiteSpace(line))];
+        var linguaLangs = _mapper.BuildLinguaList(supportedEspeakCodes);
 
-        var linguaLangs = _mapper.BuildLinguaList(espeakCodesFromFile);
-
+        // ФОЛБЕК, ЯКЩО МАПЕР НЕ ВПІЗНАВ ЖОДНОЇ МОВИ
+        // (наприклад, передали якусь екзотику, якої немає в словнику EspeakLinguaMapper)
         if (linguaLangs.Length == 0)
         {
-            throw new ArgumentException("Файл мов не містить жодної підтримуваної e-speak мови.");
+            Console.WriteLine($"[WARNING] Мапер не розпізнав передані мови. Аварійний фолбек на мову моделі/English.");
+
+            // Намагаємося взяти мову моделі, якщо ні - беремо Англійську як найбезпечнішу
+            linguaLangs = _modelLinguaLang.HasValue
+                ? [_modelLinguaLang.Value]
+                : [Language.English];
         }
+
+        Console.WriteLine($"[INFO] Preloading Lingua language models for {linguaLangs.Length} language(s)...");
 
         _detector = LanguageDetectorBuilder
             .FromLanguages(linguaLangs)
+            .WithPreloadedLanguageModels()
             .Build();
+
+        Console.WriteLine("[INFO] Lingua models loaded successfully.");
     }
 
     private static ScriptType DetectScript(string word)
