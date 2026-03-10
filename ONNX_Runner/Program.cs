@@ -60,6 +60,12 @@ if (piperConfig != null && piperModelPath != null)
 
     var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
     builder.Services.AddSingleton(runner);
+
+    // Додаємо наш новий тестовий Phonemizer (передаємо йому espeak з основного фонемізатора)
+    // Увага: ми тимчасово створимо новий екземпляр EspeakWrapper для нього, щоб не заважати основному
+    string dataPath = Path.GetFullPath("PiperNative");
+    var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
+    builder.Services.AddSingleton(new MixedLanguagePhonemizer("languages.txt", piperConfig.Espeak.Voice ?? "en"));
 }
 
 // Збираємо застосунок (після цього моменту builder.Services змінювати не можна)
@@ -103,6 +109,22 @@ app.MapPost("/v1/audio/speech", (
     }
 })
 .WithName("CreateSpeech")
+.WithOpenApi();
+
+app.MapPost("/v1/audio/tokenize", (
+    [FromBody] OpenAiSpeechRequest request,
+    [FromServices] MixedLanguagePhonemizer mixedPhonemizer) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Input))
+    {
+        return Results.BadRequest(new { error = "Input text cannot be empty." });
+    }
+
+    // Повертаємо JSON масив розібраних фонем
+    var tokens = mixedPhonemizer.ProcessTextToLanguageTokens(request.Input);
+    return Results.Ok(tokens);
+})
+.WithName("TokenizeText")
 .WithOpenApi();
 
 app.Run();

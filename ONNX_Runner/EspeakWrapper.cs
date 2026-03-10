@@ -33,6 +33,17 @@ public partial class EspeakWrapper : IDisposable
         }
     }
 
+    // Дозволяє динамічно перемикати мову перед транскрипцією
+    public void SetVoice(string voice)
+    {
+        int voiceResult = espeak_SetVoiceByName(voice);
+        if (voiceResult != 0)
+        {
+            Console.WriteLine($"[WARNING] Failed to set espeak voice to '{voice}'.");
+            throw new Exception("Voice not found"); // Кидаємо помилку, щоб спрацював наш фолбек
+        }
+    }
+
     public string GetIpaPhonemes(string text)
     {
         IntPtr textPtr = Marshal.StringToCoTaskMemUTF8(text);
