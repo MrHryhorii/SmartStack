@@ -27,31 +27,45 @@ public partial class MixedLanguagePhonemizer
     private readonly string _modelEspeakCode;
     private readonly Language? _modelLinguaLang;
 
-    public MixedLanguagePhonemizer(List<string> supportedEspeakCodes, string modelEspeakCode)
+    // Зберігаємо налаштування бонусів
+    private readonly double _maxBonus;
+    private readonly int _minLimit;
+    private readonly int _maxLimit;
+
+    public MixedLanguagePhonemizer(PhonemizerSettings settings, string modelEspeakCode)
     {
         _mapper = new EspeakLinguaMapper();
         _modelEspeakCode = modelEspeakCode.Trim().ToLower();
         _modelLinguaLang = _mapper.GetLinguaLanguage(_modelEspeakCode);
 
-        // ФОЛБЕК ДЛЯ ПУСТОГО СПИСКУ
-        if (supportedEspeakCodes == null || supportedEspeakCodes.Count == 0)
+        // Зберігаємо параметри з конфігу (або залишаємо дефолтні, якщо конфіг пустий)
+        _maxBonus = settings?.MaxBonusMultiplier ?? 0.50;
+        _minLimit = settings?.BonusMinLetterCount ?? 8;
+        _maxLimit = settings?.BonusMaxLetterCount ?? 32;
+
+        // СТВОРЮЄМО СПИСОК МОВ ТА ЗАВЖДИ ДОДАЄМО МОВУ МОДЕЛІ
+        // Використовуємо HashSet з ігноруванням регістру, щоб уникнути дублікатів ("En" і "en")
+        var codesToSupport = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (settings?.SupportedLanguages != null)
         {
-            Console.WriteLine($"[WARNING] Список мов пустий. Використовуємо лише мову моделі: {_modelEspeakCode}");
-            supportedEspeakCodes = [_modelEspeakCode];
+            foreach (var code in settings.SupportedLanguages)
+            {
+                if (!string.IsNullOrWhiteSpace(code))
+                    codesToSupport.Add(code.Trim());
+            }
         }
 
-        var linguaLangs = _mapper.BuildLinguaList(supportedEspeakCodes);
+        // Гарантовано додаємо мову моделі (це наш головний фолбек/база)
+        codesToSupport.Add(_modelEspeakCode);
+
+        var linguaLangs = _mapper.BuildLinguaList(codesToSupport);
 
         // ФОЛБЕК, ЯКЩО МАПЕР НЕ ВПІЗНАВ ЖОДНОЇ МОВИ
-        // (наприклад, передали якусь екзотику, якої немає в словнику EspeakLinguaMapper)
         if (linguaLangs.Length == 0)
         {
-            Console.WriteLine($"[WARNING] Мапер не розпізнав передані мови. Аварійний фолбек на мову моделі/English.");
-
-            // Намагаємося взяти мову моделі, якщо ні - беремо Англійську як найбезпечнішу
-            linguaLangs = _modelLinguaLang.HasValue
-                ? [_modelLinguaLang.Value]
-                : [Language.English];
+            Console.WriteLine($"[WARNING] Мапер не розпізнав жодної мови. Аварійний фолбек.");
+            linguaLangs = _modelLinguaLang.HasValue ? [_modelLinguaLang.Value] : [Language.English];
         }
 
         Console.WriteLine($"[INFO] Preloading Lingua language models for {linguaLangs.Length} language(s)...");
@@ -143,23 +157,19 @@ public partial class MixedLanguagePhonemizer
 
         string cleanText = text.Trim();
 
-        // --- ДИНАМІЧНИЙ МНОЖНИК (Плавне спадання) ---
+        // --- ДИНАМІЧНИЙ МНОЖНИК З КОНФІГУ ---
         int letterCount = cleanText.Count(char.IsLetter);
         double currentMultiplier = 1.0;
 
-        const int minLimit = 8;
-        const int maxLimit = 32;
-        const double maxBonus = 0.50; // +50%
-
-        if (letterCount <= minLimit)
+        if (letterCount <= _minLimit)
         {
-            currentMultiplier = 1.0 + maxBonus;
+            currentMultiplier = 1.0 + _maxBonus;
         }
-        else if (letterCount < maxLimit)
+        else if (letterCount < _maxLimit)
         {
-            // Лінійна інтерполяція від 1.5 до 1.0
-            double ratio = (double)(maxLimit - letterCount) / (maxLimit - minLimit);
-            currentMultiplier = 1.0 + (maxBonus * ratio);
+            // Лінійна інтерполяція від (1.0 + MaxBonus) до 1.0
+            double ratio = (double)(_maxLimit - letterCount) / (_maxLimit - _minLimit);
+            currentMultiplier = 1.0 + (_maxBonus * ratio);
         }
         else
         {

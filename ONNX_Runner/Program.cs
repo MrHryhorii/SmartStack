@@ -69,9 +69,9 @@ if (piperConfig != null && piperModelPath != null)
     // Ініціалізуємо змішаний фонемізатор з конфігу (якщо детектор увімкнено)
     if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
     {
-        // Передаємо список мов з JSON та поточний голос моделі
+        // Передаємо ВЕСЬ об'єкт конфігурації замість лише списку мов
         var mixedPhonemizer = new MixedLanguagePhonemizer(
-            phonemizerConfig.SupportedLanguages,
+            phonemizerConfig,
             piperConfig.Espeak.Voice ?? "en"
         );
         builder.Services.AddSingleton(mixedPhonemizer);
