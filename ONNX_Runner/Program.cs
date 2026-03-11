@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using ONNX_Runner;
 using ONNX_Runner.Models;
@@ -68,6 +69,7 @@ if (piperConfig != null && piperModelPath != null)
 
     string dataPath = Path.GetFullPath("PiperNative");
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
+    builder.Services.AddSingleton(mixedEspeak);
 
     // Ініціалізуємо змішаний фонемізатор з конфігу (якщо детектор увімкнено)
     if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
@@ -126,18 +128,91 @@ app.MapPost("/v1/audio/speech", (
 
 app.MapPost("/v1/audio/tokenize", (
     [FromBody] OpenAiSpeechRequest request,
-    [FromServices] MixedLanguagePhonemizer mixedPhonemizer) =>
+    [FromServices] MixedLanguagePhonemizer mixedPhonemizer,
+    [FromServices] EspeakWrapper espeakWrapper,
+    [FromServices] DynamicPunctuationMapper punctuationMapper) =>
 {
     if (string.IsNullOrWhiteSpace(request.Input))
     {
         return Results.BadRequest(new { error = "Input text cannot be empty." });
     }
 
-    // Повертаємо JSON масив розібраних фонем
-    var tokens = mixedPhonemizer.ProcessTextToLanguageTokens(request.Input);
-    return Results.Ok(tokens);
+    try
+    {
+        // Отримуємо розбиті мовні чанки
+        var tokens = mixedPhonemizer.ProcessTextToLanguageTokens(request.Input);
+
+        var finalPhonemes = new System.Text.StringBuilder();
+
+        // Проходимося по кожному чанку і генеруємо фонеми
+        foreach (var chunk in tokens)
+        {
+            if (chunk.IsPunctuationOrSpace)
+            {
+                // Для пунктуації e-speak не викликаємо, просто проганяємо через мапер
+                string normalized = punctuationMapper.Normalize(chunk.Text);
+                finalPhonemes.Append(normalized);
+            }
+            else
+            {
+                // Намагаємося встановити голос для знайденої мови
+                try
+                {
+                    espeakWrapper.SetVoice(chunk.DetectedLanguage);
+                }
+                catch
+                {
+                    if (piperConfig != null)
+                    {
+                        espeakWrapper.SetVoice(piperConfig.Espeak.Voice ?? "en");
+                    }
+                }
+
+                // Нормалізуємо весь текст чанку одразу
+                string normalizedChunk = punctuationMapper.Normalize(chunk.Text);
+
+                // Ізолюємо нелітерні знаки ТІЛЬКИ на краях (щоб e-speak їх не "з'їв")
+                // Core - це слова та всі знаки/пробіли ВСЕРЕДИНІ фрази
+                var match = MyRegex().Match(normalizedChunk);
+
+                string prefix = match.Groups[1].Value; // Напр. початковий пробіл перед " Let's"
+                string core = match.Groups[2].Value;   // Напр. "Let's see how it works" або "Hei"
+                string suffix = match.Groups[3].Value; // Напр. ", " після "Hei"
+
+                // Додаємо префікс
+                finalPhonemes.Append(prefix);
+
+                // Отримуємо фонеми тільки для ядра (e-speak чудово впорається з усім, що всередині)
+                if (!string.IsNullOrEmpty(core))
+                {
+                    string phonemes = espeakWrapper.GetIpaPhonemes(core);
+                    finalPhonemes.Append(phonemes);
+                }
+
+                // Додаємо суфікс (Повертаємо вкрадену кому і пробіл!)
+                finalPhonemes.Append(suffix);
+            }
+        }
+
+        // Повертаємо оригінальний текст і фінальний рядок фонем
+        return Results.Ok(new
+        {
+            text = request.Input,
+            phonemes = finalPhonemes.ToString()
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
 })
 .WithName("TokenizeText")
 .WithOpenApi();
 
 app.Run();
+
+partial class Program
+{
+    [GeneratedRegex(@"^([^\p{L}\p{Nd}\p{M}]*)(.*?)([^\p{L}\p{Nd}\p{M}]*)$", RegexOptions.Singleline)]
+    private static partial Regex MyRegex();
+}
