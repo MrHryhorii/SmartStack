@@ -144,7 +144,8 @@ app.MapPost("/v1/audio/tokenize", (
     [FromBody] OpenAiSpeechRequest request,
     [FromServices] MixedLanguagePhonemizer mixedPhonemizer,
     [FromServices] EspeakWrapper espeakWrapper,
-    [FromServices] DynamicPunctuationMapper punctuationMapper) =>
+    [FromServices] DynamicPunctuationMapper punctuationMapper,
+    [FromServices] PhonemeFallbackMapper? fallbackMapper) =>
 {
     if (string.IsNullOrWhiteSpace(request.Input))
     {
@@ -196,14 +197,54 @@ app.MapPost("/v1/audio/tokenize", (
                 // Додаємо префікс
                 finalPhonemes.Append(prefix);
 
-                // Отримуємо фонеми тільки для ядра (e-speak чудово впорається з усім, що всередині)
+                // Отримуємо сирі фонеми від e-speak
                 if (!string.IsNullOrEmpty(core))
                 {
-                    string phonemes = espeakWrapper.GetIpaPhonemes(core);
-                    finalPhonemes.Append(phonemes);
-                }
+                    string rawPhonemes = espeakWrapper.GetIpaPhonemes(core);
 
-                // Додаємо суфікс (Повертаємо вкрадену кому і пробіл!)
+                    if (fallbackMapper != null && piperConfig != null)
+                    {
+                        var safePhonemes = new System.Text.StringBuilder();
+
+                        // Використовуємо TextElementEnumerator, щоб правильно читати 
+                        // складні Unicode-символи (наприклад, 't͡s' як один символ)
+                        var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(rawPhonemes);
+
+                        while (enumerator.MoveNext())
+                        {
+                            string symbol = enumerator.GetTextElement();
+
+                            // Якщо модель знає цей звук (або це наголос 'ˈ', 'ˌ') - пропускаємо як є
+                            if (piperConfig.PhonemeIdMap.ContainsKey(symbol))
+                            {
+                                safePhonemes.Append(symbol);
+                            }
+                            else
+                            {
+                                // Якщо модель НЕ знає - шукаємо нашого "фізичного родича"
+                                string fallback = fallbackMapper.GetClosestPhoneme(symbol);
+
+                                if (!string.IsNullOrEmpty(fallback))
+                                {
+                                    safePhonemes.Append(fallback);
+                                }
+                                else
+                                {
+                                    // Якщо звуку немає навіть в PHOIBLE (специфічні знаки e-speak),
+                                    // залишаємо його. Piper просто проігнорує те, чого не знає.
+                                    safePhonemes.Append(symbol);
+                                }
+                            }
+                        }
+                        finalPhonemes.Append(safePhonemes);
+                    }
+                    else
+                    {
+                        // Якщо детектор/фолбек вимкнений, просто додаємо як є
+                        finalPhonemes.Append(rawPhonemes);
+                    }
+                }
+                // РЯТУЄ КОМИ ТА ПРОБІЛИ
                 finalPhonemes.Append(suffix);
             }
         }
