@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using ONNX_Runner;
 using ONNX_Runner.Models;
@@ -63,6 +62,7 @@ if (piperConfig != null && piperModelPath != null)
 
     var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
     builder.Services.AddSingleton(runner);
+
     // Реєструємо мапер пунктуації, який вивчив словник поточної моделі
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig);
     builder.Services.AddSingleton(punctuationMapper);
@@ -70,6 +70,10 @@ if (piperConfig != null && piperModelPath != null)
     string dataPath = Path.GetFullPath("PiperNative");
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
     builder.Services.AddSingleton(mixedEspeak);
+
+    // Змінні для передачі в UnifiedPhonemizer
+    MixedLanguagePhonemizer? mixedPhonemizer = null;
+    PhonemeFallbackMapper? fallbackMapper = null;
 
     // Ініціалізуємо змішаний фонемізатор з конфігу (якщо детектор увімкнено)
     if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
@@ -85,19 +89,29 @@ if (piperConfig != null && piperModelPath != null)
             Console.WriteLine($"[WARNING] Directory '{phoibleDirectory}' was created. Please put your 'phoible.csv' file there.");
         }
 
-        var fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
+        fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
         builder.Services.AddSingleton(fallbackMapper);
 
         // Ініціалізуємо детектор
-        var mixedPhonemizer = new MixedLanguagePhonemizer(
+        mixedPhonemizer = new MixedLanguagePhonemizer(
             phonemizerConfig,
             piperConfig.Espeak.Voice ?? "en"
         );
         builder.Services.AddSingleton(mixedPhonemizer);
     }
+
+    // Створюємо та реєструємо центральний сервіс фонемізації
+    var unifiedPhonemizer = new UnifiedPhonemizer(
+        mixedEspeak,
+        punctuationMapper,
+        piperConfig,
+        mixedPhonemizer,
+        fallbackMapper
+    );
+    builder.Services.AddSingleton(unifiedPhonemizer);
 }
 
-// Збираємо застосунок (після цього моменту builder.Services змінювати не можна)
+// Збираємо застосунок
 var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
@@ -106,9 +120,11 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// ЕНДПОІНТ 1: Генерація голосу
 app.MapPost("/v1/audio/speech", (
     [FromBody] OpenAiSpeechRequest request,
-    [FromServices] PiperRunner piperRunner) => // Інжектимо наш Runner
+    [FromServices] UnifiedPhonemizer unifiedPhonemizer,
+    [FromServices] PiperRunner piperRunner) =>
 {
     if (string.IsNullOrWhiteSpace(request.Input))
     {
@@ -122,9 +138,14 @@ app.MapPost("/v1/audio/speech", (
 
     try
     {
-        // Передаємо і текст, і швидкість, і наші нові параметри емоційності
+        // Отримуємо ідеальні змішані фонеми через наш центральний сервіс
+        string finalPhonemes = unifiedPhonemizer.GetPhonemes(request.Input);
+
+        // Передаємо готові ФОНЕМИ у PiperRunner
+        // УВАГА: Переконайтеся, що ваш PiperRunner.SynthesizeAudio готовий 
+        // приймати саме фонеми, а не пропускати їх через e-speak ще раз!
         byte[] audioBytes = piperRunner.SynthesizeAudio(
-            request.Input,
+            finalPhonemes,
             request.Speed,
             request.NoiseScale,
             request.NoiseW
@@ -140,12 +161,10 @@ app.MapPost("/v1/audio/speech", (
 .WithName("CreateSpeech")
 .WithOpenApi();
 
-app.MapPost("/v1/audio/tokenize", (
-    [FromBody] OpenAiSpeechRequest request,
-    [FromServices] MixedLanguagePhonemizer mixedPhonemizer,
-    [FromServices] EspeakWrapper espeakWrapper,
-    [FromServices] DynamicPunctuationMapper punctuationMapper,
-    [FromServices] PhonemeFallbackMapper? fallbackMapper) =>
+// ЕНДПОІНТ 2: Отримання фонем
+app.MapPost("/v1/audio/phonemize", (
+    [FromBody] PhonemizeRequest request,
+    [FromServices] UnifiedPhonemizer unifiedPhonemizer) =>
 {
     if (string.IsNullOrWhiteSpace(request.Input))
     {
@@ -154,106 +173,13 @@ app.MapPost("/v1/audio/tokenize", (
 
     try
     {
-        // Отримуємо розбиті мовні чанки
-        var tokens = mixedPhonemizer.ProcessTextToLanguageTokens(request.Input);
+        // Вся складна логіка фонемізвції
+        string phonemes = unifiedPhonemizer.GetPhonemes(request.Input);
 
-        var finalPhonemes = new System.Text.StringBuilder();
-
-        // Проходимося по кожному чанку і генеруємо фонеми
-        foreach (var chunk in tokens)
-        {
-            if (chunk.IsPunctuationOrSpace)
-            {
-                // Для пунктуації e-speak не викликаємо, просто проганяємо через мапер
-                string normalized = punctuationMapper.Normalize(chunk.Text);
-                finalPhonemes.Append(normalized);
-            }
-            else
-            {
-                // Намагаємося встановити голос для знайденої мови
-                try
-                {
-                    espeakWrapper.SetVoice(chunk.DetectedLanguage);
-                }
-                catch
-                {
-                    if (piperConfig != null)
-                    {
-                        espeakWrapper.SetVoice(piperConfig.Espeak.Voice ?? "en");
-                    }
-                }
-
-                // Нормалізуємо весь текст чанку одразу
-                string normalizedChunk = punctuationMapper.Normalize(chunk.Text);
-
-                // Ізолюємо нелітерні знаки ТІЛЬКИ на краях (щоб e-speak їх не "з'їв")
-                // Core - це слова та всі знаки/пробіли ВСЕРЕДИНІ фрази
-                var match = MyRegex().Match(normalizedChunk);
-
-                string prefix = match.Groups[1].Value; // Напр. початковий пробіл перед " Let's"
-                string core = match.Groups[2].Value;   // Напр. "Let's see how it works" або "Hei"
-                string suffix = match.Groups[3].Value; // Напр. ", " після "Hei"
-
-                // Додаємо префікс
-                finalPhonemes.Append(prefix);
-
-                // Отримуємо сирі фонеми від e-speak
-                if (!string.IsNullOrEmpty(core))
-                {
-                    string rawPhonemes = espeakWrapper.GetIpaPhonemes(core);
-
-                    if (fallbackMapper != null && piperConfig != null)
-                    {
-                        var safePhonemes = new System.Text.StringBuilder();
-
-                        // Використовуємо TextElementEnumerator, щоб правильно читати 
-                        // складні Unicode-символи (наприклад, 't͡s' як один символ)
-                        var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(rawPhonemes);
-
-                        while (enumerator.MoveNext())
-                        {
-                            string symbol = enumerator.GetTextElement();
-
-                            // Якщо модель знає цей звук (або це наголос 'ˈ', 'ˌ') - пропускаємо як є
-                            if (piperConfig.PhonemeIdMap.ContainsKey(symbol))
-                            {
-                                safePhonemes.Append(symbol);
-                            }
-                            else
-                            {
-                                // Якщо модель НЕ знає - шукаємо нашого "фізичного родича"
-                                string fallback = fallbackMapper.GetClosestPhoneme(symbol);
-
-                                if (!string.IsNullOrEmpty(fallback))
-                                {
-                                    safePhonemes.Append(fallback);
-                                }
-                                else
-                                {
-                                    // Якщо звуку немає навіть в PHOIBLE (специфічні знаки e-speak),
-                                    // залишаємо його. Piper просто проігнорує те, чого не знає.
-                                    safePhonemes.Append(symbol);
-                                }
-                            }
-                        }
-                        finalPhonemes.Append(safePhonemes);
-                    }
-                    else
-                    {
-                        // Якщо детектор/фолбек вимкнений, просто додаємо як є
-                        finalPhonemes.Append(rawPhonemes);
-                    }
-                }
-                // РЯТУЄ КОМИ ТА ПРОБІЛИ
-                finalPhonemes.Append(suffix);
-            }
-        }
-
-        // Повертаємо оригінальний текст і фінальний рядок фонем
         return Results.Ok(new
         {
             text = request.Input,
-            phonemes = finalPhonemes.ToString()
+            phonemes
         });
     }
     catch (Exception ex)
@@ -261,13 +187,7 @@ app.MapPost("/v1/audio/tokenize", (
         return Results.Problem(detail: ex.Message, statusCode: 500);
     }
 })
-.WithName("TokenizeText")
+.WithName("GetPhonemes")
 .WithOpenApi();
 
 app.Run();
-
-partial class Program
-{
-    [GeneratedRegex(@"^([^\p{L}\p{Nd}\p{M}]*)(.*?)([^\p{L}\p{Nd}\p{M}]*)$", RegexOptions.Singleline)]
-    private static partial Regex MyRegex();
-}
