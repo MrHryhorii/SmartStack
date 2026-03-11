@@ -74,7 +74,21 @@ if (piperConfig != null && piperModelPath != null)
     // Ініціалізуємо змішаний фонемізатор з конфігу (якщо детектор увімкнено)
     if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
     {
-        // Передаємо ВЕСЬ об'єкт конфігурації замість лише списку мов
+        // Спочатку завантажуємо базу PHOIBLE
+        string phoibleDirectory = "PHOIBLE";
+        string phoiblePath = Path.Combine(phoibleDirectory, "phoible.csv");
+
+        // Створюємо папку, якщо її ще немає (щоб підказати користувачу)
+        if (!Directory.Exists(phoibleDirectory))
+        {
+            Directory.CreateDirectory(phoibleDirectory);
+            Console.WriteLine($"[WARNING] Directory '{phoibleDirectory}' was created. Please put your 'phoible.csv' file there.");
+        }
+
+        var fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
+        builder.Services.AddSingleton(fallbackMapper);
+
+        // Ініціалізуємо детектор
         var mixedPhonemizer = new MixedLanguagePhonemizer(
             phonemizerConfig,
             piperConfig.Espeak.Voice ?? "en"
