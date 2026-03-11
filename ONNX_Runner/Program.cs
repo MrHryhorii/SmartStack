@@ -62,6 +62,9 @@ if (piperConfig != null && piperModelPath != null)
 
     var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
     builder.Services.AddSingleton(runner);
+    // Реєструємо мапер пунктуації, який вивчив словник поточної моделі
+    var punctuationMapper = new DynamicPunctuationMapper(piperConfig);
+    builder.Services.AddSingleton(punctuationMapper);
 
     string dataPath = Path.GetFullPath("PiperNative");
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
