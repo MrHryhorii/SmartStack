@@ -4,7 +4,6 @@ namespace ONNX_Runner.Services;
 
 public interface IPhonemizer
 {
-    // Змінили назву методу, щоб вона відповідала PiperRunner
     long[] PhonemesToIds(string phonemes);
 }
 
@@ -55,13 +54,19 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
         }
         corePhonemes.Add(sentenceEndId);
 
-        // --- Ідеальне математичне перемежовування індексом пустоти (Pad) ---
-        // Кожна фонема має бути обгорнута padId (зазвичай це 0)
-        var finalIds = new List<long> { padId };
-        foreach (var id in corePhonemes)
+        // --- Оптимізоване перемежовування (без пустот по краях) ---
+        var finalIds = new List<long>(corePhonemes.Count * 2);
+
+        for (int i = 0; i < corePhonemes.Count; i++)
         {
-            finalIds.Add(id);
-            finalIds.Add(padId);
+            finalIds.Add(corePhonemes[i]);
+
+            // Додаємо padId (пустоту) ТІЛЬКИ між елементами, 
+            // не додаючи його після останнього знаку '$'
+            if (i < corePhonemes.Count - 1)
+            {
+                finalIds.Add(padId);
+            }
         }
 
         var resultArray = finalIds.ToArray();
