@@ -76,6 +76,7 @@ public partial class MixedLanguagePhonemizer
             .WithPreloadedLanguageModels()
             .Build();
 
+        Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("[INFO] Lingua models loaded successfully.");
     }
 

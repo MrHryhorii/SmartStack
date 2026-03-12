@@ -18,11 +18,48 @@ namespace ONNX_Runner.Services
             _phonemizer = phonemizer;
             _chunker = chunker;
 
-            var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-            // Вмикаємо прискорення на відеокарті через DirectML
-            options.AppendExecutionProvider_DML(0);
+            _session = InitializeSession(modelPath);
+        }
 
-            _session = new InferenceSession(modelPath, options);
+        private InferenceSession InitializeSession(string modelPath)
+        {
+            int maxGpusToTry = 4; // Максимальна кількість відеокарт у системі для перевірки
+
+            // СПРОБА ЗАВАНТАЖИТИ НА ВІДЕОКАРТУ (GPU)
+            for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
+            {
+                try
+                {
+                    var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                    options.AppendExecutionProvider_DML(deviceId);
+
+                    var session = new InferenceSession(modelPath, options);
+
+                    Console.ForegroundColor = ConsoleColor.Cyan;
+                    Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
+                    Console.ResetColor();
+
+                    return session; // Успіх! Миттєво повертаємо готову сесію
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[DEBUG] Failed to load on GPU {deviceId}: {ex.Message}. Trying next...");
+                }
+            }
+
+            // ФОЛБЕК НА ПРОЦЕСОР (CPU)
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("[WARNING] All GPU attempts failed or no GPU found. Falling back to CPU...");
+            Console.ResetColor();
+
+            var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+            var fallbackSession = new InferenceSession(modelPath, cpuOptions);
+
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("[HARDWARE] Piper Model loaded successfully on CPU.");
+            Console.ResetColor();
+
+            return fallbackSession; // Повертаємо сесію на процесорі
         }
 
         public byte[] SynthesizeAudio(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
