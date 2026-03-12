@@ -69,19 +69,38 @@ namespace ONNX_Runner.Services
 
             using (var writer = new WaveFileWriter(memoryStream, waveFormat))
             {
-                byte[] buffer = new byte[audioSamples.Length * 2];
+                // Рахуємо точну кількість потрібних байтів
+                int requiredBytes = audioSamples.Length * 2;
 
-                for (int i = 0; i < audioSamples.Length; i++)
+                // ОРЕНДУЄМО МАСИВ З ПУЛУ ЗАМІСТЬ СТВОРЕННЯ НОВОГО!
+                byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(requiredBytes);
+
+                try
                 {
-                    float clamped = Math.Clamp(audioSamples[i], -1f, 1f);
-                    short shortSample = (short)(clamped * short.MaxValue);
+                    for (int i = 0; i < audioSamples.Length; i++)
+                    {
+                        // Запобігаємо перевантаженню звуку (clipping)
+                        float clamped = Math.Clamp(audioSamples[i], -1f, 1f);
 
-                    buffer[i * 2] = (byte)(shortSample & 0xFF);
-                    buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
+                        // Конвертуємо float (-1.0 до 1.0) в 16-bit PCM (-32768 до 32767)
+                        short shortSample = (short)(clamped * short.MaxValue);
+
+                        // Записуємо 2 байти (Little Endian формат)
+                        buffer[i * 2] = (byte)(shortSample & 0xFF);
+                        buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
+                    }
+
+                    // ВАЖЛИВО: Використовуємо requiredBytes, а не buffer.Length!
+                    // Тому що ArrayPool може видати масив БІЛЬШОГО розміру, ніж ми просили.
+                    writer.Write(buffer, 0, requiredBytes);
                 }
-
-                writer.Write(buffer, 0, buffer.Length);
+                finally
+                {
+                    // ОБОВ'ЯЗКОВО ПОВЕРТАЄМО МАСИВ У ПУЛ, НАВІТЬ ЯКЩО СТАЛАСЯ ПОМИЛКА
+                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                }
             }
+
             return memoryStream.ToArray();
         }
 

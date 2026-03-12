@@ -119,8 +119,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-// ЕНДПОІНТ 1: Генерація голосу
-app.MapPost("/v1/audio/speech", (
+// ЕНДПОІНТ 1: Генерація голосу (Асинхронний)
+app.MapPost("/v1/audio/speech", async (
     [FromBody] OpenAiSpeechRequest request,
     [FromServices] UnifiedPhonemizer unifiedPhonemizer,
     [FromServices] PiperRunner piperRunner) =>
@@ -137,18 +137,22 @@ app.MapPost("/v1/audio/speech", (
 
     try
     {
-        // Отримуємо ідеальні змішані фонеми через наш центральний сервіс
-        string finalPhonemes = unifiedPhonemizer.GetPhonemes(request.Input);
+        // Відправляємо важку процесорну роботу у фоновий потік, щоб не блокувати сервер
+        var (finalPhonemes, audioBytes) = await Task.Run(() =>
+        {
+            // Отримуємо фонеми
+            string phonemes = unifiedPhonemizer.GetPhonemes(request.Input);
 
-        // Передаємо готові ФОНЕМИ у PiperRunner
-        // УВАГА: Переконайтеся, що ваш PiperRunner.SynthesizeAudio готовий 
-        // приймати саме фонеми, а не пропускати їх через e-speak ще раз!
-        byte[] audioBytes = piperRunner.SynthesizeAudio(
-            finalPhonemes,
-            request.Speed,
-            request.NoiseScale,
-            request.NoiseW
-        );
+            // Генеруємо аудіо
+            byte[] bytes = piperRunner.SynthesizeAudio(
+                phonemes,
+                request.Speed,
+                request.NoiseScale,
+                request.NoiseW
+            );
+
+            return (phonemes, bytes);
+        });
 
         return Results.File(audioBytes, "audio/wav", "speech.wav");
     }
@@ -160,8 +164,8 @@ app.MapPost("/v1/audio/speech", (
 .WithName("CreateSpeech")
 .WithOpenApi();
 
-// ЕНДПОІНТ 2: Отримання фонем
-app.MapPost("/v1/audio/phonemize", (
+// ЕНДПОІНТ 2: Отримання фонем (Асинхронний)
+app.MapPost("/v1/audio/phonemize", async (
     [FromBody] PhonemizeRequest request,
     [FromServices] UnifiedPhonemizer unifiedPhonemizer) =>
 {
@@ -172,8 +176,9 @@ app.MapPost("/v1/audio/phonemize", (
 
     try
     {
-        // Вся складна логіка фонемізвції
-        string phonemes = unifiedPhonemizer.GetPhonemes(request.Input);
+        // Хоча фонемізація швидша за генерацію аудіо, вона теж використовує CPU.
+        // Переносимо її в Task.Run для абсолютної стабільності при 1000+ запитах/сек.
+        string phonemes = await Task.Run(() => unifiedPhonemizer.GetPhonemes(request.Input));
 
         return Results.Ok(new
         {
