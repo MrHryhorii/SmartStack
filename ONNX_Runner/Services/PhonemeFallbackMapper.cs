@@ -1,6 +1,6 @@
 using ONNX_Runner.Models;
 
-namespace ONNX_Runner;
+namespace ONNX_Runner.Services;
 
 public class PhonemeFallbackMapper
 {

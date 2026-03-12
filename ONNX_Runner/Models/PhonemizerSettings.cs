@@ -1,4 +1,4 @@
-namespace ONNX_Runner;
+namespace ONNX_Runner.Models;
 
 public class PhonemizerSettings
 {

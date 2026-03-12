@@ -1,6 +1,6 @@
 using System.Text;
 
-namespace ONNX_Runner;
+namespace ONNX_Runner.Services;
 
 public class DynamicPunctuationMapper
 {

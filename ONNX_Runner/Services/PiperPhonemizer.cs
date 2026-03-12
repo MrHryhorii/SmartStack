@@ -1,7 +1,6 @@
 using ONNX_Runner.Models;
-using System.Text;
 
-namespace ONNX_Runner;
+namespace ONNX_Runner.Services;
 
 public interface IPhonemizer
 {
@@ -9,15 +8,9 @@ public interface IPhonemizer
     long[] PhonemesToIds(string phonemes);
 }
 
-public class PiperPhonemizer : IPhonemizer
+public class PiperPhonemizer(PiperConfig config) : IPhonemizer
 {
-    private readonly PiperConfig _config;
-
-    // Конструктор став елементарним - тільки конфіг!
-    public PiperPhonemizer(PiperConfig config)
-    {
-        _config = config;
-    }
+    private readonly PiperConfig _config = config;
 
     public long[] PhonemesToIds(string phonemes)
     {

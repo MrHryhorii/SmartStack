@@ -1,8 +1,9 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Lingua;
+using ONNX_Runner.Models;
 
-namespace ONNX_Runner;
+namespace ONNX_Runner.Services;
 
 public record TextChunk
 {

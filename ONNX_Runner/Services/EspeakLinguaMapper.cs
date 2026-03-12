@@ -1,6 +1,6 @@
 using Lingua;
 
-namespace ONNX_Runner;
+namespace ONNX_Runner.Services;
 
 public class EspeakLinguaMapper
 {
