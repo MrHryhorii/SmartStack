@@ -59,7 +59,11 @@ if (piperConfig != null && piperModelPath != null)
     var phonemizer = new PiperPhonemizer(piperConfig);
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
-    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
+    // Реєструємо чанкер для розбиття довгих флнетичних рядків на більш короткі
+    var chunker = new PhonemeChunker();
+    builder.Services.AddSingleton(chunker);
+
+    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, chunker);
     builder.Services.AddSingleton(runner);
 
     // Реєструємо мапер пунктуації, який вивчив словник поточної моделі

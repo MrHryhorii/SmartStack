@@ -10,11 +10,13 @@ namespace ONNX_Runner.Services
         private readonly InferenceSession _session;
         private readonly IPhonemizer _phonemizer;
         private readonly PiperConfig _config;
+        private readonly PhonemeChunker _chunker;
 
-        public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer)
+        public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, PhonemeChunker chunker)
         {
             _config = config;
             _phonemizer = phonemizer;
+            _chunker = chunker;
 
             var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
             // Вмикаємо прискорення на відеокарті через DirectML
@@ -25,11 +27,11 @@ namespace ONNX_Runner.Services
 
         public byte[] SynthesizeAudio(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
         {
-            // Викликаємо метод конвертації фонем у цифри
-            long[] phonemeIds = _phonemizer.PhonemesToIds(phonemes);
+            // РІЖЕМО ГІГАНТСЬКИЙ РЯДОК НА БЕЗПЕЧНІ ЧАНКИ
+            var chunks = _chunker.SplitIntoChunks(phonemes);
 
-            var inputTensor = new DenseTensor<long>(phonemeIds, [1, phonemeIds.Length]);
-            var inputLengthsTensor = new DenseTensor<long>(new[] { (long)phonemeIds.Length }, [1]);
+            // Тут ми будемо накопичувати СИРІ ЗВУКОВІ ХВИЛІ зі всіх речень
+            var allAudioSamples = new List<float>();
 
             // --- ЗАХИСТ ВІД ДУРНЯ ТА ДЕФОЛТНІ ЗНАЧЕННЯ ---
             float safeSpeed = Math.Clamp(speed, 0.1f, 10.0f);
@@ -49,17 +51,32 @@ namespace ONNX_Runner.Services
                 safeNoiseW
             }, [3]);
 
-            var inputs = new List<NamedOnnxValue>
+            // ПРОГАНЯЄМО КОЖЕН ЧАНК ЧЕРЕЗ НЕЙРОМЕРЕЖУ
+            foreach (var chunk in chunks)
             {
-                NamedOnnxValue.CreateFromTensor("input", inputTensor),
-                NamedOnnxValue.CreateFromTensor("input_lengths", inputLengthsTensor),
-                NamedOnnxValue.CreateFromTensor("scales", scalesTensor)
-            };
+                // Викликаємо метод конвертації фонем у цифри для конкретного шматка
+                long[] phonemeIds = _phonemizer.PhonemesToIds(chunk);
 
-            using var results = _session.Run(inputs);
-            var audioOutput = results.First(r => r.Name == "output").AsEnumerable<float>().ToArray();
+                var inputTensor = new DenseTensor<long>(phonemeIds, [1, phonemeIds.Length]);
+                var inputLengthsTensor = new DenseTensor<long>(new[] { (long)phonemeIds.Length }, [1]);
 
-            return ConvertToWav(audioOutput);
+                var inputs = new List<NamedOnnxValue>
+                {
+                    NamedOnnxValue.CreateFromTensor("input", inputTensor),
+                    NamedOnnxValue.CreateFromTensor("input_lengths", inputLengthsTensor),
+                    NamedOnnxValue.CreateFromTensor("scales", scalesTensor)
+                };
+
+                using var results = _session.Run(inputs);
+                var audioOutput = results.First(r => r.Name == "output").AsEnumerable<float>().ToArray();
+
+                // Додаємо згенеровані хвилі цього речення до загальної "бобіни"
+                allAudioSamples.AddRange(audioOutput);
+            }
+
+            // КОНВЕРТУЄМО ВСЕ РАЗОМ В ОДИН WAV ФАЙЛ
+            // Використовуємо [.. allAudioSamples] - це синтаксичний цукор C# 12 для .ToArray()
+            return ConvertToWav([.. allAudioSamples]);
         }
 
         private byte[] ConvertToWav(float[] audioSamples)
