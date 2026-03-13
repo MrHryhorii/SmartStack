@@ -36,16 +36,21 @@ public partial class MixedLanguagePhonemizer
     public MixedLanguagePhonemizer(PhonemizerSettings settings, string modelEspeakCode)
     {
         _mapper = new EspeakLinguaMapper();
-        _modelEspeakCode = modelEspeakCode.Trim().ToLower();
-        _modelLinguaLang = _mapper.GetLinguaLanguage(_modelEspeakCode);
 
-        // Зберігаємо параметри з конфігу (або залишаємо дефолтні, якщо конфіг пустий)
+        // Повний код (напр., "en-gb-x-rp", "nb", "pt-br") - зберігаємо для e-speak
+        _modelEspeakCode = modelEspeakCode.Trim().ToLower();
+
+        // РОБИМО SPLIT ТУТ: Обрізаний код (напр., "en", "nb", "pt") - використовуємо для Lingua
+        string baseFamily = _modelEspeakCode.Split('-', '_')[0];
+
+        // Передаємо обрізаний код у мапер Lingua
+        _modelLinguaLang = _mapper.GetLinguaLanguage(baseFamily);
+
+        // Зберігаємо параметри з конфігу (або залишаємо дефолтні)
         _maxBonus = settings?.MaxBonusMultiplier ?? 0.50;
         _minLimit = settings?.BonusMinLetterCount ?? 8;
         _maxLimit = settings?.BonusMaxLetterCount ?? 32;
 
-        // СТВОРЮЄМО СПИСОК МОВ ТА ЗАВЖДИ ДОДАЄМО МОВУ МОДЕЛІ
-        // Використовуємо HashSet з ігноруванням регістру, щоб уникнути дублікатів ("En" і "en")
         var codesToSupport = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         if (settings?.SupportedLanguages != null)
@@ -57,8 +62,8 @@ public partial class MixedLanguagePhonemizer
             }
         }
 
-        // Гарантовано додаємо мову моделі (це наш головний фолбек/база)
-        codesToSupport.Add(_modelEspeakCode);
+        // Гарантовано додаємо в Lingua БАЗОВУ мову моделі (обрізану)
+        codesToSupport.Add(baseFamily);
 
         var linguaLangs = _mapper.BuildLinguaList(codesToSupport);
 
