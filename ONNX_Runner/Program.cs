@@ -76,6 +76,8 @@ if (piperConfig != null && piperModelPath != null)
 
     // --- ЗАВАНТАЖЕННЯ OPENVOICE (CLONER) ---
     string clonerDirectory = "Cloner";
+    string voicesDirectory = "Voices";
+
     if (Directory.Exists(clonerDirectory))
     {
         try
@@ -92,13 +94,54 @@ if (piperConfig != null && piperModelPath != null)
                 if (toneConfig != null)
                 {
                     var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig);
+                    var audioProc = new AudioProcessor(toneConfig);
+
+                    // --- СКАНУВАННЯ ТА ГЕНЕРАЦІЯ ГОЛОСІВ ---
+                    if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
+
+                    var wavFiles = Directory.GetFiles(voicesDirectory, "*.wav");
+                    foreach (var wavPath in wavFiles)
+                    {
+                        string voiceName = Path.GetFileNameWithoutExtension(wavPath);
+                        string fingerprintPath = Path.Combine(voicesDirectory, voiceName + ".voice");
+
+                        if (File.Exists(fingerprintPath))
+                        {
+                            // Завантажуємо готовий зліпок з кешу
+                            var fingerprint = openVoice.LoadVoiceFingerprint(fingerprintPath);
+                            openVoice.VoiceLibrary[voiceName] = fingerprint;
+                            Console.ForegroundColor = ConsoleColor.DarkGreen;
+                            Console.WriteLine($"[VOICE] Loaded from cache: {voiceName}");
+                        }
+                        else
+                        {
+                            // Генеруємо новий зліпок
+                            Console.ForegroundColor = ConsoleColor.DarkYellow;
+                            Console.WriteLine($"[VOICE] Fingerprinting new voice: {voiceName}...");
+
+                            float[] rawSamples = audioProc.LoadWav(wavPath);
+                            // Автоматичний ресемплінг під 22050 Hz (якщо треба)
+                            float[] readySamples = audioProc.Resample(rawSamples, 22050, toneConfig.Data.SamplingRate);
+
+                            var spec = audioProc.GetMagnitudeSpectrogram(readySamples);
+                            var fingerprint = openVoice.ExtractToneColor(spec);
+
+                            openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint);
+                            openVoice.VoiceLibrary[voiceName] = fingerprint;
+                        }
+                    }
+
+                    // РОЗВАНТАЖУЄМО ЕКСТРАКТОР З ВІДЕОПАМ'ЯТІ
+                    openVoice.UnloadExtractor();
+
                     builder.Services.AddSingleton(openVoice);
+                    builder.Services.AddSingleton(audioProc);
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[ERROR] Failed to load OpenVoice: {ex.Message}");
+            Console.WriteLine($"[ERROR] Failed to load OpenVoice/Voices: {ex.Message}");
         }
     }
 
