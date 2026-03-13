@@ -74,6 +74,34 @@ if (piperConfig != null && piperModelPath != null)
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
     builder.Services.AddSingleton(mixedEspeak);
 
+    // --- ЗАВАНТАЖЕННЯ OPENVOICE (CLONER) ---
+    string clonerDirectory = "Cloner";
+    if (Directory.Exists(clonerDirectory))
+    {
+        try
+        {
+            string extractPath = Path.Combine(clonerDirectory, "tone_extract.onnx");
+            string colorPath = Path.Combine(clonerDirectory, "tone_color.onnx");
+            string toneJsonPath = Path.Combine(clonerDirectory, "tone_config.json");
+
+            if (File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
+            {
+                string toneJsonContent = File.ReadAllText(toneJsonPath);
+                var toneConfig = System.Text.Json.JsonSerializer.Deserialize<ToneConfig>(toneJsonContent);
+
+                if (toneConfig != null)
+                {
+                    var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig);
+                    builder.Services.AddSingleton(openVoice);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERROR] Failed to load OpenVoice: {ex.Message}");
+        }
+    }
+
     // Змінні для передачі в UnifiedPhonemizer
     MixedLanguagePhonemizer? mixedPhonemizer = null;
     PhonemeFallbackMapper? fallbackMapper = null;
