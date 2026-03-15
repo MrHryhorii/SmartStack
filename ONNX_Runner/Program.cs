@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using NAudio.Wave;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
@@ -115,24 +116,50 @@ if (piperConfig != null && piperModelPath != null)
                         }
                         else
                         {
-                            // Генеруємо новий зліпок
                             Console.ForegroundColor = ConsoleColor.DarkYellow;
-                            Console.WriteLine($"[VOICE] Fingerprinting new voice: {voiceName}...");
+                            Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
 
-                            float[] rawSamples = audioProc.LoadWav(wavPath);
-                            // Автоматичний ресемплінг під 22050 Hz (якщо треба)
-                            float[] readySamples = audioProc.Resample(rawSamples, 22050, toneConfig.Data.SamplingRate);
+                            // ТОЧКА 1: Читання
+                            var (rawSamples, fileRate) = audioProc.LoadWav(wavPath);
+                            Console.WriteLine($"   -> Step 1: Read {rawSamples.Length} samples at {fileRate}Hz");
 
+                            if (rawSamples.Length == 0)
+                            {
+                                Console.WriteLine("   [ERROR] File is empty!");
+                                continue;
+                            }
+
+                            // ТОЧКА 2: Ресемплінг
+                            // Важливо: передаємо fileRate, а не жорсткі 22050!
+                            float[] readySamples = audioProc.Resample(rawSamples, fileRate, toneConfig.Data.SamplingRate);
+                            Console.WriteLine($"   -> Step 2: Resampled to {toneConfig.Data.SamplingRate}Hz. New count: {readySamples.Length}");
+
+                            // ТОЧКА 3: Спектрограма
                             var spec = audioProc.GetMagnitudeSpectrogram(readySamples);
+                            int frames = spec.GetLength(0);
+                            Console.WriteLine($"   -> Step 3: Spectrogram frames: {frames}");
+
+                            if (frames == 0)
+                            {
+                                Console.WriteLine("   [ERROR] Audio too short for the model! Need at least 1024 samples.");
+                                continue;
+                            }
+
+                            // ТОЧКА 4: Екстракція
                             var fingerprint = openVoice.ExtractToneColor(spec);
+                            Console.WriteLine($"   -> Step 4: Fingerprint extracted (Size: {fingerprint.Length})");
 
                             openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint);
                             openVoice.VoiceLibrary[voiceName] = fingerprint;
+
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.WriteLine($"   [SUCCESS] Zlipok saved: {voiceName}.voice");
+                            Console.ResetColor();
                         }
                     }
 
                     // РОЗВАНТАЖУЄМО ЕКСТРАКТОР З ВІДЕОПАМ'ЯТІ
-                    openVoice.UnloadExtractor();
+                    //openVoice.UnloadExtractor();
 
                     builder.Services.AddSingleton(openVoice);
                     builder.Services.AddSingleton(audioProc);
@@ -194,11 +221,42 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// =================================================================
+// АВТОМАТИЧНА ГЕНЕРАЦІЯ БАЗОВОГО ЗЛІПКУ PIPER
+// =================================================================
+using (var scope = app.Services.CreateScope())
+{
+    var openVoiceSvc = scope.ServiceProvider.GetService<OpenVoiceRunner>();
+    var audioProcSvc = scope.ServiceProvider.GetService<AudioProcessor>();
+
+    var unifiedPhonemizerSvc = scope.ServiceProvider.GetService<UnifiedPhonemizer>();
+    var piperRunnerSvc = scope.ServiceProvider.GetService<PiperRunner>();
+
+    // Перевірка на null
+    if (openVoiceSvc != null && audioProcSvc != null && unifiedPhonemizerSvc != null && piperRunnerSvc != null && piperConfig != null)
+    {
+        var baseGenerator = new BaseVoiceGenerator(
+            unifiedPhonemizerSvc, // Передаємо розумний фонемізатор
+            piperRunnerSvc,
+            audioProcSvc,
+            openVoiceSvc,
+            piperConfig
+        );
+
+        // Генеруємо piper_base
+        baseGenerator.GenerateAndCacheBaseFingerprint();
+
+        // Вивантажуємо екстрактор з відеопам'яті
+        openVoiceSvc.UnloadExtractor();
+    }
+}
+
 // ЕНДПОІНТ 1: Генерація голосу (Асинхронний)
 app.MapPost("/v1/audio/speech", async (
     [FromBody] OpenAiSpeechRequest request,
     [FromServices] UnifiedPhonemizer unifiedPhonemizer,
-    [FromServices] PiperRunner piperRunner) =>
+    [FromServices] PiperRunner piperRunner,
+    [FromServices] IServiceProvider services) =>
 {
     if (string.IsNullOrWhiteSpace(request.Input))
     {
@@ -218,15 +276,91 @@ app.MapPost("/v1/audio/speech", async (
             // Отримуємо фонеми
             string phonemes = unifiedPhonemizer.GetPhonemes(request.Input);
 
-            // Генеруємо аудіо
-            byte[] bytes = piperRunner.SynthesizeAudio(
+            // Генеруємо базове аудіо Piper
+            byte[] piperWav = piperRunner.SynthesizeAudio(
                 phonemes,
                 request.Speed,
                 request.NoiseScale,
                 request.NoiseW
             );
 
-            return (phonemes, bytes);
+            // ==========================================
+            // МАГІЯ КЛОНУВАННЯ (ЯКЩО ВКАЗАНО ГОЛОС)
+            // ==========================================
+            if (!string.IsNullOrEmpty(request.Voice))
+            {
+                var openVoice = services.GetService<OpenVoiceRunner>();
+                var audioProc = services.GetService<AudioProcessor>();
+
+                // ЛОГИ:
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"\n[API] Requested voice clone for: '{request.Voice}'");
+
+                if (openVoice != null && audioProc != null)
+                {
+                    if (openVoice.VoiceLibrary.TryGetValue(request.Voice, out var targetFingerprint) &&
+                        openVoice.VoiceLibrary.TryGetValue("piper_base", out var sourceFingerprint))
+                    {
+                        Console.WriteLine($"[CLONER] Found fingerprints for '{request.Voice}' and 'piper_base'. Starting conversion...");
+
+                        // БЕЗПЕЧНЕ ЧИТАННЯ (ігноруємо системний заголовок WAV)
+                        using var ms = new MemoryStream(piperWav);
+                        using var reader = new WaveFileReader(ms);
+                        var provider = reader.ToSampleProvider();
+
+                        var samplesList = new List<float>();
+                        float[] buffer = new float[8192];
+                        int read;
+                        while ((read = provider.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            samplesList.AddRange(buffer.Take(read));
+                        }
+                        var samples = samplesList.ToArray();
+
+                        Console.WriteLine($"[CLONER] Base audio decoded. Samples count: {samples.Length}");
+
+                        // Створюємо спектрограму
+                        var spec = audioProc.GetMagnitudeSpectrogram(samples);
+                        Console.WriteLine($"[CLONER] Spectrogram created. Shape: {spec.GetLength(0)} frames x {spec.GetLength(1)} bins");
+
+                        // ==========================================
+                        // РЕНТГЕН ДАНИХ (ДІАГНОСТИКА ТИШІ)
+                        // ==========================================
+                        float spMax = 0; int spNaN = 0;
+                        foreach (var s in spec) { if (float.IsNaN(s)) spNaN++; else if (s > spMax) spMax = s; }
+                        Console.WriteLine($"[DIAGNOSTIC] Spectrogram -> MaxVal: {spMax:F4}, NaNs: {spNaN}");
+
+                        float f1Max = 0; int f1NaN = 0;
+                        foreach (var s in sourceFingerprint) { if (float.IsNaN(s)) f1NaN++; else if (Math.Abs(s) > f1Max) f1Max = Math.Abs(s); }
+                        Console.WriteLine($"[DIAGNOSTIC] Source Voice (piper_base) -> MaxVal: {f1Max:F4}, NaNs: {f1NaN}");
+
+                        float f2Max = 0; int f2NaN = 0;
+                        foreach (var s in targetFingerprint) { if (float.IsNaN(s)) f2NaN++; else if (Math.Abs(s) > f2Max) f2Max = Math.Abs(s); }
+                        Console.WriteLine($"[DIAGNOSTIC] Target Voice ({request.Voice}) -> MaxVal: {f2Max:F4}, NaNs: {f2NaN}");
+
+                        // Накладаємо тембр
+                        float[] convertedSamples = openVoice.ApplyToneColor(spec, sourceFingerprint, targetFingerprint);
+                        Console.WriteLine($"[CLONER] Tone color applied successfully! New samples count: {convertedSamples.Length}");
+
+                        float cMax = 0; int cNaN = 0;
+                        foreach (var s in convertedSamples) { if (float.IsNaN(s)) cNaN++; else if (Math.Abs(s) > cMax) cMax = Math.Abs(s); }
+                        Console.WriteLine($"[DIAGNOSTIC] Converted Audio -> MaxVal: {cMax:F4}, NaNs: {cNaN}");
+                        // ==========================================
+
+                        // Конвертуємо змінений масив назад у байтовий WAV файл
+                        piperWav = piperRunner.ConvertToWav(convertedSamples);
+                        Console.WriteLine($"[CLONER] Packed back to WAV. Final size: {piperWav.Length} bytes.");
+                    }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[CLONER-SKIP] Voice '{request.Voice}' OR 'piper_base' was NOT found in memory!");
+                    }
+                }
+                Console.ResetColor();
+            }
+
+            return (phonemes, piperWav);
         });
 
         return Results.File(audioBytes, "audio/wav", "speech.wav");

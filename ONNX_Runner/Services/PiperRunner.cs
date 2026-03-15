@@ -5,23 +5,14 @@ using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Services
 {
-    public class PiperRunner : IDisposable
+    public class PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, PhonemeChunker chunker) : IDisposable
     {
-        private readonly InferenceSession _session;
-        private readonly IPhonemizer _phonemizer;
-        private readonly PiperConfig _config;
-        private readonly PhonemeChunker _chunker;
+        private readonly InferenceSession _session = InitializeSession(modelPath);
+        private readonly IPhonemizer _phonemizer = phonemizer;
+        private readonly PiperConfig _config = config;
+        private readonly PhonemeChunker _chunker = chunker;
 
-        public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, PhonemeChunker chunker)
-        {
-            _config = config;
-            _phonemizer = phonemizer;
-            _chunker = chunker;
-
-            _session = InitializeSession(modelPath);
-        }
-
-        private InferenceSession InitializeSession(string modelPath)
+        private static InferenceSession InitializeSession(string modelPath)
         {
             int maxGpusToTry = 4; // Максимальна кількість відеокарт у системі для перевірки
 
@@ -112,45 +103,35 @@ namespace ONNX_Runner.Services
             }
 
             // КОНВЕРТУЄМО ВСЕ РАЗОМ В ОДИН WAV ФАЙЛ
-            // Використовуємо [.. allAudioSamples] - це синтаксичний цукор C# 12 для .ToArray()
             return ConvertToWav([.. allAudioSamples]);
         }
 
-        private byte[] ConvertToWav(float[] audioSamples)
+        public byte[] ConvertToWav(float[] audioSamples)
         {
             using var memoryStream = new MemoryStream();
             var waveFormat = new WaveFormat(_config.Audio.SampleRate, 16, 1);
 
             using (var writer = new WaveFileWriter(memoryStream, waveFormat))
             {
-                // Рахуємо точну кількість потрібних байтів
                 int requiredBytes = audioSamples.Length * 2;
-
-                // ОРЕНДУЄМО МАСИВ З ПУЛУ ЗАМІСТЬ СТВОРЕННЯ НОВОГО!
                 byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(requiredBytes);
 
                 try
                 {
                     for (int i = 0; i < audioSamples.Length; i++)
                     {
-                        // Запобігаємо перевантаженню звуку (clipping)
-                        float clamped = Math.Clamp(audioSamples[i], -1f, 1f);
+                        // Звук завжди в межах [-1.0; 1.0], тому просто обмежуємо і масштабуємо
+                        float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
 
-                        // Конвертуємо float (-1.0 до 1.0) в 16-bit PCM (-32768 до 32767)
-                        short shortSample = (short)(clamped * short.MaxValue);
-
-                        // Записуємо 2 байти (Little Endian формат)
+                        short shortSample = (short)sample;
                         buffer[i * 2] = (byte)(shortSample & 0xFF);
                         buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
                     }
 
-                    // ВАЖЛИВО: Використовуємо requiredBytes, а не buffer.Length!
-                    // Тому що ArrayPool може видати масив БІЛЬШОГО розміру, ніж ми просили.
                     writer.Write(buffer, 0, requiredBytes);
                 }
                 finally
                 {
-                    // ОБОВ'ЯЗКОВО ПОВЕРТАЄМО МАСИВ У ПУЛ, НАВІТЬ ЯКЩО СТАЛАСЯ ПОМИЛКА
                     System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
                 }
             }

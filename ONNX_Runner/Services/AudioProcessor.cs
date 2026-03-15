@@ -1,4 +1,5 @@
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using NAudio.Dsp;
 using ONNX_Runner.Models;
 
@@ -9,31 +10,52 @@ public class AudioProcessor(ToneConfig toneConfig)
     private readonly int _fftSize = toneConfig.Data.FilterLength;
     private readonly int _hopSize = toneConfig.Data.HopLength;
 
-    public float[] LoadWav(string path)
+    public (float[] samples, int sampleRate) LoadWav(string path)
     {
         using var reader = new AudioFileReader(path);
-        var samples = new float[reader.Length / 4];
-        int read = reader.Read(samples, 0, samples.Length);
-        return [.. samples.Take(read)];
+        int rate = reader.WaveFormat.SampleRate; // Дізнаємося реальну частоту файлу
+
+        var allSamples = new List<float>();
+        float[] buffer = new float[rate];
+        int read;
+        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            allSamples.AddRange(buffer.Take(read));
+        }
+
+        Console.WriteLine($"[DEBUG-FILE] Path: {Path.GetFileName(path)}, Rate: {rate}Hz, Samples: {allSamples.Count}");
+        return (allSamples.ToArray(), rate);
     }
 
     public float[] Resample(float[] samples, int sourceRate, int targetRate)
     {
         if (sourceRate == targetRate) return samples;
 
-        var resampler = new WdlResampler();
-        resampler.SetRates(sourceRate, targetRate);
-        resampler.SetFeedMode(true);
+        // Готуємо формат та джерело даних
+        var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sourceRate, 1);
 
-        int expectedFrames = (int)((long)samples.Length * targetRate / sourceRate);
-        float[] outBuffer = new float[expectedFrames + 100];
+        // Перетворюємо float[] у байтовий потік, який розуміє NAudio
+        byte[] byteArray = new byte[samples.Length * 4];
+        Buffer.BlockCopy(samples, 0, byteArray, 0, byteArray.Length);
 
-        resampler.ResamplePrepare(samples.Length, 1, out float[] inBuffer, out int inBufferOffset);
-        Array.Copy(samples, 0, inBuffer, inBufferOffset, samples.Length);
+        using var ms = new MemoryStream(byteArray);
+        var rawSource = new RawSourceWaveStream(ms, waveFormat);
+        var sampleProvider = rawSource.ToSampleProvider();
 
-        int written = resampler.ResampleOut(outBuffer, 0, expectedFrames, 1, 1);
+        // Створюємо ресемплер
+        var resampler = new WdlResamplingSampleProvider(sampleProvider, targetRate);
 
-        return [.. outBuffer.Take(written)];
+        // Читаємо результат до останнього семпла
+        var outSamples = new List<float>();
+        float[] buffer = new float[targetRate]; // Читаємо порціями по 1 секунді
+        int read;
+
+        while ((read = resampler.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            outSamples.AddRange(buffer.Take(read));
+        }
+
+        return outSamples.ToArray();
     }
 
     public float[,] GetMagnitudeSpectrogram(float[] samples)
@@ -65,7 +87,7 @@ public class AudioProcessor(ToneConfig toneConfig)
 
             for (int j = 0; j <= _fftSize / 2; j++)
             {
-                spectrogram[i, j] = (float)Math.Sqrt(complex[j].X * complex[j].X + complex[j].Y * complex[j].Y);
+                spectrogram[i, j] = (float)Math.Sqrt(complex[j].X * complex[j].X + complex[j].Y * complex[j].Y) * _fftSize;
             }
         }
 

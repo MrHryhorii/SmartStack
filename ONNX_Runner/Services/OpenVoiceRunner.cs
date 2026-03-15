@@ -13,8 +13,7 @@ public class OpenVoiceRunner : IDisposable
     // Словник: Ключ - назва голосу (напр. "MorganFreeman"), Значення - зліпок (256 чисел)
     public Dictionary<string, float[]> VoiceLibrary { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly float[] memory = new[] { 1.0f };
-    private static readonly float[] memoryArray = new[] { 1.0f };
+    private static readonly float[] memoryArray = [1.0f];
 
     public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config)
     {
