@@ -14,6 +14,7 @@ public class OpenVoiceRunner : IDisposable
     public Dictionary<string, float[]> VoiceLibrary { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     private static readonly float[] memoryArray = [1.0f];
+    public int GetTargetSamplingRate() => _config.Data.SamplingRate;
 
     public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config)
     {
@@ -196,6 +197,54 @@ public class OpenVoiceRunner : IDisposable
 
         // Вихід моделі: [1 x 1 x Batch]
         return [.. results.First(r => r.Name == "converted_audio").AsEnumerable<float>()];
+    }
+
+    // Розумна обробка довгих аудіо по шматочках
+    public float[] ApplyToneColorInChunks(float[] originalSamples, AudioProcessor audioProc, float[] srcFingerprint, float[] destFingerprint, int chunkSeconds)
+    {
+        var convertedSamplesList = new List<float>(originalSamples.Length);
+
+        // Динамічно рахуємо розмір шматка (Час * Частота з конфігу моделі)
+        int maxAudioChunkSize = chunkSeconds * _config.Data.SamplingRate;
+
+        // Межа, до якої відступаємо (3 секунди назад)
+        int minSearchSize = Math.Max(1000, maxAudioChunkSize - (_config.Data.SamplingRate * 3));
+
+        int currentIndex = 0;
+        while (currentIndex < originalSamples.Length)
+        {
+            int remaining = originalSamples.Length - currentIndex;
+            int currentChunkSize = Math.Min(maxAudioChunkSize, remaining);
+
+            // Шукаємо "тишу" для ідеального розрізу
+            if (currentChunkSize == maxAudioChunkSize)
+            {
+                for (int i = currentChunkSize - 1; i > minSearchSize; i--)
+                {
+                    if (Math.Abs(originalSamples[currentIndex + i]) < 0.005f)
+                    {
+                        currentChunkSize = i + 1;
+                        break;
+                    }
+                }
+            }
+
+            // Вирізаємо шматок
+            float[] audioChunk = new float[currentChunkSize];
+            Array.Copy(originalSamples, currentIndex, audioChunk, 0, currentChunkSize);
+
+            // Перетворюємо у спектрограму і клонуємо голос
+            var specChunk = audioProc.GetMagnitudeSpectrogram(audioChunk);
+            if (specChunk.GetLength(0) > 0)
+            {
+                float[] convertedChunk = ApplyToneColor(specChunk, srcFingerprint, destFingerprint);
+                convertedSamplesList.AddRange(convertedChunk);
+            }
+
+            currentIndex += currentChunkSize;
+        }
+
+        return convertedSamplesList.ToArray();
     }
 
     public void Dispose()

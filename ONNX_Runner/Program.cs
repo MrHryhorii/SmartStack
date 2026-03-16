@@ -306,6 +306,7 @@ app.MapPost("/v1/audio/speech", async (
             // Генерація звуку - Строго по черзі
             var audioBytes = await Task.Run(() =>
             {
+                // Генеруємо базове аудіо Piper (частота залежить від моделі Piper)
                 byte[] piperWav = piperRunner.SynthesizeAudio(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
 
                 if (!string.IsNullOrEmpty(request.Voice))
@@ -317,6 +318,7 @@ app.MapPost("/v1/audio/speech", async (
                         openVoice.VoiceLibrary.TryGetValue(request.Voice, out var targetFingerprint) &&
                         openVoice.VoiceLibrary.TryGetValue("piper_base", out var sourceFingerprint))
                     {
+                        // Декодуємо WAV у масив float
                         using var ms = new MemoryStream(piperWav);
                         using var reader = new WaveFileReader(ms);
                         var provider = reader.ToSampleProvider();
@@ -329,8 +331,26 @@ app.MapPost("/v1/audio/speech", async (
                             samplesList.AddRange(buffer.Take(read));
                         }
 
-                        var spec = audioProc.GetMagnitudeSpectrogram(samplesList.ToArray());
-                        float[] convertedSamples = openVoice.ApplyToneColor(spec, sourceFingerprint, targetFingerprint);
+                        float[] piperSamples = samplesList.ToArray();
+
+                        // АДАПТИВНИЙ РЕСЕМПЛІНГ
+                        // Вирівнюємо частоту Piper під частоту, яку вимагає OpenVoice
+                        float[] resampledSamples = audioProc.Resample(
+                            piperSamples,
+                            piperConfig.Audio.SampleRate,     // Звідки (частота Piper)
+                            openVoice.GetTargetSamplingRate() // Куди (частота OpenVoice)
+                        );
+
+                        // РОЗУМНА ОБРОБКА ПО ШМАТОЧКАХ (передаємо вже відресемплений масив)
+                        float[] convertedSamples = openVoice.ApplyToneColorInChunks(
+                            resampledSamples,
+                            audioProc,
+                            sourceFingerprint,
+                            targetFingerprint,
+                            hardwareConfig.OpenVoiceChunkSeconds // Ліміт з конфігу (appsettings.json)
+                        );
+
+                        // Пакуємо оброблений звук назад у WAV
                         piperWav = piperRunner.ConvertToWav(convertedSamples);
                     }
                 }
