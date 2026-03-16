@@ -3,6 +3,7 @@ using NAudio.Wave.SampleProviders;
 using NAudio.Dsp;
 using ONNX_Runner.Models;
 using System.Buffers;
+using System.Numerics; // ДОДАНО ДЛЯ SIMD
 
 namespace ONNX_Runner.Services;
 
@@ -42,7 +43,8 @@ public class AudioProcessor
         _hanningWindow = new float[_fftSize];
         for (int i = 0; i < _fftSize; i++)
         {
-            _hanningWindow[i] = (float)(0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (_fftSize - 1))));
+            // MathF замість Math (уникаємо конвертації double -> float)
+            _hanningWindow[i] = (float)(0.5 * (1.0 - MathF.Cos(2.0f * MathF.PI * i / (_fftSize - 1))));
         }
     }
 
@@ -100,24 +102,49 @@ public class AudioProcessor
         var spectrogram = new float[numFrames, (_fftSize / 2) + 1];
         int m = (int)Math.Log2(_fftSize);
 
-        // ОПТИМІЗАЦІЯ ПАМ'ЯТІ: Створюємо масив Complex ОДИН РАЗ, а не тисячі разів у циклі
-        var complex = new Complex[_fftSize];
+        // Створюємо масив Complex ОДИН РАЗ
+        var complex = new NAudio.Dsp.Complex[_fftSize];
+
+        // Дізнаємося, скільки чисел за раз може обробити процесор (зазвичай 8 для AVX2)
+        int vectorSize = Vector<float>.Count;
 
         for (int i = 0; i < numFrames; i++)
         {
             var frame = samples.Slice(i * _hopSize, _fftSize);
+            int j = 0;
 
-            for (int j = 0; j < _fftSize; j++)
+            // SIMD-векторизація (Апаратне прискорення)
+            for (; j <= _fftSize - vectorSize; j += vectorSize)
             {
-                complex[j].X = frame[j] * _hanningWindow[j];
-                complex[j].Y = 0;
+                // Завантажуємо 8 чисел з аудіо та 8 чисел з вікна Ганна
+                var vFrame = new Vector<float>(frame.Slice(j));
+                var vWindow = new Vector<float>(_hanningWindow, j);
+
+                // Множимо 8 чисел за ОДИН такт процесора
+                var vResult = vFrame * vWindow;
+
+                // Записуємо результат
+                for (int k = 0; k < vectorSize; k++)
+                {
+                    complex[j + k].X = vResult[k];
+                    complex[j + k].Y = 0f;
+                }
             }
 
+            // Обробляємо хвіст (якщо _fftSize не ділиться на 8 націло)
+            for (; j < _fftSize; j++)
+            {
+                complex[j].X = frame[j] * _hanningWindow[j];
+                complex[j].Y = 0f;
+            }
+
+            // Виконуємо Швидке Перетворення Фур'є
             FastFourierTransform.FFT(true, m, complex);
 
-            for (int j = 0; j <= _fftSize / 2; j++)
+            for (int k = 0; k <= _fftSize / 2; k++)
             {
-                spectrogram[i, j] = (float)Math.Sqrt(complex[j].X * complex[j].X + complex[j].Y * complex[j].Y) * _fftSize;
+                // MathF.Sqrt виконує операцію напряму в float (без конвертації в double)
+                spectrogram[i, k] = MathF.Sqrt(complex[k].X * complex[k].X + complex[k].Y * complex[k].Y) * _fftSize;
             }
         }
 
