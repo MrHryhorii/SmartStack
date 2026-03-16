@@ -5,18 +5,33 @@ using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Services
 {
-    public class PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, PhonemeChunker chunker) : IDisposable
+    public class PiperRunner : IDisposable
     {
-        private readonly InferenceSession _session = InitializeSession(modelPath);
-        private readonly IPhonemizer _phonemizer = phonemizer;
-        private readonly PiperConfig _config = config;
-        private readonly PhonemeChunker _chunker = chunker;
+        private readonly InferenceSession _session;
+        private readonly IPhonemizer _phonemizer;
+        private readonly PiperConfig _config;
+        private readonly PhonemeChunker _chunker;
 
-        private static InferenceSession InitializeSession(string modelPath)
+        // ДОДАЄМО ПУБЛІЧНУ ВЛАСТИВІСТЬ
+        public bool IsUsingGPU { get; private set; }
+
+        public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, PhonemeChunker chunker)
         {
-            int maxGpusToTry = 4; // Максимальна кількість відеокарт у системі для перевірки
+            _phonemizer = phonemizer;
+            _config = config;
+            _chunker = chunker;
 
-            // СПРОБА ЗАВАНТАЖИТИ НА ВІДЕОКАРТУ (GPU)
+            // Змінюємо виклик, щоб отримати і сесію, і статус GPU
+            var (session, isGpu) = InitializeSession(modelPath);
+            _session = session;
+            IsUsingGPU = isGpu;
+        }
+
+        // Змінюємо повернений тип на Tuple (InferenceSession, bool)
+        private static (InferenceSession, bool) InitializeSession(string modelPath)
+        {
+            int maxGpusToTry = 4;
+
             for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
             {
                 try
@@ -25,32 +40,16 @@ namespace ONNX_Runner.Services
                     options.AppendExecutionProvider_DML(deviceId);
 
                     var session = new InferenceSession(modelPath, options);
-
-                    Console.ForegroundColor = ConsoleColor.Cyan;
                     Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
-                    Console.ResetColor();
-
-                    return session; // Успіх! Миттєво повертаємо готову сесію
+                    return (session, true); // Повертаємо true (працює на GPU)
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[DEBUG] Failed to load on GPU {deviceId}: {ex.Message}. Trying next...");
-                }
+                catch { /* ігноруємо і пробуємо далі */ }
             }
-
-            // ФОЛБЕК НА ПРОЦЕСОР (CPU)
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("[WARNING] All GPU attempts failed or no GPU found. Falling back to CPU...");
-            Console.ResetColor();
 
             var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
             var fallbackSession = new InferenceSession(modelPath, cpuOptions);
-
-            Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine("[HARDWARE] Piper Model loaded successfully on CPU.");
-            Console.ResetColor();
-
-            return fallbackSession; // Повертаємо сесію на процесорі
+            return (fallbackSession, false); // Повертаємо false (працює на CPU)
         }
 
         public byte[] SynthesizeAudio(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)

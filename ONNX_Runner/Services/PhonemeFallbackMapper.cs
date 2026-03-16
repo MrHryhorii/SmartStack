@@ -125,13 +125,30 @@ public class PhonemeFallbackMapper
     {
         if (string.IsNullOrEmpty(unknownPhoneme)) return "";
 
-        // Перевірка на розбиття (Африкати/Дифтонги)
+        // ПЕРЕВІРКА СКЛАДНИХ ЗВУКІВ (напр. "t͡s")
         if (_decompositionRules.TryGetValue(unknownPhoneme, out string? decomposed))
         {
-            return decomposed;
+            var safeResult = new System.Text.StringBuilder();
+
+            // Розбиваємо "ts" на "t" та "s" і перевіряємо кожен окремо
+            var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(decomposed);
+            while (enumerator.MoveNext())
+            {
+                string part = enumerator.GetTextElement();
+
+                // Якщо модель знає цю частину — додаємо. 
+                // Якщо ні — беремо її найближчий аналог із уже прорахованої карти.
+                if (_precalculatedMap.TryGetValue(part, out string? partFallback))
+                {
+                    // Додаємо або саму частину (якщо вона ідеальна), або її заміну
+                    safeResult.Append(!string.IsNullOrEmpty(partFallback) ? partFallback : part);
+                }
+            }
+            return safeResult.ToString();
         }
 
-        // Віддаємо готовий прорахований звук
+        // ДЛЯ ВСІХ ІНШИХ ЗВУКІВ
+        // Просто повертаємо вже готовий результат із кешу, який ми розрахували при старті
         if (_precalculatedMap.TryGetValue(unknownPhoneme, out string? fallback))
         {
             return fallback ?? "";
