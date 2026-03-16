@@ -2,18 +2,54 @@ using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using NAudio.Dsp;
 using ONNX_Runner.Models;
+using System.Buffers;
 
 namespace ONNX_Runner.Services;
 
-public class AudioProcessor(ToneConfig toneConfig)
+// Запобігає конвертації float[] у byte[] перед ресемплінгом
+public class FloatArrayWaveProvider(float[] samples, int sampleRate) : IWaveProvider
 {
-    private readonly int _fftSize = toneConfig.Data.FilterLength;
-    private readonly int _hopSize = toneConfig.Data.HopLength;
+    private readonly float[] _samples = samples;
+    private int _position;
+    public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1);
+
+    public int Read(byte[] buffer, int offset, int count)
+    {
+        int floatsRequired = count / 4;
+        int floatsAvailable = _samples.Length - _position;
+        int floatsToRead = Math.Min(floatsRequired, floatsAvailable);
+
+        if (floatsToRead > 0)
+        {
+            Buffer.BlockCopy(_samples, _position * 4, buffer, offset, floatsToRead * 4);
+            _position += floatsToRead;
+        }
+        return floatsToRead * 4;
+    }
+}
+
+public class AudioProcessor
+{
+    private readonly int _fftSize;
+    private readonly int _hopSize;
+    private readonly float[] _hanningWindow; // Кешуємо вікно раз і назавжди
+
+    public AudioProcessor(ToneConfig toneConfig)
+    {
+        _fftSize = toneConfig.Data.FilterLength;
+        _hopSize = toneConfig.Data.HopLength;
+
+        _hanningWindow = new float[_fftSize];
+        for (int i = 0; i < _fftSize; i++)
+        {
+            _hanningWindow[i] = (float)(0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (_fftSize - 1))));
+        }
+    }
 
     public (float[] samples, int sampleRate) LoadWav(string path)
     {
         using var reader = new AudioFileReader(path);
-        int rate = reader.WaveFormat.SampleRate; // Дізнаємося реальну частоту файлу
+        int rate = reader.WaveFormat.SampleRate;
 
         var allSamples = new List<float>();
         float[] buffer = new float[rate];
@@ -22,8 +58,6 @@ public class AudioProcessor(ToneConfig toneConfig)
         {
             allSamples.AddRange(buffer.Take(read));
         }
-
-        Console.WriteLine($"[DEBUG-FILE] Path: {Path.GetFileName(path)}, Rate: {rate}Hz, Samples: {allSamples.Count}");
         return (allSamples.ToArray(), rate);
     }
 
@@ -31,55 +65,51 @@ public class AudioProcessor(ToneConfig toneConfig)
     {
         if (sourceRate == targetRate) return samples;
 
-        // Готуємо формат та джерело даних
-        var waveFormat = WaveFormat.CreateIeeeFloatWaveFormat(sourceRate, 1);
+        // Використовуємо новий провайдер (НУЛЬ КОПІЮВАНЬ ПАМ'ЯТІ!)
+        var provider = new FloatArrayWaveProvider(samples, sourceRate);
+        var resampler = new WdlResamplingSampleProvider(provider.ToSampleProvider(), targetRate);
 
-        // Перетворюємо float[] у байтовий потік, який розуміє NAudio
-        byte[] byteArray = new byte[samples.Length * 4];
-        Buffer.BlockCopy(samples, 0, byteArray, 0, byteArray.Length);
+        // Попередньо виділяємо точну кількість пам'яті
+        int expectedLength = (int)((double)samples.Length * targetRate / sourceRate) + 1000;
+        var outSamples = new List<float>(expectedLength);
 
-        using var ms = new MemoryStream(byteArray);
-        var rawSource = new RawSourceWaveStream(ms, waveFormat);
-        var sampleProvider = rawSource.ToSampleProvider();
-
-        // Створюємо ресемплер
-        var resampler = new WdlResamplingSampleProvider(sampleProvider, targetRate);
-
-        // Читаємо результат до останнього семпла
-        var outSamples = new List<float>();
-        float[] buffer = new float[targetRate]; // Читаємо порціями по 1 секунді
-        int read;
-
-        while ((read = resampler.Read(buffer, 0, buffer.Length)) > 0)
+        // Беремо буфер з пулу, щоб не напрягати GC
+        float[] buffer = ArrayPool<float>.Shared.Rent(targetRate);
+        try
         {
-            outSamples.AddRange(buffer.Take(read));
+            int read;
+            while ((read = resampler.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                outSamples.AddRange(new ArraySegment<float>(buffer, 0, read));
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(buffer);
         }
 
-        return outSamples.ToArray();
+        return [.. outSamples];
     }
 
-    public float[,] GetMagnitudeSpectrogram(float[] samples)
+    // Приймає ReadOnlySpan (дивиться на масив без копіювання)
+    public float[,] GetMagnitudeSpectrogram(ReadOnlySpan<float> samples)
     {
-        // Розрахунок кадрів динамічний
         int numFrames = (samples.Length - _fftSize) / _hopSize + 1;
         if (numFrames <= 0) return new float[0, 0];
 
-        // Кількість частотних бінів: (N/2) + 1
         var spectrogram = new float[numFrames, (_fftSize / 2) + 1];
-
-        // Вікно Ганна підлаштовується під _fftSize
-        float[] window = new float[_fftSize];
-        for (int i = 0; i < _fftSize; i++)
-            window[i] = (float)(0.5 * (1.0 - Math.Cos(2.0 * Math.PI * i / (_fftSize - 1))));
-
         int m = (int)Math.Log2(_fftSize);
+
+        // ОПТИМІЗАЦІЯ ПАМ'ЯТІ: Створюємо масив Complex ОДИН РАЗ, а не тисячі разів у циклі
+        var complex = new Complex[_fftSize];
 
         for (int i = 0; i < numFrames; i++)
         {
-            var complex = new Complex[_fftSize];
+            var frame = samples.Slice(i * _hopSize, _fftSize);
+
             for (int j = 0; j < _fftSize; j++)
             {
-                complex[j].X = samples[i * _hopSize + j] * window[j];
+                complex[j].X = frame[j] * _hanningWindow[j];
                 complex[j].Y = 0;
             }
 

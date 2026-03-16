@@ -295,19 +295,15 @@ app.MapPost("/v1/audio/speech", async (
 
     try
     {
-        // Фонемізація (CPU) - Паралельно
         string phonemes = await Task.Run(() => unifiedPhonemizer.GetPhonemes(request.Input));
-
-        // Черга до відеокарти (GPU)
         await gpuSemaphore.WaitAsync();
 
         try
         {
-            // Генерація звуку - Строго по черзі
             var audioBytes = await Task.Run(() =>
             {
-                // Генеруємо базове аудіо Piper (частота залежить від моделі Piper)
-                byte[] piperWav = piperRunner.SynthesizeAudio(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
+                // Отримуємо СИРІ дані, уникаючи створення WAV!
+                float[] piperSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
 
                 if (!string.IsNullOrEmpty(request.Voice))
                 {
@@ -318,50 +314,35 @@ app.MapPost("/v1/audio/speech", async (
                         openVoice.VoiceLibrary.TryGetValue(request.Voice, out var targetFingerprint) &&
                         openVoice.VoiceLibrary.TryGetValue("piper_base", out var sourceFingerprint))
                     {
-                        // Декодуємо WAV у масив float
-                        using var ms = new MemoryStream(piperWav);
-                        using var reader = new WaveFileReader(ms);
-                        var provider = reader.ToSampleProvider();
-
-                        var samplesList = new List<float>();
-                        float[] buffer = new float[8192];
-                        int read;
-                        while ((read = provider.Read(buffer, 0, buffer.Length)) > 0)
-                        {
-                            samplesList.AddRange(buffer.Take(read));
-                        }
-
-                        float[] piperSamples = samplesList.ToArray();
-
-                        // АДАПТИВНИЙ РЕСЕМПЛІНГ
-                        // Вирівнюємо частоту Piper під частоту, яку вимагає OpenVoice
+                        // Ресемплінг
                         float[] resampledSamples = audioProc.Resample(
                             piperSamples,
-                            piperConfig.Audio.SampleRate,     // Звідки (частота Piper)
-                            openVoice.GetTargetSamplingRate() // Куди (частота OpenVoice)
+                            piperConfig.Audio.SampleRate,
+                            openVoice.GetTargetSamplingRate()
                         );
 
-                        // РОЗУМНА ОБРОБКА ПО ШМАТОЧКАХ (передаємо вже відресемплений масив)
+                        // Клонування (Оптимізоване через Span)
                         float[] convertedSamples = openVoice.ApplyToneColorInChunks(
                             resampledSamples,
                             audioProc,
                             sourceFingerprint,
                             targetFingerprint,
-                            hardwareConfig.OpenVoiceChunkSeconds // Ліміт з конфігу (appsettings.json)
+                            hardwareConfig.OpenVoiceChunkSeconds
                         );
 
-                        // Пакуємо оброблений звук назад у WAV
-                        piperWav = piperRunner.ConvertToWav(convertedSamples);
+                        // Збираємо WAV тільки один раз у кінці
+                        return piperRunner.ConvertToWav(convertedSamples);
                     }
                 }
-                return piperWav;
+
+                // Якщо клонування немає, збираємо базовий WAV
+                return piperRunner.ConvertToWav(piperSamples);
             });
 
             return Results.File(audioBytes, "audio/wav", "speech.wav");
         }
         finally
         {
-            // Звільняємо турнікет
             gpuSemaphore.Release();
         }
     }
