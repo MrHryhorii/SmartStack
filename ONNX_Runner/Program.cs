@@ -53,7 +53,8 @@ catch (Exception ex)
 }
 
 // Читаємо налаштування з appsettings.json
-var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>();
+var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
+var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
 var hardwareConfig = builder.Configuration.GetSection("HardwareSettings").Get<HardwareSettings>() ?? new HardwareSettings();
 
 // --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
@@ -62,8 +63,8 @@ if (piperConfig != null && piperModelPath != null)
     var phonemizer = new PiperPhonemizer(piperConfig);
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
-    // Реєструємо чанкер для розбиття довгих фонетичних рядків
-    var chunker = new PhonemeChunker();
+    // Реєструємо чанкер для розбиття довгих фонетичних рядків із параметрами з конфігу
+    var chunker = new PhonemeChunker(chunkerConfig.MinChunkLength, chunkerConfig.MaxChunkLength);
     builder.Services.AddSingleton(chunker);
 
     var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, chunker);
