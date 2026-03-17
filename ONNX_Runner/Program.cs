@@ -56,6 +56,7 @@ catch (Exception ex)
 var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
 var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
 var hardwareConfig = builder.Configuration.GetSection("HardwareSettings").Get<HardwareSettings>() ?? new HardwareSettings();
+var dspConfig = builder.Configuration.GetSection("DspSettings").Get<DspSettings>() ?? new DspSettings();
 
 // --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
 if (piperConfig != null && piperModelPath != null)
@@ -329,6 +330,21 @@ app.MapPost("/v1/audio/speech", async (
                             targetFingerprint,
                             hardwareConfig.OpenVoiceChunkSeconds
                         );
+
+                        // DSP ФІЛЬТР
+                        if (dspConfig.EnableLowPassFilter)
+                        {
+                            var filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
+                                openVoice.GetTargetSamplingRate(),
+                                dspConfig.LowPassCutoffFrequency,
+                                dspConfig.LowPassQFactor
+                            );
+
+                            for (int i = 0; i < convertedSamples.Length; i++)
+                            {
+                                convertedSamples[i] = filter.Transform(convertedSamples[i]);
+                            }
+                        }
 
                         // Збираємо WAV тільки один раз у кінці
                         return piperRunner.ConvertToWav(convertedSamples);
