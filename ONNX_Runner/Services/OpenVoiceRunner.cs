@@ -199,51 +199,6 @@ public class OpenVoiceRunner : IDisposable
         return [.. results.First(r => r.Name == "converted_audio").AsEnumerable<float>()];
     }
 
-    // Розумна обробка довгих аудіо по шматочках (Оптимізована Span)
-    public float[] ApplyToneColorInChunks(float[] originalSamples, AudioProcessor audioProc, float[] srcFingerprint, float[] destFingerprint, int chunkSeconds)
-    {
-        var convertedSamplesList = new List<float>(originalSamples.Length);
-
-        int maxAudioChunkSize = chunkSeconds * _config.Data.SamplingRate;
-        int minSearchSize = Math.Max(1000, maxAudioChunkSize - (_config.Data.SamplingRate * 3));
-
-        ReadOnlySpan<float> samplesSpan = originalSamples;
-        int currentIndex = 0;
-
-        while (currentIndex < originalSamples.Length)
-        {
-            int remaining = originalSamples.Length - currentIndex;
-            int currentChunkSize = Math.Min(maxAudioChunkSize, remaining);
-
-            if (currentChunkSize == maxAudioChunkSize)
-            {
-                for (int i = currentChunkSize - 1; i > minSearchSize; i--)
-                {
-                    if (Math.Abs(samplesSpan[currentIndex + i]) < 0.005f)
-                    {
-                        currentChunkSize = i + 1;
-                        break;
-                    }
-                }
-            }
-
-            // ОПТИМІЗАЦІЯ ПАМ'ЯТІ: Беремо зріз (Slice) замість копіювання Array.Copy!
-            var audioChunkSpan = samplesSpan.Slice(currentIndex, currentChunkSize);
-
-            // Передаємо Span у спектрограму
-            var specChunk = audioProc.GetMagnitudeSpectrogram(audioChunkSpan);
-            if (specChunk.GetLength(0) > 0)
-            {
-                float[] convertedChunk = ApplyToneColor(specChunk, srcFingerprint, destFingerprint);
-                convertedSamplesList.AddRange(convertedChunk);
-            }
-
-            currentIndex += currentChunkSize;
-        }
-
-        return [.. convertedSamplesList];
-    }
-
     public void Dispose()
     {
         _extractSession?.Dispose();

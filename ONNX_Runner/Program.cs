@@ -64,11 +64,11 @@ if (piperConfig != null && piperModelPath != null)
     var phonemizer = new PiperPhonemizer(piperConfig);
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
-    // Реєструємо чанкер для розбиття довгих фонетичних рядків із параметрами з конфігу
-    var chunker = new PhonemeChunker(chunkerConfig.MinChunkLength, chunkerConfig.MaxChunkLength);
-    builder.Services.AddSingleton(chunker);
+    // Реєструємо чанкер для розбиття довгих рядків із параметрами з конфігу
+    var textChunker = new TextChunker(chunkerConfig);
+    builder.Services.AddSingleton(textChunker);
 
-    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, chunker);
+    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
     builder.Services.AddSingleton(runner);
 
     // Реєструємо мапер пунктуації
@@ -287,6 +287,7 @@ var gpuSemaphore = new SemaphoreSlim(concurrentRequests, concurrentRequests);
 // ЕНДПОІНТ 1: Генерація голосу
 app.MapPost("/v1/audio/speech", async (
     [FromBody] OpenAiSpeechRequest request,
+    [FromServices] TextChunker textChunker,
     [FromServices] UnifiedPhonemizer unifiedPhonemizer,
     [FromServices] PiperRunner piperRunner,
     [FromServices] IServiceProvider services) =>
@@ -296,63 +297,101 @@ app.MapPost("/v1/audio/speech", async (
 
     try
     {
-        string phonemes = await Task.Run(() => unifiedPhonemizer.GetPhonemes(request.Input));
+        // СЕМАФОР: Захищає GPU від напливу десятків користувачів
         await gpuSemaphore.WaitAsync();
 
         try
         {
-            var audioBytes = await Task.Run(() =>
+            var audioBytes = await Task.Run(async () =>
             {
-                // Отримуємо СИРІ дані, уникаючи створення WAV!
-                float[] piperSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
+                // Ріжемо текст на ідеальні речення
+                var textChunks = textChunker.Split(request.Input);
+                var allFinalSamples = new List<float>();
 
-                if (!string.IsNullOrEmpty(request.Voice))
+                // Створюємо ідеальну тишу (400 мс)
+                int silenceSamplesCount = (int)(piperConfig.Audio.SampleRate * 0.4f);
+                float[] absoluteSilence = new float[silenceSamplesCount];
+
+                bool useOpenVoice = !string.IsNullOrEmpty(request.Voice);
+                var openVoice = services.GetService<OpenVoiceRunner>();
+                var audioProc = services.GetService<AudioProcessor>();
+
+                // Оголошуємо змінні явно та ініціалізуємо їх як null
+                float[]? targetFingerprint = null;
+                float[]? sourceFingerprint = null;
+
+                // Використовуємо out targetFingerprint (без var!)
+                bool canClone = useOpenVoice && openVoice != null && audioProc != null &&
+                                openVoice.VoiceLibrary.TryGetValue(request.Voice, out targetFingerprint) &&
+                                openVoice.VoiceLibrary.TryGetValue("piper_base", out sourceFingerprint);
+
+                // СТВОРЮЄМО ЧЕРГУ ДЛЯ ПАРАЛЕЛЬНОЇ РОБОТИ (Ліміт 10 речень, щоб не забити RAM)
+                var channel = System.Threading.Channels.Channel.CreateBounded<float[]>(10);
+
+                // ==========================================
+                // ПОТІК 1: PIPER (Виробник)
+                // ==========================================
+                var producerTask = Task.Run(async () =>
                 {
-                    var openVoice = services.GetService<OpenVoiceRunner>();
-                    var audioProc = services.GetService<AudioProcessor>();
-
-                    if (openVoice != null && audioProc != null &&
-                        openVoice.VoiceLibrary.TryGetValue(request.Voice, out var targetFingerprint) &&
-                        openVoice.VoiceLibrary.TryGetValue("piper_base", out var sourceFingerprint))
+                    foreach (var chunk in textChunks)
                     {
-                        // Ресемплінг
-                        float[] resampledSamples = audioProc.Resample(
-                            piperSamples,
-                            piperConfig.Audio.SampleRate,
-                            openVoice.GetTargetSamplingRate()
-                        );
+                        string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
+                        float[] chunkSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
 
-                        // Клонування (Оптимізоване через Span)
-                        float[] convertedSamples = openVoice.ApplyToneColorInChunks(
-                            resampledSamples,
-                            audioProc,
-                            sourceFingerprint,
-                            targetFingerprint,
-                            hardwareConfig.OpenVoiceChunkSeconds
-                        );
+                        await channel.Writer.WriteAsync(chunkSamples);
+                    }
+                    channel.Writer.Complete(); // Кажемо, що текст закінчився
+                });
 
-                        // DSP ФІЛЬТР
-                        if (dspConfig.EnableLowPassFilter)
+                // ==========================================
+                // ПОТІК 2: OPENVOICE (Споживач)
+                // ==========================================
+                var consumerTask = Task.Run(async () =>
+                {
+                    // Читаємо готові речення з черги по мірі їх появи
+                    await foreach (var chunkSamples in channel.Reader.ReadAllAsync())
+                    {
+                        float[] processedSamples = chunkSamples;
+
+                        if (canClone)
                         {
-                            var filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
-                                openVoice.GetTargetSamplingRate(),
-                                dspConfig.LowPassCutoffFrequency,
-                                dspConfig.LowPassQFactor
-                            );
+                            // Клонуємо ОДНЕ речення напряму через ApplyToneColor
+                            float[] resampledSamples = audioProc!.Resample(chunkSamples, piperConfig.Audio.SampleRate, openVoice!.GetTargetSamplingRate());
+                            var specChunk = audioProc.GetMagnitudeSpectrogram(resampledSamples);
 
-                            for (int i = 0; i < convertedSamples.Length; i++)
+                            if (specChunk.GetLength(0) > 0)
                             {
-                                convertedSamples[i] = filter.Transform(convertedSamples[i]);
+                                processedSamples = openVoice.ApplyToneColor(specChunk, sourceFingerprint!, targetFingerprint!);
                             }
                         }
 
-                        // Збираємо WAV тільки один раз у кінці
-                        return piperRunner.ConvertToWav(convertedSamples);
+                        // Збираємо все в єдиний масив + додаємо тишу після кожного речення
+                        allFinalSamples.AddRange(processedSamples);
+                        allFinalSamples.AddRange(absoluteSilence);
+                    }
+                });
+
+                // Чекаємо завершення обох потоків
+                await Task.WhenAll(producerTask, consumerTask);
+
+                // ==========================================
+                // ФІНАЛЬНА ОБРОБКА
+                // ==========================================
+                if (canClone && dspConfig.EnableLowPassFilter)
+                {
+                    var filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
+                        openVoice!.GetTargetSamplingRate(),
+                        dspConfig.LowPassCutoffFrequency,
+                        dspConfig.LowPassQFactor
+                    );
+
+                    for (int i = 0; i < allFinalSamples.Count; i++)
+                    {
+                        allFinalSamples[i] = filter.Transform(allFinalSamples[i]);
                     }
                 }
 
-                // Якщо клонування немає, збираємо базовий WAV
-                return piperRunner.ConvertToWav(piperSamples);
+                return piperRunner.ConvertToWav([.. allFinalSamples]);
             });
 
             return Results.File(audioBytes, "audio/wav", "speech.wav");
@@ -361,27 +400,6 @@ app.MapPost("/v1/audio/speech", async (
         {
             gpuSemaphore.Release();
         }
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem(detail: ex.Message, statusCode: 500);
-    }
-})
-.WithName("CreateSpeech")
-.WithOpenApi()
-.RequireRateLimiting("ip_limit");
-
-// ЕНДПОІНТ 2: Отримання фонем
-app.MapPost("/v1/audio/phonemize", async (
-    [FromBody] PhonemizeRequest request,
-    [FromServices] UnifiedPhonemizer unifiedPhonemizer) =>
-{
-    if (string.IsNullOrWhiteSpace(request.Input)) return Results.BadRequest(new { error = "Input text cannot be empty." });
-
-    try
-    {
-        string phonemes = await Task.Run(() => unifiedPhonemizer.GetPhonemes(request.Input));
-        return Results.Ok(new { text = request.Input, phonemes });
     }
     catch (Exception ex)
     {
