@@ -65,32 +65,41 @@ public class AudioProcessor
 
     public float[] Resample(float[] samples, int sourceRate, int targetRate)
     {
+        // Якщо частота збігається, миттєво повертаємо оригінал
         if (sourceRate == targetRate) return samples;
 
-        // Використовуємо новий провайдер (НУЛЬ КОПІЮВАНЬ ПАМ'ЯТІ!)
         var provider = new FloatArrayWaveProvider(samples, sourceRate);
         var resampler = new WdlResamplingSampleProvider(provider.ToSampleProvider(), targetRate);
 
-        // Попередньо виділяємо точну кількість пам'яті
-        int expectedLength = (int)((double)samples.Length * targetRate / sourceRate) + 1000;
-        var outSamples = new List<float>(expectedLength);
+        // Розраховуємо точну довжину нового масиву + додаємо невеликий запас для фільтрів NAudio
+        int expectedLength = (int)Math.Ceiling((double)samples.Length * targetRate / sourceRate) + 2000;
 
-        // Беремо буфер з пулу, щоб не напрягати GC
-        float[] buffer = ArrayPool<float>.Shared.Rent(targetRate);
+        // Орендуємо великий буфер з пам'яті системи
+        float[] buffer = ArrayPool<float>.Shared.Rent(expectedLength);
+
         try
         {
+            int totalRead = 0;
             int read;
-            while ((read = resampler.Read(buffer, 0, buffer.Length)) > 0)
+
+            // Читаємо звук ПРЯМО в орендований масив, жодних проміжних списків
+            while ((read = resampler.Read(buffer, totalRead, buffer.Length - totalRead)) > 0)
             {
-                outSamples.AddRange(new ArraySegment<float>(buffer, 0, read));
+                totalRead += read;
+                if (totalRead >= buffer.Length) break; // Захист від виходу за межі
             }
+
+            // Створюємо єдиний фінальний масив точного розміру
+            float[] finalResult = new float[totalRead];
+            Array.Copy(buffer, finalResult, totalRead);
+
+            return finalResult;
         }
         finally
         {
+            // Обов'язково повертаємо буфер системі
             ArrayPool<float>.Shared.Return(buffer);
         }
-
-        return [.. outSamples];
     }
 
     // Приймає ReadOnlySpan (дивиться на масив без копіювання)
