@@ -49,7 +49,7 @@ public class EspeakLinguaMapper
                 Console.WriteLine($"[WARNING] EspeakLinguaMapper не знає коду: {cleanCode}");
             }
         }
-        return linguaLangs.ToArray();
+        return [.. linguaLangs];
     }
 
     public string MapBackToEspeak(Language lang, string fallback)

@@ -337,22 +337,26 @@ app.MapPost("/v1/audio/speech", async (
                     );
                 }
 
-                // ПРЯМИЙ ПОТІК У WAV
+                // --- ВИБІР ФОРМАТУ ---
+                bool isMp3 = request.ResponseFormat.Equals("mp3", StringComparison.OrdinalIgnoreCase);
+
                 using var memoryStream = new MemoryStream();
                 var waveFormat = new WaveFormat(outSampleRate, 16, 1);
-                var writer = new WaveFileWriter(memoryStream, waveFormat);
 
-                // Локальна функція для миттєвого запису шматка float[] у WAV
-                void WriteChunkToWav(float[] samples)
+                // Залежно від формату, створюємо потрібний Writer (обидва реалізують базовий запис байтів)
+                Stream audioWriter = isMp3
+                    ? new NAudio.Lame.LameMP3FileWriter(memoryStream, waveFormat, NAudio.Lame.LAMEPreset.VBR_90)
+                    : new WaveFileWriter(memoryStream, waveFormat);
+
+                // Локальна функція для запису чанку в обраний Writer
+                void WriteChunkToAudio(float[] samples)
                 {
-                    // Якщо є фільтр - застосовуємо його одразу до цього речення
                     if (filter != null)
                     {
                         for (int i = 0; i < samples.Length; i++)
                             samples[i] = filter.Transform(samples[i]);
                     }
 
-                    // Одразу конвертуємо в байти (16-bit PCM) і пишемо в потік
                     int requiredBytes = samples.Length * 2;
                     byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(requiredBytes);
                     try
@@ -364,7 +368,8 @@ app.MapPost("/v1/audio/speech", async (
                             buffer[i * 2] = (byte)(shortSample & 0xFF);
                             buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
                         }
-                        writer.Write(buffer, 0, requiredBytes);
+                        // Пишемо байти в наш Writer (чи то WAV, чи то MP3)
+                        audioWriter.Write(buffer, 0, requiredBytes);
                     }
                     finally
                     {
@@ -372,31 +377,43 @@ app.MapPost("/v1/audio/speech", async (
                     }
                 }
 
+                // Створюємо чергу для паралельної роботи (макс. 10 речень у пам'яті)
                 var channel = System.Threading.Channels.Channel.CreateBounded<float[]>(10);
 
                 // ==========================================
-                // ПОТІК 1: PIPER (Виробник)
+                // ПОТІК 1: ВИРОБНИК (Producer - Piper)
                 // ==========================================
+                // Завдання цього потоку: максимально швидко перетворювати текст на фонеми, 
+                // генерувати сирий звук і закидати його в чергу (Channel). 
+                // Він НЕ чекає на роботу OpenVoice або запис у файл.
                 var producerTask = Task.Run(async () =>
                 {
                     foreach (var chunk in textChunks)
                     {
                         string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
                         float[] chunkSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
+
+                        // Відправляємо згенероване речення в чергу
                         await channel.Writer.WriteAsync(chunkSamples);
                     }
+                    // Сигналізуємо Споживачу, що весь текст оброблено і нових даних не буде
                     channel.Writer.Complete();
                 });
 
                 // ==========================================
-                // ПОТІК 2: OPENVOICE (Споживач)
+                // ПОТІК 2: СПОЖИВАЧ (Consumer - OpenVoice + Writer)
                 // ==========================================
+                // Завдання цього потоку: брати готові речення з черги по мірі їх появи,
+                // накладати цільовий голос (клонування) і одразу конвертувати/писати у файл.
+                // Працює паралельно з Виробником.
                 var consumerTask = Task.Run(async () =>
                 {
+                    // Читаємо дані, поки Виробник не викличе Complete()
                     await foreach (var chunkSamples in channel.Reader.ReadAllAsync())
                     {
                         float[] processedSamples = chunkSamples;
 
+                        // Якщо ввімкнено клонування голосу - трансформуємо
                         if (canClone)
                         {
                             float[] resampledSamples = audioProc!.Resample(chunkSamples, piperConfig.Audio.SampleRate, outSampleRate);
@@ -408,23 +425,29 @@ app.MapPost("/v1/audio/speech", async (
                             }
                         }
 
-                        // ПИШЕМО РЕЧЕННЯ ОДРАЗУ В ФАЙЛ
-                        WriteChunkToWav(processedSamples);
+                        // ПИШЕМО РЕЧЕННЯ ОДРАЗУ В ФАЙЛ (WAV або MP3 на льоту)
+                        WriteChunkToAudio(processedSamples);
 
-                        // ПИШЕМО ТИШУ ОДРАЗУ В ФАЙЛ
-                        WriteChunkToWav(absoluteSilence);
+                        // ПИШЕМО ТИШУ ОДРАЗУ В ФАЙЛ (Зберігаємо ідеальні паузи)
+                        WriteChunkToAudio(absoluteSilence);
                     }
                 });
 
+                // Чекаємо завершення обох паралельних потоків
                 await Task.WhenAll(producerTask, consumerTask);
 
-                // ЗАКРИВАЄМО WAV-ФАЙЛ (Це записує фінальні розміри в заголовок)
-                writer.Dispose();
+                // ОБОВ'ЯЗКОВО ЗАКРИВАЄМО WRITER (щоб записати фінальні байти/теги формату)
+                audioWriter.Dispose();
 
                 return memoryStream.ToArray();
             });
 
-            return Results.File(audioBytes, "audio/wav", "speech.wav");
+            // --- ПОВЕРТАЄМО ПРАВИЛЬНИЙ ФАЙЛ І MIME-ТИП ---
+            bool returnAsMp3 = request.ResponseFormat.Equals("mp3", StringComparison.OrdinalIgnoreCase);
+            string mimeType = returnAsMp3 ? "audio/mpeg" : "audio/wav";
+            string fileName = returnAsMp3 ? "speech.mp3" : "speech.wav";
+
+            return Results.File(audioBytes, mimeType, fileName);
         }
         finally
         {

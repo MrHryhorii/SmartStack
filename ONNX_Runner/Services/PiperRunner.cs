@@ -1,6 +1,7 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using NAudio.Wave;
+using NAudio.Lame;
 using ONNX_Runner.Models;
 using System.Buffers;
 
@@ -102,6 +103,37 @@ public class PiperRunner : IDisposable
                 ArrayPool<byte>.Shared.Return(buffer);
             }
         }
+
+        return memoryStream.ToArray();
+    }
+
+    public byte[] ConvertToMp3(float[] audioSamples, int sampleRate)
+    {
+        using var memoryStream = new MemoryStream();
+        var waveFormat = new WaveFormat(sampleRate, 16, 1);
+
+        // LameMP3FileWriter автоматично конвертує PCM байти в MP3 на льоту
+        using (var writer = new LameMP3FileWriter(memoryStream, waveFormat, LAMEPreset.VBR_90))
+        {
+            int requiredBytes = audioSamples.Length * 2;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(requiredBytes);
+
+            try
+            {
+                for (int i = 0; i < audioSamples.Length; i++)
+                {
+                    float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
+                    short shortSample = (short)sample;
+                    buffer[i * 2] = (byte)(shortSample & 0xFF);
+                    buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
+                }
+                writer.Write(buffer, 0, requiredBytes);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+        } // writer.Dispose() фіналізує MP3 файл
 
         return memoryStream.ToArray();
     }

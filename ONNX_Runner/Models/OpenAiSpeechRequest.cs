@@ -38,6 +38,14 @@ public class OpenAiSpeechRequest
     // --- НАШІ РОЗШИРЕНІ ПАРАМЕТРИ (Piper/VITS) ---
 
     /// <summary>
+    /// [Custom Extension] Перевизначає налаштування сервера.
+    /// Якщо true - сервер повертатиме потік chunked. Якщо false - цілий файл.
+    /// Якщо null - використовується налаштування сервера.
+    /// </summary>
+    [JsonPropertyName("stream")]
+    public bool? Stream { get; set; }
+
+    /// <summary>
     /// [Необов'язково] Варіативність висоти тону (експресія). Зазвичай від 0 до 1.
     /// </summary>
     [JsonPropertyName("noise_scale")]
