@@ -308,9 +308,14 @@ app.MapPost("/v1/audio/speech", async (
                 var textChunks = textChunker.Split(request.Input);
                 var allFinalSamples = new List<float>();
 
-                // Створюємо ідеальну тишу (400 мс)
-                int silenceSamplesCount = (int)(piperConfig.Audio.SampleRate * 0.4f);
+                // Отримуємо швидкість (захист від ділення на нуль або від'ємних значень)
+                float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
+                // ДИНАМІЧНА ПАУЗА: Базова пауза ділиться на швидкість мовлення
+                float actualPauseSeconds = chunkerConfig.SentencePauseSeconds / currentSpeed;
+                // Створюємо масив тиші потрібної довжини
+                int silenceSamplesCount = (int)(piperConfig.Audio.SampleRate * actualPauseSeconds);
                 float[] absoluteSilence = new float[silenceSamplesCount];
+                Console.WriteLine($"[DEBUG] Speech Speed: {currentSpeed}x | Sentence Pause: {actualPauseSeconds:F2} sec");
 
                 bool useOpenVoice = !string.IsNullOrEmpty(request.Voice);
                 var openVoice = services.GetService<OpenVoiceRunner>();
@@ -400,6 +405,27 @@ app.MapPost("/v1/audio/speech", async (
         {
             gpuSemaphore.Release();
         }
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
+})
+.WithName("GetSpeech")
+.WithOpenApi()
+.RequireRateLimiting("ip_limit");
+
+// ЕНДПОІНТ 2: Отримання фонем
+app.MapPost("/v1/audio/phonemize", async (
+    [FromBody] PhonemizeRequest request,
+    [FromServices] UnifiedPhonemizer unifiedPhonemizer) =>
+{
+    if (string.IsNullOrWhiteSpace(request.Input)) return Results.BadRequest(new { error = "Input text cannot be empty." });
+
+    try
+    {
+        string phonemes = await Task.Run(() => unifiedPhonemizer.GetPhonemes(request.Input));
+        return Results.Ok(new { text = request.Input, phonemes });
     }
     catch (Exception ex)
     {
