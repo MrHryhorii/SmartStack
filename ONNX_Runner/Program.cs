@@ -295,6 +295,17 @@ app.MapPost("/v1/audio/speech", async (
     if (string.IsNullOrWhiteSpace(request.Input)) return Results.BadRequest(new { error = "Input text cannot be empty." });
     if (piperConfig == null) return Results.Problem("Model is not loaded properly.", statusCode: 500);
 
+    // --- СТРОГА ВАЛІДАЦІЯ ФОРМАТУ ---
+    if (string.IsNullOrWhiteSpace(request.ResponseFormat) ||
+       (!request.ResponseFormat.Equals("wav", StringComparison.OrdinalIgnoreCase) &&
+        !request.ResponseFormat.Equals("mp3", StringComparison.OrdinalIgnoreCase)))
+    {
+        return Results.BadRequest(new
+        {
+            error = $"Unsupported response_format: '{request.ResponseFormat}'. Supported formats are: wav, mp3."
+        });
+    }
+
     try
     {
         // СЕМАФОР: Захищає GPU від напливу десятків користувачів
@@ -337,45 +348,9 @@ app.MapPost("/v1/audio/speech", async (
                     );
                 }
 
-                // --- ВИБІР ФОРМАТУ ---
-                bool isMp3 = request.ResponseFormat.Equals("mp3", StringComparison.OrdinalIgnoreCase);
-
-                using var memoryStream = new MemoryStream();
-                var waveFormat = new WaveFormat(outSampleRate, 16, 1);
-
-                // Залежно від формату, створюємо потрібний Writer (обидва реалізують базовий запис байтів)
-                Stream audioWriter = isMp3
-                    ? new NAudio.Lame.LameMP3FileWriter(memoryStream, waveFormat, NAudio.Lame.LAMEPreset.VBR_90)
-                    : new WaveFileWriter(memoryStream, waveFormat);
-
-                // Локальна функція для запису чанку в обраний Writer
-                void WriteChunkToAudio(float[] samples)
-                {
-                    if (filter != null)
-                    {
-                        for (int i = 0; i < samples.Length; i++)
-                            samples[i] = filter.Transform(samples[i]);
-                    }
-
-                    int requiredBytes = samples.Length * 2;
-                    byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(requiredBytes);
-                    try
-                    {
-                        for (int i = 0; i < samples.Length; i++)
-                        {
-                            float sample = Math.Clamp(samples[i], -1f, 1f) * 32767f;
-                            short shortSample = (short)sample;
-                            buffer[i * 2] = (byte)(shortSample & 0xFF);
-                            buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
-                        }
-                        // Пишемо байти в наш Writer (чи то WAV, чи то MP3)
-                        audioWriter.Write(buffer, 0, requiredBytes);
-                    }
-                    finally
-                    {
-                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-                    }
-                }
+                // --- ІНІЦІАЛІЗУЄМО МЕНЕДЖЕР АУДІО ---
+                // Він сам вирішить, чи це MP3, чи WAV, спираючись на request
+                using var streamManager = new AudioStreamManager(request, outSampleRate);
 
                 // Створюємо чергу для паралельної роботи (макс. 10 речень у пам'яті)
                 var channel = System.Threading.Channels.Channel.CreateBounded<float[]>(10);
@@ -425,27 +400,23 @@ app.MapPost("/v1/audio/speech", async (
                             }
                         }
 
-                        // ПИШЕМО РЕЧЕННЯ ОДРАЗУ В ФАЙЛ (WAV або MP3 на льоту)
-                        WriteChunkToAudio(processedSamples);
-
-                        // ПИШЕМО ТИШУ ОДРАЗУ В ФАЙЛ (Зберігаємо ідеальні паузи)
-                        WriteChunkToAudio(absoluteSilence);
+                        // ПИШЕМО РЕЧЕННЯ ТА ТИШУ ЧЕРЕЗ МЕНЕДЖЕР
+                        streamManager.WriteChunk(processedSamples, filter);
+                        streamManager.WriteChunk(absoluteSilence, filter);
                     }
                 });
 
                 // Чекаємо завершення обох паралельних потоків
                 await Task.WhenAll(producerTask, consumerTask);
 
-                // ОБОВ'ЯЗКОВО ЗАКРИВАЄМО WRITER (щоб записати фінальні байти/теги формату)
-                audioWriter.Dispose();
-
-                return memoryStream.ToArray();
+                // Отримуємо готові байти з менеджера
+                return streamManager.GetFinalAudioBytes();
             });
 
             // --- ПОВЕРТАЄМО ПРАВИЛЬНИЙ ФАЙЛ І MIME-ТИП ---
-            bool returnAsMp3 = request.ResponseFormat.Equals("mp3", StringComparison.OrdinalIgnoreCase);
-            string mimeType = returnAsMp3 ? "audio/mpeg" : "audio/wav";
-            string fileName = returnAsMp3 ? "speech.mp3" : "speech.wav";
+            // Використовуємо статичні методи без створення зайвих об'єктів
+            string mimeType = AudioStreamManager.GetMimeType(request);
+            string fileName = AudioStreamManager.GetFileName(request);
 
             return Results.File(audioBytes, mimeType, fileName);
         }
