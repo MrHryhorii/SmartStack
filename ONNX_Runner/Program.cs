@@ -304,33 +304,74 @@ app.MapPost("/v1/audio/speech", async (
         {
             var audioBytes = await Task.Run(async () =>
             {
-                // Ріжемо текст на ідеальні речення
                 var textChunks = textChunker.Split(request.Input);
-                var allFinalSamples = new List<float>();
-
-                // Отримуємо швидкість (захист від ділення на нуль або від'ємних значень)
-                float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
-                // ДИНАМІЧНА ПАУЗА: Базова пауза ділиться на швидкість мовлення
-                float actualPauseSeconds = chunkerConfig.SentencePauseSeconds / currentSpeed;
-                // Створюємо масив тиші потрібної довжини
-                int silenceSamplesCount = (int)(piperConfig.Audio.SampleRate * actualPauseSeconds);
-                float[] absoluteSilence = new float[silenceSamplesCount];
-                Console.WriteLine($"[DEBUG] Speech Speed: {currentSpeed}x | Sentence Pause: {actualPauseSeconds:F2} sec");
 
                 bool useOpenVoice = !string.IsNullOrEmpty(request.Voice);
                 var openVoice = services.GetService<OpenVoiceRunner>();
                 var audioProc = services.GetService<AudioProcessor>();
 
-                // Оголошуємо змінні явно та ініціалізуємо їх як null
                 float[]? targetFingerprint = null;
                 float[]? sourceFingerprint = null;
 
-                // Використовуємо out targetFingerprint (без var!)
                 bool canClone = useOpenVoice && openVoice != null && audioProc != null &&
                                 openVoice.VoiceLibrary.TryGetValue(request.Voice, out targetFingerprint) &&
                                 openVoice.VoiceLibrary.TryGetValue("piper_base", out sourceFingerprint);
 
-                // СТВОРЮЄМО ЧЕРГУ ДЛЯ ПАРАЛЕЛЬНОЇ РОБОТИ (Ліміт 10 речень, щоб не забити RAM)
+                // ВИЗНАЧАЄМО ФІНАЛЬНУ ЧАСТОТУ (Для WAV та тиші)
+                int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
+
+                // ДИНАМІЧНА ТИША З ПРАВИЛЬНОЮ ЧАСТОТОЮ
+                float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
+                float actualPauseSeconds = chunkerConfig.SentencePauseSeconds / currentSpeed;
+                int silenceSamplesCount = (int)(outSampleRate * actualPauseSeconds);
+                float[] absoluteSilence = new float[silenceSamplesCount];
+
+                // ПІДГОТОВКА ФІЛЬТРА
+                NAudio.Dsp.BiQuadFilter? filter = null;
+                if (canClone && dspConfig.EnableLowPassFilter)
+                {
+                    filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
+                        outSampleRate,
+                        dspConfig.LowPassCutoffFrequency,
+                        dspConfig.LowPassQFactor
+                    );
+                }
+
+                // ПРЯМИЙ ПОТІК У WAV
+                using var memoryStream = new MemoryStream();
+                var waveFormat = new WaveFormat(outSampleRate, 16, 1);
+                var writer = new WaveFileWriter(memoryStream, waveFormat);
+
+                // Локальна функція для миттєвого запису шматка float[] у WAV
+                void WriteChunkToWav(float[] samples)
+                {
+                    // Якщо є фільтр - застосовуємо його одразу до цього речення
+                    if (filter != null)
+                    {
+                        for (int i = 0; i < samples.Length; i++)
+                            samples[i] = filter.Transform(samples[i]);
+                    }
+
+                    // Одразу конвертуємо в байти (16-bit PCM) і пишемо в потік
+                    int requiredBytes = samples.Length * 2;
+                    byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(requiredBytes);
+                    try
+                    {
+                        for (int i = 0; i < samples.Length; i++)
+                        {
+                            float sample = Math.Clamp(samples[i], -1f, 1f) * 32767f;
+                            short shortSample = (short)sample;
+                            buffer[i * 2] = (byte)(shortSample & 0xFF);
+                            buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
+                        }
+                        writer.Write(buffer, 0, requiredBytes);
+                    }
+                    finally
+                    {
+                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+                    }
+                }
+
                 var channel = System.Threading.Channels.Channel.CreateBounded<float[]>(10);
 
                 // ==========================================
@@ -342,10 +383,9 @@ app.MapPost("/v1/audio/speech", async (
                     {
                         string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
                         float[] chunkSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
-
                         await channel.Writer.WriteAsync(chunkSamples);
                     }
-                    channel.Writer.Complete(); // Кажемо, що текст закінчився
+                    channel.Writer.Complete();
                 });
 
                 // ==========================================
@@ -353,50 +393,35 @@ app.MapPost("/v1/audio/speech", async (
                 // ==========================================
                 var consumerTask = Task.Run(async () =>
                 {
-                    // Читаємо готові речення з черги по мірі їх появи
                     await foreach (var chunkSamples in channel.Reader.ReadAllAsync())
                     {
                         float[] processedSamples = chunkSamples;
 
                         if (canClone)
                         {
-                            // Клонуємо ОДНЕ речення напряму через ApplyToneColor
-                            float[] resampledSamples = audioProc!.Resample(chunkSamples, piperConfig.Audio.SampleRate, openVoice!.GetTargetSamplingRate());
+                            float[] resampledSamples = audioProc!.Resample(chunkSamples, piperConfig.Audio.SampleRate, outSampleRate);
                             var specChunk = audioProc.GetMagnitudeSpectrogram(resampledSamples);
 
                             if (specChunk.GetLength(0) > 0)
                             {
-                                processedSamples = openVoice.ApplyToneColor(specChunk, sourceFingerprint!, targetFingerprint!);
+                                processedSamples = openVoice!.ApplyToneColor(specChunk, sourceFingerprint!, targetFingerprint!);
                             }
                         }
 
-                        // Збираємо все в єдиний масив + додаємо тишу після кожного речення
-                        allFinalSamples.AddRange(processedSamples);
-                        allFinalSamples.AddRange(absoluteSilence);
+                        // ПИШЕМО РЕЧЕННЯ ОДРАЗУ В ФАЙЛ
+                        WriteChunkToWav(processedSamples);
+
+                        // ПИШЕМО ТИШУ ОДРАЗУ В ФАЙЛ
+                        WriteChunkToWav(absoluteSilence);
                     }
                 });
 
-                // Чекаємо завершення обох потоків
                 await Task.WhenAll(producerTask, consumerTask);
 
-                // ==========================================
-                // ФІНАЛЬНА ОБРОБКА
-                // ==========================================
-                if (canClone && dspConfig.EnableLowPassFilter)
-                {
-                    var filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
-                        openVoice!.GetTargetSamplingRate(),
-                        dspConfig.LowPassCutoffFrequency,
-                        dspConfig.LowPassQFactor
-                    );
+                // ЗАКРИВАЄМО WAV-ФАЙЛ (Це записує фінальні розміри в заголовок)
+                writer.Dispose();
 
-                    for (int i = 0; i < allFinalSamples.Count; i++)
-                    {
-                        allFinalSamples[i] = filter.Transform(allFinalSamples[i]);
-                    }
-                }
-
-                return piperRunner.ConvertToWav([.. allFinalSamples]);
+                return memoryStream.ToArray();
             });
 
             return Results.File(audioBytes, "audio/wav", "speech.wav");
