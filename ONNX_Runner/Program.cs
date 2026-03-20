@@ -284,8 +284,12 @@ var gpuSemaphore = new SemaphoreSlim(concurrentRequests, concurrentRequests);
 // ЕНДПОІНТИ
 // =================================================================
 
+// Створюємо глобальний набір дозволених форматів
+var allowedFormats = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "wav", "mp3", "opus", "pcm" };
+
 // ЕНДПОІНТ 1: Генерація голосу
 app.MapPost("/v1/audio/speech", async (
+    HttpContext httpContext,
     [FromBody] OpenAiSpeechRequest request,
     [FromServices] TextChunker textChunker,
     [FromServices] UnifiedPhonemizer unifiedPhonemizer,
@@ -296,24 +300,23 @@ app.MapPost("/v1/audio/speech", async (
     if (piperConfig == null) return Results.Problem("Model is not loaded properly.", statusCode: 500);
 
     // --- СТРОГА ВАЛІДАЦІЯ ФОРМАТУ ---
-    if (string.IsNullOrWhiteSpace(request.ResponseFormat) ||
-       (!request.ResponseFormat.Equals("wav", StringComparison.OrdinalIgnoreCase) &&
-        !request.ResponseFormat.Equals("mp3", StringComparison.OrdinalIgnoreCase)))
+    if (string.IsNullOrWhiteSpace(request.ResponseFormat) || !allowedFormats.Contains(request.ResponseFormat))
     {
         return Results.BadRequest(new
         {
-            error = $"Unsupported response_format: '{request.ResponseFormat}'. Supported formats are: wav, mp3."
+            error = $"Unsupported response_format: '{request.ResponseFormat}'. Supported formats are: {string.Join(", ", allowedFormats)}."
         });
     }
 
     try
     {
-        // СЕМАФОР: Захищає GPU від напливу десятків користувачів
+        // СЕМАФОР: Захищає GPU/CPU від перевантаження
         await gpuSemaphore.WaitAsync();
 
         try
         {
-            var audioBytes = await Task.Run(async () =>
+            // Task.Run тепер повертає Кортеж (Tuple) з байтами та розрахованою частотою
+            var (AudioBytes, FinalSampleRate) = await Task.Run(async () =>
             {
                 var textChunks = textChunker.Split(request.Input);
 
@@ -328,13 +331,24 @@ app.MapPost("/v1/audio/speech", async (
                                 openVoice.VoiceLibrary.TryGetValue(request.Voice, out targetFingerprint) &&
                                 openVoice.VoiceLibrary.TryGetValue("piper_base", out sourceFingerprint);
 
-                // ВИЗНАЧАЄМО ФІНАЛЬНУ ЧАСТОТУ (Для WAV та тиші)
+                // ВИЗНАЧАЄМО БАЗОВУ ЧАСТОТУ ВІД НЕЙРОМЕРЕЖІ
                 int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
 
-                // ДИНАМІЧНА ТИША З ПРАВИЛЬНОЮ ЧАСТОТОЮ
+                // --- РОЗУМНА АДАПТАЦІЯ ЧАСТОТИ НА ПОЧАТКУ ---
+                bool isOpus = request.ResponseFormat.Equals("opus", StringComparison.OrdinalIgnoreCase);
+                int finalSampleRate = outSampleRate;
+
+                if (isOpus)
+                {
+                    // Знаходимо найближчу частоту Opus для економії ресурсів
+                    int[] validOpusRates = [8000, 12000, 16000, 24000, 48000];
+                    finalSampleRate = validOpusRates.OrderBy(r => Math.Abs(r - outSampleRate)).First();
+                }
+
+                // ДИНАМІЧНА ТИША
                 float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
                 float actualPauseSeconds = chunkerConfig.SentencePauseSeconds / currentSpeed;
-                int silenceSamplesCount = (int)(outSampleRate * actualPauseSeconds);
+                int silenceSamplesCount = (int)(finalSampleRate * actualPauseSeconds);
                 float[] absoluteSilence = new float[silenceSamplesCount];
 
                 // ПІДГОТОВКА ФІЛЬТРА
@@ -342,53 +356,34 @@ app.MapPost("/v1/audio/speech", async (
                 if (canClone && dspConfig.EnableLowPassFilter)
                 {
                     filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
-                        outSampleRate,
+                        finalSampleRate,
                         dspConfig.LowPassCutoffFrequency,
                         dspConfig.LowPassQFactor
                     );
                 }
 
-                // --- ІНІЦІАЛІЗУЄМО МЕНЕДЖЕР АУДІО ---
-                // Він сам вирішить, чи це MP3, чи WAV, спираючись на request
-                using var streamManager = new AudioStreamManager(request, outSampleRate);
+                // --- ІНІЦІАЛІЗАЦІЯ МЕНЕДЖЕРА ФОРМАТІВ ---
+                using var streamManager = new AudioStreamManager(request, finalSampleRate);
 
-                // Створюємо чергу для паралельної роботи (макс. 10 речень у пам'яті)
                 var channel = System.Threading.Channels.Channel.CreateBounded<float[]>(10);
 
-                // ==========================================
-                // ПОТІК 1: ВИРОБНИК (Producer - Piper)
-                // ==========================================
-                // Завдання цього потоку: максимально швидко перетворювати текст на фонеми, 
-                // генерувати сирий звук і закидати його в чергу (Channel). 
-                // Він НЕ чекає на роботу OpenVoice або запис у файл.
                 var producerTask = Task.Run(async () =>
                 {
                     foreach (var chunk in textChunks)
                     {
                         string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
                         float[] chunkSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
-
-                        // Відправляємо згенероване речення в чергу
                         await channel.Writer.WriteAsync(chunkSamples);
                     }
-                    // Сигналізуємо Споживачу, що весь текст оброблено і нових даних не буде
                     channel.Writer.Complete();
                 });
 
-                // ==========================================
-                // ПОТІК 2: СПОЖИВАЧ (Consumer - OpenVoice + Writer)
-                // ==========================================
-                // Завдання цього потоку: брати готові речення з черги по мірі їх появи,
-                // накладати цільовий голос (клонування) і одразу конвертувати/писати у файл.
-                // Працює паралельно з Виробником.
                 var consumerTask = Task.Run(async () =>
                 {
-                    // Читаємо дані, поки Виробник не викличе Complete()
                     await foreach (var chunkSamples in channel.Reader.ReadAllAsync())
                     {
                         float[] processedSamples = chunkSamples;
 
-                        // Якщо ввімкнено клонування голосу - трансформуємо
                         if (canClone)
                         {
                             float[] resampledSamples = audioProc!.Resample(chunkSamples, piperConfig.Audio.SampleRate, outSampleRate);
@@ -400,25 +395,36 @@ app.MapPost("/v1/audio/speech", async (
                             }
                         }
 
-                        // ПИШЕМО РЕЧЕННЯ ТА ТИШУ ЧЕРЕЗ МЕНЕДЖЕР
+                        if (outSampleRate != finalSampleRate)
+                        {
+                            processedSamples = audioProc!.Resample(processedSamples, outSampleRate, finalSampleRate);
+                        }
+
                         streamManager.WriteChunk(processedSamples, filter);
                         streamManager.WriteChunk(absoluteSilence, filter);
                     }
                 });
 
-                // Чекаємо завершення обох паралельних потоків
                 await Task.WhenAll(producerTask, consumerTask);
 
-                // Отримуємо готові байти з менеджера
-                return streamManager.GetFinalAudioBytes();
+                // ПОВЕРТАЄМО БАЙТИ ТА ЧАСТОТУ З ПОТОКУ
+                return (AudioBytes: streamManager.GetFinalAudioBytes(), FinalSampleRate: finalSampleRate);
             });
 
-            // --- ПОВЕРТАЄМО ПРАВИЛЬНИЙ ФАЙЛ І MIME-ТИП ---
-            // Використовуємо статичні методи без створення зайвих об'єктів
+            // --- ФІНАЛЬНА ВІДПОВІДЬ І ЗАГОЛОВКИ ---
             string mimeType = AudioStreamManager.GetMimeType(request);
             string fileName = AudioStreamManager.GetFileName(request);
 
-            return Results.File(audioBytes, mimeType, fileName);
+            // Визначаємо чесну частоту для клієнта
+            int displaySampleRate = FinalSampleRate;
+            if (request.ResponseFormat.Equals("opus", StringComparison.OrdinalIgnoreCase))
+            {
+                displaySampleRate = 48000; // Ogg Opus завжди декодується як 48kHz
+            }
+
+            httpContext.Response.Headers.Append("X-Audio-Sample-Rate", displaySampleRate.ToString());
+
+            return Results.File(AudioBytes, mimeType, fileName);
         }
         finally
         {
