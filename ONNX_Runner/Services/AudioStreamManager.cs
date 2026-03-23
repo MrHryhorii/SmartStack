@@ -18,7 +18,7 @@ public class AudioStreamManager : IDisposable
     public AudioStreamManager(OpenAiSpeechRequest request, int sampleRate)
     {
         _format = request.ResponseFormat.ToLower();
-        _memoryStream = new MemoryStream();
+        _memoryStream = new MemoryStream(1024 * 1024);  // Виділяємо 1 МБ пам'яті відразу, щоб уникнути фрагментації
 
         if (_format == "mp3")
         {

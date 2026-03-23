@@ -401,6 +401,11 @@ app.MapPost("/v1/audio/speech", async (
                         }
 
                         streamManager.WriteChunk(processedSamples, filter);
+                        // Очищаємо масив тиші перед кожним записом, щоб уникнути залишкових шумів від фільтра
+                        if (filter != null)
+                        {
+                            Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
+                        }
                         streamManager.WriteChunk(absoluteSilence, filter);
                     }
                 });
