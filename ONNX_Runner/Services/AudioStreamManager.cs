@@ -10,35 +10,45 @@ namespace ONNX_Runner.Services;
 
 public class AudioStreamManager : IDisposable
 {
+    private readonly Stream _baseStream;
     private readonly Stream? _audioWriter;
     private readonly OpusOggWriteStream? _opusWriter;
-    private readonly MemoryStream? _memoryStream;
     private readonly string _format;
+    private readonly bool _isMemoryStream;
 
-    public AudioStreamManager(OpenAiSpeechRequest request, int sampleRate)
+    // --- ЗМІННІ ДЛЯ МІКРО-БУФЕРА OPUS ---
+    private readonly short[]? _opusFrameBuffer;
+    private readonly int _opusFrameSize;
+    private int _opusBufferCount = 0;
+
+    public AudioStreamManager(OpenAiSpeechRequest request, int sampleRate, Stream targetStream)
     {
         _format = request.ResponseFormat.ToLower();
-        _memoryStream = new MemoryStream(1024 * 1024);  // Виділяємо 1 МБ пам'яті відразу, щоб уникнути фрагментації
+        _baseStream = targetStream;
+        _isMemoryStream = targetStream is MemoryStream;
 
         if (_format == "mp3")
         {
             var waveFormat = new WaveFormat(sampleRate, 16, 1);
-            _audioWriter = new LameMP3FileWriter(_memoryStream, waveFormat, LAMEPreset.VBR_90);
+            _audioWriter = new LameMP3FileWriter(_baseStream, waveFormat, 128);
         }
         else if (_format == "wav")
         {
             var waveFormat = new WaveFormat(sampleRate, 16, 1);
-            _audioWriter = new WaveFileWriter(_memoryStream, waveFormat);
+            _audioWriter = new WaveFileWriter(_baseStream, waveFormat);
         }
         else if (_format == "opus")
         {
             var encoder = OpusCodecFactory.CreateEncoder(sampleRate, 1, OpusApplication.OPUS_APPLICATION_VOIP);
-            // Ogg контейнер для Opus
-            _opusWriter = new OpusOggWriteStream(encoder, _memoryStream);
+            _opusWriter = new OpusOggWriteStream(encoder, _baseStream);
+
+            // ВИПРАВЛЕННЯ 2: Opus вимагає фрейми рівно по 20 мілісекунд (напр. 960 семплів для 48kHz)
+            _opusFrameSize = sampleRate / 50;
+            _opusFrameBuffer = new short[_opusFrameSize];
         }
         else // "pcm"
         {
-            _audioWriter = _memoryStream;
+            _audioWriter = _baseStream;
         }
     }
 
@@ -53,15 +63,50 @@ public class AudioStreamManager : IDisposable
         short[] shortSamples = ArrayPool<short>.Shared.Rent(samples.Length);
         try
         {
-            for (int i = 0; i < samples.Length; i++)
+            // SIMD ВЕКТОРИЗАЦІЯ
+            int vectorSize = System.Numerics.Vector<float>.Count;
+            int i = 0;
+            var minVec = new System.Numerics.Vector<float>(-1f);
+            var maxVec = new System.Numerics.Vector<float>(1f);
+            var multVec = new System.Numerics.Vector<float>(32767f);
+
+            for (; i <= samples.Length - vectorSize; i += vectorSize)
+            {
+                var vSamples = new System.Numerics.Vector<float>(samples, i);
+                var vClamped = System.Numerics.Vector.Max(minVec, System.Numerics.Vector.Min(maxVec, vSamples));
+                var vScaled = vClamped * multVec;
+                for (int k = 0; k < vectorSize; k++) shortSamples[i + k] = (short)vScaled[k];
+            }
+            for (; i < samples.Length; i++)
             {
                 float sample = Math.Clamp(samples[i], -1f, 1f) * 32767f;
                 shortSamples[i] = (short)sample;
             }
 
-            if (_format == "opus" && _opusWriter != null)
+            // ЗАПИС У ФОРМАТ
+            if (_format == "opus" && _opusWriter != null && _opusFrameBuffer != null)
             {
-                _opusWriter.WriteSamples(shortSamples, 0, samples.Length);
+                // Нарізаємо сирий звук на ідеальні Opus-фрейми
+                int sourceIndex = 0;
+                int remaining = samples.Length;
+
+                while (remaining > 0)
+                {
+                    int spaceInFrame = _opusFrameSize - _opusBufferCount;
+                    int toCopy = Math.Min(remaining, spaceInFrame);
+
+                    Array.Copy(shortSamples, sourceIndex, _opusFrameBuffer, _opusBufferCount, toCopy);
+
+                    _opusBufferCount += toCopy;
+                    sourceIndex += toCopy;
+                    remaining -= toCopy;
+
+                    if (_opusBufferCount == _opusFrameSize)
+                    {
+                        _opusWriter.WriteSamples(_opusFrameBuffer, 0, _opusFrameSize);
+                        _opusBufferCount = 0;
+                    }
+                }
             }
             else if (_audioWriter != null)
             {
@@ -84,17 +129,30 @@ public class AudioStreamManager : IDisposable
         }
     }
 
+    private void FlushOpusLeftovers()
+    {
+        if (_format == "opus" && _opusWriter != null && _opusFrameBuffer != null)
+        {
+            if (_opusBufferCount > 0)
+            {
+                // Заповнюємо залишки тишею (нулями), щоб добити фрейм до кінця
+                Array.Clear(_opusFrameBuffer, _opusBufferCount, _opusFrameSize - _opusBufferCount);
+                _opusWriter.WriteSamples(_opusFrameBuffer, 0, _opusFrameSize);
+                _opusBufferCount = 0;
+            }
+            _opusWriter.Finish();
+        }
+    }
+
     public byte[] GetFinalAudioBytes()
     {
-        if (_memoryStream == null)
+        if (!_isMemoryStream)
             throw new InvalidOperationException("Cannot get byte array in streaming mode.");
 
-        if (_format == "opus")
-            _opusWriter?.Finish();
-        else if (_format != "pcm")
-            _audioWriter?.Dispose();
+        FlushOpusLeftovers();
+        if (_format != "pcm") _audioWriter?.Dispose();
 
-        return _memoryStream.ToArray();
+        return ((MemoryStream)_baseStream).ToArray();
     }
 
     public static string GetMimeType(OpenAiSpeechRequest request)
@@ -121,8 +179,11 @@ public class AudioStreamManager : IDisposable
 
     public void Dispose()
     {
-        _audioWriter?.Dispose();
-        _memoryStream?.Dispose();
+        if (_isMemoryStream) return;
+
+        FlushOpusLeftovers();
+        if (_format != "pcm") _audioWriter?.Dispose();
+
         GC.SuppressFinalize(this);
     }
 }

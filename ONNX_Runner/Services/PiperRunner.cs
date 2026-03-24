@@ -4,6 +4,7 @@ using NAudio.Wave;
 using NAudio.Lame;
 using ONNX_Runner.Models;
 using System.Buffers;
+using System.Numerics;
 
 namespace ONNX_Runner.Services;
 
@@ -38,7 +39,12 @@ public class PiperRunner : IDisposable
                 Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
                 return (session, true);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Console.ForegroundColor = ConsoleColor.DarkYellow;
+                Console.WriteLine($"[WARNING] Piper failed to load on GPU {deviceId}. Reason: {ex.Message}");
+                Console.ResetColor();
+            }
         }
 
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
@@ -61,11 +67,11 @@ public class PiperRunner : IDisposable
         var inputLengthsTensor = new DenseTensor<long>(new[] { (long)phonemeIds.Length }, [1]);
 
         var inputs = new List<NamedOnnxValue>
-    {
-        NamedOnnxValue.CreateFromTensor("input", inputTensor),
-        NamedOnnxValue.CreateFromTensor("input_lengths", inputLengthsTensor),
-        NamedOnnxValue.CreateFromTensor("scales", scalesTensor)
-    };
+        {
+            NamedOnnxValue.CreateFromTensor("input", inputTensor),
+            NamedOnnxValue.CreateFromTensor("input_lengths", inputLengthsTensor),
+            NamedOnnxValue.CreateFromTensor("scales", scalesTensor)
+        };
 
         using var results = _session.Run(inputs);
         return results.First(r => r.Name == "output").AsEnumerable<float>().ToArray();
@@ -89,13 +95,39 @@ public class PiperRunner : IDisposable
 
             try
             {
-                for (int i = 0; i < audioSamples.Length; i++)
+                // --- SIMD ОПТИМІЗАЦІЯ ---
+                int vectorSize = Vector<float>.Count;
+                int i = 0;
+
+                var minVec = new Vector<float>(-1f);
+                var maxVec = new Vector<float>(1f);
+                var multVec = new Vector<float>(32767f);
+
+                for (; i <= audioSamples.Length - vectorSize; i += vectorSize)
+                {
+                    var vSamples = new Vector<float>(audioSamples, i);
+                    var vClamped = Vector.Max(minVec, Vector.Min(maxVec, vSamples));
+                    var vScaled = vClamped * multVec;
+
+                    for (int k = 0; k < vectorSize; k++)
+                    {
+                        short shortSample = (short)vScaled[k];
+                        int bufferIndex = (i + k) * 2;
+                        buffer[bufferIndex] = (byte)(shortSample & 0xFF);
+                        buffer[bufferIndex + 1] = (byte)((shortSample >> 8) & 0xFF);
+                    }
+                }
+
+                // Хвіст
+                for (; i < audioSamples.Length; i++)
                 {
                     float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
                     short shortSample = (short)sample;
                     buffer[i * 2] = (byte)(shortSample & 0xFF);
                     buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
                 }
+                // -------------------------
+
                 writer.Write(buffer, 0, requiredBytes);
             }
             finally
@@ -112,7 +144,6 @@ public class PiperRunner : IDisposable
         using var memoryStream = new MemoryStream();
         var waveFormat = new WaveFormat(sampleRate, 16, 1);
 
-        // LameMP3FileWriter автоматично конвертує PCM байти в MP3 на льоту
         using (var writer = new LameMP3FileWriter(memoryStream, waveFormat, LAMEPreset.VBR_90))
         {
             int requiredBytes = audioSamples.Length * 2;
@@ -120,20 +151,46 @@ public class PiperRunner : IDisposable
 
             try
             {
-                for (int i = 0; i < audioSamples.Length; i++)
+                // --- SIMD ОПТИМІЗАЦІЯ ---
+                int vectorSize = Vector<float>.Count;
+                int i = 0;
+
+                var minVec = new Vector<float>(-1f);
+                var maxVec = new Vector<float>(1f);
+                var multVec = new Vector<float>(32767f);
+
+                for (; i <= audioSamples.Length - vectorSize; i += vectorSize)
+                {
+                    var vSamples = new Vector<float>(audioSamples, i);
+                    var vClamped = Vector.Max(minVec, Vector.Min(maxVec, vSamples));
+                    var vScaled = vClamped * multVec;
+
+                    for (int k = 0; k < vectorSize; k++)
+                    {
+                        short shortSample = (short)vScaled[k];
+                        int bufferIndex = (i + k) * 2;
+                        buffer[bufferIndex] = (byte)(shortSample & 0xFF);
+                        buffer[bufferIndex + 1] = (byte)((shortSample >> 8) & 0xFF);
+                    }
+                }
+
+                // Хвіст
+                for (; i < audioSamples.Length; i++)
                 {
                     float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
                     short shortSample = (short)sample;
                     buffer[i * 2] = (byte)(shortSample & 0xFF);
                     buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
                 }
+                // -------------------------
+
                 writer.Write(buffer, 0, requiredBytes);
             }
             finally
             {
                 ArrayPool<byte>.Shared.Return(buffer);
             }
-        } // writer.Dispose() фіналізує MP3 файл
+        }
 
         return memoryStream.ToArray();
     }
