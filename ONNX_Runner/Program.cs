@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Mvc;
-using NAudio.Wave;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 using System.Threading.RateLimiting;
@@ -53,6 +52,7 @@ catch (Exception ex)
 }
 
 // Читаємо налаштування з appsettings.json
+var corsConfig = builder.Configuration.GetSection("CorsSettings").Get<CorsSettings>() ?? new CorsSettings();
 var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
 var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
 var hardwareConfig = builder.Configuration.GetSection("HardwareSettings").Get<HardwareSettings>() ?? new HardwareSettings();
@@ -197,6 +197,30 @@ if (piperConfig != null && piperModelPath != null)
 }
 
 // =================================================================
+// НАЛАШТУВАННЯ CORS (ДЛЯ ВЕБ-КЛІЄНТІВ)
+// =================================================================
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DynamicCorsPolicy", policy =>
+    {
+        if (corsConfig.AllowAnyOrigin)
+        {
+            policy.AllowAnyOrigin()
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .WithExposedHeaders("X-Audio-Sample-Rate", "Content-Disposition"); // Дозволяємо фронтенду бачити ці заголовки
+        }
+        else
+        {
+            policy.WithOrigins(corsConfig.AllowedOrigins)
+                  .AllowAnyMethod()
+                  .AllowAnyHeader()
+                  .WithExposedHeaders("X-Audio-Sample-Rate", "Content-Disposition");
+        }
+    });
+});
+
+// =================================================================
 // ЗАХИСТ ВІД БОТІВ ТА DDOS (RATE LIMITING)
 // =================================================================
 builder.Services.AddRateLimiter(options =>
@@ -223,6 +247,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+app.UseCors("DynamicCorsPolicy"); // Вмикаємо CORS
 app.UseRateLimiter();
 
 // =================================================================

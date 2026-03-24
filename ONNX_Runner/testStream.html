@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Voice Streaming Tester</title>
+    <style>
+        /* Base styling for layout and typography */
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: #f4f4f9; color: #333; }
+        .card { background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 15px; }
+        label { font-weight: bold; display: block; margin-bottom: 5px; }
+        
+        /* Input field styling */
+        input[type="text"], input[type="number"], select, textarea, input[type="url"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
+        textarea { resize: vertical; height: 120px; font-family: inherit; }
+        
+        /* Checkbox and button styling */
+        .checkbox-group { display: flex; align-items: center; gap: 10px; }
+        .checkbox-group input { width: auto; transform: scale(1.2); }
+        button { background: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; width: 100%; transition: 0.2s; }
+        button:hover { background: #0056b3; }
+        button:disabled { background: #aaa; cursor: not-allowed; }
+        
+        /* Audio player and log console styling */
+        audio { width: 100%; margin-top: 20px; }
+        .logs { margin-top: 20px; background: #1e1e1e; color: #00ff00; padding: 15px; border-radius: 5px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 13px; }
+        .endpoint-group { background: #eef2f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; border: 1px dashed #b0c4de; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>🎙️ AI Voice API Tester</h2>
+
+    <div class="form-group endpoint-group">
+        <label for="endpoint">API Endpoint URL:</label>
+        <input type="url" id="endpoint" value="http://localhost:5045/v1/audio/speech">
+    </div>
+    
+    <div class="form-group">
+        <label for="input">Text to Synthesize:</label>
+        <textarea id="input">Nordlys, eller Aurora Borealis, er et fantastisk naturfenomen som ofte kan observeres i Nord-Norge under vintermånedene. Det oppstår når elektrisk ladede partikler fra solen kolliderer med gasser i jordens atmosfære.</textarea>
+    </div>
+
+    <div style="display: flex; gap: 15px;">
+        <div class="form-group" style="flex: 1;">
+            <label for="model">Model:</label>
+            <input type="text" id="model" value="tts-1">
+        </div>
+        <div class="form-group" style="flex: 1;">
+            <label for="voice">Voice:</label>
+            <input type="text" id="voice" value="lumi">
+        </div>
+    </div>
+
+    <div style="display: flex; gap: 15px;">
+        <div class="form-group" style="flex: 1;">
+            <label for="format">Response Format:</label>
+            <select id="format">
+                <option value="mp3">MP3</option>
+                <option value="opus">Opus (OGG)</option>
+                <option value="wav">WAV (No stream)</option>
+                <option value="pcm">Raw PCM</option>
+            </select>
+        </div>
+        <div class="form-group" style="flex: 1;">
+            <label for="speed">Speed (0.25 - 4.0):</label>
+            <input type="number" id="speed" value="1.0" step="0.1" min="0.25" max="4.0">
+        </div>
+    </div>
+
+    <div class="form-group checkbox-group">
+        <input type="checkbox" id="stream" checked>
+        <label for="stream" style="margin: 0; cursor: pointer;">Enable Chunked Streaming</label>
+    </div>
+
+    <button id="generateBtn" onclick="generateAudio()">Generate & Play</button>
+
+    <audio id="player" controls></audio>
+
+    <label style="margin-top: 20px;">Network Logs:</label>
+    <div class="logs" id="logs">Waiting for action...<br></div>
+</div>
+
+<script>
+    const logBox = document.getElementById('logs');
+    const player = document.getElementById('player');
+    const btn = document.getElementById('generateBtn');
+
+    /**
+     * Appends a timestamped message to the UI log console.
+     * @param {string} message - The message to log.
+     */
+    function log(message) {
+        const time = new Date().toISOString().split('T')[1].substring(0, 8);
+        logBox.innerHTML += `[${time}] ${message}<br>`;
+        logBox.scrollTop = logBox.scrollHeight;
+    }
+
+    /**
+     * Initiates the audio generation request and handles the response.
+     * Routes the flow to either synchronous playback or MediaSource chunked streaming.
+     */
+    async function generateAudio() {
+        // Reset UI state
+        logBox.innerHTML = '';
+        player.removeAttribute('src');
+        btn.disabled = true;
+        btn.innerText = "Generating & Streaming...";
+
+        const targetUrl = document.getElementById('endpoint').value.trim();
+        const requestData = {
+            model: document.getElementById('model').value,
+            input: document.getElementById('input').value,
+            voice: document.getElementById('voice').value,
+            response_format: document.getElementById('format').value,
+            speed: parseFloat(document.getElementById('speed').value),
+            stream: document.getElementById('stream').checked
+        };
+
+        log(`Sending POST request to ${targetUrl}...`);
+
+        try {
+            const response = await fetch(targetUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(requestData)
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json().catch(() => ({}));
+                throw new Error(errorData.error || `HTTP Error ${response.status}`);
+            }
+
+            const mimeType = response.headers.get('Content-Type') || 'audio/mpeg';
+            const isStreamingEnabled = requestData.stream;
+            
+            // Note: Browsers natively support MSE (MediaSource Extensions) primarily for MP3 and WebM/Opus. 
+            // WAV format requires full file buffering and cannot be streamed via MSE natively.
+            const supportsMSE = window.MediaSource && MediaSource.isTypeSupported(mimeType);
+
+            log(`Headers received. Content-Type: ${mimeType}`);
+
+            if (isStreamingEnabled && supportsMSE) {
+                await handleStreamedResponse(response.body.getReader(), mimeType);
+            } else {
+                if (isStreamingEnabled) log("⚠️ Format does not support native MSE streaming in this browser. Falling back to buffered playback.");
+                await handleBufferedResponse(response.blob(), mimeType);
+            }
+
+        } catch (error) {
+            log(`❌ ERROR: ${error.message}`);
+        } finally {
+            // Restore UI state
+            btn.disabled = false;
+            btn.innerText = "Generate & Play";
+        }
+    }
+
+    /**
+     * Handles true chunked streaming using the MediaSource API.
+     * Pushes bytes to the audio element as soon as they arrive over the network.
+     * @param {ReadableStreamDefaultReader} reader - The network stream reader.
+     * @param {string} mimeType - The audio MIME type (e.g., 'audio/mpeg').
+     */
+    async function handleStreamedResponse(reader, mimeType) {
+        const mediaSource = new MediaSource();
+        player.src = URL.createObjectURL(mediaSource);
+
+        await new Promise(resolve => mediaSource.addEventListener('sourceopen', resolve, { once: true }));
+        
+        const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+        let totalBytes = 0;
+        let isFirstChunk = true;
+
+        // Helper function to safely append a chunk and wait for the buffer to process it
+        const appendChunk = async (chunk) => {
+            return new Promise((resolve) => {
+                sourceBuffer.addEventListener('updateend', resolve, { once: true });
+                sourceBuffer.appendBuffer(chunk);
+            });
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) {
+                if (mediaSource.readyState === 'open') {
+                    mediaSource.endOfStream();
+                }
+                log("✅ Network stream completed. EOS sent to player.");
+                break;
+            }
+
+            totalBytes += value.length;
+            log(`⬇️ Pushed chunk to SourceBuffer: ${value.length} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
+
+            await appendChunk(value);
+
+            // Trigger playback immediately after the first chunk is successfully buffered
+            if (isFirstChunk) {
+                player.play().catch(e => log(`⚠️ Autoplay prevented by browser policy: ${e.message}`));
+                log("🎵 Playback started mid-stream.");
+                isFirstChunk = false;
+            }
+        }
+    }
+
+    /**
+     * Handles synchronous/buffered response.
+     * Waits for the entire payload to download before initiating playback.
+     * @param {Promise<Blob>} blobPromise - The promise resolving to the complete audio Blob.
+     * @param {string} mimeType - The audio MIME type.
+     */
+    async function handleBufferedResponse(blobPromise, mimeType) {
+        log("⏳ Waiting for complete file generation (Buffered mode)...");
+        const blob = await blobPromise;
+        const audioBlob = new Blob([blob], { type: mimeType });
+        
+        log(`✅ File received completely. Size: ${(audioBlob.size / 1024).toFixed(2)} KB`);
+        
+        player.src = URL.createObjectURL(audioBlob);
+        player.play().catch(e => log(`⚠️ Autoplay prevented by browser policy: ${e.message}`));
+        log("🎵 Playback started.");
+    }
+</script>
+
+</body>
+</html>
