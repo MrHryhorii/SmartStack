@@ -1,5 +1,5 @@
 using System.Text;
-using System.Text.RegularExpressions;
+using System.Globalization;
 using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Services;
@@ -24,7 +24,6 @@ public partial class UnifiedPhonemizer(
         var finalPhonemes = new StringBuilder();
 
         // РОЗУМНИЙ ВИБІР РЕЖИМУ
-        // Якщо детектор є — ріжемо на мови. Якщо немає — створюємо один "штучний" чанк на весь текст.
         var tokens = _mixedPhonemizer != null
             ? _mixedPhonemizer.ProcessTextToLanguageTokens(text)
             : [new TextChunk { Text = text, DetectedLanguage = _piperConfig.Espeak.Voice ?? "en", IsPunctuationOrSpace = false }];
@@ -42,35 +41,59 @@ public partial class UnifiedPhonemizer(
                 catch { _espeakWrapper.SetVoice(_piperConfig.Espeak.Voice ?? "en"); }
 
                 string normalizedChunk = _punctuationMapper.Normalize(chunk.Text);
-                var match = BoundaryRegex().Match(normalizedChunk);
+                ReadOnlySpan<char> chunkSpan = normalizedChunk.AsSpan();
 
-                string prefix = match.Groups[1].Value;
-                string core = match.Groups[2].Value;
-                string suffix = match.Groups[3].Value;
+                // =====================================================================
+                // Знаходження префіксу, ядра та суфіксу
+                // =====================================================================
+                int start = 0;
+                while (start < chunkSpan.Length && !IsCoreChar(chunkSpan[start])) start++;
 
+                int end = chunkSpan.Length;
+                while (end > start && !IsCoreChar(chunkSpan[end - 1])) end--;
+
+                // Нарізаємо пам'ять без створення нових рядків
+                ReadOnlySpan<char> prefix = chunkSpan[..start];
+                ReadOnlySpan<char> coreSpan = chunkSpan[start..end];
+                ReadOnlySpan<char> suffix = chunkSpan[end..];
+
+                // StringBuilder додає Span
                 finalPhonemes.Append(prefix);
 
-                if (!string.IsNullOrEmpty(core))
+                if (!coreSpan.IsEmpty)
                 {
+                    // Для eSpeak потрібен звичайний string, тому конвертуємо тільки ядро
+                    string core = coreSpan.ToString();
                     string rawPhonemes = _espeakWrapper.GetIpaPhonemes(core);
 
                     if (_fallbackMapper != null)
                     {
-                        var safePhonemes = new StringBuilder();
-                        var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(rawPhonemes);
+                        // =====================================================================
+                        // Перебір фонем (Grapheme Clusters)
+                        // =====================================================================
+                        ReadOnlySpan<char> rawSpan = rawPhonemes.AsSpan();
+                        int index = 0;
 
-                        while (enumerator.MoveNext())
+                        while (index < rawSpan.Length)
                         {
-                            string symbol = enumerator.GetTextElement();
+                            // Отримуємо довжину поточного юнікод-символу (фонеми) без виділення пам'яті
+                            int length = StringInfo.GetNextTextElementLength(rawSpan[index..]);
+                            ReadOnlySpan<char> symbolSpan = rawSpan.Slice(index, length);
 
-                            if (_piperConfig.PhonemeIdMap.ContainsKey(symbol)) safePhonemes.Append(symbol);
+                            // Словники вимагають string для пошуку ключа
+                            string symbol = symbolSpan.ToString();
+
+                            if (_piperConfig.PhonemeIdMap.ContainsKey(symbol))
+                            {
+                                finalPhonemes.Append(symbolSpan);
+                            }
                             else
                             {
                                 string fallback = _fallbackMapper.GetClosestPhoneme(symbol);
-                                safePhonemes.Append(!string.IsNullOrEmpty(fallback) ? fallback : symbol);
+                                finalPhonemes.Append(!string.IsNullOrEmpty(fallback) ? fallback : symbolSpan);
                             }
+                            index += length;
                         }
-                        finalPhonemes.Append(safePhonemes);
                     }
                     else
                     {
@@ -84,7 +107,14 @@ public partial class UnifiedPhonemizer(
         return finalPhonemes.ToString();
     }
 
-    // Перенесли регулярку сюди, де їй і місце
-    [GeneratedRegex(@"^([^\p{L}\p{Nd}\p{M}]*)(.*?)([^\p{L}\p{Nd}\p{M}]*)$", RegexOptions.Singleline)]
-    private static partial Regex BoundaryRegex();
+    // Допоміжний метод, який робить те саме, що й [\p{L}\p{Nd}\p{M}] у Regex
+    private static bool IsCoreChar(char c)
+    {
+        if (char.IsLetterOrDigit(c)) return true;
+
+        var category = char.GetUnicodeCategory(c);
+        return category == UnicodeCategory.NonSpacingMark ||
+               category == UnicodeCategory.SpacingCombiningMark ||
+               category == UnicodeCategory.EnclosingMark;
+    }
 }
