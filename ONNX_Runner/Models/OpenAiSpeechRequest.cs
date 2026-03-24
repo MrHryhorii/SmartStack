@@ -27,7 +27,7 @@ public class OpenAiSpeechRequest
     /// Нам поки що найпростіше віддавати wav (через NAudio).
     /// </summary>
     [JsonPropertyName("response_format")]
-    public string ResponseFormat { get; set; } = "wav";
+    public string ResponseFormat { get; set; } = "mp3";
 
     /// <summary>
     /// Швидкість генерації від 0.25 до 4.0. За замовчуванням 1.0.

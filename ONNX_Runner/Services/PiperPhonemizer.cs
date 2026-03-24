@@ -1,4 +1,5 @@
 using ONNX_Runner.Models;
+using System.Globalization;
 
 namespace ONNX_Runner.Services;
 
@@ -13,7 +14,8 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
 
     public long[] PhonemesToIds(string phonemes)
     {
-        var corePhonemes = new List<long>();
+        // Початкова місткість 128 покриє більшість речень без реаллокацій
+        var corePhonemes = new List<long>(128);
 
         // Дістаємо службові ID (або беремо стандартні Piper-значення)
         int sentenceStartId = _config.PhonemeIdMap.TryGetValue("^", out var startArr) ? startArr[0] : 1;
@@ -25,55 +27,70 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
         corePhonemes.Add(sentenceStartId);
         corePhonemes.Add(spaceId); // Piper любить починати з пробілу
 
-        // Використовуємо StringInfo для безпечного читання складних Unicode символів
-        var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(phonemes);
+        // =====================================================================
+        // Читання Юнікоду через Span
+        // =====================================================================
+        ReadOnlySpan<char> phonemeSpan = phonemes.AsSpan();
+        int index = 0;
 
-        while (enumerator.MoveNext())
+        while (index < phonemeSpan.Length)
         {
-            string symbol = enumerator.GetTextElement();
+            // Беремо довжину поточного юнікод-символу/фонеми (без виділення пам'яті)
+            int length = StringInfo.GetNextTextElementLength(phonemeSpan[index..]);
+            ReadOnlySpan<char> symbolSpan = phonemeSpan.Slice(index, length);
 
-            // Якщо модель знає цей символ (фонема, кома, пробіл) - просто додаємо його ID
-            if (_config.PhonemeIdMap.TryGetValue(symbol, out var ids))
-            {
-                corePhonemes.Add(ids[0]);
-            }
             // Якщо це невідомий символ переносу рядка, перетворюємо на пробіл
-            else if (symbol == "\n" || symbol == "\r")
+            if (symbolSpan.Length == 1 && (symbolSpan[0] == '\n' || symbolSpan[0] == '\r'))
             {
-                if (corePhonemes.Count > 0 && corePhonemes.Last() != spaceId)
+                if (corePhonemes.Count > 0 && corePhonemes[^1] != spaceId)
                 {
                     corePhonemes.Add(spaceId);
                 }
             }
+            else
+            {
+                // Словник очікує рядок
+                string symbol = symbolSpan.ToString();
+
+                // Якщо модель знає цей символ (фонема, кома, пробіл) - просто додаємо його ID
+                if (_config.PhonemeIdMap.TryGetValue(symbol, out var ids))
+                {
+                    corePhonemes.Add(ids[0]);
+                }
+            }
+
+            index += length;
         }
 
         // Завершуємо речення тишею
-        if (corePhonemes.Count > 0 && corePhonemes.Last() != spaceId)
+        if (corePhonemes.Count > 0 && corePhonemes[^1] != spaceId)
         {
             corePhonemes.Add(spaceId);
         }
         corePhonemes.Add(sentenceEndId);
 
-        // --- Оптимізоване перемежовування (без пустот по краях) ---
-        var finalIds = new List<long>(corePhonemes.Count * 2);
+        // =====================================================================
+        // Zero-Allocation перемежовування (Interspersing)
+        // =====================================================================
+        // Знаємо точний розмір фінального тензора: (кількість ID) + (кількість паддингів між ними)
+        int finalCount = corePhonemes.Count * 2 - 1;
+        long[] resultArray = new long[finalCount];
 
+        int resultIndex = 0;
         for (int i = 0; i < corePhonemes.Count; i++)
         {
-            finalIds.Add(corePhonemes[i]);
+            resultArray[resultIndex++] = corePhonemes[i];
 
-            // Додаємо padId (пустоту) ТІЛЬКИ між елементами, 
-            // не додаючи його після останнього знаку '$'
+            // Додаємо padId (пустоту) ТІЛЬКИ між елементами
             if (i < corePhonemes.Count - 1)
             {
-                finalIds.Add(padId);
+                resultArray[resultIndex++] = padId;
             }
         }
 
-        var resultArray = finalIds.ToArray();
-
         // Виводимо в консоль для дебагу, щоб бачити, що реально пішло в нейромережу
         Console.WriteLine($"\n[DEBUG] Input Phonemes: {phonemes}");
-        Console.WriteLine($"[DEBUG] Target Tensor:  [{string.Join(", ", resultArray)}]\n");
+        Console.WriteLine($"[DEBUG] Target Tensor Size: {resultArray.Length}\n");
 
         return resultArray;
     }
