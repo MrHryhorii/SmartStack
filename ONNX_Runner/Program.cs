@@ -119,6 +119,7 @@ if (piperConfig != null && piperModelPath != null)
                             openVoice.VoiceLibrary[voiceName] = fingerprint;
                             Console.ForegroundColor = ConsoleColor.DarkGreen;
                             Console.WriteLine($"[VOICE] Loaded from cache: {voiceName}");
+                            Console.ResetColor();
                         }
                         else
                         {
