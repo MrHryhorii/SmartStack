@@ -309,25 +309,26 @@ using (var scope = app.Services.CreateScope())
 var gpuSemaphore = new SemaphoreSlim(concurrentRequests, concurrentRequests);
 
 // =================================================================
-// ЕНДПОІНТИ
+// ENDPOINTS
 // =================================================================
 
-// Створюємо глобальний набір дозволених форматів
+// Global set of allowed audio formats for validation
 var allowedFormats = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "wav", "mp3", "opus", "pcm" };
 
-// ЕНДПОІНТ 1: Генерація голосу
+// ENDPOINT 1: Text-to-Speech Generation
 app.MapPost("/v1/audio/speech", async (
     HttpContext httpContext,
     [FromBody] OpenAiSpeechRequest request,
     [FromServices] TextChunker textChunker,
     [FromServices] UnifiedPhonemizer unifiedPhonemizer,
     [FromServices] PiperRunner piperRunner,
-    [FromServices] IServiceProvider services) =>
+    [FromServices] IServiceProvider services,
+    CancellationToken cancellationToken) => // Injected by ASP.NET to track client disconnects
 {
+    // --- Request Validation ---
     if (string.IsNullOrWhiteSpace(request.Input)) return Results.BadRequest(new { error = "Input text cannot be empty." });
     if (piperConfig == null) return Results.Problem("Model is not loaded properly.", statusCode: 500);
 
-    // --- СТРОГА ВАЛІДАЦІЯ ФОРМАТУ ---
     if (string.IsNullOrWhiteSpace(request.ResponseFormat) || !allowedFormats.Contains(request.ResponseFormat))
     {
         return Results.BadRequest(new
@@ -338,18 +339,19 @@ app.MapPost("/v1/audio/speech", async (
 
     try
     {
-        await gpuSemaphore.WaitAsync();
+        // --- Concurrency Control (Semaphore Pattern) ---
+        // Prevents OutOfMemoryExceptions by queuing requests. 
+        // Aborts immediately if the client disconnects while waiting in the queue.
+        await gpuSemaphore.WaitAsync(cancellationToken);
 
         try
         {
-            // ========================================================================
-            // НАЛАШТУВАННЯ СТРІМІНГУ ТА ЧАСТОТИ
-            // ========================================================================
+            // --- Pipeline Configuration ---
             var streamConfig = services.GetRequiredService<StreamSettings>();
             bool shouldStream = request.Stream ?? streamConfig.EnableStreaming;
             bool isWav = request.ResponseFormat.Equals("wav", StringComparison.OrdinalIgnoreCase);
 
-            // WAV концептуально не підтримує стрімінг (потребує розміру в заголовку), тому для нього стрім завжди вимкнено
+            // WAV requires a file size in its header, so chunked streaming is conceptually impossible.
             bool useStreaming = shouldStream && !isWav;
 
             bool useOpenVoice = !string.IsNullOrEmpty(request.Voice);
@@ -357,67 +359,62 @@ app.MapPost("/v1/audio/speech", async (
             var audioProc = services.GetService<AudioProcessor>();
             bool canClone = useOpenVoice && openVoice != null && audioProc != null;
 
-            // Визначаємо робочу частоту дискретизації
+            // Determine target sample rates based on requested format and pipeline capabilities
             int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
             int finalSampleRate = outSampleRate;
             bool isOpus = request.ResponseFormat.Equals("opus", StringComparison.OrdinalIgnoreCase);
 
             if (isOpus)
             {
-                // Контейнер Ogg Opus вимагає жорстко заданих частот дискретизації
+                // Ogg Opus strictly requires specific sample rates (8, 12, 16, 24, or 48 kHz)
                 int[] validOpusRates = [8000, 12000, 16000, 24000, 48000];
                 finalSampleRate = validOpusRates.OrderBy(r => Math.Abs(r - outSampleRate)).First();
             }
 
             int displaySampleRate = isOpus ? 48000 : finalSampleRate;
 
-            // ========================================================================
-            // ПІДГОТОВКА МЕРЕЖЕВОГО ШЛЮЗУ (NETWORK PIPELINE)
-            // ========================================================================
+            // --- Network Gateway Setup (Bridging & Backpressure) ---
             Stream targetStream;
             System.Threading.Channels.Channel<byte[]>? networkChannel = null;
             Task? networkSenderTask = null;
 
             if (useStreaming)
             {
-                // Для стрімінгу ми зобов'язані відправити HTTP-заголовки ДО початку генерації
+                // Send HTTP headers before any generation starts to initiate Chunked Transfer Encoding
                 httpContext.Response.ContentType = AudioStreamManager.GetMimeType(request);
                 httpContext.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{AudioStreamManager.GetFileName(request)}\"");
                 httpContext.Response.Headers.Append("X-Audio-Sample-Rate", displaySampleRate.ToString());
-                await httpContext.Response.StartAsync();
+                await httpContext.Response.StartAsync(cancellationToken);
 
-                // Даємо буфер максимум на 50 шматків (приблизно 400 КБ). 
-                // Якщо клієнт не встигає качати, FullMode.Wait змусить генератор почекати, рятуючи RAM.
+                // Backpressure configuration: limit buffer size.
+                // If the client network is too slow, the pipeline will pause to prevent RAM exhaustion.
                 var channelOptions = new System.Threading.Channels.BoundedChannelOptions(50)
                 {
                     FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait
                 };
-                // Створюємо "Міст" між синхронними енкодерами (NAudio/Opus) та асинхронним Kestrel
                 networkChannel = System.Threading.Channels.Channel.CreateBounded<byte[]>(channelOptions);
 
                 int chunkSize = streamConfig.MinChunkSizeKb * 1024;
                 targetStream = new BridgingStream(networkChannel.Writer, chunkSize);
 
-                // Запускаємо "Кур'єра" (Network Consumer)
-                // Він працює у фоні: бере готові байти з каналу BridgingStream і безпечно виштовхує їх клієнту
+                // Asynchronous Network Courier: Pushes buffered bytes to the client
                 networkSenderTask = Task.Run(async () =>
                 {
-                    await foreach (var chunk in networkChannel.Reader.ReadAllAsync())
+                    await foreach (var chunk in networkChannel.Reader.ReadAllAsync(cancellationToken))
                     {
-                        await httpContext.Response.Body.WriteAsync(chunk);
-                        await httpContext.Response.Body.FlushAsync(); // Відправляємо шматок клієнту (Chunked Transfer)
+                        cancellationToken.ThrowIfCancellationRequested();
+                        await httpContext.Response.Body.WriteAsync(chunk, cancellationToken);
+                        await httpContext.Response.Body.FlushAsync(cancellationToken);
                     }
-                });
+                }, cancellationToken);
             }
             else
             {
-                // Якщо стрімінг вимкнено, просто збираємо всі байти в оперативну пам'ять
-                targetStream = new MemoryStream(1024 * 1024); // Виділяємо 1 МБ резерву
+                // Synchronous fallback: buffer everything in memory
+                targetStream = new MemoryStream(1024 * 1024); // Pre-allocate 1 MB
             }
 
-            // ========================================================================
-            // ГЕНЕРАЦІЯ АУДІО (PRODUCER-CONSUMER PIPELINE)
-            // ========================================================================
+            // --- Asynchronous Audio Generation (Producer-Consumer Pattern) ---
             byte[]? finalAudioBytes = null;
 
             await Task.Run(async () =>
@@ -440,34 +437,35 @@ app.MapPost("/v1/audio/speech", async (
                 if (canClone && dspConfig.EnableLowPassFilter)
                     filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, dspConfig.LowPassCutoffFrequency, dspConfig.LowPassQFactor);
 
-                // Використовуємо using, щоб після завершення блоку викликався Dispose() і дописувались футери файлів (MP3/Ogg)
                 using (var streamManager = new AudioStreamManager(request, finalSampleRate, targetStream))
                 {
-                    // Канал для передачі "сирих" звукових хвиль від генератора до обробника
                     var channel = System.Threading.Channels.Channel.CreateBounded<float[]>(10);
 
-                    // PRODUCER (Виробник): Перетворює текст на сирий звук (Piper TTS)
+                    // PRODUCER: Text -> Phonemes -> Raw Audio (GPU/CPU bound)
                     var producerTask = Task.Run(async () =>
                     {
                         foreach (var chunk in textChunks)
                         {
+                            // Graceful Cancellation: Abort immediately if the client disconnects
+                            cancellationToken.ThrowIfCancellationRequested();
+
                             string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
                             float[] chunkSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
 
-                            // Відправляємо сирий звук у чергу на обробку
-                            await channel.Writer.WriteAsync(chunkSamples);
+                            await channel.Writer.WriteAsync(chunkSamples, cancellationToken);
                         }
-                        channel.Writer.Complete(); // Кажемо, що тексту більше немає
-                    });
+                        channel.Writer.Complete();
+                    }, cancellationToken);
 
-                    // CONSUMER (Споживач): Клонує голос, фільтрує, кодує і відправляє в цільовий потік
+                    // CONSUMER: Tone Cloning -> Resampling -> Encoding (MP3/Opus) -> Network Buffer
                     var consumerTask = Task.Run(async () =>
                     {
-                        await foreach (var chunkSamples in channel.Reader.ReadAllAsync())
+                        await foreach (var chunkSamples in channel.Reader.ReadAllAsync(cancellationToken))
                         {
+                            cancellationToken.ThrowIfCancellationRequested();
+
                             float[] processedSamples = chunkSamples;
 
-                            // Застосовуємо клонування голосу (Tone Color)
                             if (canClone && targetFingerprint != null && sourceFingerprint != null)
                             {
                                 float[] resampledSamples = audioProc!.Resample(chunkSamples, piperConfig.Audio.SampleRate, outSampleRate);
@@ -476,83 +474,77 @@ app.MapPost("/v1/audio/speech", async (
                                     processedSamples = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
                             }
 
-                            // Фінальний ресемплінг (наприклад, для Opus)
                             if (outSampleRate != finalSampleRate)
                                 processedSamples = audioProc!.Resample(processedSamples, outSampleRate, finalSampleRate);
 
-                            // Кодуємо (MP3/Opus) і пишемо в цільову "трубу" (BridgingStream або MemoryStream)
                             streamManager.WriteChunk(processedSamples, filter);
                             if (filter != null) Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
-                            streamManager.WriteChunk(absoluteSilence, filter); // Додаємо паузу між реченнями
+                            streamManager.WriteChunk(absoluteSilence, filter);
 
-                            // Примусове виштовхування (Flush) після кожного речення для плавності стрімінгу
                             if (useStreaming && streamConfig.FlushAfterEachSentence)
                             {
                                 targetStream.Flush();
                             }
                         }
-                    });
+                    }, cancellationToken);
 
+                    // Await both stages of the generation pipeline
                     await Task.WhenAll(producerTask, consumerTask);
 
-                    // Якщо стрімінг вимкнено, забираємо готовий файл з пам'яті
                     if (!useStreaming)
                     {
                         finalAudioBytes = streamManager.GetFinalAudioBytes();
                     }
-                } // Тут викликається streamManager.Dispose(), який фіналізує аудіо-контейнери і викликає targetStream.Dispose()
+                } // streamManager.Dispose() ensures MP3/Ogg footers are written
 
-                // ЗАВЕРШЕННЯ МЕРЕЖЕВОГО ПОТОКУ
+                // --- Finalize Network Stream ---
                 if (useStreaming)
                 {
-                    // Бібліотеки енкодерів (як Opus) можуть автоматично закрити потік під час Dispose.
-                    // Тому ми використовуємо try-catch для безпечного виштовхування залишків.
                     try
                     {
-                        // Примусово витрушуємо залишки
-                        targetStream.Flush();
+                        targetStream.Flush(); // Push remaining encoder buffers
                     }
-                    catch (ObjectDisposedException)
-                    {
-                        // енкодер вже успішно закрив потік
-                    }
+                    catch (ObjectDisposedException) { /* Encoder already closed the stream */ }
 
-                    networkChannel?.Writer.Complete();  // Даємо команду "Кур'єру", що нових байтів більше не буде
+                    networkChannel?.Writer.Complete(); // Signal Courier to exit
                 }
-            });
+            }, cancellationToken);
 
-            // ========================================================================
-            // ФІНАЛІЗАЦІЯ ВІДПОВІДІ
-            // ========================================================================
+            // --- Finalize HTTP Response ---
             if (useStreaming)
             {
-                // Чекаємо, поки "Кур'єр" надішле клієнту останні байти (наприклад, футер OGG-файлу)
                 if (networkSenderTask != null) await networkSenderTask;
-
-                // Дані вже відправлені через Response.Body, тому повертаємо Empty
-                return Results.Empty;
+                return Results.Empty; // Data already sent via Response.Body
             }
             else
             {
-                // Синхронний режим: віддаємо готовий буфер як звичайний файл
+                // Synchronous Mode: return full buffered file
                 httpContext.Response.Headers.Append("X-Audio-Sample-Rate", displaySampleRate.ToString());
                 return Results.File(finalAudioBytes!, AudioStreamManager.GetMimeType(request), AudioStreamManager.GetFileName(request));
             }
         }
         finally
         {
-            gpuSemaphore.Release(); // Звільняємо місце для наступного запиту
+            gpuSemaphore.Release(); // Guarantee semaphore slot is freed
         }
+    }
+    catch (OperationCanceledException)
+    {
+        // Graceful exit when client disconnects (closes tab/aborts request)
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [INFO] Client disconnected. Generation stopped to save resources.");
+        Console.ResetColor();
+        return Results.Empty;
     }
     catch (Exception ex)
     {
-        // Захист від падіння Kestrel, якщо помилка сталася під час активного стріму
         if (httpContext.Response.HasStarted)
         {
+            // Failsafe for errors during an active stream (headers already sent)
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"[ERROR] Stream aborted unexpectedly: {ex.Message}");
+            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [ERROR] Stream aborted unexpectedly: {ex.Message}");
             Console.ResetColor();
-            return Results.Empty; // Просто обриваємо з'єднання, бо заголовки вже відправлені
+            return Results.Empty;
         }
 
         return Results.Problem(detail: ex.Message, statusCode: 500);
