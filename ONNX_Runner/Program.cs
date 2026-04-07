@@ -453,36 +453,34 @@ app.MapPost("/v1/audio/speech", async (
 
                 using (var streamManager = new AudioStreamManager(request, finalSampleRate, targetStream))
                 {
-                    var channel = System.Threading.Channels.Channel.CreateBounded<float[]>(10);
+                    var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length)>(10);
 
-                    // PRODUCER: Text -> Phonemes -> Raw Audio (GPU/CPU bound)
+                    // PRODUCER: Генерує аудіо (орендує масиви)
                     var producerTask = Task.Run(async () =>
                     {
                         foreach (var chunk in textChunks)
                         {
-                            // Graceful Cancellation: Abort immediately if the client disconnects
                             cancellationToken.ThrowIfCancellationRequested();
 
                             string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
-                            float[] chunkSamples = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
+                            // SynthesizeAudioRaw тепер повертає (Buffer, Length)
+                            var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
 
-                            await channel.Writer.WriteAsync(chunkSamples, cancellationToken);
+                            await channel.Writer.WriteAsync(rawResult, cancellationToken);
                         }
                         channel.Writer.Complete();
                     }, cancellationToken);
 
-                    // CONSUMER: Tone Cloning -> Resampling -> Encoding (MP3/Opus) -> Network Buffer
+                    // CONSUMER: Обробляє аудіо і гарантовано повертає всі масиви у пул
                     var consumerTask = Task.Run(async () =>
                     {
-                        await foreach (var chunkSamples in channel.Reader.ReadAllAsync(cancellationToken))
+                        await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
                         {
                             cancellationToken.ThrowIfCancellationRequested();
 
-                            // Змінні для відстеження стану поточного аудіо
-                            float[] currentBuffer = chunkSamples;
-                            int currentLength = chunkSamples.Length;
+                            float[] currentBuffer = chunk.Buffer;
+                            int currentLength = chunk.Length;
 
-                            // Зберігаємо посилання на орендовані масиви, щоб потім повернути їх у пул
                             float[]? rentedBuffer1 = null;
                             float[]? rentedBuffer2 = null;
 
@@ -490,16 +488,12 @@ app.MapPost("/v1/audio/speech", async (
                             {
                                 if (canClone && targetFingerprint != null && sourceFingerprint != null)
                                 {
-                                    // РЕСЕМПЛІНГ 1
                                     var r1 = audioProc!.Resample(currentBuffer, currentLength, piperConfig.Audio.SampleRate, outSampleRate);
                                     rentedBuffer1 = r1.Buffer;
 
-                                    // Спектрограма приймає ReadOnlySpan, тому беремо лише корисну частину!
                                     var specChunk = audioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
-
                                     if (specChunk.GetLength(0) > 0)
                                     {
-                                        // ApplyToneColor поки створює новий масив (ми це виправимо на наступному кроці)
                                         currentBuffer = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
                                         currentLength = currentBuffer.Length;
                                     }
@@ -512,14 +506,12 @@ app.MapPost("/v1/audio/speech", async (
 
                                 if (outSampleRate != finalSampleRate)
                                 {
-                                    // РЕСЕМПЛІНГ 2
                                     var r2 = audioProc!.Resample(currentBuffer, currentLength, outSampleRate, finalSampleRate);
                                     rentedBuffer2 = r2.Buffer;
                                     currentBuffer = rentedBuffer2;
                                     currentLength = r2.Length;
                                 }
 
-                                // ВІДПРАВКА НА КОДУВАННЯ (Передаємо тільки корисну частину як Span)
                                 streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
                                 if (filter != null) Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
@@ -532,7 +524,11 @@ app.MapPost("/v1/audio/speech", async (
                             }
                             finally
                             {
-                                // НАЙГОЛОВНІШЕ: Повертаємо орендовані масиви назад системі!
+                                // --- ПРИБИРАЄМО ЗА СОБОЮ ---
+                                // Повертаємо оригінальний масив, який орендував PiperRunner
+                                ArrayPool<float>.Shared.Return(chunk.Buffer);
+
+                                // Повертаємо проміжні масиви ресемплінгу (якщо вони використовувалися)
                                 if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);
                                 if (rentedBuffer2 != null) ArrayPool<float>.Shared.Return(rentedBuffer2);
                             }

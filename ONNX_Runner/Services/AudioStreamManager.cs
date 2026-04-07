@@ -42,7 +42,7 @@ public class AudioStreamManager : IDisposable
             var encoder = OpusCodecFactory.CreateEncoder(sampleRate, 1, OpusApplication.OPUS_APPLICATION_VOIP);
             _opusWriter = new OpusOggWriteStream(encoder, _baseStream);
 
-            // ВИПРАВЛЕННЯ 2: Opus вимагає фрейми рівно по 20 мілісекунд (напр. 960 семплів для 48kHz)
+            // Даємо Opus фрейми рівно по 20 мілісекунд (напр. 960 семплів для 48kHz)
             _opusFrameSize = sampleRate / 50;
             _opusFrameBuffer = new short[_opusFrameSize];
         }

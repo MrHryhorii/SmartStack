@@ -53,7 +53,7 @@ public class PiperRunner : IDisposable
         return (fallbackSession, false);
     }
 
-    public float[] SynthesizeAudioRaw(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
+    public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
         float safeSpeed = Math.Clamp(speed, 0.1f, 10.0f);
         float targetLengthScale = _config.Inference.LengthScale / safeSpeed;
@@ -74,16 +74,44 @@ public class PiperRunner : IDisposable
         };
 
         using var results = _session.Run(inputs);
-        return results.First(r => r.Name == "output").AsEnumerable<float>().ToArray();
+        var outputNode = results.First(r => r.Name == "output");
+        var outputTensor = outputNode.AsTensor<float>();
+
+        int length = (int)outputTensor.Length;
+
+        // ОРЕНДУЄМО МАСИВ
+        float[] buffer = ArrayPool<float>.Shared.Rent(length);
+
+        // Швидке копіювання з тензора напряму в орендований масив
+        if (outputTensor is DenseTensor<float> denseTensor)
+        {
+            denseTensor.Buffer.Span.CopyTo(buffer);
+        }
+        else
+        {
+            // Фолбек для старих версій ONNX
+            int index = 0;
+            foreach (var val in outputTensor) buffer[index++] = val;
+        }
+
+        return (buffer, length);
     }
 
     public byte[] SynthesizeAudio(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
-        float[] rawSamples = SynthesizeAudioRaw(phonemes, speed, requestNoiseScale, requestNoiseW);
-        return ConvertToWav(rawSamples);
+        var rawResult = SynthesizeAudioRaw(phonemes, speed, requestNoiseScale, requestNoiseW);
+        try
+        {
+            // Передаємо лише корисну частину масиву
+            return ConvertToWav(rawResult.Buffer.AsSpan(0, rawResult.Length));
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rawResult.Buffer);
+        }
     }
 
-    public byte[] ConvertToWav(float[] audioSamples)
+    public byte[] ConvertToWav(ReadOnlySpan<float> audioSamples)
     {
         using var memoryStream = new MemoryStream();
         var waveFormat = new WaveFormat(_config.Audio.SampleRate, 16, 1);
@@ -95,7 +123,6 @@ public class PiperRunner : IDisposable
 
             try
             {
-                // --- SIMD ОПТИМІЗАЦІЯ ---
                 int vectorSize = Vector<float>.Count;
                 int i = 0;
 
@@ -105,7 +132,7 @@ public class PiperRunner : IDisposable
 
                 for (; i <= audioSamples.Length - vectorSize; i += vectorSize)
                 {
-                    var vSamples = new Vector<float>(audioSamples, i);
+                    var vSamples = new Vector<float>(audioSamples[i..]);
                     var vClamped = Vector.Max(minVec, Vector.Min(maxVec, vSamples));
                     var vScaled = vClamped * multVec;
 
@@ -118,7 +145,6 @@ public class PiperRunner : IDisposable
                     }
                 }
 
-                // Хвіст
                 for (; i < audioSamples.Length; i++)
                 {
                     float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
@@ -126,7 +152,6 @@ public class PiperRunner : IDisposable
                     buffer[i * 2] = (byte)(shortSample & 0xFF);
                     buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
                 }
-                // -------------------------
 
                 writer.Write(buffer, 0, requiredBytes);
             }
@@ -139,7 +164,7 @@ public class PiperRunner : IDisposable
         return memoryStream.ToArray();
     }
 
-    public byte[] ConvertToMp3(float[] audioSamples, int sampleRate)
+    public byte[] ConvertToMp3(ReadOnlySpan<float> audioSamples, int sampleRate)
     {
         using var memoryStream = new MemoryStream();
         var waveFormat = new WaveFormat(sampleRate, 16, 1);
@@ -161,7 +186,8 @@ public class PiperRunner : IDisposable
 
                 for (; i <= audioSamples.Length - vectorSize; i += vectorSize)
                 {
-                    var vSamples = new Vector<float>(audioSamples, i);
+                    var vSamples = new Vector<float>(audioSamples[i..]);
+
                     var vClamped = Vector.Max(minVec, Vector.Min(maxVec, vSamples));
                     var vScaled = vClamped * multVec;
 
