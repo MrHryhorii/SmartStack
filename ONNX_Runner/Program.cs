@@ -463,7 +463,7 @@ app.MapPost("/v1/audio/speech", async (
                             cancellationToken.ThrowIfCancellationRequested();
 
                             string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
-                            // SynthesizeAudioRaw тепер повертає (Buffer, Length)
+                            // SynthesizeAudioRaw повертає (Buffer, Length)
                             var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
 
                             await channel.Writer.WriteAsync(rawResult, cancellationToken);
@@ -483,6 +483,7 @@ app.MapPost("/v1/audio/speech", async (
 
                             float[]? rentedBuffer1 = null;
                             float[]? rentedBuffer2 = null;
+                            float[]? rentedBuffer3 = null;
 
                             try
                             {
@@ -494,8 +495,12 @@ app.MapPost("/v1/audio/speech", async (
                                     var specChunk = audioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
                                     if (specChunk.GetLength(0) > 0)
                                     {
-                                        currentBuffer = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
-                                        currentLength = currentBuffer.Length;
+                                        // ВИКЛИКАЄМО ОНОВЛЕНИЙ МЕТОД
+                                        var rClone = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
+                                        rentedBuffer3 = rClone.Buffer;
+
+                                        currentBuffer = rentedBuffer3;
+                                        currentLength = rClone.Length;
                                     }
                                     else
                                     {
@@ -525,12 +530,11 @@ app.MapPost("/v1/audio/speech", async (
                             finally
                             {
                                 // --- ПРИБИРАЄМО ЗА СОБОЮ ---
-                                // Повертаємо оригінальний масив, який орендував PiperRunner
                                 ArrayPool<float>.Shared.Return(chunk.Buffer);
 
-                                // Повертаємо проміжні масиви ресемплінгу (якщо вони використовувалися)
                                 if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);
                                 if (rentedBuffer2 != null) ArrayPool<float>.Shared.Return(rentedBuffer2);
+                                if (rentedBuffer3 != null) ArrayPool<float>.Shared.Return(rentedBuffer3);
                             }
                         }
                     }, cancellationToken);

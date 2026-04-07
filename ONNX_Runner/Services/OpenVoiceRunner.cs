@@ -1,3 +1,4 @@
+using System.Buffers;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using ONNX_Runner.Models;
@@ -72,25 +73,37 @@ public class OpenVoiceRunner : IDisposable
 
         int frames = spectrogram.GetLength(0);
         int bins = spectrogram.GetLength(1); // Має бути 513
+        int tensorSize = frames * bins;
 
-        // Створюємо тензор [1 x Batch x 513] згідно з логами інспекції 
-        var inputTensor = new DenseTensor<float>([1, frames, bins]);
-        for (int i = 0; i < frames; i++)
+        // ОРЕНДУЄМО МАСИВ ДЛЯ ВХІДНОГО ТЕНЗОРА
+        float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
+        try
         {
-            for (int j = 0; j < bins; j++)
+            // Змушуємо тензор працювати поверх орендованої пам'яті (Zero Allocation)
+            var memory = new Memory<float>(rentedInput, 0, tensorSize);
+            var inputTensor = new DenseTensor<float>(memory, [1, frames, bins]);
+
+            for (int i = 0; i < frames; i++)
             {
-                inputTensor[0, i, j] = spectrogram[i, j];
+                for (int j = 0; j < bins; j++)
+                {
+                    inputTensor[0, i, j] = spectrogram[i, j];
+                }
             }
+
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor("input", inputTensor)
+            };
+
+            using var results = _extractSession.Run(inputs);
+            // Зліпок - це лише 256 чисел (1 КБ).
+            return [.. results.First(r => r.Name == "tone_embedding").AsEnumerable<float>()];
         }
-
-        var inputs = new List<NamedOnnxValue>
+        finally
         {
-            NamedOnnxValue.CreateFromTensor("input", inputTensor)
-        };
-
-        using var results = _extractSession.Run(inputs);
-        // Вихід моделі називається "tone_embedding" 
-        return results.First(r => r.Name == "tone_embedding").AsEnumerable<float>().ToArray();
+            ArrayPool<float>.Shared.Return(rentedInput);
+        }
     }
 
     public void SaveVoiceFingerprint(string path, float[] embedding)
@@ -155,48 +168,67 @@ public class OpenVoiceRunner : IDisposable
         }
     }
 
-    public float[] ApplyToneColor(float[,] spectrogram, float[] srcFingerprint, float[] destFingerprint)
+    public (float[] Buffer, int Length) ApplyToneColor(float[,] spectrogram, float[] srcFingerprint, float[] destFingerprint)
     {
-        // Динамічно отримуємо параметри з конфігурації та вхідних даних
         int frames = spectrogram.GetLength(0);
         int bins = spectrogram.GetLength(1);
-        int channels = _config.Model.GinChannels; // Використовуємо 256 з конфігу
+        int channels = _config.Model.GinChannels;
+        int tensorSize = frames * bins;
 
-        // Готуємо вхідну спектрограму [1 x Bins x Frames]
-        // На основі інспекції: [1 x 513 x Batch]
-        var audioTensor = new DenseTensor<float>([1, bins, frames]);
-        for (int i = 0; i < frames; i++)
+        // ОРЕНДУЄМО МАСИВ ДЛЯ ВХІДНОГО ТЕНЗОРА
+        float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
+        try
         {
-            for (int j = 0; j < bins; j++)
+            var memory = new Memory<float>(rentedInput, 0, tensorSize);
+            var audioTensor = new DenseTensor<float>(memory, [1, bins, frames]);
+
+            for (int i = 0; i < frames; i++)
             {
-                // Переносимо дані в формат, який очікує ONNX (Bins як друга розмірність)
-                audioTensor[0, j, i] = spectrogram[i, j];
+                for (int j = 0; j < bins; j++)
+                {
+                    audioTensor[0, j, i] = spectrogram[i, j];
+                }
             }
+
+            var srcTensor = new DenseTensor<float>(srcFingerprint, [1, channels, 1]);
+            var destTensor = new DenseTensor<float>(destFingerprint, [1, channels, 1]);
+            var lengthTensor = new DenseTensor<long>(new[] { (long)frames }, [1]);
+            var tauTensor = new DenseTensor<float>(memoryArray, [1]);
+
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor("audio", audioTensor),
+                NamedOnnxValue.CreateFromTensor("audio_length", lengthTensor),
+                NamedOnnxValue.CreateFromTensor("src_tone", srcTensor),
+                NamedOnnxValue.CreateFromTensor("dest_tone", destTensor),
+                NamedOnnxValue.CreateFromTensor("tau", tauTensor)
+            };
+
+            using var results = _colorSession.Run(inputs);
+
+            // ВИТЯГУЄМО РЕЗУЛЬТАТ В ОРЕНДОВАНИЙ МАСИВ
+            var outputNode = results.First(r => r.Name == "converted_audio");
+            var outputTensor = outputNode.AsTensor<float>();
+
+            int outLength = (int)outputTensor.Length;
+            float[] outBuffer = ArrayPool<float>.Shared.Rent(outLength);
+
+            if (outputTensor is DenseTensor<float> denseTensor)
+            {
+                denseTensor.Buffer.Span.CopyTo(outBuffer);
+            }
+            else
+            {
+                int index = 0;
+                foreach (var val in outputTensor) outBuffer[index++] = val;
+            }
+
+            return (outBuffer, outLength);
         }
-
-        // Готуємо тензори зліпків [1 x Channels x 1]
-        var srcTensor = new DenseTensor<float>(srcFingerprint, [1, channels, 1]);
-        var destTensor = new DenseTensor<float>(destFingerprint, [1, channels, 1]);
-
-        // Додаткові параметри
-        var lengthTensor = new DenseTensor<long>(new[] { (long)frames }, [1]);
-
-        // Tau — це коефіцієнт інтенсивності перетворення (зазвичай 1.0)
-        var tauTensor = new DenseTensor<float>(memoryArray, [1]);
-
-        var inputs = new List<NamedOnnxValue>
+        finally
         {
-            NamedOnnxValue.CreateFromTensor("audio", audioTensor),
-            NamedOnnxValue.CreateFromTensor("audio_length", lengthTensor),
-            NamedOnnxValue.CreateFromTensor("src_tone", srcTensor),
-            NamedOnnxValue.CreateFromTensor("dest_tone", destTensor),
-            NamedOnnxValue.CreateFromTensor("tau", tauTensor)
-        };
-
-        using var results = _colorSession.Run(inputs);
-
-        // Вихід моделі: [1 x 1 x Batch]
-        return [.. results.First(r => r.Name == "converted_audio").AsEnumerable<float>()];
+            ArrayPool<float>.Shared.Return(rentedInput);
+        }
     }
 
     public void Dispose()
