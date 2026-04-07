@@ -63,43 +63,58 @@ public class AudioProcessor
         return (allSamples.ToArray(), rate);
     }
 
-    public float[] Resample(float[] samples, int sourceRate, int targetRate)
+    public class FloatArrayWaveProvider(float[] samples, int validLength, int sampleRate) : IWaveProvider
     {
-        // Якщо частота збігається, миттєво повертаємо оригінал
-        if (sourceRate == targetRate) return samples;
+        private readonly float[] _samples = samples;
+        private readonly int _validLength = validLength;
+        private int _position;
+        public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1);
 
-        var provider = new FloatArrayWaveProvider(samples, sourceRate);
+        public int Read(byte[] buffer, int offset, int count)
+        {
+            int floatsRequired = count / 4;
+            int floatsAvailable = _validLength - _position; // Читаємо тільки до межі корисних даних!
+            int floatsToRead = Math.Min(floatsRequired, floatsAvailable);
+
+            if (floatsToRead > 0)
+            {
+                Buffer.BlockCopy(_samples, _position * 4, buffer, offset, floatsToRead * 4);
+                _position += floatsToRead;
+            }
+            return floatsToRead * 4;
+        }
+    }
+
+    public (float[] Buffer, int Length) Resample(float[] samples, int length, int sourceRate, int targetRate)
+    {
+        if (sourceRate == targetRate)
+        {
+            // Орендуємо масив, щоб дотримуватись єдиного правила: "Resample завжди повертає орендований масив"
+            float[] cloneBuffer = ArrayPool<float>.Shared.Rent(length);
+            Array.Copy(samples, cloneBuffer, length);
+            return (cloneBuffer, length);
+        }
+
+        var provider = new FloatArrayWaveProvider(samples, length, sourceRate);
         var resampler = new WdlResamplingSampleProvider(provider.ToSampleProvider(), targetRate);
 
-        // Розраховуємо точну довжину нового масиву + додаємо невеликий запас для фільтрів NAudio
-        int expectedLength = (int)Math.Ceiling((double)samples.Length * targetRate / sourceRate) + 2000;
+        int expectedLength = (int)Math.Ceiling((double)length * targetRate / sourceRate) + 2000;
 
-        // Орендуємо великий буфер з пам'яті системи
+        // ОРЕНДУЄМО МАСИВ
         float[] buffer = ArrayPool<float>.Shared.Rent(expectedLength);
 
-        try
+        int totalRead = 0;
+        int read;
+
+        // Читаємо звук ПРЯМО в орендований масив
+        while ((read = resampler.Read(buffer, totalRead, buffer.Length - totalRead)) > 0)
         {
-            int totalRead = 0;
-            int read;
-
-            // Читаємо звук ПРЯМО в орендований масив, жодних проміжних списків
-            while ((read = resampler.Read(buffer, totalRead, buffer.Length - totalRead)) > 0)
-            {
-                totalRead += read;
-                if (totalRead >= buffer.Length) break; // Захист від виходу за межі
-            }
-
-            // Створюємо єдиний фінальний масив точного розміру
-            float[] finalResult = new float[totalRead];
-            Array.Copy(buffer, finalResult, totalRead);
-
-            return finalResult;
+            totalRead += read;
+            if (totalRead >= buffer.Length) break;
         }
-        finally
-        {
-            // Обов'язково повертаємо буфер системі
-            ArrayPool<float>.Shared.Return(buffer);
-        }
+
+        // Повертаємо орендований буфер і кількість корисних даних у ньому
+        return (buffer, totalRead);
     }
 
     // Приймає ReadOnlySpan (дивиться на масив без копіювання)

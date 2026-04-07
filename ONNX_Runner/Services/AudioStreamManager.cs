@@ -52,7 +52,7 @@ public class AudioStreamManager : IDisposable
         }
     }
 
-    public void WriteChunk(float[] samples, NAudio.Dsp.BiQuadFilter? filter = null)
+    public void WriteChunk(Span<float> samples, NAudio.Dsp.BiQuadFilter? filter = null)
     {
         if (filter != null)
         {
@@ -72,7 +72,7 @@ public class AudioStreamManager : IDisposable
 
             for (; i <= samples.Length - vectorSize; i += vectorSize)
             {
-                var vSamples = new System.Numerics.Vector<float>(samples, i);
+                var vSamples = new System.Numerics.Vector<float>(samples[i..]);
                 var vClamped = System.Numerics.Vector.Max(minVec, System.Numerics.Vector.Min(maxVec, vSamples));
                 var vScaled = vClamped * multVec;
                 for (int k = 0; k < vectorSize; k++) shortSamples[i + k] = (short)vScaled[k];

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
+using System.Buffers;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -131,10 +132,22 @@ if (piperConfig != null && piperModelPath != null)
 
                             if (rawSamples.Length == 0) continue;
 
-                            float[] readySamples = audioProc.Resample(rawSamples, fileRate, toneConfig.Data.SamplingRate);
-                            Console.WriteLine($"   -> Step 2: Resampled to {toneConfig.Data.SamplingRate}Hz. New count: {readySamples.Length}");
+                            // Передаємо довжину масиву як другий параметр
+                            var resampled = audioProc.Resample(rawSamples, rawSamples.Length, fileRate, toneConfig.Data.SamplingRate);
+                            Console.WriteLine($"   -> Step 2: Resampled to {toneConfig.Data.SamplingRate}Hz. New count: {resampled.Length}");
 
-                            var spec = audioProc.GetMagnitudeSpectrogram(readySamples);
+                            float[,] spec;
+                            try
+                            {
+                                // Передаємо тільки корисну частину (Span) у спектрограму
+                                spec = audioProc.GetMagnitudeSpectrogram(resampled.Buffer.AsSpan(0, resampled.Length));
+                            }
+                            finally
+                            {
+                                // Обов'язково повертаємо орендований масив системі, коли спектрограма готова!
+                                ArrayPool<float>.Shared.Return(resampled.Buffer);
+                            }
+
                             int frames = spec.GetLength(0);
                             Console.WriteLine($"   -> Step 3: Spectrogram frames: {frames}");
 
@@ -465,26 +478,63 @@ app.MapPost("/v1/audio/speech", async (
                         {
                             cancellationToken.ThrowIfCancellationRequested();
 
-                            float[] processedSamples = chunkSamples;
+                            // Змінні для відстеження стану поточного аудіо
+                            float[] currentBuffer = chunkSamples;
+                            int currentLength = chunkSamples.Length;
 
-                            if (canClone && targetFingerprint != null && sourceFingerprint != null)
+                            // Зберігаємо посилання на орендовані масиви, щоб потім повернути їх у пул
+                            float[]? rentedBuffer1 = null;
+                            float[]? rentedBuffer2 = null;
+
+                            try
                             {
-                                float[] resampledSamples = audioProc!.Resample(chunkSamples, piperConfig.Audio.SampleRate, outSampleRate);
-                                var specChunk = audioProc.GetMagnitudeSpectrogram(resampledSamples);
-                                if (specChunk.GetLength(0) > 0)
-                                    processedSamples = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
+                                if (canClone && targetFingerprint != null && sourceFingerprint != null)
+                                {
+                                    // РЕСЕМПЛІНГ 1
+                                    var r1 = audioProc!.Resample(currentBuffer, currentLength, piperConfig.Audio.SampleRate, outSampleRate);
+                                    rentedBuffer1 = r1.Buffer;
+
+                                    // Спектрограма приймає ReadOnlySpan, тому беремо лише корисну частину!
+                                    var specChunk = audioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
+
+                                    if (specChunk.GetLength(0) > 0)
+                                    {
+                                        // ApplyToneColor поки створює новий масив (ми це виправимо на наступному кроці)
+                                        currentBuffer = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
+                                        currentLength = currentBuffer.Length;
+                                    }
+                                    else
+                                    {
+                                        currentBuffer = rentedBuffer1;
+                                        currentLength = r1.Length;
+                                    }
+                                }
+
+                                if (outSampleRate != finalSampleRate)
+                                {
+                                    // РЕСЕМПЛІНГ 2
+                                    var r2 = audioProc!.Resample(currentBuffer, currentLength, outSampleRate, finalSampleRate);
+                                    rentedBuffer2 = r2.Buffer;
+                                    currentBuffer = rentedBuffer2;
+                                    currentLength = r2.Length;
+                                }
+
+                                // ВІДПРАВКА НА КОДУВАННЯ (Передаємо тільки корисну частину як Span)
+                                streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
+
+                                if (filter != null) Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
+                                streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
+
+                                if (useStreaming && streamConfig.FlushAfterEachSentence)
+                                {
+                                    targetStream.Flush();
+                                }
                             }
-
-                            if (outSampleRate != finalSampleRate)
-                                processedSamples = audioProc!.Resample(processedSamples, outSampleRate, finalSampleRate);
-
-                            streamManager.WriteChunk(processedSamples, filter);
-                            if (filter != null) Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
-                            streamManager.WriteChunk(absoluteSilence, filter);
-
-                            if (useStreaming && streamConfig.FlushAfterEachSentence)
+                            finally
                             {
-                                targetStream.Flush();
+                                // НАЙГОЛОВНІШЕ: Повертаємо орендовані масиви назад системі!
+                                if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);
+                                if (rentedBuffer2 != null) ArrayPool<float>.Shared.Return(rentedBuffer2);
                             }
                         }
                     }, cancellationToken);
