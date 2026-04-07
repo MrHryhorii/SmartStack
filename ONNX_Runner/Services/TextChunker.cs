@@ -11,19 +11,47 @@ public class TextChunker(ChunkerSettings settings)
     private static readonly char[] SentenceTerminators = ['.', '!', '?', '\n', '。', '！', '？', '؟', '۔', '։', ';'];
     private static readonly char[] PauseMarks = [',', ';', ':', '-', '—', '，', '、', '；', '：'];
 
-    // Містить найпопулярніші звернення багатьох європейських мов.
+    // Словник, що включає максимальну кількість відомих скорочень, після яких йде слово з Великої літери.
+    // Однолітерні (напр. "M.", "г.") сюди не входять, бо їх ловить Правило А.
     private static readonly HashSet<string> CommonTitles = new(StringComparer.OrdinalIgnoreCase)
     {
-        // English
-        "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "rev", "rep", "sen", "gov",
-        // Norwegian / Danish / Swedish
-        "hr", "fr", "fru", "kapt",
-        // German
-        "herr", "frau", "ing",
-        // Spanish / Portuguese
-        "srta", "sra", "don", "doña",
-        // French
-        "mme", "mlle", "mgr"
+        // ================= АНГЛІЙСЬКА (English) =================
+        // Загальні звернення
+        "mr", "mrs", "ms", "mx", "messrs", "mmes", "msgr", "esq", "hon", "rev", "fr", "prof", "dr", "sr", "jr",
+        // Політичні та юридичні
+        "rep", "sen", "gov", "pres", "amb", "sec", "min", "cmdr", "cllr", "ald", "mag", "jud",
+        // Військові
+        "gen", "col", "maj", "capt", "lieut", "lt", "sgt", "cpl", "pvt", "adm", "brig", "cmdr", "comm",
+        // Бізнес та посади
+        "ceo", "cfo", "cto", "vp", "dir", "mgr", "asst", "assoc",
+        // Географія та адреси
+        "mt", "ft", "st", "ave", "blvd", "rd", "hwy", "bldg", "ste", "apt", "vs", "etc",
+        
+        // ================= ІСПАНСЬКА / ПОРТУГАЛЬСЬКА (Spanish/Portuguese) =================
+        "srta", "sra", "don", "doña", "dra", "profa", "ldo", "lda", "arq", "gral", "cap", "sto", "sta", "av", "pza", "prof",
+        
+        // ================= ФРАНЦУЗЬКА (French) =================
+        "mme", "mlle", "mgr", "pr", "me", "vve", "ste", "st", "bd", "av",
+        
+        // ================= ІТАЛІЙСЬКА (Italian) =================
+        "sig", "sigra", "dott", "dottssa", "avv", "arch", "geom", "rag", "prof", "profssa", "mons", "ten", "cap", "gen",
+        
+        // ================= НІМЕЦЬКА / НІДЕРЛАНДСЬКА (German/Dutch) =================
+        "herr", "frau", "ing", "frl", "mag", "dipl", "med", "dhr", "mevr", "mej", "ir", "drs", "ds", "prof", "univ", "bakk",
+        
+        // ================= СКАНДИНАВСЬКІ (Nordic) =================
+        "hr", "fr", "fru", "frk", "kapt", "prof", "dr",
+        
+        // ================= СЛОВ'ЯНСЬКІ - ЛАТИНИЦЯ (Polish/Czech/Slovak) =================
+        "doc", "inż", "mec", "dyr", "św", "bł", "bc", "mgr", "mudr", "mvdr", "judr", "phdr", "rndr", "inž", "prof", "pan", "pani",
+        
+        // ================= КИРИЛИЦЯ (Ukrainian/Russian/Belarusian) =================
+        // Титули, звання, професії
+        "проф", "доц", "акад", "гр", "тов", "пан", "пані", "дир", "інж", "зав", "заст", "пом", "д-р", "ст", "мол",
+        // Географія та адреси
+        "вул", "пров", "просп", "бул", "обл", "пл", "ім", "буд", "кв", "мкр", "р-н", "пт", "сел", "смт", "просп",
+        // Інше
+        "рис", "табл", "див", "пор", "напр"
     };
 
     public List<string> Split(string text)
