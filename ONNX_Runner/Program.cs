@@ -59,9 +59,11 @@ var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<Chun
 var hardwareConfig = builder.Configuration.GetSection("HardwareSettings").Get<HardwareSettings>() ?? new HardwareSettings();
 var dspConfig = builder.Configuration.GetSection("DspSettings").Get<DspSettings>() ?? new DspSettings();
 var streamConfig = builder.Configuration.GetSection("StreamSettings").Get<StreamSettings>() ?? new StreamSettings();
+var onnxConfig = builder.Configuration.GetSection("OnnxSettings").Get<OnnxSettings>() ?? new OnnxSettings();
 
 // --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
 builder.Services.AddSingleton(streamConfig);
+builder.Services.AddSingleton(onnxConfig);
 
 if (piperConfig != null && piperModelPath != null)
 {
@@ -72,7 +74,7 @@ if (piperConfig != null && piperModelPath != null)
     var textChunker = new TextChunker(chunkerConfig);
     builder.Services.AddSingleton(textChunker);
 
-    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer);
+    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, onnxConfig);
     builder.Services.AddSingleton(runner);
 
     // Реєструємо мапер пунктуації
@@ -102,7 +104,7 @@ if (piperConfig != null && piperModelPath != null)
 
                 if (toneConfig != null)
                 {
-                    var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig);
+                    var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig);
                     var audioProc = new AudioProcessor(toneConfig);
 
                     // --- СКАНУВАННЯ ТА ГЕНЕРАЦІЯ ГОЛОСІВ ---

@@ -17,17 +17,14 @@ public class OpenVoiceRunner : IDisposable
     private static readonly float[] memoryArray = [1.0f];
     public int GetTargetSamplingRate() => _config.Data.SamplingRate;
 
-    public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config)
+    public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config, OnnxSettings onnxSettings)
     {
         _config = config;
-
-        // Викликаємо універсальний метод завантаження
-        (_extractSession, _colorSession) = InitializeSessions(extractPath, colorPath);
-
+        (_extractSession, _colorSession) = InitializeSessions(extractPath, colorPath, onnxSettings);
         PrintModelMetadata();
     }
 
-    private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath)
+    private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings)
     {
         int maxGpusToTry = 4;
 
@@ -36,6 +33,7 @@ public class OpenVoiceRunner : IDisposable
             try
             {
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                onnxSettings.ApplyTo(options); // ЗАСТОСУВАННЯ ТЮНІНГУ
                 options.AppendExecutionProvider_DML(deviceId);
 
                 var extract = new InferenceSession(extractPath, options);
@@ -53,14 +51,12 @@ public class OpenVoiceRunner : IDisposable
             }
         }
 
+        // Фолбек на CPU
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+        onnxSettings.ApplyTo(cpuOptions); // ЗАСТОСУВАННЯ ТЮНІНГУ НА CPU
+
         var cpuExtract = new InferenceSession(extractPath, cpuOptions);
         var cpuColor = new InferenceSession(colorPath, cpuOptions);
-
-        Console.ForegroundColor = ConsoleColor.Magenta;
-        Console.WriteLine("[HARDWARE] OpenVoice Models loaded on CPU.");
-        Console.ResetColor();
-
         return (cpuExtract, cpuColor);
     }
 

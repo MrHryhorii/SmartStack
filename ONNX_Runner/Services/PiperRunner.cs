@@ -16,17 +16,17 @@ public class PiperRunner : IDisposable
 
     public bool IsUsingGPU { get; private set; }
 
-    public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer)
+    public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, OnnxSettings onnxSettings)
     {
         _phonemizer = phonemizer;
         _config = config;
 
-        var (session, isGpu) = InitializeSession(modelPath);
+        var (session, isGpu) = InitializeSession(modelPath, onnxSettings);
         _session = session;
         IsUsingGPU = isGpu;
     }
 
-    private static (InferenceSession, bool) InitializeSession(string modelPath)
+    private static (InferenceSession, bool) InitializeSession(string modelPath, OnnxSettings onnxSettings)
     {
         int maxGpusToTry = 4;
         for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
@@ -34,7 +34,9 @@ public class PiperRunner : IDisposable
             try
             {
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                onnxSettings.ApplyTo(options); // ЗАСТОСУВАННЯ ТЮНІНГУ
                 options.AppendExecutionProvider_DML(deviceId);
+
                 var session = new InferenceSession(modelPath, options);
                 Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
                 return (session, true);
@@ -47,7 +49,10 @@ public class PiperRunner : IDisposable
             }
         }
 
+        // Фолбек на CPU
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+        onnxSettings.ApplyTo(cpuOptions); // ЗАСТОСУВАННЯ ТЮНІНГУ НА CPU
+
         var fallbackSession = new InferenceSession(modelPath, cpuOptions);
         Console.WriteLine("[HARDWARE] Piper Model loaded successfully on CPU.");
         return (fallbackSession, false);
