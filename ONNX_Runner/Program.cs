@@ -60,10 +60,15 @@ var hardwareConfig = builder.Configuration.GetSection("HardwareSettings").Get<Ha
 var dspConfig = builder.Configuration.GetSection("DspSettings").Get<DspSettings>() ?? new DspSettings();
 var streamConfig = builder.Configuration.GetSection("StreamSettings").Get<StreamSettings>() ?? new StreamSettings();
 var onnxConfig = builder.Configuration.GetSection("OnnxSettings").Get<OnnxSettings>() ?? new OnnxSettings();
+var effectsConfig = builder.Configuration.GetSection("EffectsSettings").Get<EffectsSettings>() ?? new EffectsSettings();
 
 // --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
 builder.Services.AddSingleton(streamConfig);
 builder.Services.AddSingleton(onnxConfig);
+
+// Реєструємо конфіг та сам двигун ефектів як Singleton
+builder.Services.AddSingleton(effectsConfig);
+builder.Services.AddSingleton<AudioEffectsEngine>();
 
 if (piperConfig != null && piperModelPath != null)
 {
@@ -340,6 +345,20 @@ var gpuSemaphore = new SemaphoreSlim(concurrentRequests, concurrentRequests);
 // Global set of allowed audio formats for validation
 var allowedFormats = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "wav", "mp3", "opus", "pcm" };
 
+// Helper method for applying frequency filters (EQ) to effects
+void ApplyEffectEq(Span<float> buffer, NAudio.Dsp.BiQuadFilter? hp, NAudio.Dsp.BiQuadFilter? lp)
+{
+    if (hp == null && lp == null) return;
+
+    for (int i = 0; i < buffer.Length; i++)
+    {
+        float sample = buffer[i];
+        if (hp != null) sample = hp.Transform(sample);
+        if (lp != null) sample = lp.Transform(sample);
+        buffer[i] = sample;
+    }
+}
+
 // ENDPOINT 1: Text-to-Speech Generation
 app.MapPost("/v1/audio/speech", async (
     HttpContext httpContext,
@@ -348,6 +367,7 @@ app.MapPost("/v1/audio/speech", async (
     [FromServices] UnifiedPhonemizer unifiedPhonemizer,
     [FromServices] PiperRunner piperRunner,
     [FromServices] IServiceProvider services,
+    [FromServices] AudioEffectsEngine effectsEngine,
     CancellationToken cancellationToken) => // Injected by ASP.NET to track client disconnects
 {
     // --- Request Validation ---
@@ -454,6 +474,35 @@ app.MapPost("/v1/audio/speech", async (
                     openVoice.VoiceLibrary.TryGetValue("piper_base", out sourceFingerprint);
                 }
 
+                // --- ARTISTIC FILTERS (EQ) SETUP ---
+                NAudio.Dsp.BiQuadFilter? effectHighPass = null;
+                NAudio.Dsp.BiQuadFilter? effectLowPass = null;
+
+                if (Enum.TryParse(request.Effect, true, out VoiceEffectType parsedEffect))
+                {
+                    switch (parsedEffect)
+                    {
+                        case VoiceEffectType.Telephone:
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 300f, 0.707f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 3400f, 0.707f);
+                            break;
+                        case VoiceEffectType.VintageRadio:
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 400f, 0.707f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 4000f, 0.707f);
+                            break;
+                        case VoiceEffectType.Megaphone:
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 500f, 2.0f); // Resonance for horn
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 3000f, 2.0f);
+                            break;
+                        case VoiceEffectType.VinylRecord:
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 60f, 0.707f); // Cut deep rumble
+                            break;
+                        case VoiceEffectType.Arcade:
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 2500f, 0.707f); // Muffled retro sound
+                            break;
+                    }
+                }
+
                 float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
                 int silenceSamplesCount = (int)(finalSampleRate * (chunkerConfig.SentencePauseSeconds / currentSpeed));
                 float[] absoluteSilence = new float[silenceSamplesCount];
@@ -466,7 +515,7 @@ app.MapPost("/v1/audio/speech", async (
                 {
                     var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length)>(10);
 
-                    // PRODUCER: Генерує аудіо (орендує масиви)
+                    // PRODUCER: Generates audio (rents arrays)
                     var producerTask = Task.Run(async () =>
                     {
                         foreach (var chunk in textChunks)
@@ -474,7 +523,7 @@ app.MapPost("/v1/audio/speech", async (
                             cancellationToken.ThrowIfCancellationRequested();
 
                             string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
-                            // SynthesizeAudioRaw повертає (Buffer, Length)
+                            // SynthesizeAudioRaw returns (Buffer, Length)
                             var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
 
                             await channel.Writer.WriteAsync(rawResult, cancellationToken);
@@ -482,7 +531,7 @@ app.MapPost("/v1/audio/speech", async (
                         channel.Writer.Complete();
                     }, cancellationToken);
 
-                    // CONSUMER: Обробляє аудіо і гарантовано повертає всі масиви у пул
+                    // CONSUMER: Processes audio and safely returns arrays to the pool
                     var consumerTask = Task.Run(async () =>
                     {
                         await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
@@ -506,7 +555,6 @@ app.MapPost("/v1/audio/speech", async (
                                     var specChunk = audioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
                                     if (specChunk.GetLength(0) > 0)
                                     {
-                                        // ВИКЛИКАЄМО ОНОВЛЕНИЙ МЕТОД
                                         var rClone = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
                                         rentedBuffer3 = rClone.Buffer;
 
@@ -528,9 +576,33 @@ app.MapPost("/v1/audio/speech", async (
                                     currentLength = r2.Length;
                                 }
 
+                                // ====== EFFECT FOR VOICE ======
+                                // Apply hardware frequency constraints (EQ)
+                                ApplyEffectEq(currentBuffer.AsSpan(0, currentLength), effectHighPass, effectLowPass);
+
+                                // Apply saturation, noise, and digital distortions
+                                effectsEngine.ApplyEffect(
+                                    currentBuffer.AsSpan(0, currentLength),
+                                    request.Effect,
+                                    request.EffectIntensity
+                                );
+
                                 streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
-                                if (filter != null) Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
+                                // ====== EFFECT FOR PAUSE (SILENCE) ======
+                                // Always clear the silence array to reset any accumulated noise
+                                Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
+
+                                // Apply EQ to silence so the background noise is also frequency-limited
+                                ApplyEffectEq(absoluteSilence.AsSpan(), effectHighPass, effectLowPass);
+
+                                // Apply the mathematical effect to absolute zero to generate matching background noise
+                                effectsEngine.ApplyEffect(
+                                    absoluteSilence.AsSpan(),
+                                    request.Effect,
+                                    request.EffectIntensity
+                                );
+
                                 streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
 
                                 if (useStreaming && streamConfig.FlushAfterEachSentence)
@@ -540,7 +612,7 @@ app.MapPost("/v1/audio/speech", async (
                             }
                             finally
                             {
-                                // --- ПРИБИРАЄМО ЗА СОБОЮ ---
+                                // --- CLEANUP ---
                                 ArrayPool<float>.Shared.Return(chunk.Buffer);
 
                                 if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);

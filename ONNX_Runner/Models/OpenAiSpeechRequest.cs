@@ -56,4 +56,10 @@ public class OpenAiSpeechRequest
     /// </summary>
     [JsonPropertyName("noise_w")]
     public float? NoiseW { get; set; }
+
+    /// <summary>
+    /// [Необов'язково] Параметр, що контролює інтенсивність застосування ефекту. Від 0.0 (немає ефекту) до 1.0 (повний ефект).
+    /// </summary>
+    public string? Effect { get; set; }         // Наприклад: "VintageRadio", "Robot"
+    public float? EffectIntensity { get; set; } // Від 0.0 до 1.0
 }
