@@ -48,19 +48,71 @@ public class AudioProcessor
         }
     }
 
-    public (float[] samples, int sampleRate) LoadWav(string path)
+    // Читає WAV, зводить в моно (якщо потрібно), змінює частоту (якщо потрібно) і повертає орендований буфер з нормалізованими даними
+    public (float[] Buffer, int Length) LoadAndNormalizeWav(string path, int targetSampleRate)
     {
         using var reader = new AudioFileReader(path);
-        int rate = reader.WaveFormat.SampleRate;
+        ISampleProvider provider = reader;
 
-        var allSamples = new List<float>();
-        float[] buffer = new float[rate];
-        int read;
-        while ((read = reader.Read(buffer, 0, buffer.Length)) > 0)
+        // ПЕРЕВІРКА НА СТЕРЕО ТА ЗВЕДЕННЯ В МОНО
+        if (reader.WaveFormat.Channels == 2)
         {
-            allSamples.AddRange(buffer.Take(read));
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"      [INFO] Файл стерео. Зводимо в моно (50% L / 50% R)...");
+            Console.ResetColor();
+            provider = new StereoToMonoSampleProvider(provider)
+            {
+                LeftVolume = 0.5f,
+                RightVolume = 0.5f
+            };
         }
-        return (allSamples.ToArray(), rate);
+        else if (reader.WaveFormat.Channels > 2)
+        {
+            provider = provider.ToMono(); // Для 5.1 / 7.1
+        }
+
+        // РЕСЕМПЛІНГ
+        if (provider.WaveFormat.SampleRate != targetSampleRate)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"      [INFO] Зміна частоти з {provider.WaveFormat.SampleRate}Hz на {targetSampleRate}Hz...");
+            Console.ResetColor();
+            provider = new WdlResamplingSampleProvider(provider, targetSampleRate);
+        }
+
+        // ЗЧИТУВАННЯ ПРЯМО В ОРЕНДОВАНИЙ МАСИВ
+        // Виділяємо буфер із запасом на 30 секунд аудіо
+        int initialSize = targetSampleRate * 30;
+        float[] buffer = ArrayPool<float>.Shared.Rent(initialSize);
+
+        int totalRead = 0;
+        int read;
+
+        // Читаємо шматками по 1 секунді (щоб не перевантажувати пам'ять)
+        float[] chunk = ArrayPool<float>.Shared.Rent(targetSampleRate);
+        try
+        {
+            while ((read = provider.Read(chunk, 0, chunk.Length)) > 0)
+            {
+                // Якщо буфер заповнений, орендуємо вдвічі більший і копіюємо дані
+                if (totalRead + read > buffer.Length)
+                {
+                    float[] newBuffer = ArrayPool<float>.Shared.Rent(buffer.Length * 2);
+                    Array.Copy(buffer, newBuffer, totalRead);
+                    ArrayPool<float>.Shared.Return(buffer); // Повертаємо старий буфер
+                    buffer = newBuffer;
+                }
+
+                Array.Copy(chunk, 0, buffer, totalRead, read);
+                totalRead += read;
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(chunk); // Завжди повертаємо тимчасовий буфер (chunk)
+        }
+
+        return (buffer, totalRead);
     }
 
     public class FloatArrayWaveProvider(float[] samples, int validLength, int sampleRate) : IWaveProvider

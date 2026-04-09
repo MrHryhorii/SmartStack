@@ -128,26 +128,35 @@ if (piperConfig != null && piperModelPath != null)
                         {
                             Console.ForegroundColor = ConsoleColor.DarkYellow;
                             Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
+                            Console.ResetColor();
 
-                            var (rawSamples, fileRate) = audioProc.LoadWav(wavPath);
-                            Console.WriteLine($"   -> Step 1: Read {rawSamples.Length} samples at {fileRate}Hz");
+                            int targetRate = toneConfig.Data.SamplingRate;
 
-                            if (rawSamples.Length == 0) continue;
+                            // Читаємо, зводимо в моно і ресемплимо прямо в орендований масив!
+                            var normalizedAudio = audioProc.LoadAndNormalizeWav(wavPath, targetRate);
+                            Console.WriteLine($"   -> Step 1 & 2: Loaded and normalized to {targetRate}Hz (Mono). Samples count: {normalizedAudio.Length}");
 
-                            // Передаємо довжину масиву як другий параметр
-                            var resampled = audioProc.Resample(rawSamples, rawSamples.Length, fileRate, toneConfig.Data.SamplingRate);
-                            Console.WriteLine($"   -> Step 2: Resampled to {toneConfig.Data.SamplingRate}Hz. New count: {resampled.Length}");
+                            if (normalizedAudio.Length == 0)
+                            {
+                                ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
+                                continue;
+                            }
 
                             float[,] spec;
                             try
                             {
-                                // Передаємо тільки корисну частину (Span) у спектрограму
-                                spec = audioProc.GetMagnitudeSpectrogram(resampled.Buffer.AsSpan(0, resampled.Length));
+                                // Передаємо тільки корисну частину орендованого масиву
+                                spec = audioProc.GetMagnitudeSpectrogram(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length));
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"   -> [ERROR] Spectrogram generation failed: {ex.Message}");
+                                continue;
                             }
                             finally
                             {
-                                // Обов'язково повертаємо орендований масив системі, коли спектрограма готова!
-                                ArrayPool<float>.Shared.Return(resampled.Buffer);
+                                // Повертаємо масив з аудіо-даними у пул (GC відпочиває)
+                                ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
                             }
 
                             int frames = spec.GetLength(0);
