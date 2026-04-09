@@ -480,25 +480,81 @@ app.MapPost("/v1/audio/speech", async (
 
                 if (Enum.TryParse(request.Effect, true, out VoiceEffectType parsedEffect))
                 {
+                    // Calculate physical limit (Nyquist limit minus 2% for mathematical safety margin)
+                    float nyquistLimit = finalSampleRate / 2.0f * 0.98f;
+                    // Get administrative limit from appsettings (DSP config)
+                    float dspLimit = (float)dspConfig.LowPassCutoffFrequency;
+                    // Absolute ceiling is the strictest of both limits to prevent NaN crashes
+                    float absoluteMaxFreq = Math.Min(nyquistLimit, dspLimit);
+                    // Local safety function: ensures target frequency NEVER exceeds the absolute max
+                    float SafeFreq(float targetFreq) => Math.Min(targetFreq, absoluteMaxFreq);
+
                     switch (parsedEffect)
                     {
                         case VoiceEffectType.Telephone:
-                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 300f, 0.707f);
-                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 3400f, 0.707f);
+                            // Mimics G.711 telecom standard. 
+                            // 300Hz-3400Hz is the exact bandwidth of classic phone lines.
+                            // Q=1.2 adds a slight resonance mimicking a cheap plastic earpiece.
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, Math.Min(300f, absoluteMaxFreq - 100f), 1.2f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(3400f), 1.2f);
                             break;
+
                         case VoiceEffectType.VintageRadio:
-                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 400f, 0.707f);
-                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 4000f, 0.707f);
+                            // Mimics old paper cone speakers inside a wooden cabinet.
+                            // Bandwidth is slightly narrower than telephone (400Hz-3500Hz).
+                            // Q=1.5 emphasizes the cutoff frequencies, creating a classic "boxy" sound.
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, Math.Min(400f, absoluteMaxFreq - 100f), 1.5f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(3500f), 1.5f);
                             break;
+
                         case VoiceEffectType.Megaphone:
-                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 500f, 2.0f); // Resonance for horn
-                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 3000f, 2.0f);
+                            // Mimics a metallic horn. 
+                            // Horns project mid-frequencies (500Hz-3000Hz) extremely well but lack bass/treble.
+                            // Extreme Q=2.0 creates a sharp, piercing resonance at the edges.
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, Math.Min(500f, absoluteMaxFreq - 100f), 2.0f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(3000f), 2.0f);
                             break;
+
+                        case VoiceEffectType.Overdrive:
+                            // Walkie-Talkie / Military radio effect.
+                            // Heavily restricted (600Hz-2800Hz) to cut through battlefield noise.
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, Math.Min(600f, absoluteMaxFreq - 100f), 1.5f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(2800f), 1.5f);
+                            break;
+
                         case VoiceEffectType.VinylRecord:
-                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 60f, 0.707f); // Cut deep rumble
+                            // Analog turntables struggle with extreme sub-bass (causes needle skipping).
+                            // HighPass at 80Hz removes turntable motor rumble. 
+                            // LowPass at 12000Hz rolls off digital harshness for analog "warmth".
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 80f, 0.707f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(12000f), 0.5f);
                             break;
+
                         case VoiceEffectType.Arcade:
-                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, 2500f, 0.707f); // Muffled retro sound
+                            // Mimics a tiny 8-bit console piezo speaker (e.g., GameBoy).
+                            // No bass (300Hz cut) and muffled highs (4000Hz cut) to emphasize the 3-bit crush.
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, Math.Min(300f, absoluteMaxFreq - 100f), 1.0f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(4000f), 1.0f);
+                            break;
+
+                        case VoiceEffectType.Whisper:
+                            // Whispering relies on air (high frequencies) and lacks vocal cord engagement (low frequencies).
+                            // HighPass at 250Hz removes the "chest boom" to make it sound purely breathy.
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 250f, 0.707f);
+                            break;
+
+                        case VoiceEffectType.Robot:
+                            // Foldback distortion generates extreme high-frequency artifacts (aliasing).
+                            // LowPass at 6000Hz tames the digital harshness. 
+                            // HighPass at 150Hz removes "mud" to keep the metallic voice clear.
+                            effectHighPass = NAudio.Dsp.BiQuadFilter.HighPassFilter(finalSampleRate, 150f, 0.707f);
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(6000f), 0.707f);
+                            break;
+
+                        case VoiceEffectType.Alien:
+                            // Sine phase-distortion multiplies harmonics infinitely.
+                            // A strict LowPass at 8000Hz keeps the spacey/watery effect but prevents ear-bleeding highs.
+                            effectLowPass = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, SafeFreq(8000f), 0.707f);
                             break;
                     }
                 }
