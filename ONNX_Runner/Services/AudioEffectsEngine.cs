@@ -3,205 +3,235 @@ using System.Runtime.CompilerServices;
 
 namespace ONNX_Runner.Services;
 
-public class AudioEffectsEngine(EffectsSettings config)
+public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 {
     private readonly EffectsSettings _globalConfig = config;
+    private readonly int _sampleRate = sampleRate;
+
+    // =================================================================
+    // КОНСТАНТИ БАЛАНСУВАННЯ ГУЧНОСТІ (MAKEUP GAIN)
+    // =================================================================
+    // Компенсують втрату (або надлишок) енергії після фільтрації та спотворень, 
+    // щоб усі ефекти звучали на одному рівні гучності (Unity Gain).
+
+    private const float GainTelephone = 1.8f;
+    private const float GainVintageRadio = 1.6f;
+    private const float GainVinylRecord = 1.2f;
+    private const float GainRobot = 1.4f;
+    private const float GainAlien = 1.4f;
+    private const float GainMegaphone = 1.5f;
+    private const float GainOverdrive = 0.85f; // Зменшуємо, бо перегруз занадто гучний
+    private const float GainWhisper = 1.6f;
+    private const float GainArcade = 1.0f;
+
+    // =================================================================
+    // ЗМІННІ СТАНУ (DSP Меморі)
+    // =================================================================
+
+    // --- VINYL RECORD (Аналогова пластинка) ---
+    private float _crackleDecay = 0f;
+    private float _pinkNoiseState = 0f; // Для генерації м'якого тертя
+
+    // --- VINTAGE RADIO (Ламповий приймач) ---
+    private float _acHumPhase = 0f; // Для гудіння трансформатора
+    private float _radioStaticState = 0f;
+
+    // --- СИНТЕТИКА (LFO Генератори) ---
+    private float _lfoPhase = 0f;
+
+    // --- WHISPER (Шепіт) ---
+    private float _breathNoiseState = 0f; // Фільтр для перетворення радіошуму на звук дихання
+
+    // --- ALIEN (Прибулець) ---
+    private readonly float[] _alienBuffer = new float[2048];
+    private int _alienWritePos = 0;
 
     public void ApplyEffect(Span<float> buffer, string? requestedEffect = null, float? requestedIntensity = null)
     {
-        // Перевірка глобального налаштування: якщо ефекти вимкнені адміністратором - вихід
         if (!_globalConfig.EnableGlobalEffects) return;
 
-        // Визначаємо тип ефекту: пріоритет у запиту користувача, інакше - значення за замовчуванням
         string effectString = requestedEffect ?? _globalConfig.DefaultEffect;
         if (!Enum.TryParse(effectString, true, out VoiceEffectType effectType) || effectType == VoiceEffectType.None)
         {
             return;
         }
 
-        // Розрахунок сили ефекту (Dry/Wet mix) від 0.0 до 1.0
         float intensity = requestedIntensity ?? _globalConfig.DefaultIntensity;
         intensity = Math.Clamp(intensity, 0.0f, 1.0f);
 
-        // Якщо інтенсивність нульова - не витрачаємо ресурси на цикл
         if (intensity <= 0.001f) return;
 
-        // Процесор один раз обирає гілку і далі виконує чистий цикл без розгалужень
         switch (effectType)
         {
-            case VoiceEffectType.VintageRadio:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessVintageRadio(buffer[i]), intensity);
-                break;
-
             case VoiceEffectType.Telephone:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessTelephone(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessTelephone(buffer[i]), intensity);
                 break;
-
+            case VoiceEffectType.VintageRadio:
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessVintageRadio(buffer[i]), intensity);
+                break;
             case VoiceEffectType.VinylRecord:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessVinylRecord(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessVinylRecord(buffer[i]), intensity);
                 break;
-
             case VoiceEffectType.Megaphone:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessMegaphone(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessMegaphone(buffer[i]), intensity);
                 break;
-
             case VoiceEffectType.Robot:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessRobot(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessRobot(buffer[i]), intensity);
                 break;
-
             case VoiceEffectType.Overdrive:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessOverdrive(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessOverdrive(buffer[i]), intensity);
                 break;
-
             case VoiceEffectType.Alien:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessAlien(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessAlien(buffer[i]), intensity);
                 break;
-
             case VoiceEffectType.Whisper:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessWhisper(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessWhisper(buffer[i]), intensity);
                 break;
-
             case VoiceEffectType.Arcade:
-                for (int i = 0; i < buffer.Length; i++)
-                    buffer[i] = Mix(buffer[i], ProcessArcade(buffer[i]), intensity);
+                for (int i = 0; i < buffer.Length; i++) buffer[i] = Mix(buffer[i], ProcessArcade(buffer[i]), intensity);
                 break;
         }
     }
 
-    // =================================================================
-    // АЛГОРИТМИ ЕФЕКТІВ (DSP логіка)
-    // =================================================================
-
-    // Лінійна інтерполяція (Lerp) між оригінальним і обробленим сигналом
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float Mix(float dry, float wet, float intensity) => (dry * (1.0f - intensity)) + (wet * intensity);
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float ProcessVintageRadio(float sample)
-    {
-        // Сатурація (MathF.Tanh): М'яко загинає піки хвилі, створюючи "лампове" тепло.
-        float processed = MathF.Tanh(sample * 3.0f) * 0.8f;
-
-        // Адитивний шум: Додаємо високочастотне ефірне шипіння постійної амплітуди.
-        float noise = (Random.Shared.NextSingle() * 2f - 1f) * 0.02f;
-
-        return processed + noise;
-    }
+    // =================================================================
+    // АЛГОРИТМИ ЕФЕКТІВ
+    // =================================================================
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float ProcessTelephone(float sample)
     {
-        // Hard Clipping: Жорстко обрізаємо амплітуду. Створює різкі транзисторні спотворення.
-        float processed = sample * 5.0f;
-        if (processed > 1.0f) processed = 1.0f;
-        else if (processed < -1.0f) processed = -1.0f;
-
-        // Bitcrushing: Квантування (округлення) сигналу до 8-бітних рівнів. Дає "цифровий пісок".
-        float bitDepth = 8f;
-        return MathF.Round(processed * bitDepth) / bitDepth * 0.7f;
+        float carbon = sample > 0 ? MathF.Tanh(sample * 3.0f) : MathF.Max(sample * 3.0f, -0.8f);
+        return MathF.Tanh(carbon) * GainTelephone;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float ProcessVinylRecord(float sample)
+    private float ProcessVintageRadio(float sample)
     {
-        float processed = sample;
+        float drive = sample * 5.0f;
+        float processed = drive > 0 ? MathF.Tanh(drive) : (MathF.Exp(drive) - 1.0f);
 
-        // Імпульсний шум: Штучний сплеск високої амплітуди (тріск голки об пилинку).
-        if (Random.Shared.NextSingle() > 0.9995f)
+        float humPhaseStep = MathF.PI * 2.0f * 50.0f / _sampleRate;
+        _acHumPhase += humPhaseStep;
+        if (_acHumPhase > MathF.PI * 2.0f) _acHumPhase -= MathF.PI * 2.0f;
+        float hum = MathF.Sin(_acHumPhase) * 0.015f;
+
+        float white = Random.Shared.NextSingle() * 2f - 1f;
+        _radioStaticState = 0.9f * _radioStaticState + 0.1f * white;
+
+        return MathF.Tanh((processed * 0.8f) + hum + (_radioStaticState * 0.02f)) * GainVintageRadio;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float ProcessVinylRecord(float sample)
+    {
+        // АНАЛОГОВА ТЕПЛОТА (Warmth - 2nd Harmonic Distortion)
+        float drive = sample * 1.2f;
+        float warmth = drive + (drive * drive * 0.15f);
+        float processed = MathF.Tanh(warmth);
+
+        // ФІЗИЧНИЙ ТРІСК (Pops & Clicks)
+        if (Random.Shared.NextSingle() > 0.9994f)
         {
-            processed += (Random.Shared.NextSingle() * 2f - 1f) * 0.6f;
+            _crackleDecay = 1.0f;
         }
 
-        // Шумовий фон: Імітація тертя голки об вінілову масу.
-        float vinylHiss = (Random.Shared.NextSingle() * 2f - 1f) * 0.015f;
-        processed += vinylHiss;
+        float clickNoise = Random.Shared.NextSingle() * 2f - 1f;
+        float crackle = clickNoise * _crackleDecay;
 
-        // Компресія: Утримуємо різкі імпульси в межах -1..1.
-        return MathF.Tanh(processed * 1.5f) * 0.9f;
+        // Згасання 4 мілісекунди
+        _crackleDecay *= MathF.Exp(-1.0f / (_sampleRate * 0.004f));
+
+        // ФОНОВЕ ТЕРТЯ (Surface Noise & Rumble)
+        float white = Random.Shared.NextSingle() * 2f - 1f;
+        _pinkNoiseState = 0.98f * _pinkNoiseState + 0.02f * white;
+
+        float surfaceNoise = _pinkNoiseState * 0.03f;
+
+        float mix = (processed * 0.9f) + (crackle * 0.2f) + surfaceNoise;
+        return MathF.Tanh(mix) * GainVinylRecord;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float ProcessRobot(float sample)
+    {
+        float lfoFreq = 30.0f;
+        float phaseStep = MathF.PI * 2.0f * lfoFreq / _sampleRate;
+
+        _lfoPhase += phaseStep;
+        if (_lfoPhase > MathF.PI * 2.0f) _lfoPhase -= MathF.PI * 2.0f;
+
+        float lfo = MathF.Sin(_lfoPhase);
+
+        return MathF.Tanh((sample * 0.6f) + (sample * lfo * 0.6f)) * GainRobot;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float ProcessAlien(float sample)
+    {
+        _alienBuffer[_alienWritePos] = sample;
+
+        float lfoFreq = 2.0f;
+        float phaseStep = MathF.PI * 2.0f * lfoFreq / _sampleRate;
+        _lfoPhase += phaseStep;
+        if (_lfoPhase > MathF.PI * 2.0f) _lfoPhase -= MathF.PI * 2.0f;
+
+        float delayMs = 15.0f + MathF.Sin(_lfoPhase) * 10.0f;
+        int delaySamples = (int)(delayMs * _sampleRate / 1000.0f);
+
+        int readPos = _alienWritePos - delaySamples;
+        if (readPos < 0) readPos += 2048;
+
+        float delayedSample = _alienBuffer[readPos];
+        _alienWritePos = (_alienWritePos + 1) % 2048;
+
+        return MathF.Tanh((sample * 0.6f) + (delayedSample * 0.6f)) * GainAlien;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float ProcessMegaphone(float sample)
     {
-        // Асиметричний кліппінг: Позитивні і негативні півхвилі спотворюються по-різному.
-        // Це імітує фізичну властивість мембрани дешевого рупора.
         float processed = sample * 4.0f;
         if (processed > 0) processed = MathF.Tanh(processed);
-        else processed = MathF.Max(processed, -0.6f); // Жорсткий зріз знизу
+        else processed = MathF.Max(processed, -0.6f);
 
-        return processed * 0.8f;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float ProcessRobot(float sample)
-    {
-        // Foldback-спотворення: Замість зрізання піку (Clipping), хвиля "відбивається" всередину.
-        // Це створює сильний металевий, синтетичний тембр.
-        float processed = sample * 3.0f;
-        if (processed > 1.0f) processed = 2.0f - processed;
-        else if (processed < -1.0f) processed = -2.0f - processed;
-
-        // Екстремальне квантування: Робить звук ще більш штучним.
-        float bitDepth = 4f;
-        return MathF.Round(processed * bitDepth) / bitDepth;
+        return processed * GainMegaphone;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float ProcessOverdrive(float sample)
     {
-        // Екстремальний гейн (Gain): Підсилюємо сигнал у 10 разів.
         float processed = sample * 10.0f;
-
-        // Кубічне спотворення: Класична формула гітарного овердрайву (x - x^3 / 3).
-        // Додає дуже багато непарних гармонік (відчуття "агресії" та рації).
         if (processed > 1.0f) processed = 1.0f;
         else if (processed < -1.0f) processed = -1.0f;
         else processed -= MathF.Pow(processed, 3) / 3.0f;
 
-        return processed * 1.2f; // Компенсація втрати гучності
+        return processed * GainOverdrive;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float ProcessAlien(float sample)
+    private float ProcessWhisper(float sample)
     {
-        // Phase Distortion (Фазове спотворення): Пропускаємо амплітуду через синусоїду.
-        // Чим гучніший звук, тим сильніше він "загортається", створюючи лазерний тембр.
-        float processed = MathF.Sin(sample * 15.0f);
+        float white = Random.Shared.NextSingle() * 2f - 1f;
 
-        return processed * 0.8f;
-    }
+        _breathNoiseState = 0.85f * _breathNoiseState + 0.15f * white;
+        float breath = white - _breathNoiseState;
 
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float ProcessWhisper(float sample)
-    {
-        // Амплітудна модуляція шуму (AM Noise): Генеруємо шум, що залежить від гучності голосу.
-        float noise = Random.Shared.NextSingle() * 2f - 1f;
+        float raspy = (sample * 0.7f) + (breath * MathF.Abs(sample) * 1.0f);
 
-        // Множимо шум на абсолютну гучність голосу. Це "приклеює" шипіння до фонем.
-        float raspy = sample + (noise * MathF.Abs(sample) * 2.0f);
-
-        // Згладжуємо результат через Tanh для запобігання цифрового перевантаження.
-        return MathF.Tanh(raspy) * 0.9f;
+        return MathF.Tanh(raspy) * GainWhisper;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float ProcessArcade(float sample)
     {
-        // Hard Square Clipping: Екстремально посилюємо і жорстко зрізаємо хвилю.
         float processed = sample * 6.0f;
         if (processed > 1.0f) processed = 1.0f;
         else if (processed < -1.0f) processed = -1.0f;
-
-        // Знищення точності: Квантування до 3 рівнів гучності (8-бітний ретро-стиль).
         float bitDepth = 3f;
-        return MathF.Round(processed * bitDepth) / bitDepth * 0.8f;
+
+        return MathF.Round(processed * bitDepth) / bitDepth * GainArcade;
     }
 }

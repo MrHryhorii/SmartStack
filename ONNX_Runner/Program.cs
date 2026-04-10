@@ -65,10 +65,7 @@ var effectsConfig = builder.Configuration.GetSection("EffectsSettings").Get<Effe
 // --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
 builder.Services.AddSingleton(streamConfig);
 builder.Services.AddSingleton(onnxConfig);
-
-// Реєструємо конфіг та сам двигун ефектів як Singleton
 builder.Services.AddSingleton(effectsConfig);
-builder.Services.AddSingleton<AudioEffectsEngine>();
 
 if (piperConfig != null && piperModelPath != null)
 {
@@ -367,7 +364,6 @@ app.MapPost("/v1/audio/speech", async (
     [FromServices] UnifiedPhonemizer unifiedPhonemizer,
     [FromServices] PiperRunner piperRunner,
     [FromServices] IServiceProvider services,
-    [FromServices] AudioEffectsEngine effectsEngine,
     CancellationToken cancellationToken) => // Injected by ASP.NET to track client disconnects
 {
     // --- Request Validation ---
@@ -473,6 +469,9 @@ app.MapPost("/v1/audio/speech", async (
                     openVoice!.VoiceLibrary.TryGetValue(request.Voice, out targetFingerprint);
                     openVoice.VoiceLibrary.TryGetValue("piper_base", out sourceFingerprint);
                 }
+
+                // Створюємо ізольований двигун ефектів ТІЛЬКИ для цього запиту!
+                var effectsEngine = new AudioEffectsEngine(effectsConfig, finalSampleRate);
 
                 // --- ARTISTIC FILTERS (EQ) SETUP ---
                 NAudio.Dsp.BiQuadFilter? effectHighPass = null;
