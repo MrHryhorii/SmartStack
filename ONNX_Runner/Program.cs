@@ -61,11 +61,13 @@ var dspConfig = builder.Configuration.GetSection("DspSettings").Get<DspSettings>
 var streamConfig = builder.Configuration.GetSection("StreamSettings").Get<StreamSettings>() ?? new StreamSettings();
 var onnxConfig = builder.Configuration.GetSection("OnnxSettings").Get<OnnxSettings>() ?? new OnnxSettings();
 var effectsConfig = builder.Configuration.GetSection("EffectsSettings").Get<EffectsSettings>() ?? new EffectsSettings();
+var clonerConfig = builder.Configuration.GetSection("ClonerSettings").Get<ClonerSettings>() ?? new ClonerSettings(); // <--- ДОДАТИ ЦЕ
 
 // --- РЕЄСТРАЦІЯ СЕРВІСІВ ---
 builder.Services.AddSingleton(streamConfig);
 builder.Services.AddSingleton(onnxConfig);
 builder.Services.AddSingleton(effectsConfig);
+builder.Services.AddSingleton(clonerConfig);
 
 if (piperConfig != null && piperModelPath != null)
 {
@@ -375,6 +377,8 @@ app.MapPost("/v1/audio/speech", async (
         {
             // --- Pipeline Configuration ---
             var streamConfig = services.GetRequiredService<StreamSettings>();
+            var clonerConfig = services.GetRequiredService<ClonerSettings>();
+
             bool shouldStream = request.Stream ?? streamConfig.EnableStreaming;
             bool isWav = request.ResponseFormat.Equals("wav", StringComparison.OrdinalIgnoreCase);
 
@@ -384,7 +388,10 @@ app.MapPost("/v1/audio/speech", async (
             bool useOpenVoice = !string.IsNullOrEmpty(request.Voice);
             var openVoice = services.GetService<OpenVoiceRunner>();
             var audioProc = services.GetService<AudioProcessor>();
-            bool canClone = useOpenVoice && openVoice != null && audioProc != null;
+
+            // Глобальний рубильник EnableCloning.
+            // Якщо він false, сервер миттєво віддасть базовий голос Piper, ігноруючи OpenVoice, що економить ресурси GPU/CPU.
+            bool canClone = clonerConfig.EnableCloning && useOpenVoice && openVoice != null && audioProc != null;
 
             // Determine target sample rates based on requested format and pipeline capabilities
             int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
@@ -505,13 +512,31 @@ app.MapPost("/v1/audio/speech", async (
                             {
                                 if (canClone && targetFingerprint != null && sourceFingerprint != null)
                                 {
+                                    // Отримуємо поточні налаштування сервера
+                                    var clonerConfig = services.GetRequiredService<ClonerSettings>();
+                                    float intensity = clonerConfig.CloneIntensity;
+
+                                    // ЛІНІЙНА ІНТЕРПОЛЯЦІЯ В ЛАТЕНТНОМУ ПРОСТОРІ (Latent Space Blending)
+                                    // Зліпок (fingerprint) - це вектор із 256 чисел. Ми знаходимо точку між базовим голосом і клоном.
+                                    // Intensity = 1.0: 100% копія цільового голосу.
+                                    // Intensity = 0.5: Гібрид (50% базової моделі, 50% клону).
+                                    // Intensity > 1.0: Екстраполяція (карикатурне посилення рис цільового голосу).
+                                    float[] blendedTarget = new float[targetFingerprint.Length];
+                                    for (int j = 0; j < blendedTarget.Length; j++)
+                                    {
+                                        blendedTarget[j] = sourceFingerprint[j] + (targetFingerprint[j] - sourceFingerprint[j]) * intensity;
+                                    }
+
                                     var r1 = audioProc!.Resample(currentBuffer, currentLength, piperConfig.Audio.SampleRate, outSampleRate);
                                     rentedBuffer1 = r1.Buffer;
 
                                     var specChunk = audioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
                                     if (specChunk.GetLength(0) > 0)
                                     {
-                                        var rClone = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, targetFingerprint);
+                                        // Передаємо ЗМІШАНИЙ ВЕКТОР (blendedTarget) у нейромережу замість оригінального
+                                        float tau = clonerConfig.ToneTemperature;
+                                        var rClone = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, blendedTarget, tau);
+
                                         rentedBuffer3 = rClone.Buffer;
 
                                         currentBuffer = rentedBuffer3;

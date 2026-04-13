@@ -60,6 +60,6 @@ public class OpenAiSpeechRequest
     /// <summary>
     /// [Необов'язково] Параметр, що контролює інтенсивність застосування ефекту. Від 0.0 (немає ефекту) до 1.0 (повний ефект).
     /// </summary>
-    public string? Effect { get; set; }         // Наприклад: "VintageRadio", "Robot"
+    public string? Effect { get; set; }         // Наприклад: "Overdrive", "Robot"
     public float? EffectIntensity { get; set; } // Від 0.0 до 1.0
 }

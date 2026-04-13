@@ -262,7 +262,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _delayBuffer[_delayWritePos] = x;
         _delayWritePos = (_delayWritePos + 1) & 4095;
 
-        // ФІКС 4: Менше оригінального голосу, більше відлуння - звук стає значно густішим і "дорожчим"
+        // Менше оригінального голосу, більше відлуння
         float wet = (x * 0.4f) + (delayed1 * 0.3f) + (delayed2 * 0.3f);
         return Math.Clamp(wet, -1.0f, 1.0f);
     }

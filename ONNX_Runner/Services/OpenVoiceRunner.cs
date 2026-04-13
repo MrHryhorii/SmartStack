@@ -14,7 +14,6 @@ public class OpenVoiceRunner : IDisposable
     // Словник: Ключ - назва голосу (напр. "MorganFreeman"), Значення - зліпок (256 чисел)
     public Dictionary<string, float[]> VoiceLibrary { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    private static readonly float[] memoryArray = [1.0f];
     public int GetTargetSamplingRate() => _config.Data.SamplingRate;
 
     public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config, OnnxSettings onnxSettings)
@@ -164,7 +163,7 @@ public class OpenVoiceRunner : IDisposable
         }
     }
 
-    public (float[] Buffer, int Length) ApplyToneColor(float[,] spectrogram, float[] srcFingerprint, float[] destFingerprint)
+    public (float[] Buffer, int Length) ApplyToneColor(float[,] spectrogram, float[] srcFingerprint, float[] destFingerprint, float tau = 1.0f)
     {
         int frames = spectrogram.GetLength(0);
         int bins = spectrogram.GetLength(1);
@@ -189,7 +188,7 @@ public class OpenVoiceRunner : IDisposable
             var srcTensor = new DenseTensor<float>(srcFingerprint, [1, channels, 1]);
             var destTensor = new DenseTensor<float>(destFingerprint, [1, channels, 1]);
             var lengthTensor = new DenseTensor<long>(new[] { (long)frames }, [1]);
-            var tauTensor = new DenseTensor<float>(memoryArray, [1]);
+            var tauTensor = new DenseTensor<float>(new[] { tau }, [1]);
 
             var inputs = new List<NamedOnnxValue>
             {
