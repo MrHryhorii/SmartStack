@@ -3,35 +3,138 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Voice Streaming Tester</title>
+    <title>AI Voice Streaming Tester - Retro Edition</title>
     <style>
-        /* Base styling for layout and typography */
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; background: darkgrey; color: #333; }
-        .card { background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        /* Base styling: Dark deep blue/black background for eye comfort */
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            max-width: 800px; 
+            margin: 40px auto; 
+            padding: 20px; 
+            background: #101014; 
+            color: #d8d8e6; 
+        }
+        
+        /* Main card with subtle neon glow */
+        .card { 
+            background: #1a1a24; 
+            padding: 25px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 0 10px rgba(0, 243, 255, 0.05); 
+            border: 1px solid #2a2a36;
+        }
+        
+        h2 { 
+            color: #00f3ff; 
+            text-shadow: 0 0 10px rgba(0, 243, 255, 0.3);
+            margin-top: 0;
+            text-align: center;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+
         .form-group { margin-bottom: 15px; }
-        label { font-weight: bold; display: block; margin-bottom: 5px; }
         
-        /* Input field styling */
-        input[type="text"], input[type="number"], select, textarea, input[type="url"] { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 5px; box-sizing: border-box; }
-        textarea { resize: vertical; height: 120px; font-family: inherit; }
+        label { 
+            font-weight: 600; 
+            display: block; 
+            margin-bottom: 6px; 
+            color: #bcaafc; /* Soft purple */
+            font-size: 0.9em;
+            letter-spacing: 0.5px;
+        }
         
-        /* Checkbox and button styling */
+        /* Input fields with Cyberpunk aesthetic */
+        input[type="text"], input[type="number"], select, textarea, input[type="url"] { 
+            width: 100%; 
+            padding: 12px; 
+            background: #0d0d12;
+            color: #00f3ff; /* Neon cyan text */
+            border: 1px solid #3a3a4c; 
+            border-radius: 6px; 
+            box-sizing: border-box; 
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+        
+        textarea { resize: vertical; height: 120px; }
+
+        /* Focus states for glow effect without blinding the user */
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #ff00ff;
+            box-shadow: 0 0 12px rgba(255, 0, 255, 0.2);
+            background: #111118;
+        }
+        
+        /* Checkbox styling */
         .checkbox-group { display: flex; align-items: center; gap: 10px; }
-        .checkbox-group input { width: auto; transform: scale(1.2); }
-        button { background: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 16px; font-weight: bold; width: 100%; transition: 0.2s; }
-        button:hover { background: #0056b3; }
-        button:disabled { background: #aaa; cursor: not-allowed; }
+        .checkbox-group input { width: auto; transform: scale(1.2); accent-color: #ff00ff; }
         
-        /* Audio player and log console styling */
-        audio { width: 100%; margin-top: 20px; }
-        .logs { margin-top: 20px; background: #1e1e1e; color: #00ff00; padding: 15px; border-radius: 5px; height: 150px; overflow-y: auto; font-family: monospace; font-size: 13px; }
-        .endpoint-group { background: #eef2f5; padding: 15px; border-radius: 5px; margin-bottom: 20px; border: 1px dashed #b0c4de; }
+        /* Neon Button */
+        button { 
+            background: linear-gradient(135deg, #b100ff, #ff00ff); 
+            color: white; 
+            border: none; 
+            padding: 14px 20px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            font-weight: bold; 
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            width: 100%; 
+            box-shadow: 0 0 15px rgba(255, 0, 255, 0.3);
+            transition: 0.2s all ease-in-out; 
+        }
+        button:hover { 
+            box-shadow: 0 0 25px rgba(255, 0, 255, 0.6); 
+            transform: translateY(-2px);
+        }
+        button:disabled { 
+            background: #333; 
+            color: #666;
+            box-shadow: none; 
+            cursor: not-allowed; 
+            transform: translateY(0);
+        }
+        
+        /* Audio player dark mode */
+        audio { 
+            width: 100%; 
+            margin-top: 25px; 
+            filter: invert(90%) hue-rotate(180deg); /* CSS trick to make default audio player dark */
+            opacity: 0.8;
+        }
+        
+        /* Retro terminal logs */
+        .logs { 
+            margin-top: 10px; 
+            background: #050508; 
+            color: #ff0055; /* Synthwave pink/red */
+            padding: 15px; 
+            border-radius: 6px; 
+            height: 150px; 
+            overflow-y: auto; 
+            font-family: 'Courier New', Courier, monospace; 
+            font-size: 13px; 
+            border: 1px solid #222;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.8);
+        }
+        
+        .endpoint-group { 
+            background: #14141d; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin-bottom: 25px; 
+            border: 1px dashed #00f3ff; 
+        }
     </style>
 </head>
 <body>
 
 <div class="card">
-    <h2>🎙️ AI Voice API Tester</h2>
+    <h2>🎙️ Voice API Tester</h2>
 
     <div class="form-group endpoint-group">
         <label for="endpoint">API Endpoint URL:</label>
@@ -70,39 +173,36 @@
         </div>
     </div>
 
-    <div style="display: flex; gap: 15px; padding-top: 5px; border-top: 1px solid #eee;">
-        <div class="form-group" style="flex: 1;">
-            <label for="effect">Voice Effect:</label>
+    <div style="display: flex; gap: 15px; padding-top: 15px; border-top: 1px solid #2a2a36;">
+        <div class="form-group" style="flex: 2;">
+            <label for="effect">DSP Effect Engine:</label>
             <select id="effect">
                 <option value="None">None (Clean Voice)</option>
-                <option value="VintageRadio">📻 Vintage Radio</option>
-                <option value="Telephone">☎️ Telephone</option>
-                <option value="VinylRecord">💿 Vinyl Record</option>
-                <option value="Megaphone">📢 Megaphone</option>
-                <option value="Robot">🤖 Robot</option>
-                <option value="Overdrive">🎸 Overdrive / Walkie-Talkie</option>
-                <option value="Alien">👽 Alien</option>
-                <option value="Whisper">👻 Whisper / Raspy</option>
-                <option value="Arcade">👾 8-Bit Arcade</option>
+                <option value="Telephone">☎️ Telephone (Lo-Fi)</option>
+                <option value="Overdrive">🎸 Overdrive (Saturation)</option>
+                <option value="Bitcrusher">👾 Bitcrusher (8-Bit/Arcade)</option>
+                <option value="RingModulator">🤖 Ring Modulator (Robot)</option>
+                <option value="Flanger">🛸 Flanger (Space Sweep)</option>
+                <option value="Chorus">👥 Chorus (Multi-Voice)</option>
             </select>
         </div>
         <div class="form-group" style="flex: 1;">
-            <label for="effectIntensity">Effect Intensity (Dry/Wet Mix):</label>
+            <label for="effectIntensity">Dry/Wet Mix:</label>
             <input type="number" id="effectIntensity" value="1.0" step="0.1" min="0.0" max="1.0">
         </div>
     </div>
 
     <div class="form-group checkbox-group">
         <input type="checkbox" id="stream" checked>
-        <label for="stream" style="margin: 0; cursor: pointer;">Enable Chunked Streaming</label>
+        <label for="stream" style="margin: 0; cursor: pointer; color: #d8d8e6;">Enable Chunked Streaming</label>
     </div>
 
-    <button id="generateBtn" onclick="generateAudio()">Generate & Play</button>
+    <button id="generateBtn" onclick="generateAudio()">INITIATE SEQUENCE</button>
 
     <audio id="player" controls></audio>
 
-    <label style="margin-top: 20px;">Network Logs:</label>
-    <div class="logs" id="logs">Waiting for action...<br></div>
+    <label style="margin-top: 25px; color: #bcaafc;">Terminal Output:</label>
+    <div class="logs" id="logs">SYSTEM READY...<br></div>
 </div>
 
 <script>
@@ -110,26 +210,17 @@
     const player = document.getElementById('player');
     const btn = document.getElementById('generateBtn');
 
-    /**
-     * Appends a timestamped message to the UI log console.
-     * @param {string} message - The message to log.
-     */
     function log(message) {
         const time = new Date().toISOString().split('T')[1].substring(0, 8);
         logBox.innerHTML += `[${time}] ${message}<br>`;
         logBox.scrollTop = logBox.scrollHeight;
     }
 
-    /**
-     * Initiates the audio generation request and handles the response.
-     * Routes the flow to either synchronous playback or MediaSource chunked streaming.
-     */
     async function generateAudio() {
-        // Reset UI state
         logBox.innerHTML = '';
         player.removeAttribute('src');
         btn.disabled = true;
-        btn.innerText = "Generating & Streaming...";
+        btn.innerText = "PROCESSING...";
 
         const targetUrl = document.getElementById('endpoint').value.trim();
         
@@ -144,9 +235,9 @@
             EffectIntensity: parseFloat(document.getElementById('effectIntensity').value)
         };
 
-        log(`Sending POST request to ${targetUrl}...`);
+        log(`Uplink established. Sending payload to ${targetUrl}...`);
         if (requestData.Effect !== "None") {
-            log(`Applied Effect: ${requestData.Effect} (Intensity: ${requestData.EffectIntensity})`);
+            log(`DSP Engaged: ${requestData.Effect} | Wet mix: ${requestData.EffectIntensity * 100}%`);
         }
 
         try {
@@ -158,40 +249,31 @@
 
             if (!response.ok) {
                 const errorData = await response.json().catch(() => ({}));
-                throw new Error(errorData.error || `HTTP Error ${response.status}`);
+                throw new Error(errorData.error || `HTTP Code ${response.status}`);
             }
 
             const mimeType = response.headers.get('Content-Type') || 'audio/mpeg';
             const isStreamingEnabled = requestData.stream;
             
-            // Note: Browsers natively support MSE (MediaSource Extensions) primarily for MP3 and WebM/Opus. 
-            // WAV format requires full file buffering and cannot be streamed via MSE natively.
             const supportsMSE = window.MediaSource && MediaSource.isTypeSupported(mimeType);
 
-            log(`Headers received. Content-Type: ${mimeType}`);
+            log(`Data stream incoming. Format: ${mimeType}`);
 
             if (isStreamingEnabled && supportsMSE) {
                 await handleStreamedResponse(response.body.getReader(), mimeType);
             } else {
-                if (isStreamingEnabled) log("⚠️ Format does not support native MSE streaming in this browser. Falling back to buffered playback.");
+                if (isStreamingEnabled) log("⚠️ Native MSE unavailable. Buffering entire payload...");
                 await handleBufferedResponse(response.blob(), mimeType);
             }
 
         } catch (error) {
-            log(`❌ ERROR: ${error.message}`);
+            log(`❌ CRITICAL ERROR: ${error.message}`);
         } finally {
-            // Restore UI state
             btn.disabled = false;
-            btn.innerText = "Generate & Play";
+            btn.innerText = "INITIATE SEQUENCE";
         }
     }
 
-    /**
-     * Handles true chunked streaming using the MediaSource API.
-     * Pushes bytes to the audio element as soon as they arrive over the network.
-     * @param {ReadableStreamDefaultReader} reader - The network stream reader.
-     * @param {string} mimeType - The audio MIME type (e.g., 'audio/mpeg').
-     */
     async function handleStreamedResponse(reader, mimeType) {
         const mediaSource = new MediaSource();
         player.src = URL.createObjectURL(mediaSource);
@@ -202,7 +284,6 @@
         let totalBytes = 0;
         let isFirstChunk = true;
 
-        // Helper function to safely append a chunk and wait for the buffer to process it
         const appendChunk = async (chunk) => {
             return new Promise((resolve) => {
                 sourceBuffer.addEventListener('updateend', resolve, { once: true });
@@ -217,40 +298,33 @@
                 if (mediaSource.readyState === 'open') {
                     mediaSource.endOfStream();
                 }
-                log("✅ Network stream completed. EOS sent to player.");
+                log("✅ Transmission complete.");
                 break;
             }
 
             totalBytes += value.length;
-            log(`⬇️ Pushed chunk to SourceBuffer: ${value.length} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
+            log(`⬇️ Chunk decoded: ${value.length} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
 
             await appendChunk(value);
 
-            // Trigger playback immediately after the first chunk is successfully buffered
             if (isFirstChunk) {
-                player.play().catch(e => log(`⚠️ Autoplay prevented by browser policy: ${e.message}`));
-                log("🎵 Playback started mid-stream.");
+                player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
+                log("🎵 Playback engaged.");
                 isFirstChunk = false;
             }
         }
     }
 
-    /**
-     * Handles synchronous/buffered response.
-     * Waits for the entire payload to download before initiating playback.
-     * @param {Promise<Blob>} blobPromise - The promise resolving to the complete audio Blob.
-     * @param {string} mimeType - The audio MIME type.
-     */
     async function handleBufferedResponse(blobPromise, mimeType) {
-        log("⏳ Waiting for complete file generation (Buffered mode)...");
+        log("⏳ Buffering...");
         const blob = await blobPromise;
         const audioBlob = new Blob([blob], { type: mimeType });
         
-        log(`✅ File received completely. Size: ${(audioBlob.size / 1024).toFixed(2)} KB`);
+        log(`✅ File reconstructed. Size: ${(audioBlob.size / 1024).toFixed(2)} KB`);
         
         player.src = URL.createObjectURL(audioBlob);
-        player.play().catch(e => log(`⚠️ Autoplay prevented by browser policy: ${e.message}`));
-        log("🎵 Playback started.");
+        player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
+        log("🎵 Playback engaged.");
     }
 </script>
 

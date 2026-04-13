@@ -4,43 +4,67 @@ using NAudio.Dsp;
 
 namespace ONNX_Runner.Services;
 
+/// <summary>
+/// Серверний рушій аудіоефектів.
+/// Оптимізований для високих навантажень (Zero-Allocation): обробляє аудіо без виділення нової пам'яті.
+/// </summary>
 public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 {
     private readonly EffectsSettings _config = config;
     private readonly int _sampleRate = sampleRate;
 
-    // =================================================================
-    // КОНСТАНТИ БАЛАНСУВАННЯ ГУЧНОСТІ (MAKEUP GAIN)
-    // =================================================================
-    private const float GainTelephone = 1.5f;
-    private const float GainVintageRadio = 1.6f;
-    private const float GainVinylRecord = 1.1f;
-    private const float GainMegaphone = 1.4f;
-    private const float GainRobot = 1.2f;
-    private const float GainOverdrive = 0.85f;
-    private const float GainAlien = 1.3f;
-    private const float GainWhisper = 1.8f;
-    private const float GainArcade = 1.2f;
+    // Компенсація гучності (Makeup Gain).
+    // Ефекти часто "з'їдають" частину звуку, тому після обробки ми трохи підсилюємо результат.
+    private const float GainTelephone = 1.6f;
+    private const float GainOverdrive = 0.9f;
+    private const float GainBitcrusher = 1.2f;
+    private const float GainRingModulator = 1.2f;
+    private const float GainFlanger = 1.05f;
+    private const float GainChorus = 1.05f;
 
-    // =================================================================
-    // СТАН DSP (Пам'ять системи)
-    // =================================================================
-    private float _lfoPhase;
-    private float _lfoPhase2;       // Для вторинної модуляції (Flutter)
-    private float _whistlePhase;    // Фаза для гетеродинного AM-свисту
-    private NoiseState _noiseState;
-    private float _crackleDecay;
+    // Внутрішні стани генераторів хвиль (LFO), які керують рухом ефектів у часі.
+    private float _ringPhase;
+    private float _lfoPhase2;
+    private float _flangerPhase;
+    private float _chorusPhase;
 
-    // Єдиний буфер для всіх просторових ефектів (Вініл, Прибулець)
+    // Стани для ефекту Bitcrusher
+    private float _zohPhase;
+    private float _zohHold;
+    private uint _prngState = 12345; // Простий генератор випадкових чисел для "аналогового" шуму
+
+    // Стан для Flanger (зберігає частину попереднього звуку для ефекту резонансу)
+    private float _flangerFeedbackState;
+
+    // "Пам'ять" ефектів. Зберігає останні ~90 мілісекунд звуку для створення відлуння/хору.
     private readonly float[] _delayBuffer = new float[4096];
-    private int _delayPos;
+    private int _delayWritePos;
 
-    // =================================================================
-    // КАСКАД ФІЛЬТРІВ (EQ)
-    // =================================================================
-    private readonly List<BiQuadFilter> _filters = new();
+    // Еквалайзери для попередньої підготовки звуку (наприклад, зріз басів для "Телефону")
+    private readonly List<BiQuadFilter> _filters = new(4);
+    private BiQuadFilter? _odPostFilter;
+
     private VoiceEffectType _currentEffect = VoiceEffectType.None;
     private bool _eqInitialized = false;
+
+    /// <summary>
+    /// Очищує всю історію та пам'ять рушія. 
+    /// Обов'язково викликати перед обробкою нового голосового повідомлення, щоб уникнути "хвостів".
+    /// </summary>
+    public void Reset()
+    {
+        Array.Clear(_delayBuffer, 0, _delayBuffer.Length);
+        _ringPhase = 0;
+        _lfoPhase2 = 0;
+        _flangerPhase = 0;
+        _chorusPhase = 0;
+        _zohPhase = 0;
+        _zohHold = 0;
+        _prngState = 12345;
+        _flangerFeedbackState = 0f;
+        _delayWritePos = 0;
+        _eqInitialized = false;
+    }
 
     public void ApplyEffect(Span<float> buffer, string? requestedEffect = null, float? requestedIntensity = null)
     {
@@ -50,313 +74,229 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (!Enum.TryParse(effectString, true, out VoiceEffectType effectType) || effectType == VoiceEffectType.None)
             return;
 
-        float intensity = requestedIntensity ?? _config.DefaultIntensity;
-        intensity = Math.Clamp(intensity, 0f, 1f);
-
+        float intensity = Math.Clamp(requestedIntensity ?? _config.DefaultIntensity, 0f, 1f);
         if (intensity <= 0.001f) return;
 
-        // Ініціалізація або перемикання еквалайзера
+        // Якщо ефект змінився, переналаштовуємо еквалайзери та чистимо пам'ять
         if (!_eqInitialized || _currentEffect != effectType)
         {
+            Array.Clear(_delayBuffer, 0, _delayBuffer.Length);
             SetupEqualizer(effectType);
             _eqInitialized = true;
             _currentEffect = effectType;
         }
 
-        // Обробка кожного семплу
+        // Головний цикл обробки: семпл за семплом
         for (int i = 0; i < buffer.Length; i++)
         {
-            float dry = buffer[i];
+            float dry = buffer[i];    // Оригінальний звук
             float eqSignal = dry;
 
-            // Каскадна обробка фільтрами (Формування АЦХ як у фізичному корпусі)
+            // Пропускаємо через еквалайзер
             foreach (var filter in _filters)
-            {
                 eqSignal = filter.Transform(eqSignal);
-            }
 
-            // Генерація художнього спотворення та модуляцій
-            float wet = Process(_currentEffect, eqSignal);
+            // Накладаємо основний художній ефект
+            float wet = Process(_currentEffect, eqSignal, intensity);
 
-            // Захисна магнітна сатурація (Склеює мікс і запобігає кліппінгу)
-            wet = Saturation.Tape(wet);
-
-            // Змішування (Dry/Wet)
-            buffer[i] = Mix(dry, wet, intensity);
+            // Змішуємо оригінал з ефектом залежно від інтенсивності
+            buffer[i] = dry + (wet - dry) * intensity;
         }
     }
 
+    /// <summary>
+    /// Налаштовує еквалайзери для формування базового "профілю" звуку.
+    /// </summary>
     private void SetupEqualizer(VoiceEffectType type)
     {
         _filters.Clear();
-        // Межа Найквіста (максимальна частота, яку може відтворити поточний SampleRate)
-        float nyquist = _sampleRate / 2.0f * 0.98f;
+        float nyquist = _sampleRate / 2.0f * 0.95f;
         float SafeFreq(float target) => Math.Min(target, nyquist);
 
         switch (type)
         {
             case VoiceEffectType.Telephone:
-                // Вугільний мікрофон Type II: різкий зріз низів і подвійний резонанс на середині
+                // Імітація старої трубки: зрізаємо баси і верхи, додаємо "носовий" резонанс на 2 кГц.
                 _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 300f, 0.707f));
-                _filters.Add(BiQuadFilter.PeakingEQ(_sampleRate, SafeFreq(2000f), 3.0f, 15f));
-                _filters.Add(BiQuadFilter.PeakingEQ(_sampleRate, SafeFreq(3900f), 2.5f, 21f));
+                _filters.Add(BiQuadFilter.PeakingEQ(_sampleRate, SafeFreq(2000f), 3.0f, 5f));
                 _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(4000f), 1.2f));
                 break;
 
-            case VoiceEffectType.VintageRadio:
-                // Стандарт AM-трансляції 1940-х (дуже вузька смуга 60-4500 Гц)
-                _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 60f, 0.707f));
-                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(4500f), 2.0f));
-                _filters.Add(BiQuadFilter.PeakingEQ(_sampleRate, SafeFreq(2500f), 1.0f, 4f));
-                break;
-
-            case VoiceEffectType.VinylRecord:
-                // RIAA крива (спрощена): зріз інфрабасу (від гулу мотора) та згладжування верхів
-                _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 80f, 0.5f));
-                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(10000f), 0.707f));
-                break;
-
-            case VoiceEffectType.Megaphone:
-                // Металевий рупор: величезний резонанс на 1-3 кГц, відсутність басу
-                _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 500f, 2.0f));
-                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(3000f), 2.0f));
-                break;
-
             case VoiceEffectType.Overdrive:
-                // Рація піхоти: смуга обмежена для максимальної розбірливості в шумі бою
-                _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 600f, 1.5f));
-                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(2800f), 1.5f));
+                // Профіль для дисторшну: зрізаємо зайвий гул внизу і підготовлюємо верхи.
+                _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 400f, 1.0f));
+                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(6500f), 0.707f));
+                // Фільтр, який прибере неприємний цифровий писк ПІСЛЯ дисторшну.
+                _odPostFilter = BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(8500f), 0.707f);
                 break;
 
-            case VoiceEffectType.Arcade:
-                // Імітація дешевого п'єзодинаміка (GameBoy/NES)
-                _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 300f, 1.0f));
-                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(4000f), 2.0f));
-                break;
-
-            case VoiceEffectType.Whisper:
-                // Зріз низьких частот грудної клітини (залишаємо лише повітря)
-                _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 250f, 0.707f));
-                break;
-
-            case VoiceEffectType.Robot:
+            case VoiceEffectType.Bitcrusher:
+            case VoiceEffectType.RingModulator:
+                // Легке очищення від гулу перед обробкою
                 _filters.Add(BiQuadFilter.HighPassFilter(_sampleRate, 150f, 0.707f));
-                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(6000f), 0.707f));
-                break;
-
-            case VoiceEffectType.Alien:
-                _filters.Add(BiQuadFilter.LowPassFilter(_sampleRate, SafeFreq(8000f), 0.707f));
                 break;
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float Mix(float dry, float wet, float t) => dry + (wet - dry) * t;
-
-    // =================================================================
-    // ДИСПЕТЧЕР ЕФЕКТІВ
-    // =================================================================
-    private float Process(VoiceEffectType type, float x)
+    private float Process(VoiceEffectType type, float x, float intensity)
     {
         return type switch
         {
-            VoiceEffectType.Telephone => Telephone(x) * GainTelephone,
-            VoiceEffectType.VintageRadio => Radio(x) * GainVintageRadio,
-            VoiceEffectType.VinylRecord => Vinyl(x) * GainVinylRecord,
-            VoiceEffectType.Megaphone => Saturation.Transformer(x * 4.0f) * GainMegaphone,
-            VoiceEffectType.Overdrive => Saturation.Tube(x * 10.0f) * GainOverdrive,
-            VoiceEffectType.Robot => Robot(x) * GainRobot,
-            VoiceEffectType.Alien => Alien(x) * GainAlien,
-            VoiceEffectType.Whisper => Whisper(x) * GainWhisper,
-            VoiceEffectType.Arcade => Arcade(x) * GainArcade,
+            // Сатурація = плавне стиснення хвилі для "утеплення" звуку
+            VoiceEffectType.Telephone => Saturation.Tape(Saturation.AsymmetricTube(x * 2.5f)) * GainTelephone,
+            VoiceEffectType.Overdrive => Overdrive(x, intensity) * GainOverdrive,
+            VoiceEffectType.Bitcrusher => Bitcrusher(x) * GainBitcrusher,
+            VoiceEffectType.RingModulator => RingModulator(x) * GainRingModulator,
+            VoiceEffectType.Flanger => Flanger(x) * GainFlanger,
+            VoiceEffectType.Chorus => Chorus(x) * GainChorus,
             _ => x
         };
     }
 
-    // =================================================================
-    // ФІЗИЧНІ МОДЕЛІ АПАРАТУРИ
-    // =================================================================
-
-    private static float Telephone(float x)
+    /// <summary>
+    /// Перевантаження (Рація/Гучномовець). Робить звук гучним і агресивним.
+    /// </summary>
+    private float Overdrive(float x, float intensity)
     {
-        // Carbon Mic (Вугільний мікрофон) асиметрично реагує на тиск.
-        // Замість Чебишева (який дає зміщення DC), використовуємо безпечну асиметрію.
-        float carbon = x > 0 ? MathF.Tanh(x * 2.5f) : MathF.Max(x * 2.5f, -0.8f);
-        return carbon;
+        // Рівень спотворення залежить від налаштування intensity
+        float drive = 2.0f + (intensity * 6.0f);
+        float distorted = Saturation.Cubic(x * drive);
+
+        // Зрізаємо ріжучі цифрові артефакти, залишаючи м'яке "аналогове" тепло
+        if (_odPostFilter != null)
+            distorted = _odPostFilter.Transform(distorted);
+
+        return Saturation.Tape(distorted); // Захист від піків
     }
 
-    private float Radio(float x)
+    /// <summary>
+    /// Ефект "Робот/Далек". Створює металевий дзвін, множачи звук на синусоїду.
+    /// </summary>
+    private float RingModulator(float x)
     {
-        // Гетеродинний свист (Interference) від сусідніх AM-станцій (10 kHz)
-        float whistleFreq = 10000f;
-        _whistlePhase += MathF.PI * 2f * whistleFreq / _sampleRate;
-        float whistle = MathF.Sin(_whistlePhase) * 0.005f;
+        // Щоб робот звучав цікавіше, частота модуляції плавно "плаває" від 400 до 600 Гц
+        _lfoPhase2 += MathF.PI * 2f * 0.5f / _sampleRate;
+        if (_lfoPhase2 > MathF.PI * 2f) _lfoPhase2 -= MathF.PI * 2f;
+        float currentFreq = 500f + MathF.Sin(_lfoPhase2) * 100f;
 
-        // Іоносферне завмирання (Fading) - сигнал "плаває" через відбиття від атмосфери
-        _lfoPhase += MathF.PI * 2f * 0.05f / _sampleRate;
-        float fading = 0.8f + MathF.Sin(_lfoPhase) * 0.2f;
+        // Множимо голос на згенеровану частоту
+        _ringPhase += MathF.PI * 2f * currentFreq / _sampleRate;
+        if (_ringPhase > MathF.PI * 2f) _ringPhase -= MathF.PI * 2f;
 
-        float sat = Saturation.AsymmetricTube(x * fading * 4f);
-
-        // AM-ефір має рожевий шум, який приглушується (Ducking), коли диктор говорить голосно
-        float noise = Noise.Pink(ref _noiseState) * 0.04f;
-        float duckedNoise = Noise.Duck(sat, noise);
-
-        return sat + whistle + duckedNoise;
+        return x * MathF.Sin(_ringPhase);
     }
 
-    private float Vinyl(float x)
+    /// <summary>
+    /// Ефект "Ретро-приставка / 8-біт". Грубо руйнує якість звуку.
+    /// </summary>
+    private float Bitcrusher(float x)
     {
-        // Механічна детонація мотора програвача
-        // Wow (повільне плавання) 0.5Hz + Flutter (швидка вібрація) 5Hz
-        _lfoPhase += MathF.PI * 2f * 0.5f / _sampleRate;
-        _lfoPhase2 += MathF.PI * 2f * 5.0f / _sampleRate;
+        // Штучно знижуємо частоту дискретизації до вінтажних 8 кГц
+        _zohPhase += 8000f / _sampleRate;
+        if (_zohPhase >= 1.0f)
+        {
+            _zohHold = x;
+            _zohPhase -= 1.0f;
+        }
 
-        float wow = MathF.Sin(_lfoPhase) * 15f;
-        float flutter = MathF.Sin(_lfoPhase2) * 5f;
-        float totalDelay = 20f + wow + flutter; // Затримка в семплах
+        // Додаємо ледь помітний шум (Dither), щоб прибрати ідеальну комп'ютерну стерильність
+        _prngState = 1664525 * _prngState + 1013904223;
+        float dither = (((float)_prngState / uint.MaxValue) - 0.5f) * 0.03f;
 
-        // ЗАПИС у кільцевий буфер
-        _delayBuffer[_delayPos] = x;
-
-        // ЧИТАННЯ з дробовою затримкою (Лінійна Інтерполяція)
-        // Це запобігає ефекту "цифрового піску" при плаванні тону
-        float readPos = _delayPos - totalDelay;
-        if (readPos < 0) readPos += _delayBuffer.Length;
-
-        int pos1 = (int)readPos;
-        int pos2 = (pos1 + 1) % _delayBuffer.Length;
-        float frac = readPos - pos1; // Дробова частина
-
-        float pitchShifted = (_delayBuffer[pos1] * (1 - frac)) + (_delayBuffer[pos2] * frac);
-
-        _delayPos = (_delayPos + 1) % _delayBuffer.Length;
-
-        // Тріск пилинок (Модель імпульсів Пуассона)
-        if (Random.Shared.NextSingle() > 0.9998f)
-            _crackleDecay = (Random.Shared.NextSingle() > 0.5f ? 1f : -1f) * 0.5f;
-
-        float pop = _crackleDecay;
-        _crackleDecay *= 0.1f; // Дуже швидке згасання ("сухий" клац)
-
-        // Тепла лампова сатурація + низькочастотний гул мотора (Brown noise)
-        return Saturation.Tape(pitchShifted * 1.2f) + pop + (Noise.Brown(ref _noiseState) * 0.02f);
-    }
-
-    private float Robot(float x)
-    {
-        // Класична кільцева модуляція (Ring Modulation 30Hz) - ефект Далеків
-        float step = MathF.PI * 2f * 30f / _sampleRate;
-        _lfoPhase += step;
-        if (_lfoPhase > MathF.PI * 2f) _lfoPhase -= MathF.PI * 2f;
-
-        float mod = MathF.Sin(_lfoPhase);
-        return (x * 0.6f) + (x * mod * 0.6f);
-    }
-
-    private float Alien(float x)
-    {
-        // Просторовий Flanger (Металева труба)
-        _delayBuffer[_delayPos] = x;
-
-        float step = MathF.PI * 2f * 2f / _sampleRate;
-        _lfoPhase += step;
-        if (_lfoPhase > MathF.PI * 2f) _lfoPhase -= MathF.PI * 2f;
-
-        float delayMs = 15f + MathF.Sin(_lfoPhase) * 10f;
-        int samples = (int)(delayMs * _sampleRate / 1000f);
-
-        int read = _delayPos - samples;
-        if (read < 0) read += _delayBuffer.Length;
-
-        float delayed = _delayBuffer[read];
-        _delayPos = (_delayPos + 1) % _delayBuffer.Length;
-
-        return (x * 0.6f) + (delayed * 0.6f);
-    }
-
-    private static float Whisper(float x)
-    {
-        // Source-filter: Шум пропускаємо через динаміку голосу (Vocoding ефект)
-        float noise = Noise.White() * 0.3f;
-        return (x * 0.3f) + (noise * MathF.Abs(x) * 2.0f);
-    }
-
-    private static float Arcade(float x)
-    {
-        // Квантування до 4-х біт (16 рівнів) для збереження розбірливості мови
+        // Знижуємо бітність: округлюємо звук всього до 16 рівнів гучності
         float levels = 16f;
-        return MathF.Round(x * levels) / levels;
+        return MathF.Round((_zohHold + dither) * levels) / levels;
+    }
+
+    /// <summary>
+    /// Ефект "Літака/Труби". Накладає на звук його ж копію з крихітною змінною затримкою.
+    /// </summary>
+    private float Flanger(float x)
+    {
+        // Розраховуємо затримку, яка постійно плаває туди-сюди (від 1 до 5 мс)
+        _flangerPhase += MathF.PI * 2f * 0.5f / _sampleRate;
+        if (_flangerPhase > MathF.PI * 2f) _flangerPhase -= MathF.PI * 2f;
+        float delayMs = 3.0f + MathF.Sin(_flangerPhase) * 2.0f;
+        float delayed = ReadFractionalDelay(delayMs * _sampleRate / 1000f);
+
+        // "Резонанс": повертаємо частину затриманого звуку назад у буфер, трохи його "замилюючи"
+        _flangerFeedbackState = 0.5f * _flangerFeedbackState + 0.5f * delayed;
+        float feedback = 0.7f;
+
+        _delayBuffer[_delayWritePos] = x + (_flangerFeedbackState * feedback);
+        _delayWritePos = (_delayWritePos + 1) & 4095;
+
+        // Змішуємо оригінал і затримку. Clamp потрібен, щоб сума не "вибухнула".
+        float wet = (x * 0.45f) + (delayed * 0.55f);
+        return Math.Clamp(wet, -1.0f, 1.0f);
+    }
+
+    /// <summary>
+    /// Ефект "Хорус". Розмиває звук, створюючи ілюзію багатоголосся.
+    /// </summary>
+    private float Chorus(float x)
+    {
+        _chorusPhase += MathF.PI * 2f * 0.8f / _sampleRate;
+        if (_chorusPhase > MathF.PI * 2f) _chorusPhase -= MathF.PI * 2f;
+
+        // Створюємо крихітний хаос, щоб голоси не звучали ідеально синхронно (як у живого хору)
+        _prngState = 1664525 * _prngState + 1013904223;
+        float analogDrift = (((float)_prngState / uint.MaxValue) - 0.5f) * 0.04f;
+
+        // Читаємо два віртуальних "голоси" з різними затримками
+        float delayMs1 = 20.0f + MathF.Sin(_chorusPhase) * 6.0f;
+        float delayed1 = ReadFractionalDelay(delayMs1 * _sampleRate / 1000f);
+
+        float delayMs2 = 25.0f + MathF.Cos(_chorusPhase + analogDrift) * 7.0f;
+        float delayed2 = ReadFractionalDelay(delayMs2 * _sampleRate / 1000f);
+
+        _delayBuffer[_delayWritePos] = x;
+        _delayWritePos = (_delayWritePos + 1) & 4095;
+
+        // Змішуємо: 50% оригіналу та по 25% на кожен додатковий голос
+        float wet = (x * 0.5f) + (delayed1 * 0.25f) + (delayed2 * 0.25f);
+        return Math.Clamp(wet, -1.0f, 1.0f);
+    }
+
+    /// <summary>
+    /// Допоміжний метод для просторових ефектів. 
+    /// Читає звук з пам'яті (буфера) з інтерполяцією, щоб він не "хрустів" при зміні часу затримки.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float ReadFractionalDelay(float delaySamples)
+    {
+        float readPos = _delayWritePos - delaySamples;
+        if (readPos < 0) readPos += 4096;
+
+        int p1 = (int)readPos & 4095;
+        int p2 = (p1 + 1) & 4095;
+        float frac = readPos - (int)readPos;
+
+        // Плавно змішуємо два сусідні семпли
+        return (_delayBuffer[p1] * (1.0f - frac)) + (_delayBuffer[p2] * frac);
     }
 }
 
-// =================================================================
-// ДОПОМІЖНІ DSP-МОДУЛІ
-// =================================================================
-
-public struct NoiseState
-{
-    public float B0, B1, B2, B3, B4, B5, B6, Brown;
-}
-
+/// <summary>
+/// Інструменти для математичного викривлення форми звукової хвилі.
+/// Додають "утеплення", характер або жорсткий дисторшн.
+/// </summary>
 file static class Saturation
 {
-    // Симетрична лампа (Кубічний шейпер): ідеально для жорсткого Овердрайву/Рації
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Tube(float x)
-    {
-        // Безпечний кліппінг перед кубічною формулою, щоб хвиля не "вибухнула"
-        float clamped = x > 1.0f ? 1.0f : (x < -1.0f ? -1.0f : x);
-        return clamped - clamped * clamped * clamped / 3.0f;
-    }
-    // Асиметрична лампа класу А: "утеплює" звук парними гармоніками
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float AsymmetricTube(float x) => x > 0 ? MathF.Tanh(x) : (MathF.Exp(x) - 1.0f);
-
-    // Симетрична стрічка: згладжує піки (захист від кліппінгу)
+    // Імітація магнітної стрічки. М'яко згладжує піки (безпечний лімітер).
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Tape(float x) => MathF.Tanh(x);
 
-    // Трансформатор (Діодний кліппінг): агресивний зріз для телефонів і рацій
+    // Імітація старої лампи. Спотворює звук асиметрично, роблячи його теплим.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Transformer(float x) => x > 0 ? MathF.Tanh(x * 2f) : MathF.Max(x * 2f, -1f);
-}
+    public static float AsymmetricTube(float x) => x > 0 ? MathF.Tanh(x) : (MathF.Exp(x) - 1.0f);
 
-file static class Noise
-{
+    // Кубічний дисторшн. Жорстке і агресивне перевантаження звуку.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float White() => Random.Shared.NextSingle() * 2f - 1f;
-
-    // Рожевий шум (спадає -3 дБ/окт). Ідеальний для ефіру та тертя.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Pink(ref NoiseState state)
+    public static float Cubic(float x)
     {
-        float white = White();
-        state.B0 = 0.99886f * state.B0 + white * 0.0555179f;
-        state.B1 = 0.99332f * state.B1 + white * 0.0750759f;
-        state.B2 = 0.96900f * state.B2 + white * 0.1538520f;
-        state.B3 = 0.86650f * state.B3 + white * 0.3104856f;
-        state.B4 = 0.55000f * state.B4 + white * 0.5329522f;
-        state.B5 = -0.7616f * state.B5 - white * 0.0168980f;
-        float pink = state.B0 + state.B1 + state.B2 + state.B3 + state.B4 + state.B5 + state.B6 + white * 0.5362f;
-        state.B6 = white * 0.115926f;
-        return pink * 0.11f;
-    }
-
-    // Коричневий шум (спадає -6 дБ/окт). Ідеально для гулу мотора програвача.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Brown(ref NoiseState state)
-    {
-        float white = White();
-        state.Brown = (state.Brown + (0.02f * white)) / 1.02f;
-        return state.Brown * 3.5f;
-    }
-
-    // Ducking (Приглушення): Зменшує гучність шуму, коли голос звучить голосно
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Duck(float sample, float noise)
-    {
-        float duck = MathF.Max(0f, 1f - MathF.Abs(sample) * 1.5f);
-        return noise * duck;
+        float clamped = x > 1.0f ? 1.0f : (x < -1.0f ? -1.0f : x);
+        return clamped - clamped * clamped * clamped / 3.0f;
     }
 }
