@@ -89,106 +89,138 @@ if (piperConfig != null && piperModelPath != null)
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
     builder.Services.AddSingleton(mixedEspeak);
 
-    // --- ЗАВАНТАЖЕННЯ OPENVOICE (CLONER) ---
+    // --- ПЕРЕВІРКА ТА ЗАВАНТАЖЕННЯ OPENVOICE (CLONER) ---
     string clonerDirectory = "Cloner";
     string voicesDirectory = "Voices";
 
-    if (Directory.Exists(clonerDirectory))
+    string extractPath = Path.Combine(clonerDirectory, "tone_extract.onnx");
+    string colorPath = Path.Combine(clonerDirectory, "tone_color.onnx");
+    string toneJsonPath = Path.Combine(clonerDirectory, "tone_config.json");
+
+    // Якщо папки немає — просто створюємо її
+    if (!Directory.Exists(clonerDirectory))
+    {
+        Directory.CreateDirectory(clonerDirectory);
+    }
+
+    // Розумний дозавантажувач: перевіряємо, чи не вистачає хоча б одного файлу
+    if (!File.Exists(extractPath) || !File.Exists(colorPath) || !File.Exists(toneJsonPath))
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("\n[INFO] Missing Voice Cloner models (OpenVoice) detected locally.");
+        Console.WriteLine("[INFO] Initiating automatic download from Hugging Face...");
+        Console.ResetColor();
+
+        string baseUrl = "https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2/resolve/main/";
+        string desc = "Voice Cloner";
+
+        // Качаємо ТІЛЬКИ ті файли, яких фізично немає
+        if (!File.Exists(extractPath))
+            await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_extract.onnx", extractPath, "tone_extract.onnx", desc);
+
+        if (!File.Exists(colorPath))
+            await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_color.onnx", colorPath, "tone_color.onnx", desc);
+
+        if (!File.Exists(toneJsonPath))
+            await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_config.json", toneJsonPath, "tone_config.json", desc);
+    }
+
+    // ТЕПЕР ЗАВАНТАЖУЄМО МОДЕЛІ В ПАМ'ЯТЬ (Вони вже 100% є на диску)
+    if (File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
     {
         try
         {
-            string extractPath = Path.Combine(clonerDirectory, "tone_extract.onnx");
-            string colorPath = Path.Combine(clonerDirectory, "tone_color.onnx");
-            string toneJsonPath = Path.Combine(clonerDirectory, "tone_config.json");
+            string toneJsonContent = File.ReadAllText(toneJsonPath);
+            var toneConfig = System.Text.Json.JsonSerializer.Deserialize<ToneConfig>(toneJsonContent);
 
-            if (File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
+            if (toneConfig != null)
             {
-                string toneJsonContent = File.ReadAllText(toneJsonPath);
-                var toneConfig = System.Text.Json.JsonSerializer.Deserialize<ToneConfig>(toneJsonContent);
+                var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig);
+                var audioProc = new AudioProcessor(toneConfig);
 
-                if (toneConfig != null)
+                // --- СКАНУВАННЯ ТА ГЕНЕРАЦІЯ ГОЛОСІВ ---
+                if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
+
+                var wavFiles = Directory.GetFiles(voicesDirectory, "*.wav");
+                foreach (var wavPath in wavFiles)
                 {
-                    var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig);
-                    var audioProc = new AudioProcessor(toneConfig);
+                    string voiceName = Path.GetFileNameWithoutExtension(wavPath);
+                    string fingerprintPath = Path.Combine(voicesDirectory, voiceName + ".voice");
 
-                    // --- СКАНУВАННЯ ТА ГЕНЕРАЦІЯ ГОЛОСІВ ---
-                    if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
-
-                    var wavFiles = Directory.GetFiles(voicesDirectory, "*.wav");
-                    foreach (var wavPath in wavFiles)
+                    if (File.Exists(fingerprintPath))
                     {
-                        string voiceName = Path.GetFileNameWithoutExtension(wavPath);
-                        string fingerprintPath = Path.Combine(voicesDirectory, voiceName + ".voice");
-
-                        if (File.Exists(fingerprintPath))
-                        {
-                            var fingerprint = openVoice.LoadVoiceFingerprint(fingerprintPath);
-                            openVoice.VoiceLibrary[voiceName] = fingerprint;
-                            Console.ForegroundColor = ConsoleColor.DarkGreen;
-                            Console.WriteLine($"[VOICE] Loaded from cache: {voiceName}");
-                            Console.ResetColor();
-                        }
-                        else
-                        {
-                            Console.ForegroundColor = ConsoleColor.DarkYellow;
-                            Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
-                            Console.ResetColor();
-
-                            int targetRate = toneConfig.Data.SamplingRate;
-
-                            // Читаємо, зводимо в моно і ресемплимо прямо в орендований масив!
-                            var normalizedAudio = audioProc.LoadAndNormalizeWav(wavPath, targetRate);
-                            Console.WriteLine($"   -> Step 1 & 2: Loaded and normalized to {targetRate}Hz (Mono). Samples count: {normalizedAudio.Length}");
-
-                            if (normalizedAudio.Length == 0)
-                            {
-                                ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
-                                continue;
-                            }
-
-                            float[,] spec;
-                            try
-                            {
-                                // Передаємо тільки корисну частину орендованого масиву
-                                spec = audioProc.GetMagnitudeSpectrogram(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length));
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"   -> [ERROR] Spectrogram generation failed: {ex.Message}");
-                                continue;
-                            }
-                            finally
-                            {
-                                // Повертаємо масив з аудіо-даними у пул (GC відпочиває)
-                                ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
-                            }
-
-                            int frames = spec.GetLength(0);
-                            Console.WriteLine($"   -> Step 3: Spectrogram frames: {frames}");
-
-                            if (frames == 0) continue;
-
-                            var fingerprint = openVoice.ExtractToneColor(spec);
-                            Console.WriteLine($"   -> Step 4: Fingerprint extracted (Size: {fingerprint.Length})");
-
-                            openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint);
-                            openVoice.VoiceLibrary[voiceName] = fingerprint;
-
-                            Console.ForegroundColor = ConsoleColor.Green;
-                            Console.WriteLine($"   [SUCCESS] Zlipok saved: {voiceName}.voice");
-                            Console.ResetColor();
-                        }
+                        var fingerprint = openVoice.LoadVoiceFingerprint(fingerprintPath);
+                        openVoice.VoiceLibrary[voiceName] = fingerprint;
+                        Console.ForegroundColor = ConsoleColor.DarkGreen;
+                        Console.WriteLine($"[VOICE] Loaded from cache: {voiceName}");
+                        Console.ResetColor();
                     }
+                    else
+                    {
+                        Console.ForegroundColor = ConsoleColor.DarkYellow;
+                        Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
+                        Console.ResetColor();
 
-                    builder.Services.AddSingleton(openVoice);
-                    builder.Services.AddSingleton(audioProc);
+                        int targetRate = toneConfig.Data.SamplingRate;
+
+                        // Читаємо, зводимо в моно і ресемплимо прямо в орендований масив!
+                        var normalizedAudio = audioProc.LoadAndNormalizeWav(wavPath, targetRate);
+                        Console.WriteLine($"   -> Step 1 & 2: Loaded and normalized to {targetRate}Hz (Mono). Samples count: {normalizedAudio.Length}");
+
+                        if (normalizedAudio.Length == 0)
+                        {
+                            ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
+                            continue;
+                        }
+
+                        float[,] spec;
+                        try
+                        {
+                            // Передаємо тільки корисну частину орендованого масиву
+                            spec = audioProc.GetMagnitudeSpectrogram(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length));
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"   -> [ERROR] Spectrogram generation failed: {ex.Message}");
+                            continue;
+                        }
+                        finally
+                        {
+                            // Повертаємо масив з аудіо-даними у пул (GC відпочиває)
+                            ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
+                        }
+
+                        int frames = spec.GetLength(0);
+                        Console.WriteLine($"   -> Step 3: Spectrogram frames: {frames}");
+
+                        if (frames == 0) continue;
+
+                        var fingerprint = openVoice.ExtractToneColor(spec);
+                        Console.WriteLine($"   -> Step 4: Fingerprint extracted (Size: {fingerprint.Length})");
+
+                        openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint);
+                        openVoice.VoiceLibrary[voiceName] = fingerprint;
+
+                        Console.ForegroundColor = ConsoleColor.Green;
+                        Console.WriteLine($"   [SUCCESS] Zlipok saved: {voiceName}.voice");
+                        Console.ResetColor();
+                    }
                 }
+
+                builder.Services.AddSingleton(openVoice);
+                builder.Services.AddSingleton(audioProc);
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[ERROR] Failed to load OpenVoice/Voices: {ex.Message}");
         }
+    }
+    else
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine("[ERROR] Voice Cloner models are missing. OpenVoice features will be unavailable.");
+        Console.ResetColor();
     }
 
     MixedLanguagePhonemizer? mixedPhonemizer = null;
