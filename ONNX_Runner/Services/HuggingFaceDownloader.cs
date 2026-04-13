@@ -43,7 +43,7 @@ public static class HuggingFaceDownloader
 
             do
             {
-                var read = await contentStream.ReadAsync(buffer, 0, buffer.Length);
+                var read = await contentStream.ReadAsync(buffer);
                 if (read == 0)
                 {
                     isMoreToRead = false;
