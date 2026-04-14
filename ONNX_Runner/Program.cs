@@ -10,8 +10,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Читаємо налаштування директорії ДО завантаження моделі
+var modelConfig = builder.Configuration.GetSection("ModelSettings").Get<ModelSettings>() ?? new ModelSettings();
+
 // --- ЗАВАНТАЖЕННЯ МОДЕЛІ ТА ЛОГУВАННЯ ---
-string modelDirectory = "Model";
+string modelDirectory = modelConfig.ModelDirectory;
 PiperConfig? piperConfig = null;
 string? piperModelPath = null;
 
