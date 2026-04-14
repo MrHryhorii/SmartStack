@@ -2,64 +2,78 @@ using System.Text.Json.Serialization;
 
 namespace ONNX_Runner.Models;
 
+/// <summary>
+/// Represents an incoming text-to-speech request.
+/// Designed to be 100% compatible with the official OpenAI TTS API schema, 
+/// while adding custom extensions for advanced Piper/VITS configurations and audio effects.
+/// </summary>
 public class OpenAiSpeechRequest
 {
     /// <summary>
-    /// Модель для синтезу (наприклад, tts-1). Поки ігноруємо, бо маємо лише одну локальну модель.
+    /// The model to use (e.g., "tts-1"). 
+    /// Currently ignored as the server relies on the single locally loaded Piper model.
     /// </summary>
     [JsonPropertyName("model")]
     public string Model { get; set; } = "tts-1";
 
     /// <summary>
-    /// Текст, який потрібно озвучити. Максимум 4096 символів в оригінальному API.
+    /// The text to synthesize into audio.
     /// </summary>
     [JsonPropertyName("input")]
     public required string Input { get; set; }
 
     /// <summary>
-    /// Голос (alloy, echo, fable, onyx, nova, shimmer). Поки ігноруємо.
+    /// The voice to use. For OpenVoice cloning, this should match a saved voice fingerprint name.
+    /// If empty or "alloy", it defaults to the base Piper voice.
     /// </summary>
     [JsonPropertyName("voice")]
     public string Voice { get; set; } = "alloy";
 
     /// <summary>
-    /// Формат аудіо. OpenAI за замовчуванням віддає mp3. 
-    /// Нам поки що найпростіше віддавати wav (через NAudio).
+    /// The format of the returned audio. 
+    /// Supported formats: "wav", "mp3", "opus", "pcm". Defaults to "mp3".
     /// </summary>
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "mp3";
 
     /// <summary>
-    /// Швидкість генерації від 0.25 до 4.0. За замовчуванням 1.0.
+    /// Generation speed multiplier. Ranges from 0.25 to 4.0. Default is 1.0.
     /// </summary>
     [JsonPropertyName("speed")]
     public float Speed { get; set; } = 1.0f;
 
-    // --- НАШІ РОЗШИРЕНІ ПАРАМЕТРИ (Piper/VITS) ---
+    // =====================================================================
+    // CUSTOM EXTENSIONS (Piper/VITS & Server Specific)
+    // =====================================================================
 
     /// <summary>
-    /// [Custom Extension] Перевизначає налаштування сервера.
-    /// Якщо true - сервер повертатиме потік chunked. Якщо false - цілий файл.
-    /// Якщо null - використовується налаштування сервера.
+    /// Overrides the server's default streaming behavior.
+    /// True = Chunked Transfer Encoding (stream). False = Wait for full file.
     /// </summary>
     [JsonPropertyName("stream")]
     public bool? Stream { get; set; }
 
     /// <summary>
-    /// [Необов'язково] Варіативність висоти тону (експресія). Зазвичай від 0 до 1.
+    /// Variance of pitch/intonation (Expression). Typically ranges from 0.0 to 1.0.
     /// </summary>
     [JsonPropertyName("noise_scale")]
     public float? NoiseScale { get; set; }
 
     /// <summary>
-    /// [Необов'язково] Варіативність тривалості фонем (ритмічність). Зазвичай від 0 до 1.
+    /// Variance of phoneme duration (Rhythm/Pacing). Typically ranges from 0.0 to 1.0.
     /// </summary>
     [JsonPropertyName("noise_w")]
     public float? NoiseW { get; set; }
 
     /// <summary>
-    /// [Необов'язково] Параметр, що контролює інтенсивність застосування ефекту. Від 0.0 (немає ефекту) до 1.0 (повний ефект).
+    /// Specifies an artistic DSP effect to apply (e.g., "Overdrive", "Telephone").
     /// </summary>
-    public string? Effect { get; set; }         // Наприклад: "Overdrive", "Robot"
-    public float? EffectIntensity { get; set; } // Від 0.0 до 1.0
+    [JsonPropertyName("effect")]
+    public string? Effect { get; set; }
+
+    /// <summary>
+    /// Controls the intensity of the chosen effect. Ranges from 0.0 (bypass) to 1.0 (maximum).
+    /// </summary>
+    [JsonPropertyName("effect_intensity")]
+    public float? EffectIntensity { get; set; }
 }

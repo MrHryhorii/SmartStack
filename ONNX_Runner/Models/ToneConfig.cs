@@ -2,6 +2,9 @@ using System.Text.Json.Serialization;
 
 namespace ONNX_Runner.Models;
 
+/// <summary>
+/// Represents the configuration schema for OpenVoice/ToneColor models (tone_config.json).
+/// </summary>
 public class ToneConfig
 {
     [JsonPropertyName("data")]

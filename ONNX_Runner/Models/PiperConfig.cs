@@ -2,6 +2,9 @@ using System.Text.Json.Serialization;
 
 namespace ONNX_Runner.Models;
 
+/// <summary>
+/// Represents the official Piper TTS JSON configuration schema (e.g., voice.onnx.json).
+/// </summary>
 public class PiperConfig
 {
     [JsonPropertyName("audio")]
@@ -13,21 +16,27 @@ public class PiperConfig
     [JsonPropertyName("inference")]
     public InferenceConfig Inference { get; set; } = new();
 
-    // Карта фонем: ключ - символ (рядок), значення - масив ID (зазвичай з 1 елемента)
+    /// <summary>
+    /// The phoneme dictionary mapping. 
+    /// Key: Phoneme string (e.g., "a", "t͡ʃ"). Value: Array of corresponding integer IDs.
+    /// </summary>
     [JsonPropertyName("phoneme_id_map")]
-    public Dictionary<string, int[]> PhonemeIdMap { get; set; } = new();
+    public Dictionary<string, int[]> PhonemeIdMap { get; set; } = [];
 }
 
 public class AudioConfig
 {
     [JsonPropertyName("sample_rate")]
-    public int SampleRate { get; set; } = 22050; // Дефолтне значення, якщо раптом немає
+    public int SampleRate { get; set; } = 22050; // Fallback default if missing
 }
 
 public class EspeakConfig
 {
+    /// <summary>
+    /// The native eSpeak-ng voice/dialect code used to generate the phonetic transcription.
+    /// </summary>
     [JsonPropertyName("voice")]
-    public string Voice { get; set; } = "en"; // Голос для espeak
+    public string Voice { get; set; } = "en";
 }
 
 public class InferenceConfig

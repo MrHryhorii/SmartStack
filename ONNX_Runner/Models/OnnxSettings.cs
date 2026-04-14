@@ -2,17 +2,29 @@ using Microsoft.ML.OnnxRuntime;
 
 namespace ONNX_Runner.Models;
 
+/// <summary>
+/// Configuration for the ONNX Runtime execution engine.
+/// Allows fine-tuning performance based on specific CPU/GPU architectures.
+/// </summary>
 public class OnnxSettings
 {
     public bool EnableGraphOptimization { get; set; } = true;
 
-    // "Sequential" (послідовне виконання вузлів) або "Parallel" (паралельне)
+    /// <summary>
+    /// Execution mode: "Sequential" (nodes executed one by one) or "Parallel" (simultaneous node execution).
+    /// Sequential is generally safer and faster for most TTS models unless the graph is explicitly designed for parallel execution.
+    /// </summary>
     public string ExecutionMode { get; set; } = "Sequential";
 
-    // Кількість потоків (0 = автоматично)
+    /// <summary>
+    /// The number of threads used to parallelize the execution within nodes. 
+    /// 0 means the ONNX runtime will automatically select the optimal thread count based on hardware.
+    /// </summary>
     public int IntraOpNumThreads { get; set; } = 0;
 
-    // Зручний метод, щоб швидко застосувати ці налаштування до будь-якої сесії
+    /// <summary>
+    /// A convenient helper method to quickly apply these settings to any ONNX SessionOptions instance.
+    /// </summary>
     public void ApplyTo(Microsoft.ML.OnnxRuntime.SessionOptions options)
     {
         options.GraphOptimizationLevel = EnableGraphOptimization
