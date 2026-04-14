@@ -2,9 +2,14 @@ using System.Text;
 
 namespace ONNX_Runner.Services;
 
+/// <summary>
+/// Dynamically maps unsupported punctuation marks to standard equivalents based on the currently loaded model.
+/// Piper TTS models often fail or skip words when encountering exotic punctuation (like Asian full stops or Arabic question marks) 
+/// if those symbols are not explicitly defined in their phoneme dictionary.
+/// </summary>
 public class DynamicPunctuationMapper
 {
-    // Зберігаємо всі підтримувані символи/фонеми, які є в phoneme_id_map моделі
+    // A cached set of all symbols/phonemes natively supported by the loaded Piper model
     private readonly HashSet<char> _supportedSymbols;
 
     public DynamicPunctuationMapper(Models.PiperConfig config)
@@ -15,7 +20,7 @@ public class DynamicPunctuationMapper
         {
             foreach (var key in config.PhonemeIdMap.Keys)
             {
-                // Зазвичай пунктуація — це один символ (напр. ".", "¿")
+                // Punctuation marks are typically single characters (e.g., ".", "¿")
                 if (key.Length == 1)
                 {
                     _supportedSymbols.Add(key[0]);
@@ -24,6 +29,10 @@ public class DynamicPunctuationMapper
         }
     }
 
+    /// <summary>
+    /// Normalizes the input text. If a symbol is supported by the model, it is kept.
+    /// Otherwise, it falls back to a standard equivalent to ensure proper pauses and intonation.
+    /// </summary>
     public string Normalize(string input)
     {
         if (string.IsNullOrWhiteSpace(input)) return input;
@@ -32,18 +41,18 @@ public class DynamicPunctuationMapper
 
         foreach (char c in input)
         {
-            // ПЕРЕВІРКА НА НАЯВНІСТЬ У МОДЕЛІ:
-            // Якщо модель знає цей знак, просто пропускаємо його як є
+            // NATIVE SUPPORT CHECK:
+            // If the model explicitly knows this symbol, leave it completely untouched
             if (_supportedSymbols.Contains(c))
             {
                 sb.Append(c);
                 continue;
             }
 
-            // ФОЛБЕК-ЗАМІНИ ДЛЯ НЕВІДОМИХ ЗНАКІВ:
+            // FALLBACK MAPPING FOR UNKNOWN SYMBOLS:
             switch (c)
             {
-                // Азійська пунктуація -> Стандартна
+                // Asian punctuation -> Standard equivalent
                 case '。': sb.Append('.'); break;
                 case '！': sb.Append('!'); break;
                 case '？': sb.Append('?'); break;
@@ -52,19 +61,19 @@ public class DynamicPunctuationMapper
                 case '；': sb.Append(';'); break;
                 case '：': sb.Append(':'); break;
 
-                // Близькосхідна та інші екзотичні кінці речень -> Стандартні
-                case ';': sb.Append('?'); break; // Грецький знак питання (U+037E)
-                case '؟': sb.Append('?'); break; // Арабський/перський знак питання (U+061F)
-                case '۔': sb.Append('.'); break; // Арабська/урду крапка (U+06D4)
-                case '։': sb.Append('.'); break; // Вірменська крапка (виглядає як :, але це кінець речення)
-                case '…': sb.Append('.'); break; // Трикрапка (один символ) -> просто крапка для паузи
+                // Middle Eastern and other exotic sentence terminators -> Standard
+                case ';': sb.Append('?'); break; // Greek question mark (U+037E)
+                case '؟': sb.Append('?'); break; // Arabic/Persian question mark (U+061F)
+                case '۔': sb.Append('.'); break; // Arabic/Urdu full stop (U+06D4)
+                case '։': sb.Append('.'); break; // Armenian full stop (looks like a colon)
+                case '…': sb.Append('.'); break; // Ellipsis (single char) -> replaced with a period for a solid pause
 
-                // Перевернуті іспанські знаки: ігноруємо, бо інтонацію задасть знак в кінці
+                // Inverted Spanish marks: safely ignored, as the ending mark will dictate the intonation
                 case '¿':
                 case '¡':
                     break;
 
-                // Дужки: перетворюємо на кому, щоб Piper зробив коротку паузу
+                // Brackets/Parentheses: converted to commas to force the TTS engine to take a short, natural breath/pause
                 case '(':
                 case ')':
                 case '[':
@@ -76,7 +85,7 @@ public class DynamicPunctuationMapper
                     sb.Append(',');
                     break;
 
-                // Лапки: безпечно ігноруємо, бо вони не впливають на паузи
+                // Quotation marks: safely ignored/stripped as they do not affect spoken pauses or intonation
                 case '«':
                 case '»':
                 case '「':
@@ -89,13 +98,14 @@ public class DynamicPunctuationMapper
                 case '“':
                     break;
 
+                // Default case: keep all standard alphanumeric characters and unmapped symbols
                 default:
                     sb.Append(c);
                     break;
             }
         }
 
-        // Очищаємо можливі дублікати ком, які виникли через заміни
+        // Cleanup: remove any duplicate commas created by sequential bracket replacements (e.g., "word), word")
         return sb.ToString().Replace(",,", ",");
     }
 }

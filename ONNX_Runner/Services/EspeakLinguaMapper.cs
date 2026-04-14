@@ -2,6 +2,12 @@ using Lingua;
 
 namespace ONNX_Runner.Services;
 
+/// <summary>
+/// Acts as a translation layer between eSpeak-ng language codes and the Lingua language detection library.
+/// eSpeak uses standard ISO codes or regional tags (e.g., "en-us", "zh-cn"), whereas Lingua uses strict 
+/// strongly-typed enums. This mapper allows the system to seamlessly detect the input text language 
+/// and route it back to the correct eSpeak voice variant.
+/// </summary>
 public class EspeakLinguaMapper
 {
     private readonly Dictionary<Language, string> _linguaToEspeak = [];
@@ -163,6 +169,10 @@ public class EspeakLinguaMapper
         { "zu", Language.Zulu }
     };
 
+    /// <summary>
+    /// Builds a unique collection of Lingua Enum languages based on the provided eSpeak codes.
+    /// Also caches the mapping to allow reverse lookups later.
+    /// </summary>
     public Language[] BuildLinguaList(IEnumerable<string> espeakCodes)
     {
         var linguaLangs = new HashSet<Language>();
@@ -174,22 +184,29 @@ public class EspeakLinguaMapper
             if (EspeakToLinguaBase.TryGetValue(cleanCode, out var linguaLang))
             {
                 linguaLangs.Add(linguaLang);
-                // Запам'ятовуємо зв'язок для зворотного мапінгу
+
+                // Cache the association for reverse mapping (Lingua Enum -> eSpeak string)
                 _linguaToEspeak.TryAdd(linguaLang, cleanCode);
             }
             else
             {
-                Console.WriteLine($"[WARNING] EspeakLinguaMapper не знає коду: {cleanCode}");
+                Console.WriteLine($"[WARNING] EspeakLinguaMapper encountered an unknown code: {cleanCode}");
             }
         }
         return [.. linguaLangs];
     }
 
+    /// <summary>
+    /// Converts a detected Lingua language enum back into the corresponding eSpeak code string.
+    /// </summary>
     public string MapBackToEspeak(Language lang, string fallback)
     {
         return _linguaToEspeak.TryGetValue(lang, out var espeakCode) ? espeakCode : fallback;
     }
 
+    /// <summary>
+    /// Directly maps an eSpeak code string to its corresponding Lingua Enum, if available.
+    /// </summary>
     public Language? GetLinguaLanguage(string espeakCode)
     {
         return EspeakToLinguaBase.TryGetValue(espeakCode.Trim().ToLower(), out var lang) ? lang : null;

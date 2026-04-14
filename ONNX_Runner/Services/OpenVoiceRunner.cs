@@ -5,13 +5,22 @@ using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Services;
 
+/// <summary>
+/// Handles the execution of OpenVoice AI models for Voice Cloning.
+/// It manages two distinct ONNX sessions:
+/// 1. Tone Extractor: Extracts unique vocal characteristics (embeddings) from audio.
+/// 2. Tone Color Converter: Applies a source tone color to a target voice using Latent Space Blending.
+/// </summary>
 public class OpenVoiceRunner : IDisposable
 {
-    private InferenceSession? _extractSession; // Робимо nullable, щоб можна було вивантажити
+    // The Extractor session is nullable because it can be unloaded from memory after 
+    // the initial startup processing to save precious VRAM/RAM.
+    private InferenceSession? _extractSession;
     private readonly InferenceSession _colorSession;
     private readonly ToneConfig _config;
 
-    // Словник: Ключ - назва голосу (напр. "MorganFreeman"), Значення - зліпок (256 чисел)
+    // A dictionary acting as a 'Voice Library': 
+    // Key - Voice name (e.g., "MorganFreeman"), Value - Tonal fingerprint (256-float embedding).
     public Dictionary<string, float[]> VoiceLibrary { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     public int GetTargetSamplingRate() => _config.Data.SamplingRate;
@@ -23,6 +32,10 @@ public class OpenVoiceRunner : IDisposable
         PrintModelMetadata();
     }
 
+    /// <summary>
+    /// Attempts to initialize ONNX sessions on the GPU using DirectML.
+    /// If no compatible GPU is found, it automatically falls back to CPU execution.
+    /// </summary>
     private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings)
     {
         int maxGpusToTry = 4;
@@ -32,7 +45,7 @@ public class OpenVoiceRunner : IDisposable
             try
             {
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-                onnxSettings.ApplyTo(options); // ЗАСТОСУВАННЯ ТЮНІНГУ
+                onnxSettings.ApplyTo(options); // Apply performance tuning settings
                 options.AppendExecutionProvider_DML(deviceId);
 
                 var extract = new InferenceSession(extractPath, options);
@@ -50,31 +63,37 @@ public class OpenVoiceRunner : IDisposable
             }
         }
 
-        // Фолбек на CPU
+        // FALLBACK: CPU Execution
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
-        onnxSettings.ApplyTo(cpuOptions); // ЗАСТОСУВАННЯ ТЮНІНГУ НА CPU
+        onnxSettings.ApplyTo(cpuOptions);
 
         var cpuExtract = new InferenceSession(extractPath, cpuOptions);
         var cpuColor = new InferenceSession(colorPath, cpuOptions);
+
+        Console.WriteLine("[HARDWARE] OpenVoice Models loaded on CPU.");
         return (cpuExtract, cpuColor);
     }
 
-    // --- МЕТОДИ ДЛЯ ЕКСТРАКЦІЇ ТА РОБОТИ ЗІ ЗЛІПКАМИ ---
+    // --- EMBEDDING EXTRACTION & FINGERPRINT MANAGEMENT ---
 
+    /// <summary>
+    /// Extracts a 256-dimensional tone embedding (fingerprint) from a provided audio spectrogram.
+    /// This acts as the mathematical 'DNA' of a specific voice.
+    /// </summary>
     public float[] ExtractToneColor(float[,] spectrogram)
     {
         if (_extractSession == null)
             throw new InvalidOperationException("Tone Extractor has been unloaded from memory.");
 
         int frames = spectrogram.GetLength(0);
-        int bins = spectrogram.GetLength(1); // Має бути 513
+        int bins = spectrogram.GetLength(1); // Expected to be 513 for standard STFT
         int tensorSize = frames * bins;
 
-        // ОРЕНДУЄМО МАСИВ ДЛЯ ВХІДНОГО ТЕНЗОРА
+        // ZERO-ALLOCATION PATTERN: Rent memory from a shared pool to avoid GC pressure
         float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
         try
         {
-            // Змушуємо тензор працювати поверх орендованої пам'яті (Zero Allocation)
+            // Map the rented array to a Tensor without copying data
             var memory = new Memory<float>(rentedInput, 0, tensorSize);
             var inputTensor = new DenseTensor<float>(memory, [1, frames, bins]);
 
@@ -92,7 +111,7 @@ public class OpenVoiceRunner : IDisposable
             };
 
             using var results = _extractSession.Run(inputs);
-            // Зліпок - це лише 256 чисел (1 КБ).
+            // Resulting embedding is small (256 floats ~ 1KB)
             return [.. results.First(r => r.Name == "tone_embedding").AsEnumerable<float>()];
         }
         finally
@@ -116,6 +135,10 @@ public class OpenVoiceRunner : IDisposable
         return embedding;
     }
 
+    /// <summary>
+    /// Frees the Tone Extractor model from memory. 
+    /// This is a memory-saving optimization since extraction is typically only needed once at startup.
+    /// </summary>
     public void UnloadExtractor()
     {
         _extractSession?.Dispose();
@@ -125,7 +148,7 @@ public class OpenVoiceRunner : IDisposable
         Console.ResetColor();
     }
 
-    // --- ІНСПЕКЦІЯ ТА ДИСПРОВЕР ---
+    // --- MODEL INSPECTION & DSP ---
 
     private void PrintModelMetadata()
     {
@@ -163,6 +186,10 @@ public class OpenVoiceRunner : IDisposable
         }
     }
 
+    /// <summary>
+    /// Applies the destination tone color to a source audio spectrogram.
+    /// This is the core logic of Voice Cloning.
+    /// </summary>
     public (float[] Buffer, int Length) ApplyToneColor(float[,] spectrogram, float[] srcFingerprint, float[] destFingerprint, float tau = 1.0f)
     {
         int frames = spectrogram.GetLength(0);
@@ -170,7 +197,7 @@ public class OpenVoiceRunner : IDisposable
         int channels = _config.Model.GinChannels;
         int tensorSize = frames * bins;
 
-        // ОРЕНДУЄМО МАСИВ ДЛЯ ВХІДНОГО ТЕНЗОРА
+        // Rent memory for input audio tensor
         float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
         try
         {
@@ -185,6 +212,7 @@ public class OpenVoiceRunner : IDisposable
                 }
             }
 
+            // Prepare voice fingerprints and parameters for ONNX inference
             var srcTensor = new DenseTensor<float>(srcFingerprint, [1, channels, 1]);
             var destTensor = new DenseTensor<float>(destFingerprint, [1, channels, 1]);
             var lengthTensor = new DenseTensor<long>(new[] { (long)frames }, [1]);
@@ -201,7 +229,7 @@ public class OpenVoiceRunner : IDisposable
 
             using var results = _colorSession.Run(inputs);
 
-            // ВИТЯГУЄМО РЕЗУЛЬТАТ В ОРЕНДОВАНИЙ МАСИВ
+            // Extract the converted audio result into a rented buffer
             var outputNode = results.First(r => r.Name == "converted_audio");
             var outputTensor = outputNode.AsTensor<float>();
 

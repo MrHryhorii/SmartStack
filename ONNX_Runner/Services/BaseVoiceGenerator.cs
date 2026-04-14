@@ -3,6 +3,12 @@ using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Services;
 
+/// <summary>
+/// Automatically generates a baseline voice fingerprint for the currently loaded Piper TTS model.
+/// This baseline fingerprint is absolutely critical for Voice Cloning. OpenVoice uses Latent Space Blending,
+/// which means it needs to know the exact tonal characteristics of the "source" voice (Piper) in order 
+/// to mathematically shift it towards the "target" cloned voice.
+/// </summary>
 public class BaseVoiceGenerator(
     UnifiedPhonemizer phonemizer,
     PiperRunner piperRunner,
@@ -16,7 +22,10 @@ public class BaseVoiceGenerator(
     private readonly OpenVoiceRunner _openVoice = openVoice;
     private readonly PiperConfig _piperConfig = piperConfig;
 
-    // Словник еталонних текстів (Панграми або фонетично багаті речення для 75 мов lingua-dotnet)
+    // Dictionary of reference texts. 
+    // Contains pangrams or phonetically rich sentences for 75 languages.
+    // Using phonetically rich sentences guarantees that the generated baseline audio will contain 
+    // almost all possible sounds/phonemes of the language, resulting in a highly accurate tone embedding.
     private readonly Dictionary<string, string> _referenceTexts = new(StringComparer.OrdinalIgnoreCase)
     {
         // Afrikaans
@@ -171,12 +180,13 @@ public class BaseVoiceGenerator(
         { "zu", "Umfana omncane ugijime waya ekhaya wazodla ukudla okumnandi kakhulu asiphiwe umama wakhe." }
     };
 
-    // Фолбек: просто англійський алфавіт через кому
+    // Fallback text: A simple, comma-separated English alphabet. 
+    // Used only if the model's language code isn't found in the dictionary above.
     private const string FallbackText = "A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z.";
 
     public void GenerateAndCacheBaseFingerprint()
     {
-        // Витягуємо базовий код мови (наприклад, з "en-us" беремо "en")
+        // Extract the base language code (e.g., from "en-us" we take just "en")
         string langCode = _piperConfig.Espeak.Voice?.Split('-')[0].ToLower() ?? "en";
 
         Console.ForegroundColor = ConsoleColor.Cyan;
@@ -186,7 +196,7 @@ public class BaseVoiceGenerator(
         {
             Console.WriteLine($"[AUTO-BASE] Exact match not found for '{langCode}'. Using alphabet fallback.");
 
-            // Тут ми одразу перепризначаємо null на наш безпечний FallbackText
+            // Safely reassign null to our guaranteed fallback text
             textToSpeak = FallbackText;
         }
         else
@@ -194,26 +204,29 @@ public class BaseVoiceGenerator(
             Console.WriteLine($"[AUTO-BASE] Using native phonetically rich sentences for '{langCode}'.");
         }
 
-        // Отримуємо фонеми та генеруємо аудіо (базовий голос Piper)
+        // 1. Phonemize the reference text and synthesize the raw audio using the base Piper model
         string phonemes = _phonemizer.GetPhonemes(textToSpeak);
         byte[] baseAudioBytes = _piperRunner.SynthesizeAudio(phonemes, 1.0f);
 
-        // Читаємо в float[] через NAudio прямо в оперативній пам'яті
+        // 2. Read the raw 16-bit PCM bytes into memory via NAudio
         using var ms = new MemoryStream(baseAudioBytes);
         using var reader = new WaveFileReader(ms);
 
-        // Перетворюємо 16-bit PCM у float через SampleProvider
+        // 3. Convert 16-bit PCM to 32-bit float array using NAudio's SampleProvider
         var provider = reader.ToSampleProvider();
 
-        // 16 біт = 2 байти на семпл
+        // 16-bit audio means exactly 2 bytes per sample
         var samples = new float[reader.Length / 2];
         provider.Read(samples, 0, samples.Length);
 
-        // Робимо спектрограму і витягуємо зліпок кольору голосу
+        // 4. Generate the Magnitude Spectrogram from the float samples
         var spec = _audioProcessor.GetMagnitudeSpectrogram(samples);
+
+        // 5. Extract the voice footprint (tone embedding) using the OpenVoice Extractor model
         var baseFingerprint = _openVoice.ExtractToneColor(spec);
 
-        // Зберігаємо в пам'ять під ключем "piper_base"
+        // 6. Cache it in the Voice Library under the reserved key "piper_base". 
+        // This acts as the mathematical anchor for all future voice cloning operations.
         _openVoice.VoiceLibrary["piper_base"] = baseFingerprint;
 
         Console.WriteLine("[AUTO-BASE] Dynamic base footprint successfully calculated and stored in memory.");

@@ -2,56 +2,61 @@ using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Services;
 
+/// <summary>
+/// Intelligent phonetic fallback system. 
+/// It maps unknown phonemes (not supported by the current Piper model) to the closest 
+/// available phonetic relatives using the PHOIBLE database and Hamming distance logic.
+/// This prevents "silent" gaps or errors when the TTS encounters rare or foreign sounds.
+/// </summary>
 public class PhonemeFallbackMapper
 {
-    // Готовий словник: Ключ = будь-який звук у світі, Значення = найближчий звук вашої моделі
+    // High-speed lookup map: Key = any global phoneme (IPA), Value = closest supported model phoneme
     private readonly Dictionary<string, string> _precalculatedMap = [];
 
+    // Rules to break down complex IPA symbols into simpler characters that the model is more likely to understand.
     private readonly Dictionary<string, string> _decompositionRules = new()
     {
-        // Африкати (Лігатури та злиті символи)
+        // Affricates (Ligatures and combined symbols)
         {"t͡s", "ts"}, {"t͡ʃ", "tʃ"}, {"d͡z", "dz"}, {"d͡ʒ", "dʒ"},
         {"ʦ", "ts"},  {"ʧ", "tʃ"},  {"ʣ", "dz"},  {"ʤ", "dʒ"},
         {"p͡f", "pf"}, {"k͡x", "kx"}, {"t͡ɕ", "tɕ"}, {"d͡ʑ", "dʑ"},
 
-        // Палаталізація (М'які приголосні - важливо для слов'янських мов)
-        // Розкладаємо на "твердий звук + йот [j]"
+        // Palatalization (Soft consonants - critical for Slavic languages)
+        // Decomposed into "Hard consonant + Jot [j]"
         {"pʲ", "pj"}, {"bʲ", "bj"}, {"mʲ", "mj"}, {"fʲ", "fj"}, {"vʲ", "vj"},
         {"tʲ", "tj"}, {"dʲ", "dj"}, {"nʲ", "nj"}, {"lʲ", "lj"}, {"rʲ", "rj"},
         {"sʲ", "sj"}, {"zʲ", "zj"}, {"kʲ", "kj"}, {"gʲ", "gj"}, {"xʲ", "xj"},
 
-        // Аспірація (Придих - азіатські, індійські, германські мови)
-        // Розкладаємо на "звук + h"
+        // Aspiration (Common in Asian, Indian, and Germanic languages)
+        // Decomposed into "Main sound + h"
         {"pʰ", "ph"}, {"tʰ", "th"}, {"kʰ", "kh"}, {"cʰ", "ch"}, {"qʰ", "qh"},
         {"bʱ", "bh"}, {"dʱ", "dh"}, {"gʱ", "gh"},
 
-        // Лабіалізація (Огублені приголосні)
-        // Розкладаємо на "звук + w"
+        // Labialization (Rounded consonants)
+        // Decomposed into "Main sound + w"
         {"kʷ", "kw"}, {"gʷ", "gw"}, {"xʷ", "xw"}, {"sʷ", "sw"}, {"zʷ", "zw"},
 
-        // Назалізовані голосні (Французька, польська, португальська)
-        // Розкладаємо на "голосна + n" (найкращий фолбек для імітації "в ніс")
+        // Nasalized Vowels (French, Polish, Portuguese)
+        // Mapped to "Vowel + n" as the best approximation for "nasal" quality
         {"ã", "an"}, {"ẽ", "en"}, {"ĩ", "in"}, {"õ", "on"}, {"ũ", "un"},
         {"ɛ̃", "ɛn"}, {"ɔ̃", "ɔn"}, {"œ̃", "œn"}, {"æ̃", "æn"},
 
-        // Довгі голосні та приголосні
-        // Модель може не розуміти знак довготи ː, тому просто дублюємо звук
+        // Length marks (Gemination)
+        // Doubling the sound if the model doesn't support the duration marker ː
         {"aː", "aa"}, {"eː", "ee"}, {"iː", "ii"}, {"oː", "oo"}, {"uː", "uu"},
         {"sː", "ss"}, {"mː", "mm"}, {"nː", "nn"},
 
-        // Велярний носовий (як "ng" у going, sing)
-        // Розкладаємо на "n" + "g" (найкраща імітація для слов'янських/європейських моделей)
+        // Velar Nasal (e.g., "ng" in "singing")
         {"ŋ", "ng"}, 
 
-        // Складотворчі приголосні (Syllabic consonants, як у button, bottle)
-        // Розкладаємо на нейтральний звук "ə" (шва) + приголосний
+        // Syllabic consonants (e.g., "button", "bottle")
+        // Decomposed into Schwa [ə] + consonant
         {"n̩", "ən"}, {"l̩", "əl"}, {"m̩", "əm"},
 
-        // Ротизовані голосні (Американське "er", як у water, bird)
-        // Розкладаємо на нейтральний "ə" + "r"
+        // Rhotic vowels (American "er" as in "bird")
         {"ɚ", "ər"}, {"ɝ", "ɜr"}, 
 
-        // Злиті дифтонги (якщо eSpeak видав їх як один символ, а модель не знає)
+        // Diphthongs (Simplified if the single-symbol ligature isn't supported)
         {"aɪ", "ai"}, {"aʊ", "au"}, {"eɪ", "ei"}, {"oʊ", "ou"}, {"ɔɪ", "ɔi"}
     };
 
@@ -63,14 +68,20 @@ public class PhonemeFallbackMapper
             return;
         }
 
-        // Тимчасові словники для розрахунків при старті
+        // 1. Load the phonetic feature database (PHOIBLE)
         var phoibleDb = LoadPhoibleDatabase(csvPath);
+
+        // 2. Cross-reference it with the phonemes currently supported by the loaded Piper model
         var supportedModelPhonemes = GetSupportedPhonemes(piperConfig, phoibleDb);
 
-        // ОДРАЗУ РАХУЄМО ВСІ МОЖЛИВІ ЗАМІНИ
+        // 3. Precalculate all possible fallbacks at startup to ensure O(1) performance during synthesis
         PrecalculateAllFallbacks(phoibleDb, supportedModelPhonemes);
     }
 
+    /// <summary>
+    /// Loads phonemes and their corresponding binary feature vectors from the PHOIBLE CSV file.
+    /// Feature vectors describe articulatory characteristics (voiced, labial, nasal, etc.).
+    /// </summary>
     private static Dictionary<string, char[]> LoadPhoibleDatabase(string csvPath)
     {
         var db = new Dictionary<string, char[]>();
@@ -127,13 +138,16 @@ public class PhonemeFallbackMapper
         return supported;
     }
 
+    /// <summary>
+    /// Performs a nearest-neighbor search for every phoneme in the PHOIBLE database.
+    /// Uses Hamming distance to find which supported model phoneme is the most "acoustically similar".
+    /// </summary>
     private void PrecalculateAllFallbacks(Dictionary<string, char[]> phoibleDb, Dictionary<string, char[]> supportedModelPhonemes)
     {
         if (supportedModelPhonemes.Count == 0) return;
 
         Console.WriteLine("[INFO] Precalculating phoneme fallback map. This may take a moment...");
 
-        // Проходимо по ВСІХ 3142 звуках PHOIBLE
         foreach (var phoibleKvp in phoibleDb)
         {
             string unknownPhoneme = phoibleKvp.Key;
@@ -142,7 +156,6 @@ public class PhonemeFallbackMapper
             string bestMatch = "";
             int minDistance = int.MaxValue;
 
-            // Шукаємо для нього найближчого родича з доступних
             foreach (var supportedKvp in supportedModelPhonemes)
             {
                 int distance = CalculateHammingDistance(unknownVector, supportedKvp.Value);
@@ -153,42 +166,42 @@ public class PhonemeFallbackMapper
                 }
             }
 
-            // Зберігаємо готовий результат!
             _precalculatedMap[unknownPhoneme] = bestMatch;
         }
 
         Console.WriteLine($"[INFO] Successfully precalculated fallbacks for {_precalculatedMap.Count} phonemes.");
     }
 
-    // Тепер цей метод миттєвий (O(1) завжди) і не містить математики!
+    /// <summary>
+    /// Returns the closest supported phoneme for any given IPA input.
+    /// This method is O(1) as it uses the precalculated cache.
+    /// </summary>
     public string GetClosestPhoneme(string unknownPhoneme)
     {
         if (string.IsNullOrEmpty(unknownPhoneme)) return "";
 
-        // ПЕРЕВІРКА СКЛАДНИХ ЗВУКІВ (напр. "t͡s")
+        // CHECK DECOMPOSITION RULES (e.g., "t͡s")
         if (_decompositionRules.TryGetValue(unknownPhoneme, out string? decomposed))
         {
             var safeResult = new System.Text.StringBuilder();
 
-            // Розбиваємо "ts" на "t" та "s" і перевіряємо кожен окремо
+            // Break "ts" into "t" and "s", then verify each separately
             var enumerator = System.Globalization.StringInfo.GetTextElementEnumerator(decomposed);
             while (enumerator.MoveNext())
             {
                 string part = enumerator.GetTextElement();
 
-                // Якщо модель знає цю частину — додаємо. 
-                // Якщо ні — беремо її найближчий аналог із уже прорахованої карти.
+                // If the model knows this component, use it. 
+                // Otherwise, take the closest match from the precalculated map.
                 if (_precalculatedMap.TryGetValue(part, out string? partFallback))
                 {
-                    // Додаємо або саму частину (якщо вона ідеальна), або її заміну
                     safeResult.Append(!string.IsNullOrEmpty(partFallback) ? partFallback : part);
                 }
             }
             return safeResult.ToString();
         }
 
-        // ДЛЯ ВСІХ ІНШИХ ЗВУКІВ
-        // Просто повертаємо вже готовий результат із кешу, який ми розрахували при старті
+        // STANDARD LOOKUP (Cached)
         if (_precalculatedMap.TryGetValue(unknownPhoneme, out string? fallback))
         {
             return fallback ?? "";
@@ -197,6 +210,10 @@ public class PhonemeFallbackMapper
         return "";
     }
 
+    /// <summary>
+    /// Calculates the Hamming distance between two binary feature vectors.
+    /// A lower distance represents higher phonetic similarity.
+    /// </summary>
     private static int CalculateHammingDistance(char[] vec1, char[] vec2)
     {
         int distance = 0;
@@ -226,6 +243,6 @@ public class PhonemeFallbackMapper
             else currentToken.Append(c);
         }
         result.Add(currentToken.ToString().Trim());
-        return result.ToArray();
+        return [.. result];
     }
 }

@@ -8,6 +8,11 @@ using System.Numerics;
 
 namespace ONNX_Runner.Services;
 
+/// <summary>
+/// The core engine responsible for executing the Piper ONNX model.
+/// It handles hardware acceleration, tensor preparation, and the high-performance 
+/// conversion of raw neural network output into playable audio formats.
+/// </summary>
 public class PiperRunner : IDisposable
 {
     private readonly InferenceSession _session;
@@ -26,6 +31,10 @@ public class PiperRunner : IDisposable
         IsUsingGPU = isGpu;
     }
 
+    /// <summary>
+    /// Dynamically selects the best available hardware. 
+    /// Iterates through available GPUs using DirectML before falling back to the CPU.
+    /// </summary>
     private static (InferenceSession, bool) InitializeSession(string modelPath, OnnxSettings onnxSettings)
     {
         int maxGpusToTry = 4;
@@ -34,7 +43,9 @@ public class PiperRunner : IDisposable
             try
             {
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-                onnxSettings.ApplyTo(options); // ЗАСТОСУВАННЯ ТЮНІНГУ
+                onnxSettings.ApplyTo(options); // Apply performance tuning from appsettings.json
+
+                // DirectML (Windows Machine Learning) allows running ONNX on almost any modern GPU (Nvidia, AMD, Intel)
                 options.AppendExecutionProvider_DML(deviceId);
 
                 var session = new InferenceSession(modelPath, options);
@@ -49,22 +60,34 @@ public class PiperRunner : IDisposable
             }
         }
 
-        // Фолбек на CPU
+        // FALLBACK: CPU Execution if no compatible GPU is detected or initialization fails
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
-        onnxSettings.ApplyTo(cpuOptions); // ЗАСТОСУВАННЯ ТЮНІНГУ НА CPU
+        onnxSettings.ApplyTo(cpuOptions);
 
         var fallbackSession = new InferenceSession(modelPath, cpuOptions);
         Console.WriteLine("[HARDWARE] Piper Model loaded successfully on CPU.");
         return (fallbackSession, false);
     }
 
+    /// <summary>
+    /// Performs raw inference. Converts phonemes into a float array of audio samples.
+    /// Logic:
+    /// 1. Maps speed to 'Length Scale' (Neural networks don't have a "speed" slider, they have a "duration" multiplier).
+    /// 2. Prepares three input tensors: input (phonemes), input_lengths, and scales (noise parameters).
+    /// 3. Executes the model and rents a buffer from ArrayPool to store the result.
+    /// </summary>
     public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
         float safeSpeed = Math.Clamp(speed, 0.1f, 10.0f);
+
+        // ARCHITECTURAL LOGIC: LengthScale controls the duration of phonemes. 
+        // A lower scale means shorter duration = faster speech.
         float targetLengthScale = _config.Inference.LengthScale / safeSpeed;
+
         float safeNoiseScale = requestNoiseScale ?? _config.Inference.NoiseScale;
         float safeNoiseW = requestNoiseW ?? _config.Inference.NoiseW;
 
+        // The 'scales' tensor controls the 'robotic vs natural' variance and the speed.
         var scalesTensor = new DenseTensor<float>(new float[] { safeNoiseScale, targetLengthScale, safeNoiseW }, [3]);
 
         long[] phonemeIds = _phonemizer.PhonemesToIds(phonemes);
@@ -84,17 +107,17 @@ public class PiperRunner : IDisposable
 
         int length = (int)outputTensor.Length;
 
-        // ОРЕНДУЄМО МАСИВ
+        // ZERO-ALLOCATION: Rent a buffer instead of creating a new array to save GC cycles.
         float[] buffer = ArrayPool<float>.Shared.Rent(length);
 
-        // Швидке копіювання з тензора напряму в орендований масив
+        // Directly copy the memory block from the ONNX tensor to our rented array.
         if (outputTensor is DenseTensor<float> denseTensor)
         {
             denseTensor.Buffer.Span.CopyTo(buffer);
         }
         else
         {
-            // Фолбек для старих версій ONNX
+            // Legacy fallback for non-dense tensors
             int index = 0;
             foreach (var val in outputTensor) buffer[index++] = val;
         }
@@ -102,20 +125,27 @@ public class PiperRunner : IDisposable
         return (buffer, length);
     }
 
+    /// <summary>
+    /// A high-level wrapper that produces a standard WAV byte array.
+    /// </summary>
     public byte[] SynthesizeAudio(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
         var rawResult = SynthesizeAudioRaw(phonemes, speed, requestNoiseScale, requestNoiseW);
         try
         {
-            // Передаємо лише корисну частину масиву
+            // Convert the raw neural float samples (-1.0 to 1.0) into a standard WAV file.
             return ConvertToWav(rawResult.Buffer.AsSpan(0, rawResult.Length));
         }
         finally
         {
+            // Always return the rented buffer to the pool after use.
             ArrayPool<float>.Shared.Return(rawResult.Buffer);
         }
     }
 
+    /// <summary>
+    /// Converts raw float samples to 16-bit PCM WAV data using SIMD (Single Instruction, Multiple Data).
+    /// </summary>
     public byte[] ConvertToWav(ReadOnlySpan<float> audioSamples)
     {
         using var memoryStream = new MemoryStream();
@@ -123,21 +153,26 @@ public class PiperRunner : IDisposable
 
         using (var writer = new WaveFileWriter(memoryStream, waveFormat))
         {
+            // 16-bit audio requires 2 bytes per sample.
             int requiredBytes = audioSamples.Length * 2;
             byte[] buffer = ArrayPool<byte>.Shared.Rent(requiredBytes);
 
             try
             {
+                // --- HARDWARE ACCELERATION (SIMD) ---
+                // Process 4 or 8 samples in a single CPU operation.
                 int vectorSize = Vector<float>.Count;
                 int i = 0;
 
                 var minVec = new Vector<float>(-1f);
                 var maxVec = new Vector<float>(1f);
-                var multVec = new Vector<float>(32767f);
+                var multVec = new Vector<float>(32767f); // Multiplier for 16-bit range
 
                 for (; i <= audioSamples.Length - vectorSize; i += vectorSize)
                 {
                     var vSamples = new Vector<float>(audioSamples[i..]);
+
+                    // Clamp values to [-1, 1] to prevent "clipping" artifacts (loud popping sounds)
                     var vClamped = Vector.Max(minVec, Vector.Min(maxVec, vSamples));
                     var vScaled = vClamped * multVec;
 
@@ -145,11 +180,13 @@ public class PiperRunner : IDisposable
                     {
                         short shortSample = (short)vScaled[k];
                         int bufferIndex = (i + k) * 2;
+                        // Manual byte-packing (Little Endian)
                         buffer[bufferIndex] = (byte)(shortSample & 0xFF);
                         buffer[bufferIndex + 1] = (byte)((shortSample >> 8) & 0xFF);
                     }
                 }
 
+                // Process the remaining samples (the "tail") that didn't fit into a SIMD vector.
                 for (; i < audioSamples.Length; i++)
                 {
                     float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
@@ -169,6 +206,9 @@ public class PiperRunner : IDisposable
         return memoryStream.ToArray();
     }
 
+    /// <summary>
+    /// Encodes float samples into high-quality MP3 using the LAME encoder and SIMD scaling.
+    /// </summary>
     public byte[] ConvertToMp3(ReadOnlySpan<float> audioSamples, int sampleRate)
     {
         using var memoryStream = new MemoryStream();
@@ -181,10 +221,10 @@ public class PiperRunner : IDisposable
 
             try
             {
-                // --- SIMD ОПТИМІЗАЦІЯ ---
+                // Identical SIMD logic to ConvertToWav to ensure maximum performance 
+                // when converting floats to the shorts expected by the MP3 encoder.
                 int vectorSize = Vector<float>.Count;
                 int i = 0;
-
                 var minVec = new Vector<float>(-1f);
                 var maxVec = new Vector<float>(1f);
                 var multVec = new Vector<float>(32767f);
@@ -192,7 +232,6 @@ public class PiperRunner : IDisposable
                 for (; i <= audioSamples.Length - vectorSize; i += vectorSize)
                 {
                     var vSamples = new Vector<float>(audioSamples[i..]);
-
                     var vClamped = Vector.Max(minVec, Vector.Min(maxVec, vSamples));
                     var vScaled = vClamped * multVec;
 
@@ -205,7 +244,6 @@ public class PiperRunner : IDisposable
                     }
                 }
 
-                // Хвіст
                 for (; i < audioSamples.Length; i++)
                 {
                     float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
@@ -213,7 +251,6 @@ public class PiperRunner : IDisposable
                     buffer[i * 2] = (byte)(shortSample & 0xFF);
                     buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
                 }
-                // -------------------------
 
                 writer.Write(buffer, 0, requiredBytes);
             }
