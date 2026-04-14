@@ -1,13 +1,13 @@
-using System.Buffers;
 using Microsoft.AspNetCore.Mvc;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
+using System.Buffers;
 
 namespace ONNX_Runner.Endpoints;
 
 public static class SpeechEndpoint
 {
-    // Глобальний набір дозволених форматів
+    // Global set of allowed audio response formats
     private static readonly HashSet<string> _allowedFormats = new(StringComparer.OrdinalIgnoreCase)
     {
         "wav", "mp3", "opus", "pcm"
@@ -20,11 +20,14 @@ public static class SpeechEndpoint
         [FromServices] IServiceProvider services,
         CancellationToken cancellationToken)
     {
-        // --- Request Validation ---
+        // =================================================================
+        // REQUEST VALIDATION
+        // =================================================================
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.BadRequest(new { error = "Input text cannot be empty." });
 
-        // Безпечно перевіряємо, чи завантажилася базова модель
+        // Safely verify if the base TTS model was successfully loaded at startup.
+        // If not, we return a 500 Internal Server Error without crashing the server.
         var piperConfig = services.GetService<PiperConfig>();
         if (piperConfig == null)
             return Results.Problem("Model is not loaded properly.", statusCode: 500);
@@ -39,12 +42,17 @@ public static class SpeechEndpoint
 
         try
         {
-            // --- Concurrency Control (Semaphore Pattern) ---
+            // =================================================================
+            // CONCURRENCY CONTROL (SEMAPHORE PATTERN)
+            // =================================================================
+            // Wait for an available slot in the execution queue. This strictly limits 
+            // concurrent ONNX inferences to prevent GPU VRAM Out-Of-Memory (OOM) errors 
+            // or CPU thread starvation.
             await gpuSemaphore.WaitAsync(cancellationToken);
 
             try
             {
-                // Отримуємо всі необхідні сервіси та конфіги з DI контейнера
+                // Retrieve necessary services and configurations from the Dependency Injection (DI) container
                 var streamConfig = services.GetRequiredService<StreamSettings>();
                 var clonerConfig = services.GetRequiredService<ClonerSettings>();
                 var dspConfig = services.GetRequiredService<DspSettings>();
@@ -58,42 +66,49 @@ public static class SpeechEndpoint
                 bool shouldStream = request.Stream ?? streamConfig.EnableStreaming;
                 bool isWav = request.ResponseFormat.Equals("wav", StringComparison.OrdinalIgnoreCase);
 
-                // WAV requires a file size in its header, so chunked streaming is conceptually impossible.
+                // WAV format requires the total file size to be written in its header upfront.
+                // Therefore, true chunked streaming is conceptually impossible for WAV.
                 bool useStreaming = shouldStream && !isWav;
 
                 bool useOpenVoice = !string.IsNullOrEmpty(request.Voice);
                 var openVoice = services.GetService<OpenVoiceRunner>();
                 var audioProc = services.GetService<AudioProcessor>();
 
-                // Глобальний рубильник EnableCloning.
+                // Global toggle for Voice Cloning. Ensures all prerequisites (config enabled, 
+                // target voice requested, and models loaded) are met before activating the heavy cloner.
                 bool canClone = clonerConfig.EnableCloning && useOpenVoice && openVoice != null && audioProc != null;
 
-                // Determine target sample rates
+                // Determine target sample rates based on the active pipeline
                 int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
                 int finalSampleRate = outSampleRate;
                 bool isOpus = request.ResponseFormat.Equals("opus", StringComparison.OrdinalIgnoreCase);
 
                 if (isOpus)
                 {
-                    // Ogg Opus strictly requires specific sample rates
+                    // Ogg Opus strictly requires specific sample rates (e.g., 24kHz, 48kHz)
                     int[] validOpusRates = [8000, 12000, 16000, 24000, 48000];
                     finalSampleRate = validOpusRates.OrderBy(r => Math.Abs(r - outSampleRate)).First();
                 }
 
                 int displaySampleRate = isOpus ? 48000 : finalSampleRate;
 
-                // --- Network Gateway Setup (Bridging & Backpressure) ---
+                // =================================================================
+                // NETWORK GATEWAY SETUP (BRIDGING & BACKPRESSURE)
+                // =================================================================
                 Stream targetStream;
                 System.Threading.Channels.Channel<byte[]>? networkChannel = null;
                 Task? networkSenderTask = null;
 
                 if (useStreaming)
                 {
+                    // Prepare HTTP headers for chunked audio streaming
                     httpContext.Response.ContentType = AudioStreamManager.GetMimeType(request);
                     httpContext.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{AudioStreamManager.GetFileName(request)}\"");
                     httpContext.Response.Headers.Append("X-Audio-Sample-Rate", displaySampleRate.ToString());
                     await httpContext.Response.StartAsync(cancellationToken);
 
+                    // Create a bounded channel for backpressure. If the client downloads slowly,
+                    // generation pauses until the client catches up, saving server RAM.
                     var channelOptions = new System.Threading.Channels.BoundedChannelOptions(50)
                     {
                         FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait
@@ -103,6 +118,7 @@ public static class SpeechEndpoint
                     int chunkSize = streamConfig.MinChunkSizeKb * 1024;
                     targetStream = new BridgingStream(networkChannel.Writer, chunkSize);
 
+                    // Background task to push bytes from the channel to the HTTP response body
                     networkSenderTask = Task.Run(async () =>
                     {
                         await foreach (var chunk in networkChannel.Reader.ReadAllAsync(cancellationToken))
@@ -115,10 +131,12 @@ public static class SpeechEndpoint
                 }
                 else
                 {
-                    targetStream = new MemoryStream(1024 * 1024); // Pre-allocate 1 MB
+                    targetStream = new MemoryStream(1024 * 1024); // Pre-allocate 1 MB for non-streaming requests
                 }
 
-                // --- Asynchronous Audio Generation (Producer-Consumer Pattern) ---
+                // =================================================================
+                // ASYNCHRONOUS AUDIO GENERATION (PRODUCER-CONSUMER PATTERN)
+                // =================================================================
                 byte[]? finalAudioBytes = null;
 
                 await Task.Run(async () =>
@@ -127,6 +145,8 @@ public static class SpeechEndpoint
 
                     float[]? targetFingerprint = null;
                     float[]? sourceFingerprint = null;
+
+                    // Fetch pre-computed tone embeddings from the Voice Library if cloning is active
                     if (canClone)
                     {
                         openVoice!.VoiceLibrary.TryGetValue(request.Voice, out targetFingerprint);
@@ -139,15 +159,17 @@ public static class SpeechEndpoint
                     int silenceSamplesCount = (int)(finalSampleRate * (chunkerConfig.SentencePauseSeconds / currentSpeed));
                     float[] absoluteSilence = new float[silenceSamplesCount];
 
+                    // Optional anti-aliasing low-pass filter to clean up cloning artifacts
                     NAudio.Dsp.BiQuadFilter? filter = null;
                     if (canClone && dspConfig.EnableLowPassFilter)
                         filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(finalSampleRate, dspConfig.LowPassCutoffFrequency, dspConfig.LowPassQFactor);
 
                     using (var streamManager = new AudioStreamManager(request, finalSampleRate, targetStream))
                     {
+                        // Internal channel for passing raw audio chunks between the Generator and the DSP Processor
                         var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length)>(10);
 
-                        // PRODUCER: Generates audio
+                        // PRODUCER: Phonemizes text and generates raw base audio using Piper ONNX
                         var producerTask = Task.Run(async () =>
                         {
                             foreach (var chunk in textChunks)
@@ -162,7 +184,7 @@ public static class SpeechEndpoint
                             channel.Writer.Complete();
                         }, cancellationToken);
 
-                        // CONSUMER: Processes audio
+                        // CONSUMER: Applies voice cloning, resampling, effects, and pushes to the network stream
                         var consumerTask = Task.Run(async () =>
                         {
                             await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
@@ -180,6 +202,7 @@ public static class SpeechEndpoint
                                 {
                                     if (canClone && targetFingerprint != null && sourceFingerprint != null)
                                     {
+                                        // Latent Space Blending: mix base voice fingerprint with target voice fingerprint
                                         float intensity = clonerConfig.CloneIntensity;
                                         float[] blendedTarget = new float[targetFingerprint.Length];
 
@@ -188,6 +211,7 @@ public static class SpeechEndpoint
                                             blendedTarget[j] = sourceFingerprint[j] + (targetFingerprint[j] - sourceFingerprint[j]) * intensity;
                                         }
 
+                                        // OpenVoice requires a specific sample rate (typically 22050 Hz)
                                         var r1 = audioProc!.Resample(currentBuffer, currentLength, piperConfig!.Audio.SampleRate, outSampleRate);
                                         rentedBuffer1 = r1.Buffer;
 
@@ -208,6 +232,7 @@ public static class SpeechEndpoint
                                         }
                                     }
 
+                                    // Final resampling to match the requested output format (e.g., Opus requires 24kHz/48kHz)
                                     if (outSampleRate != finalSampleRate)
                                     {
                                         var r2 = audioProc!.Resample(currentBuffer, currentLength, outSampleRate, finalSampleRate);
@@ -216,11 +241,11 @@ public static class SpeechEndpoint
                                         currentLength = r2.Length;
                                     }
 
-                                    // Apply Effects
+                                    // Apply post-processing DSP effects (reverb, EQ, etc.)
                                     effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), request.Effect, request.EffectIntensity);
                                     streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
-                                    // Pause (Silence)
+                                    // Append a brief pause (silence) between sentences for natural pacing
                                     Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
                                     effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), request.Effect, request.EffectIntensity);
                                     streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
@@ -232,6 +257,8 @@ public static class SpeechEndpoint
                                 }
                                 finally
                                 {
+                                    // ZERO-ALLOCATION PATTERN: 
+                                    // Always return rented memory arrays to the shared pool to prevent Garbage Collector (GC) pressure and memory leaks.
                                     ArrayPool<float>.Shared.Return(chunk.Buffer);
                                     if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);
                                     if (rentedBuffer2 != null) ArrayPool<float>.Shared.Return(rentedBuffer2);
@@ -242,12 +269,14 @@ public static class SpeechEndpoint
 
                         await Task.WhenAll(producerTask, consumerTask);
 
+                        // If not streaming, grab the complete audio file from memory once generation is done
                         if (!useStreaming)
                         {
                             finalAudioBytes = streamManager.GetFinalAudioBytes();
                         }
                     }
 
+                    // Gracefully close the network bridge
                     if (useStreaming)
                     {
                         try { targetStream.Flush(); }
@@ -256,6 +285,9 @@ public static class SpeechEndpoint
                     }
                 }, cancellationToken);
 
+                // =================================================================
+                // RESPONSE DISPATCHING
+                // =================================================================
                 if (useStreaming)
                 {
                     if (networkSenderTask != null) await networkSenderTask;
@@ -269,11 +301,14 @@ public static class SpeechEndpoint
             }
             finally
             {
+                // CRITICAL: Always release the semaphore slot, even if an error occurs, 
+                // so the next request in the queue can proceed.
                 gpuSemaphore.Release();
             }
         }
         catch (OperationCanceledException)
         {
+            // Triggered if the client disconnects/cancels the request midway through generation
             Console.ForegroundColor = ConsoleColor.Yellow;
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [INFO] Client disconnected. Generation stopped to save resources.");
             Console.ResetColor();
@@ -283,6 +318,7 @@ public static class SpeechEndpoint
         {
             if (httpContext.Response.HasStarted)
             {
+                // If streaming already started, we can't send a 500 status code anymore, just abort gracefully
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [ERROR] Stream aborted unexpectedly: {ex.Message}");
                 Console.ResetColor();

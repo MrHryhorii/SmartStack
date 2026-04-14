@@ -5,20 +5,25 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Додаємо підтримку Swagger
+// Add Swagger support for API documentation and easy testing
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Читаємо налаштування директорії ДО завантаження моделі
+// Read the model directory configuration BEFORE attempting to load the model.
+// This prevents CrashLoopBackOff in Docker if the folder doesn't exist yet.
 var modelConfig = builder.Configuration.GetSection("ModelSettings").Get<ModelSettings>() ?? new ModelSettings();
 
-// --- ЗАВАНТАЖЕННЯ МОДЕЛІ ТА ЛОГУВАННЯ ---
+// =================================================================
+// MODEL LOADING & LOGGING
+// =================================================================
 string modelDirectory = modelConfig.ModelDirectory;
 PiperConfig? piperConfig = null;
 string? piperModelPath = null;
 
 try
 {
+    // Graceful initialization: create directory if missing and warn the user,
+    // allowing the server to start without crashing.
     if (!Directory.Exists(modelDirectory))
     {
         Directory.CreateDirectory(modelDirectory);
@@ -52,7 +57,7 @@ catch (Exception ex)
     Console.ResetColor();
 }
 
-// Читаємо налаштування з appsettings.json
+// Read configuration sections from appsettings.json
 var corsConfig = builder.Configuration.GetSection("CorsSettings").Get<CorsSettings>() ?? new CorsSettings();
 var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
 var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
@@ -63,7 +68,10 @@ var onnxConfig = builder.Configuration.GetSection("OnnxSettings").Get<OnnxSettin
 var effectsConfig = builder.Configuration.GetSection("EffectsSettings").Get<EffectsSettings>() ?? new EffectsSettings();
 var clonerConfig = builder.Configuration.GetSection("ClonerSettings").Get<ClonerSettings>() ?? new ClonerSettings();
 
-// --- РЕЄСТРАЦІЯ СЕРВІСІВ (DI) ---
+// =================================================================
+// SERVICE REGISTRATION (Dependency Injection)
+// =================================================================
+// Registering settings as Singletons so they can be injected into any service or endpoint.
 builder.Services.AddSingleton(streamConfig);
 builder.Services.AddSingleton(onnxConfig);
 builder.Services.AddSingleton(effectsConfig);
@@ -72,9 +80,10 @@ builder.Services.AddSingleton(hardwareConfig);
 builder.Services.AddSingleton(chunkerConfig);
 builder.Services.AddSingleton(dspConfig);
 
+// Only wire up the heavy services if the base Piper model was successfully loaded
 if (piperConfig != null && piperModelPath != null)
 {
-    builder.Services.AddSingleton(piperConfig); // Робимо конфіг глобальним
+    builder.Services.AddSingleton(piperConfig); // Make Piper config globally available
 
     var phonemizer = new PiperPhonemizer(piperConfig);
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
@@ -92,7 +101,9 @@ if (piperConfig != null && piperModelPath != null)
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
     builder.Services.AddSingleton(mixedEspeak);
 
-    // --- ПЕРЕВІРКА ТА ЗАВАНТАЖЕННЯ OPENVOICE (CLONER) ---
+    // =================================================================
+    // OPENVOICE (CLONER) CHECK & AUTO-DOWNLOAD
+    // =================================================================
     string clonerDirectory = "Cloner";
     string voicesDirectory = "Voices";
 
@@ -105,6 +116,7 @@ if (piperConfig != null && piperModelPath != null)
         Directory.CreateDirectory(clonerDirectory);
     }
 
+    // Auto-fetch missing OpenVoice models from Hugging Face
     if (!File.Exists(extractPath) || !File.Exists(colorPath) || !File.Exists(toneJsonPath))
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
@@ -125,6 +137,7 @@ if (piperConfig != null && piperModelPath != null)
             HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_config.json", toneJsonPath, "tone_config.json", desc).Wait();
     }
 
+    // If models are present, load them into memory and process cached voices
     if (File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
     {
         try
@@ -139,12 +152,14 @@ if (piperConfig != null && piperModelPath != null)
 
                 if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
 
+                // Iterate through all .wav files in the voices directory to build the voice library
                 var wavFiles = Directory.GetFiles(voicesDirectory, "*.wav");
                 foreach (var wavPath in wavFiles)
                 {
                     string voiceName = Path.GetFileNameWithoutExtension(wavPath);
                     string fingerprintPath = Path.Combine(voicesDirectory, voiceName + ".voice");
 
+                    // Load pre-computed voice fingerprint if it exists to save startup time
                     if (File.Exists(fingerprintPath))
                     {
                         var fingerprint = openVoice.LoadVoiceFingerprint(fingerprintPath);
@@ -155,6 +170,7 @@ if (piperConfig != null && piperModelPath != null)
                     }
                     else
                     {
+                        // Extract new fingerprint from WAV file using the Tone Extractor model
                         Console.ForegroundColor = ConsoleColor.DarkYellow;
                         Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
                         Console.ResetColor();
@@ -180,6 +196,7 @@ if (piperConfig != null && piperModelPath != null)
                         }
                         finally
                         {
+                            // Always return rented arrays to the shared pool to prevent memory leaks
                             System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
                         }
 
@@ -191,11 +208,12 @@ if (piperConfig != null && piperModelPath != null)
                         openVoice.VoiceLibrary[voiceName] = fingerprint;
 
                         Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"   [SUCCESS] Zlipok saved: {voiceName}.voice");
+                        Console.WriteLine($"   [SUCCESS] Fingerprint saved: {voiceName}.voice");
                         Console.ResetColor();
                     }
                 }
 
+                // Register cloner services
                 builder.Services.AddSingleton(openVoice);
                 builder.Services.AddSingleton(audioProc);
             }
@@ -207,11 +225,15 @@ if (piperConfig != null && piperModelPath != null)
     }
     else
     {
+        // Graceful degradation: The server will still run, but voice cloning will be disabled
         Console.ForegroundColor = ConsoleColor.Red;
         Console.WriteLine("[ERROR] Voice Cloner models are missing. OpenVoice features will be unavailable.");
         Console.ResetColor();
     }
 
+    // =================================================================
+    // PHONEMIZER & LANGUAGE DETECTION SETUP
+    // =================================================================
     MixedLanguagePhonemizer? mixedPhonemizer = null;
     PhonemeFallbackMapper? fallbackMapper = null;
 
@@ -237,8 +259,10 @@ if (piperConfig != null && piperModelPath != null)
 }
 
 // =================================================================
-// НАЛАШТУВАННЯ CORS ТА RATE LIMITING
+// CORS & RATE LIMITING SETUP
 // =================================================================
+// Dynamic CORS allows integration with web frontends (e.g., React/Vue)
+// Exposing custom headers is required for the client to read audio metadata.
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("DynamicCorsPolicy", policy =>
@@ -254,6 +278,7 @@ builder.Services.AddCors(options =>
     });
 });
 
+// Protect the API from spam and DDoS attacks using IP-based limits
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -270,8 +295,10 @@ builder.Services.AddRateLimiter(options =>
 });
 
 // =================================================================
-// ДИНАМІЧНА ЧЕРГА ЗАПИТІВ (РОЗУМНИЙ СЕМАФОР У DI)
+// DYNAMIC REQUEST QUEUE (SMART SEMAPHORE IN DI)
 // =================================================================
+// Calculates the maximum number of concurrent generation tasks based on available hardware.
+// Prevents Out-Of-Memory (OOM) errors on GPUs and avoids heavy thread-blocking on CPUs.
 builder.Services.AddSingleton(sp =>
 {
     var hwConfig = sp.GetRequiredService<HardwareSettings>();
@@ -285,14 +312,14 @@ builder.Services.AddSingleton(sp =>
             double totalVramGb = hwConfig.TotalVramGb;
             double vramPerRequest = hwConfig.VramPerRequestGb;
             cr = Math.Max(1, (int)(totalVramGb / vramPerRequest));
-            Console.WriteLine($"[SYSTEM] Running on GPU ({totalVramGb}GB VRAM). Limit: {cr} tasks.");
+            Console.WriteLine($"[SYSTEM] Running on GPU ({totalVramGb}GB VRAM). Limit: {cr} concurrent tasks.");
         }
         else
         {
             int totalCores = Environment.ProcessorCount;
             double cpuMultiplier = Math.Clamp(hwConfig.CpuCoresUsageMultiplier, 0.1, 1.0);
             cr = Math.Max(1, (int)(totalCores * cpuMultiplier));
-            Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Limit: {cr} tasks.");
+            Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Limit: {cr} concurrent tasks.");
         }
     }
     return new SemaphoreSlim(cr, cr);
@@ -310,8 +337,10 @@ app.UseCors("DynamicCorsPolicy");
 app.UseRateLimiter();
 
 // =================================================================
-// АВТОМАТИЧНА ГЕНЕРАЦІЯ БАЗОВОГО ЗЛІПКУ PIPER
+// AUTOMATIC BASE FINGERPRINT GENERATION
 // =================================================================
+// We use a temporary scope to generate the base Piper voice fingerprint at startup.
+// Once generated and cached, the heavy Tone Extractor model is unloaded from memory to free up VRAM/RAM.
 using (var scope = app.Services.CreateScope())
 {
     var openVoiceSvc = scope.ServiceProvider.GetService<OpenVoiceRunner>();
@@ -324,12 +353,14 @@ using (var scope = app.Services.CreateScope())
     {
         var baseGenerator = new BaseVoiceGenerator(unifiedPhonemizerSvc, piperRunnerSvc, audioProcSvc, openVoiceSvc, pipConfig);
         baseGenerator.GenerateAndCacheBaseFingerprint();
+
+        // Free up memory since extraction is only needed once at startup
         openVoiceSvc.UnloadExtractor();
     }
 }
 
 // =================================================================
-// ENDPOINTS
+// API ENDPOINTS
 // =================================================================
 
 app.MapPost("/v1/audio/speech", SpeechEndpoint.HandleSpeechRequest)
