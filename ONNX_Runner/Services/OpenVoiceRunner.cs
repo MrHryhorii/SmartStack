@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using System.Buffers;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -33,8 +34,8 @@ public class OpenVoiceRunner : IDisposable
     }
 
     /// <summary>
-    /// Attempts to initialize ONNX sessions on the GPU using DirectML.
-    /// If no compatible GPU is found, it automatically falls back to CPU execution.
+    /// Attempts to initialize ONNX sessions on the GPU using DirectML (on Windows).
+    /// If no compatible GPU is found or running on non-Windows OS, it gracefully falls back to CPU execution.
     /// </summary>
     private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings)
     {
@@ -46,16 +47,26 @@ public class OpenVoiceRunner : IDisposable
             {
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
                 onnxSettings.ApplyTo(options); // Apply performance tuning settings
-                options.AppendExecutionProvider_DML(deviceId);
 
-                var extract = new InferenceSession(extractPath, options);
-                var color = new InferenceSession(colorPath, options);
+                // SMART CROSS-PLATFORM HARDWARE DETECTION:
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    options.AppendExecutionProvider_DML(deviceId);
 
-                Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {deviceId})");
-                Console.ResetColor();
+                    var extract = new InferenceSession(extractPath, options);
+                    var color = new InferenceSession(colorPath, options);
 
-                return (extract, color);
+                    Console.ForegroundColor = ConsoleColor.Magenta;
+                    Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {deviceId})");
+                    Console.ResetColor();
+
+                    return (extract, color);
+                }
+                else
+                {
+                    Console.WriteLine("[HARDWARE] Non-Windows OS detected. Skipping DirectML for OpenVoice, proceeding to CPU execution.");
+                    break; // Exit the GPU loop and proceed directly to CPU fallback
+                }
             }
             catch (Exception ex)
             {

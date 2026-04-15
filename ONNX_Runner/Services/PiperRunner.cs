@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using NAudio.Wave;
@@ -33,7 +34,7 @@ public class PiperRunner : IDisposable
 
     /// <summary>
     /// Dynamically selects the best available hardware. 
-    /// Iterates through available GPUs using DirectML before falling back to the CPU.
+    /// Iterates through available GPUs using DirectML (on Windows) before gracefully falling back to the CPU.
     /// </summary>
     private static (InferenceSession, bool) InitializeSession(string modelPath, OnnxSettings onnxSettings)
     {
@@ -45,12 +46,23 @@ public class PiperRunner : IDisposable
                 var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
                 onnxSettings.ApplyTo(options); // Apply performance tuning from appsettings.json
 
-                // DirectML (Windows Machine Learning) allows running ONNX on almost any modern GPU (Nvidia, AMD, Intel)
-                options.AppendExecutionProvider_DML(deviceId);
+                // SMART CROSS-PLATFORM HARDWARE DETECTION:
+                // DirectML is highly optimized for Windows (DirectX). For Linux/macOS (like Docker containers), 
+                // we gracefully skip this step and rely on the highly-capable CPU fallback below.
+                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                {
+                    // DirectML (Windows Machine Learning) allows running ONNX on almost any modern GPU (Nvidia, AMD, Intel)
+                    options.AppendExecutionProvider_DML(deviceId);
 
-                var session = new InferenceSession(modelPath, options);
-                Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
-                return (session, true);
+                    var session = new InferenceSession(modelPath, options);
+                    Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
+                    return (session, true);
+                }
+                else
+                {
+                    Console.WriteLine("[HARDWARE] Non-Windows OS detected. Skipping DirectML, proceeding to CPU execution.");
+                    break; // Exit the GPU loop and proceed directly to CPU initialization
+                }
             }
             catch (Exception ex)
             {
@@ -60,7 +72,7 @@ public class PiperRunner : IDisposable
             }
         }
 
-        // FALLBACK: CPU Execution if no compatible GPU is detected or initialization fails
+        // FALLBACK: CPU Execution if no compatible GPU is detected, initialization fails, or running on non-Windows OS
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
         onnxSettings.ApplyTo(cpuOptions);
 

@@ -1,15 +1,42 @@
 using System.Runtime.InteropServices;
+using System.Reflection;
 
 namespace ONNX_Runner.Services;
 
 /// <summary>
 /// A lightweight C# wrapper for the native C/C++ espeak-ng library.
 /// Uses Platform Invocation Services (P/Invoke) and modern LibraryImport 
-/// to interface directly with the compiled DLL for lightning-fast text-to-phoneme conversion.
+/// to interface directly with the compiled library for lightning-fast text-to-phoneme conversion.
 /// </summary>
 public partial class EspeakWrapper : IDisposable
 {
-    private const string DllPath = @"PiperNative\espeak-ng.dll";
+    // Universal library name without path or extension.
+    // .NET will automatically append .dll on Windows, .so on Linux, and .dylib on macOS.
+    private const string DllPath = "espeak-ng";
+
+    /// <summary>
+    /// Static constructor sets up a smart cross-platform DLL resolver.
+    /// Since espeak-ng is a native C++ binary and not a standard .NET NuGet package, 
+    /// this resolver ensures smooth execution on both local Windows machines (using the local PiperNative folder) 
+    /// and Docker Linux containers (using system-installed libraries).
+    /// </summary>
+    static EspeakWrapper()
+    {
+        NativeLibrary.SetDllImportResolver(typeof(EspeakWrapper).Assembly, ImportResolver);
+    }
+
+    private static IntPtr ImportResolver(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
+    {
+        // For Windows: explicitly route to the local structured folder to keep the project root clean.
+        if (libraryName == DllPath && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return NativeLibrary.Load(@"PiperNative\espeak-ng.dll", assembly, searchPath);
+        }
+
+        // For Linux/macOS (Docker): return IntPtr.Zero to let .NET fall back to its default behavior,
+        // which perfectly locates system-installed libraries (e.g., via apt-get install espeak-ng).
+        return IntPtr.Zero;
+    }
 
     [LibraryImport(DllPath, StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(System.Runtime.InteropServices.Marshalling.AnsiStringMarshaller))]
     [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
@@ -61,7 +88,7 @@ public partial class EspeakWrapper : IDisposable
     /// </summary>
     public string GetIpaPhonemes(string text)
     {
-        // Allocate unmanaged memory for the UTF-8 string to pass it to the C++ DLL
+        // Allocate unmanaged memory for the UTF-8 string to pass it to the C++ library
         IntPtr textPtr = Marshal.StringToCoTaskMemUTF8(text);
         IntPtr currentPtr = textPtr;
         var sb = new System.Text.StringBuilder();
