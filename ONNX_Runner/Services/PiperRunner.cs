@@ -47,20 +47,27 @@ public class PiperRunner : IDisposable
                 onnxSettings.ApplyTo(options); // Apply performance tuning from appsettings.json
 
                 // SMART CROSS-PLATFORM HARDWARE DETECTION:
-                // DirectML is highly optimized for Windows (DirectX). For Linux/macOS (like Docker containers), 
-                // we gracefully skip this step and rely on the highly-capable CPU fallback below.
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
-                    // DirectML (Windows Machine Learning) allows running ONNX on almost any modern GPU (Nvidia, AMD, Intel)
+                    // DirectML (Windows)
                     options.AppendExecutionProvider_DML(deviceId);
 
                     var session = new InferenceSession(modelPath, options);
                     Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
                     return (session, true);
                 }
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                {
+                    // CUDA (Linux / Docker with Nvidia Runtime)
+                    options.AppendExecutionProvider_CUDA(deviceId);
+
+                    var session = new InferenceSession(modelPath, options);
+                    Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {deviceId})");
+                    return (session, true);
+                }
                 else
                 {
-                    Console.WriteLine("[HARDWARE] Non-Windows OS detected. Skipping DirectML, proceeding to CPU execution.");
+                    Console.WriteLine("[HARDWARE] Unsupported OS for GPU acceleration (e.g. macOS). Proceeding to CPU execution.");
                     break; // Exit the GPU loop and proceed directly to CPU initialization
                 }
             }

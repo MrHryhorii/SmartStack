@@ -51,6 +51,7 @@ public class OpenVoiceRunner : IDisposable
                 // SMART CROSS-PLATFORM HARDWARE DETECTION:
                 if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                 {
+                    // DirectML (Windows)
                     options.AppendExecutionProvider_DML(deviceId);
 
                     var extract = new InferenceSession(extractPath, options);
@@ -62,9 +63,23 @@ public class OpenVoiceRunner : IDisposable
 
                     return (extract, color);
                 }
+                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                {
+                    // CUDA (Linux / Docker WITH Nvidia Runtime)
+                    options.AppendExecutionProvider_CUDA(deviceId);
+
+                    var extract = new InferenceSession(extractPath, options);
+                    var color = new InferenceSession(colorPath, options);
+
+                    Console.ForegroundColor = ConsoleColor.Magenta;
+                    Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (CUDA, Device ID: {deviceId})");
+                    Console.ResetColor();
+
+                    return (extract, color);
+                }
                 else
                 {
-                    Console.WriteLine("[HARDWARE] Non-Windows OS detected. Skipping DirectML for OpenVoice, proceeding to CPU execution.");
+                    Console.WriteLine("[HARDWARE] Unsupported OS for GPU acceleration. Proceeding to CPU execution.");
                     break; // Exit the GPU loop and proceed directly to CPU fallback
                 }
             }

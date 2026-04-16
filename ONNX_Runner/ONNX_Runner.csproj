@@ -14,9 +14,8 @@
     <PackageReference Include="NAudio.Lame" Version="2.1.0" />
     <PackageReference Include="SearchPioneer.Lingua" Version="1.0.5" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
-    # On Windows, we can leverage DirectML for GPU acceleration. On Linux, we'll fall back to the CPU execution provider.
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.2" Condition="'$(OS)' == 'Windows_NT'" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" Condition="'$(OS)' != 'Windows_NT'" />  
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" Condition="'$(OS)' != 'Windows_NT'" /> 
   </ItemGroup>
 
   <ItemGroup>

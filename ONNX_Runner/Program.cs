@@ -5,6 +5,52 @@ using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+
+// =================================================================
+// LINUX SELF-HEALING (NAudio.Lame Fix)
+// =================================================================
+// NAudio.Lame expects a Windows DLL path. On bare-metal Linux, we automatically 
+// create the required symlink so the sysadmin doesn't have to do it manually.
+if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
+{
+    try
+    {
+        string targetDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "linux-x64", "native");
+        string symlinkPath = Path.Combine(targetDir, "libmp3lame.64.dll");
+
+        if (!File.Exists(symlinkPath))
+        {
+            Directory.CreateDirectory(targetDir);
+
+            // Common locations for LAME on Ubuntu/Debian and CentOS/RHEL
+            string[] possibleSystemLibs = {
+                "/usr/lib/x86_64-linux-gnu/libmp3lame.so.0",
+                "/usr/lib64/libmp3lame.so.0",
+                "/usr/lib/libmp3lame.so.0"
+            };
+
+            string? validSystemLib = possibleSystemLibs.FirstOrDefault(File.Exists);
+
+            if (validSystemLib != null)
+            {
+                File.CreateSymbolicLink(symlinkPath, validSystemLib);
+                Console.WriteLine($"[SYSTEM] Auto-created symlink for LAME MP3 Encoder: {symlinkPath} -> {validSystemLib}");
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine("[WARNING] libmp3lame.so.0 not found on the system. MP3 streaming may fail. Please run: apt-get install libmp3lame0");
+                Console.ResetColor();
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[WARNING] Failed to auto-heal LAME library link: {ex.Message}");
+    }
+}
+
+
 // Add Swagger support for API documentation and easy testing
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();

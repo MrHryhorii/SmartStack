@@ -24,11 +24,6 @@ RUN apt-get update && apt-get install -y \
     libmp3lame-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# THE DEVOPS FIX: NAudio.Lame hardcodes the Windows DLL name.
-# We create the expected directory and a symlink pointing to the actual Linux library.
-RUN mkdir -p /app/runtimes/linux-x64/native/ && \
-    ln -s /usr/lib/x86_64-linux-gnu/libmp3lame.so.0 /app/runtimes/linux-x64/native/libmp3lame.64.dll
-
 # Copy the compiled application from the build stage
 COPY --from=build /app/publish .
 
