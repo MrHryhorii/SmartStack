@@ -13,13 +13,25 @@ public static class PhonemizeEndpoint
 {
     public static async Task<IResult> HandlePhonemizeRequest(
         [FromBody] PhonemizeRequest request,
-        [FromServices] UnifiedPhonemizer unifiedPhonemizer)
+        [FromServices] UnifiedPhonemizer unifiedPhonemizer,
+        [FromServices] ApiSettings apiSettings)
     {
         // =================================================================
         // REQUEST VALIDATION
         // =================================================================
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.BadRequest(new { error = "Input text cannot be empty." });
+
+        // =================================================================
+        // TEXT LENGTH LIMITATION (RESOURCE PROTECTION)
+        // =================================================================
+        // Even though phonemization doesn't use the GPU, heavy Regex operations 
+        // and deep dictionary lookups on massive texts can cause CPU thread starvation.
+        // We gracefully truncate the input to the configured maximum length.
+        if (apiSettings.MaxTextLength > 0 && request.Input.Length > apiSettings.MaxTextLength)
+        {
+            request.Input = request.Input[..apiSettings.MaxTextLength];
+        }
 
         try
         {

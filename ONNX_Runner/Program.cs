@@ -104,6 +104,7 @@ catch (Exception ex)
 }
 
 // Read configuration sections from appsettings.json
+var apiConfig = builder.Configuration.GetSection("ApiSettings").Get<ApiSettings>() ?? new ApiSettings();
 var corsConfig = builder.Configuration.GetSection("CorsSettings").Get<CorsSettings>() ?? new CorsSettings();
 var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
 var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
@@ -118,6 +119,7 @@ var clonerConfig = builder.Configuration.GetSection("ClonerSettings").Get<Cloner
 // SERVICE REGISTRATION (Dependency Injection)
 // =================================================================
 // Registering settings as Singletons so they can be injected into any service or endpoint.
+builder.Services.AddSingleton(apiConfig);
 builder.Services.AddSingleton(streamConfig);
 builder.Services.AddSingleton(onnxConfig);
 builder.Services.AddSingleton(effectsConfig);

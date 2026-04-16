@@ -26,6 +26,18 @@ public static class SpeechEndpoint
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.BadRequest(new { error = "Input text cannot be empty." });
 
+        // =================================================================
+        // TEXT LENGTH LIMITATION (OOM PROTECTION)
+        // =================================================================
+        // Protects the server from Out-Of-Memory errors and GPU timeout limits.
+        // If the client sends a massive block of text (like a whole book in one request), 
+        // we smoothly truncate it to the allowed limit rather than rejecting the entire request.
+        var apiSettings = services.GetRequiredService<ApiSettings>();
+        if (apiSettings.MaxTextLength > 0 && request.Input.Length > apiSettings.MaxTextLength)
+        {
+            request.Input = request.Input[..apiSettings.MaxTextLength];
+        }
+
         // Safely verify if the base TTS model was successfully loaded at startup.
         // If not, we return a 500 Internal Server Error without crashing the server.
         var piperConfig = services.GetService<PiperConfig>();

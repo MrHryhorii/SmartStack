@@ -21,15 +21,15 @@
 
   <!--
   [LIGHTWEIGHT CPU-ONLY BUILD FOR LINUX]
-  
+
   1. In this file: 
       Replace "Microsoft.ML.OnnxRuntime.Gpu" with "Microsoft.ML.OnnxRuntime".
 
   2. In PiperRunner.cs and OpenVoiceRunner.cs: 
       Comment out the entire "else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))" block.
 
-  Reason: The CPU-only package does not contain GPU methods,
-          so the Linux-specific GPU code must be disabled to prevent compilation errors.
+      Reason: The CPU-only package does not contain GPU methods,
+              so the Linux-specific GPU code must be disabled to prevent compilation errors.
   -->
 
   <ItemGroup>
