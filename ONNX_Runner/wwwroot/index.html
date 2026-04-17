@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="uk" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tsubaki Voice Engine</title>
+    <link rel="icon" type="image/svg+xml" href="tsubaki.svg">
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+    <div class="watermark"></div>
+
+    <div class="container">
+        <header>
+            <h1>🎙️ Tsubaki Voice API</h1>
+            <button id="themeToggle" class="btn-theme" title="Toggle Theme">🌓</button>
+        </header>
+
+        <main class="dashboard">
+            <section class="panel text-panel">
+                <label for="textInput">Текст для синтезу (Text to synthesize):</label>
+                <textarea id="textInput" placeholder="Enter text here..."></textarea>
+                
+                <div class="main-controls">
+                    <button id="generateBtn" class="btn-primary">Генерувати Аудіо</button>
+                    <div class="toggle-wrap">
+                        <input type="checkbox" id="streamToggle" checked>
+                        <label for="streamToggle">Потокове відтворення (Stream)</label>
+                    </div>
+                </div>
+                
+                <audio id="audioPlayer" controls style="display: none; width: 100%; margin-top: 20px;"></audio>
+                <div id="statusLog" class="terminal-log"></div>
+            </section>
+
+            <aside class="panel settings-panel">
+                <div class="control-group">
+                    <label for="voiceSelect">Голос (Voice):</label>
+                    <select id="voiceSelect"><option>Loading...</option></select>
+                </div>
+
+                <div class="control-group">
+                    <label for="formatSelect">Формат (Format):</label>
+                    <select id="formatSelect">
+                        <option value="mp3">MP3</option>
+                        <option value="opus">Opus (OGG)</option>
+                        <option value="wav">WAV</option>
+                        <option value="pcm">Raw PCM</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
+                    <label>Швидкість (Speed):</label>
+                    <div class="slider-row">
+                        <input type="range" id="speedSlider" min="0.25" max="4.0" step="0.01" value="1.0">
+                        <input type="number" id="speedNum" min="0.25" max="4.0" step="0.01" value="1.0" class="num-input">
+                    </div>
+                </div>
+
+                <hr class="divider">
+                <h3>Розширені параметри (Advanced)</h3>
+
+                <div class="control-group">
+                    <div class="toggle-wrap">
+                        <input type="checkbox" id="useEffect">
+                        <label for="effectSelect">DSP Ефект (Effect)</label>
+                    </div>
+                    <select id="effectSelect" disabled><option>Loading...</option></select>
+                    <div class="slider-row mt-2">
+                        <input type="range" id="effectIntSlider" min="0" max="1" step="0.01" value="1.0" disabled title="Intensity">
+                        <input type="number" id="effectIntNum" min="0" max="1" step="0.01" value="1.0" disabled class="num-input">
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="toggle-wrap">
+                        <input type="checkbox" id="useNoiseScale">
+                        <label>Експресія (Noise Scale):</label>
+                    </div>
+                    <div class="slider-row">
+                        <input type="range" id="nsSlider" min="0" max="2" step="0.001" value="0.667" disabled>
+                        <input type="number" id="nsNum" min="0" max="2" step="0.001" value="0.667" disabled class="num-input">
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div class="toggle-wrap">
+                        <input type="checkbox" id="useNoiseW">
+                        <label>Ритм (Noise W):</label>
+                    </div>
+                    <div class="slider-row">
+                        <input type="range" id="nwSlider" min="0" max="2" step="0.001" value="0.8" disabled>
+                        <input type="number" id="nwNum" min="0" max="2" step="0.001" value="0.8" disabled class="num-input">
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>

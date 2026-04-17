@@ -1,0 +1,181 @@
+/* =========================================
+   THEMES (VARIABLES)
+========================================= */
+:root[data-theme="light"] {
+    --bg-base: #f0f4f8;
+    --bg-panel: #ffffff;
+    --text-main: #2d3748;
+    --text-muted: #718096;
+    --accent: #3182ce;
+    --accent-hover: #2b6cb0;
+    --border: #e2e8f0;
+    --shadow: 0 4px 6px rgba(0,0,0,0.05);
+    --svg-opacity: 0.03;
+}
+
+:root[data-theme="dark"] {
+    /* Citypop / Synthwave colors */
+    --bg-base: #0a0a12;
+    --bg-panel: #151522;
+    --text-main: #e2e8f0;
+    --text-muted: #a0aec0;
+    --accent: #ff00ff;       
+    --accent-hover: #00ffff; 
+    --border: #2d3748;
+    --shadow: 0 4px 15px rgba(255, 0, 255, 0.15);
+    --svg-opacity: 0.05;
+}
+
+/* =========================================
+   BASE STYLES
+========================================= */
+body {
+    margin: 0;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background-color: var(--bg-base);
+    color: var(--text-main);
+    transition: background-color 0.3s, color 0.3s;
+}
+
+/* Background Watermark */
+.watermark {
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    width: 60vh; height: 60vh;
+    background-image: url('../tsubaki.svg');
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: contain;
+    opacity: var(--svg-opacity);
+    z-index: -1;
+    pointer-events: none;
+}
+
+/* Layout Grid */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+}
+
+h1 { margin: 0; color: var(--accent); }
+
+.dashboard {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 2rem;
+}
+
+.panel {
+    background: var(--bg-panel);
+    padding: 1.5rem;
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+}
+
+/* Controls & Inputs */
+textarea {
+    width: 100%;
+    height: 150px;
+    background: var(--bg-base);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    box-sizing: border-box; /* Fixes overflow */
+    font-size: 1rem;
+    resize: vertical;
+}
+
+textarea:focus, select:focus, input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Global input sizing fix */
+select, input[type="range"], input[type="number"] {
+    width: 100%;
+    padding: 0.5rem;
+    background: var(--bg-base);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-sizing: border-box; /* Crucial for preventing right-side overflow */
+}
+
+.control-group { margin-bottom: 1.5rem; }
+.toggle-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 5px;}
+.toggle-wrap label { font-size: 0.9rem; font-weight: bold; cursor: pointer; }
+.mt-2 { margin-top: 0.5rem; }
+
+/* Flexbox for slider and number input side-by-side */
+.slider-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 0.5rem;
+}
+
+.slider-row input[type="range"] {
+    flex: 1; /* Slider takes remaining space */
+    margin-top: 0;
+}
+
+.slider-row .num-input {
+    width: 80px; /* Fixed width for manual number entry */
+    margin-top: 0;
+}
+
+/* Buttons */
+.btn-primary {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: 0.2s;
+}
+.btn-primary:hover {
+    background: var(--accent-hover);
+    transform: translateY(-2px);
+}
+.btn-primary:disabled {
+    background: #555;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.btn-theme {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    font-size: 1.5rem;
+    cursor: pointer;
+    border-radius: 50%;
+    width: 50px; height: 50px;
+}
+
+/* Terminal Log */
+.terminal-log {
+    margin-top: 1.5rem;
+    background: #050505;
+    color: #00ff00;
+    padding: 1rem;
+    border-radius: 8px;
+    font-family: monospace;
+    height: 150px;
+    overflow-y: auto;
+    font-size: 0.85rem;
+    border: 1px solid #222;
+}

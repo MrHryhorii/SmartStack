@@ -375,6 +375,13 @@ builder.Services.AddSingleton(sp =>
 
 var app = builder.Build();
 
+// =================================================================
+// ENABLE STATIC FILES (WEB UI HOSTING)
+// =================================================================
+// These middlewares allow ASP.NET to serve index.html from the 'wwwroot' folder
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
@@ -420,5 +427,17 @@ app.MapPost("/v1/audio/phonemize", PhonemizeEndpoint.HandlePhonemizeRequest)
    .WithName("GetPhonemes")
    .WithOpenApi()
    .RequireRateLimiting("ip_limit");
+
+// With limited access for security,
+// these endpoints are designed for local dashboard integration and should not be exposed publicly.
+app.MapGet("/v1/audio/voices", InfoEndpoints.GetVoices)
+   .WithName("GetVoices")
+   .WithOpenApi()
+   .AddEndpointFilter<LocalHostOnlyFilter>();
+
+app.MapGet("/v1/audio/effects", InfoEndpoints.GetEffects)
+   .WithName("GetEffects")
+   .WithOpenApi()
+   .AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.Run();
