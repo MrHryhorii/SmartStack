@@ -162,7 +162,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             log(`❌ CRITICAL ERROR: ${error.message}`);
         } finally {
             btn.disabled = false;
-            btn.innerText = "Генерувати (Generate)";
+            btn.innerText = "Generate";
         }
     });
 });

@@ -1,107 +1,153 @@
 <!DOCTYPE html>
-<html lang="uk" data-theme="light">
+<html lang="en" data-theme="light">
 <head>
+    <!-- Meta configuration -->
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Page title -->
     <title>Tsubaki Voice Engine</title>
+
+    <!-- App icon -->
     <link rel="icon" type="image/svg+xml" href="tsubaki.svg">
+
+    <!-- Main stylesheet -->
     <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
+
+    <!-- Decorative background (logo watermark) -->
     <div class="watermark"></div>
 
+    <!-- Root container (controls max width + padding) -->
     <div class="container">
-        <header>
-            <h1>🎙️ Tsubaki Voice API</h1>
-            <button id="themeToggle" class="btn-theme" title="Toggle Theme">🌓</button>
+
+        <!-- Header: title + global actions -->
+        <header class="header">
+            <h1 class="title">🎙️ Tsubaki Voice Engine</h1>
+
+            <!-- Theme switch button -->
+            <button id="themeToggle" class="btn-icon" title="Toggle theme">🌓</button>
         </header>
 
-        <main class="dashboard">
-            <section class="panel text-panel">
-                <label for="textInput">Текст для синтезу (Text to synthesize):</label>
-                <textarea id="textInput" placeholder="Enter text here..."></textarea>
+        <!-- Main layout grid -->
+        <main class="layout">
+
+            <!-- Primary panel: text input + playback -->
+            <section class="panel panel-main">
                 
-                <div class="main-controls">
-                    <button id="generateBtn" class="btn-primary">Генерувати (Generate)</button>
-                    <button id="downloadBtn" class="btn-secondary" disabled title="Download Audio">💾 Завантажити</button>
+                <!-- Text input field -->
+                <div class="field">
+                    <label for="textInput" class="label">Text</label>
+                    <textarea id="textInput" spellcheck="false" placeholder="Enter text..."></textarea>
                 </div>
-                
-                <div class="toggle-wrap mt-2">
+
+                <!-- Main action buttons -->
+                <div class="actions">
+                    <button id="generateBtn" class="btn-primary">Generate</button>
+                    <button id="downloadBtn" class="btn-secondary" disabled>Download</button>
+                </div>
+
+                <!-- Streaming toggle -->
+                <div class="toggle">
                     <input type="checkbox" id="streamToggle" checked>
-                    <label for="streamToggle">Потокове відтворення (Stream)</label>
+                    <label for="streamToggle">Stream</label>
                 </div>
-                
-                <audio id="audioPlayer" controls style="width: 100%; margin-top: 20px;"></audio>
+
+                <!-- Audio player preview -->
+                <audio id="audioPlayer" class="audio" controls></audio>
             </section>
 
-            <aside class="panel settings-panel">
-                <div class="control-group">
-                    <label for="voiceSelect">Голос (Voice):</label>
-                    <select id="voiceSelect"><option>Loading...</option></select>
+            <!-- Side panel: parameters and settings -->
+            <aside class="panel panel-side">
+
+                <!-- Voice selection -->
+                <div class="field">
+                    <label for="voiceSelect" class="label">Voice</label>
+                    <select id="voiceSelect"></select>
                 </div>
 
-                <div class="control-group">
-                    <label for="formatSelect">Формат (Format):</label>
+                <!-- Output format -->
+                <div class="field">
+                    <label for="formatSelect" class="label">Format</label>
                     <select id="formatSelect">
                         <option value="mp3">MP3</option>
-                        <option value="opus">Opus (OGG)</option>
+                        <option value="opus">Opus</option>
                         <option value="wav">WAV</option>
-                        <option value="pcm">Raw PCM</option>
+                        <option value="pcm">PCM</option>
                     </select>
                 </div>
 
-                <div class="control-group">
-                    <label>Швидкість (Speed):</label>
-                    <div class="slider-row">
-                        <input type="range" id="speedSlider" min="0.25" max="4.0" step="0.01" value="1.0">
-                        <input type="number" id="speedNum" min="0.25" max="4.0" step="0.01" value="1.0" class="num-input">
+                <!-- Speed control -->
+                <div class="field">
+                    <label class="label">Speed</label>
+                    <div class="row">
+                        <input type="range" id="speedSlider" min="0.25" max="4" step="0.01" value="1">
+                        <input type="number" id="speedNum" class="input-num" min="0.25" max="4" step="0.01" value="1">
                     </div>
                 </div>
 
-                <hr class="divider">
-                <h3>Розширені параметри (Advanced)</h3>
+                <!-- Visual divider -->
+                <div class="divider"></div>
 
-                <div class="control-group">
-                    <div class="toggle-wrap">
+                <!-- Advanced settings title -->
+                <div class="section-title">Advanced</div>
+
+                <!-- DSP effect control -->
+                <div class="field">
+                    <div class="toggle">
                         <input type="checkbox" id="useEffect">
-                        <label for="effectSelect">DSP Ефект (Effect)</label>
+                        <label for="useEffect">Effect</label>
                     </div>
-                    <select id="effectSelect" disabled><option>Loading...</option></select>
-                    <div class="slider-row mt-2">
-                        <input type="range" id="effectIntSlider" min="0" max="1" step="0.01" value="1.0" disabled title="Intensity">
-                        <input type="number" id="effectIntNum" min="0" max="1" step="0.01" value="1.0" disabled class="num-input">
+
+                    <!-- Effect selection -->
+                    <select id="effectSelect" disabled></select>
+                    
+                    <!-- Effect intensity -->
+                    <label class="label mt-3">Intensity</label>
+                    <div class="row">
+                        <input type="range" id="effectIntSlider" min="0" max="1" step="0.01" value="1" disabled>
+                        <input type="number" id="effectIntNum" class="input-num" min="0" max="1" step="0.01" value="1" disabled>
                     </div>
                 </div>
 
-                <div class="control-group">
-                    <div class="toggle-wrap">
+                <!-- Expression (noise scale) -->
+                <div class="field">
+                    <div class="toggle">
                         <input type="checkbox" id="useNoiseScale">
-                        <label>Експресія (Noise Scale):</label>
+                        <label>Expression</label>
                     </div>
-                    <div class="slider-row">
+                    <div class="row">
                         <input type="range" id="nsSlider" min="0" max="2" step="0.001" value="0.667" disabled>
-                        <input type="number" id="nsNum" min="0" max="2" step="0.001" value="0.667" disabled class="num-input">
+                        <input type="number" id="nsNum" class="input-num" min="0" max="2" step="0.001" value="0.667" disabled>
                     </div>
                 </div>
 
-                <div class="control-group">
-                    <div class="toggle-wrap">
+                <!-- Rhythm (noise W) -->
+                <div class="field">
+                    <div class="toggle">
                         <input type="checkbox" id="useNoiseW">
-                        <label>Ритм (Noise W):</label>
+                        <label>Rhythm</label>
                     </div>
-                    <div class="slider-row">
+                    <div class="row">
                         <input type="range" id="nwSlider" min="0" max="2" step="0.001" value="0.8" disabled>
-                        <input type="number" id="nwNum" min="0" max="2" step="0.001" value="0.8" disabled class="num-input">
+                        <input type="number" id="nwNum" class="input-num" min="0" max="2" step="0.001" value="0.8" disabled>
                     </div>
                 </div>
+
             </aside>
 
-            <section class="panel log-panel">
-                <div id="statusLog" class="terminal-log" style="margin-top: 0; height: 180px;"></div>
+            <!-- Log panel: system output / debug -->
+            <section class="panel panel-log">
+                <div id="statusLog" class="log"></div>
             </section>
+
         </main>
+
     </div>
 
+    <!-- Main application script -->
     <script type="module" src="js/app.js"></script>
+
 </body>
 </html>
