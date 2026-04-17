@@ -1,5 +1,3 @@
-// js/theme.js
-
 export function initTheme() {
     const htmlEl = document.documentElement;
     const themeBtn = document.getElementById('themeToggle');

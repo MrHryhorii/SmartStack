@@ -1,5 +1,3 @@
-// js/api.js
-
 // Using relative path. The browser will automatically resolve the host and port.
 const BASE_URL = '/v1/audio';
 

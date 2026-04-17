@@ -1,74 +1,56 @@
-// js/app.js
 import { initTheme } from './theme.js';
 import { getVoices, getEffects, synthesizeSpeech } from './api.js';
+import { AudioEngine } from './audio.js';
 
-// Global variables to handle file downloading
 let currentDownloadUrl = null;
 let currentExtension = 'mp3';
 
-// Helper: Append messages to the terminal log
+// UI Helpers
 function log(msg) {
     const logger = document.getElementById('statusLog');
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
     logger.innerHTML += `[${time}] ${msg}<br>`;
-    logger.scrollTop = logger.scrollHeight; // Auto-scroll to bottom
+    logger.scrollTop = logger.scrollHeight; 
 }
 
-// Helper: Sync range slider and number input two-way
 function syncInputs(sliderId, numId) {
     const slider = document.getElementById(sliderId);
     const num = document.getElementById(numId);
-    
     slider.addEventListener('input', (e) => num.value = e.target.value);
     num.addEventListener('input', (e) => slider.value = e.target.value);
 }
 
-// Helper: Bind a checkbox to enable/disable related inputs
 function bindToggle(chkId, elementsToToggle) {
-    const chk = document.getElementById(chkId);
-    chk.addEventListener('change', (e) => {
-        elementsToToggle.forEach(id => {
-            document.getElementById(id).disabled = !e.target.checked;
-        });
+    document.getElementById(chkId).addEventListener('change', (e) => {
+        elementsToToggle.forEach(id => document.getElementById(id).disabled = !e.target.checked);
     });
 }
 
-document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Initialize UI theme
+// Main Boot Sequence
+async function bootEngine() {
     initTheme();
-    
-    // 2. Initialize terminal
     document.getElementById('statusLog').innerHTML = '';
     log('SYSTEM READY... Awaiting commands.');
-    log('Uplink to core established. Fetching resources...');
 
-    // 3. Fetch server data
     const [voicesData, effectsData] = await Promise.all([getVoices(), getEffects()]);
     
-    const voiceSelect = document.getElementById('voiceSelect');
-    voiceSelect.innerHTML = voicesData.voices.map(v => `<option value="${v}">${v}</option>`).join('');
-    
-    const effectSelect = document.getElementById('effectSelect');
-    effectSelect.innerHTML = effectsData.effects.map(e => `<option value="${e}">${e}</option>`).join('');
+    document.getElementById('voiceSelect').innerHTML = voicesData.voices.map(v => `<option value="${v}">${v}</option>`).join('');
+    document.getElementById('effectSelect').innerHTML = effectsData.effects.map(e => `<option value="${e}">${e}</option>`).join('');
     log('Resources synchronized successfully.');
 
-    // 4. Setup UI bindings (Sliders + Number inputs)
     syncInputs('speedSlider', 'speedNum');
     syncInputs('effectIntSlider', 'effectIntNum');
     syncInputs('nsSlider', 'nsNum');
     syncInputs('nwSlider', 'nwNum');
 
-    // 5. Setup UI toggles (Checkboxes)
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
 
-    // 6. Handle Generation & UI Elements
     const btn = document.getElementById('generateBtn');
     const downloadBtn = document.getElementById('downloadBtn');
     const player = document.getElementById('audioPlayer');
 
-    // Download Button Logic
     downloadBtn.addEventListener('click', () => {
         if (!currentDownloadUrl) return;
         const a = document.createElement('a');
@@ -77,27 +59,23 @@ document.addEventListener('DOMContentLoaded', async () => {
         a.click();
     });
 
-    // Generate Button Logic
     btn.addEventListener('click', async () => {
         const text = document.getElementById('textInput').value.trim();
         if (!text) return alert("Please enter text!");
 
-        // Reset UI for new generation
         document.getElementById('statusLog').innerHTML = '';
         btn.disabled = true;
         downloadBtn.disabled = true;
         btn.innerText = "Processing...";
         player.removeAttribute('src');
 
-        // Clean up previous file URL from browser memory
         if (currentDownloadUrl) {
             URL.revokeObjectURL(currentDownloadUrl);
             currentDownloadUrl = null;
         }
 
-        log('Initializing synthesis sequence...');
-        
-        // Build payload. We read values from the number inputs since they are more precise.
+        await AudioEngine.stopAll();
+
         const payload = {
             input: text,
             voice: document.getElementById('voiceSelect').value,
@@ -106,57 +84,74 @@ document.addEventListener('DOMContentLoaded', async () => {
             stream: document.getElementById('streamToggle').checked
         };
 
-        // Append optional advanced parameters if their checkboxes are ticked
         if (document.getElementById('useEffect').checked) {
             payload.effect = document.getElementById('effectSelect').value;
             payload.effect_intensity = parseFloat(document.getElementById('effectIntNum').value);
-            log(`DSP Engaged: ${payload.effect} | Intensity: ${payload.effect_intensity}`);
         }
-        if (document.getElementById('useNoiseScale').checked) {
-            payload.noise_scale = parseFloat(document.getElementById('nsNum').value);
-        }
-        if (document.getElementById('useNoiseW').checked) {
-            payload.noise_w = parseFloat(document.getElementById('nwNum').value);
-        }
+        if (document.getElementById('useNoiseScale').checked) payload.noise_scale = parseFloat(document.getElementById('nsNum').value);
+        if (document.getElementById('useNoiseW').checked) payload.noise_w = parseFloat(document.getElementById('nwNum').value);
 
-        log(`Payload assembled. Transmitting to backend...`);
+        log(`Transmitting payload to backend...`);
 
         try {
             const response = await synthesizeSpeech(payload);
             const mimeType = response.headers.get('Content-Type') || 'audio/mpeg';
             const supportsMSE = window.MediaSource && MediaSource.isTypeSupported(mimeType);
+            const targetSampleRate = parseInt(response.headers.get('X-Audio-Sample-Rate') || "22050");
             
-            // Set correct extension for downloading
             currentExtension = payload.response_format === 'opus' ? 'ogg' : payload.response_format;
+            let totalBytes = 0;
 
-            log(`Data stream incoming. Format: ${mimeType}`);
+            // Callback for streaming logs
+            const onChunk = (chunkSize) => {
+                totalBytes += chunkSize;
+                log(`⬇️ Chunk decoded: ${chunkSize} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
+            };
 
+            // Callback when stream finishes
+            const onComplete = (finalBlob) => {
+                log("✅ Transmission complete.");
+                currentDownloadUrl = URL.createObjectURL(finalBlob);
+                downloadBtn.disabled = false;
+            };
+
+            // BRANCH 1: Raw PCM
             if (payload.response_format === 'pcm') {
-                log('Raw PCM stream detected. Buffering for file download...');
-                const blob = await response.blob();
-                
-                currentDownloadUrl = URL.createObjectURL(blob);
-                downloadBtn.disabled = false; // Enable manual download
-                
-                log(`✅ File ready. Size: ${(blob.size / 1024).toFixed(2)} KB`);
-                downloadBtn.click(); // Auto-download for PCM since standard player can't play it yet
+                if (payload.stream) {
+                    log('Routing Raw PCM via Web Audio API Queue...');
+                    await AudioEngine.streamPCM(response.body.getReader(), targetSampleRate, onChunk, onComplete);
+                } else {
+                    log('Buffering complete Raw PCM payload...');
+                    const blob = await response.blob();
+                    
+                    // Allow downloading the raw PCM
+                    currentDownloadUrl = URL.createObjectURL(blob);
+                    downloadBtn.disabled = false;
+                    
+                    // BUT play it in the browser by adding a temporary WAV header!
+                    const arrayBuffer = await blob.arrayBuffer();
+                    const playableWavBlob = AudioEngine.addWavHeader(arrayBuffer, targetSampleRate);
+                    player.src = URL.createObjectURL(playableWavBlob);
+                    player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
+                    
+                    log(`✅ PCM Blob ready & Wrapped for playback. Size: ${(blob.size / 1024).toFixed(2)} KB`);
+                }
             } 
+            // BRANCH 2: Native MSE Streaming (MP3/Opus)
             else if (payload.stream && supportsMSE) {
-                // Pass downloadBtn to the streaming function so it can unlock it when finished
-                await handleStreamedResponse(response.body.getReader(), mimeType, player, downloadBtn);
+                await AudioEngine.streamMSE(response.body.getReader(), mimeType, player, onChunk, onComplete);
             } 
+            // BRANCH 3: Standard Buffered Playback (WAV/MP3 without stream)
             else {
-                if (payload.stream) log("⚠️ Native MSE unavailable for this format. Buffering full payload...");
+                if (payload.stream) log("⚠️ Native MSE unavailable for this format. Buffering...");
                 const blob = await response.blob();
                 
                 currentDownloadUrl = URL.createObjectURL(blob);
-                downloadBtn.disabled = false; // Enable download button
-                
-                log(`✅ File reconstructed. Size: ${(blob.size / 1024).toFixed(2)} KB`);
+                downloadBtn.disabled = false; 
                 
                 player.src = currentDownloadUrl;
                 player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
-                log('🎵 Playback engaged.');
+                log(`✅ File reconstructed. Size: ${(blob.size / 1024).toFixed(2)} KB`);
             }
         } catch (error) {
             log(`❌ CRITICAL ERROR: ${error.message}`);
@@ -165,56 +160,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             btn.innerText = "Generate";
         }
     });
-});
+}
 
-// Helper: Handle Chunked Streaming & Combine Chunks for Download
-async function handleStreamedResponse(reader, mimeType, player, downloadBtn) {
-    const mediaSource = new MediaSource();
-    player.src = URL.createObjectURL(mediaSource);
-    
-    const audioChunks = []; // Store chunks to build the final file for downloading
-
-    await new Promise(resolve => mediaSource.addEventListener('sourceopen', resolve, { once: true }));
-    
-    const sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-    let totalBytes = 0;
-    let isFirstChunk = true;
-
-    const appendChunk = async (chunk) => {
-        return new Promise((resolve) => {
-            sourceBuffer.addEventListener('updateend', resolve, { once: true });
-            sourceBuffer.appendBuffer(chunk);
-        });
-    };
-
-    while (true) {
-        const { done, value } = await reader.read();
-        
-        if (done) {
-            if (mediaSource.readyState === 'open') {
-                mediaSource.endOfStream();
-            }
-            log("✅ Transmission complete. Reconstructing file for download...");
-            
-            // Combine all streamed chunks into a single Blob for the download button
-            const finalBlob = new Blob(audioChunks, { type: mimeType });
-            currentDownloadUrl = URL.createObjectURL(finalBlob);
-            downloadBtn.disabled = false; // Unlock the download button
-            
-            log(`💾 Download ready. Total size: ${(totalBytes / 1024).toFixed(2)} KB`);
-            break;
-        }
-
-        audioChunks.push(value); // Save chunk
-        totalBytes += value.length;
-        log(`⬇️ Chunk decoded: ${value.length} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
-        
-        await appendChunk(value);
-
-        if (isFirstChunk) {
-            player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
-            log("🎵 Playback engaged.");
-            isFirstChunk = false;
-        }
-    }
+// Bootstrap Event
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootEngine);
+} else {
+    bootEngine(); 
 }
