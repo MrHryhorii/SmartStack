@@ -440,4 +440,47 @@ app.MapGet("/v1/audio/effects", InfoEndpoints.GetEffects)
    .WithOpenApi()
    .AddEndpointFilter<LocalHostOnlyFilter>();
 
+// =================================================================
+// AUTO-OPEN BROWSER (LOCAL DASHBOARD)
+// =================================================================
+// Listen for the application started event to open the dashboard automatically
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    try
+    {
+        // Retrieve the local URL where the server is listening (e.g., http://localhost:5045)
+        string? url = app.Urls.FirstOrDefault(u => u.StartsWith("http://"));
+
+        // If a valid URL is found, attempt to open the default web browser
+        if (!string.IsNullOrEmpty(url))
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"\n[SYSTEM] Launching Tsubaki Dashboard in default browser: {url}");
+            Console.ResetColor();
+
+            // Cross-platform browser launch logic
+            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+            }
+            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
+            {
+                System.Diagnostics.Process.Start("xdg-open", url);
+            }
+            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+            {
+                System.Diagnostics.Process.Start("open", url);
+            }
+        }
+    }
+    catch (Exception ex)
+    {
+        // Graceful degradation: If running in a headless environment (e.g., Docker, Linux server),
+        // we just log a warning instead of crashing the application.
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"[WARNING] Could not auto-open browser (headless environment?): {ex.Message}");
+        Console.ResetColor();
+    }
+});
+
 app.Run();
