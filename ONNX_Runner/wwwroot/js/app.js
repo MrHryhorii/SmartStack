@@ -2,6 +2,10 @@
 import { initTheme } from './theme.js';
 import { getVoices, getEffects, synthesizeSpeech } from './api.js';
 
+// Global variables to handle file downloading
+let currentDownloadUrl = null;
+let currentExtension = 'mp3';
+
 // Helper: Append messages to the terminal log
 function log(msg) {
     const logger = document.getElementById('statusLog');
@@ -59,10 +63,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
 
-    // 6. Handle Generation
+    // 6. Handle Generation & UI Elements
     const btn = document.getElementById('generateBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
     const player = document.getElementById('audioPlayer');
 
+    // Download Button Logic
+    downloadBtn.addEventListener('click', () => {
+        if (!currentDownloadUrl) return;
+        const a = document.createElement('a');
+        a.href = currentDownloadUrl;
+        a.download = `tsubaki_voice_${Date.now()}.${currentExtension}`;
+        a.click();
+    });
+
+    // Generate Button Logic
     btn.addEventListener('click', async () => {
         const text = document.getElementById('textInput').value.trim();
         if (!text) return alert("Please enter text!");
@@ -70,9 +85,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Reset UI for new generation
         document.getElementById('statusLog').innerHTML = '';
         btn.disabled = true;
+        downloadBtn.disabled = true;
         btn.innerText = "Processing...";
         player.removeAttribute('src');
-        player.style.display = 'none';
+
+        // Clean up previous file URL from browser memory
+        if (currentDownloadUrl) {
+            URL.revokeObjectURL(currentDownloadUrl);
+            currentDownloadUrl = null;
+        }
 
         log('Initializing synthesis sequence...');
         
@@ -104,32 +125,36 @@ document.addEventListener('DOMContentLoaded', async () => {
             const response = await synthesizeSpeech(payload);
             const mimeType = response.headers.get('Content-Type') || 'audio/mpeg';
             const supportsMSE = window.MediaSource && MediaSource.isTypeSupported(mimeType);
+            
+            // Set correct extension for downloading
+            currentExtension = payload.response_format === 'opus' ? 'ogg' : payload.response_format;
 
             log(`Data stream incoming. Format: ${mimeType}`);
 
             if (payload.response_format === 'pcm') {
                 log('Raw PCM stream detected. Buffering for file download...');
                 const blob = await response.blob();
-                log(`✅ File ready. Size: ${(blob.size / 1024).toFixed(2)} KB`);
                 
-                // Trigger automatic download for PCM
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `voice_${Date.now()}.pcm`;
-                a.click();
+                currentDownloadUrl = URL.createObjectURL(blob);
+                downloadBtn.disabled = false; // Enable manual download
+                
+                log(`✅ File ready. Size: ${(blob.size / 1024).toFixed(2)} KB`);
+                downloadBtn.click(); // Auto-download for PCM since standard player can't play it yet
             } 
             else if (payload.stream && supportsMSE) {
-                player.style.display = 'block';
-                await handleStreamedResponse(response.body.getReader(), mimeType, player);
+                // Pass downloadBtn to the streaming function so it can unlock it when finished
+                await handleStreamedResponse(response.body.getReader(), mimeType, player, downloadBtn);
             } 
             else {
                 if (payload.stream) log("⚠️ Native MSE unavailable for this format. Buffering full payload...");
                 const blob = await response.blob();
+                
+                currentDownloadUrl = URL.createObjectURL(blob);
+                downloadBtn.disabled = false; // Enable download button
+                
                 log(`✅ File reconstructed. Size: ${(blob.size / 1024).toFixed(2)} KB`);
                 
-                player.src = URL.createObjectURL(blob);
-                player.style.display = 'block';
+                player.src = currentDownloadUrl;
                 player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
                 log('🎵 Playback engaged.');
             }
@@ -137,15 +162,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             log(`❌ CRITICAL ERROR: ${error.message}`);
         } finally {
             btn.disabled = false;
-            btn.innerText = "Генерувати Аудіо";
+            btn.innerText = "Генерувати (Generate)";
         }
     });
 });
 
-// Helper: Handle Chunked Streaming via MediaSource Extensions
-async function handleStreamedResponse(reader, mimeType, player) {
+// Helper: Handle Chunked Streaming & Combine Chunks for Download
+async function handleStreamedResponse(reader, mimeType, player, downloadBtn) {
     const mediaSource = new MediaSource();
     player.src = URL.createObjectURL(mediaSource);
+    
+    const audioChunks = []; // Store chunks to build the final file for downloading
 
     await new Promise(resolve => mediaSource.addEventListener('sourceopen', resolve, { once: true }));
     
@@ -167,10 +194,18 @@ async function handleStreamedResponse(reader, mimeType, player) {
             if (mediaSource.readyState === 'open') {
                 mediaSource.endOfStream();
             }
-            log("✅ Transmission complete.");
+            log("✅ Transmission complete. Reconstructing file for download...");
+            
+            // Combine all streamed chunks into a single Blob for the download button
+            const finalBlob = new Blob(audioChunks, { type: mimeType });
+            currentDownloadUrl = URL.createObjectURL(finalBlob);
+            downloadBtn.disabled = false; // Unlock the download button
+            
+            log(`💾 Download ready. Total size: ${(totalBytes / 1024).toFixed(2)} KB`);
             break;
         }
 
+        audioChunks.push(value); // Save chunk
         totalBytes += value.length;
         log(`⬇️ Chunk decoded: ${value.length} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
         

@@ -14,7 +14,6 @@
 }
 
 :root[data-theme="dark"] {
-    /* Citypop / Synthwave colors */
     --bg-base: #0a0a12;
     --bg-panel: #151522;
     --text-main: #e2e8f0;
@@ -37,7 +36,6 @@ body {
     transition: background-color 0.3s, color 0.3s;
 }
 
-/* Background Watermark */
 .watermark {
     position: fixed;
     top: 50%; left: 50%;
@@ -52,7 +50,6 @@ body {
     pointer-events: none;
 }
 
-/* Layout Grid */
 .container {
     max-width: 1200px;
     margin: 0 auto;
@@ -68,11 +65,21 @@ header {
 
 h1 { margin: 0; color: var(--accent); }
 
+/* =========================================
+   LAYOUT GRID (Responsive)
+========================================= */
 .dashboard {
     display: grid;
     grid-template-columns: 2fr 1fr;
+    grid-template-areas:
+        "text settings"
+        "log settings";
     gap: 2rem;
 }
+
+.text-panel { grid-area: text; }
+.settings-panel { grid-area: settings; }
+.log-panel { grid-area: log; }
 
 .panel {
     background: var(--bg-panel);
@@ -82,7 +89,9 @@ h1 { margin: 0; color: var(--accent); }
     border: 1px solid var(--border);
 }
 
-/* Controls & Inputs */
+/* =========================================
+   CONTROLS & INPUTS
+========================================= */
 textarea {
     width: 100%;
     height: 150px;
@@ -91,7 +100,7 @@ textarea {
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 1rem;
-    box-sizing: border-box; /* Fixes overflow */
+    box-sizing: border-box; 
     font-size: 1rem;
     resize: vertical;
 }
@@ -101,7 +110,6 @@ textarea:focus, select:focus, input[type="number"]:focus {
     border-color: var(--accent);
 }
 
-/* Global input sizing fix */
 select, input[type="range"], input[type="number"] {
     width: 100%;
     padding: 0.5rem;
@@ -109,7 +117,7 @@ select, input[type="range"], input[type="number"] {
     color: var(--text-main);
     border: 1px solid var(--border);
     border-radius: 6px;
-    box-sizing: border-box; /* Crucial for preventing right-side overflow */
+    box-sizing: border-box; 
 }
 
 .control-group { margin-bottom: 1.5rem; }
@@ -117,7 +125,6 @@ select, input[type="range"], input[type="number"] {
 .toggle-wrap label { font-size: 0.9rem; font-weight: bold; cursor: pointer; }
 .mt-2 { margin-top: 0.5rem; }
 
-/* Flexbox for slider and number input side-by-side */
 .slider-row {
     display: flex;
     gap: 10px;
@@ -125,17 +132,20 @@ select, input[type="range"], input[type="number"] {
     margin-top: 0.5rem;
 }
 
-.slider-row input[type="range"] {
-    flex: 1; /* Slider takes remaining space */
-    margin-top: 0;
+.slider-row input[type="range"] { flex: 1; margin-top: 0; }
+.slider-row .num-input { width: 80px; margin-top: 0; }
+
+/* =========================================
+   BUTTONS
+========================================= */
+.main-controls {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
 }
 
-.slider-row .num-input {
-    width: 80px; /* Fixed width for manual number entry */
-    margin-top: 0;
-}
+.main-controls button { flex: 1; }
 
-/* Buttons */
 .btn-primary {
     background: var(--accent);
     color: #fff;
@@ -147,14 +157,38 @@ select, input[type="range"], input[type="number"] {
     font-weight: bold;
     transition: 0.2s;
 }
+
 .btn-primary:hover {
     background: var(--accent-hover);
     transform: translateY(-2px);
 }
+
 .btn-primary:disabled {
     background: #555;
     cursor: not-allowed;
     transform: none;
+}
+
+.btn-secondary {
+    background: var(--bg-base);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+    padding: 1rem 2rem;
+    font-size: 1.1rem;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: 0.2s;
+}
+
+.btn-secondary:not(:disabled):hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.btn-secondary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .btn-theme {
@@ -166,16 +200,33 @@ select, input[type="range"], input[type="number"] {
     width: 50px; height: 50px;
 }
 
-/* Terminal Log */
+/* =========================================
+   TERMINAL LOG
+========================================= */
 .terminal-log {
-    margin-top: 1.5rem;
     background: #050505;
     color: #00ff00;
     padding: 1rem;
     border-radius: 8px;
     font-family: monospace;
-    height: 150px;
     overflow-y: auto;
     font-size: 0.85rem;
     border: 1px solid #222;
+}
+
+/* =========================================
+   MOBILE ADAPTATION
+========================================= */
+@media (max-width: 768px) {
+    .dashboard {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+            "text"
+            "settings"
+            "log";
+    }
+    
+    .main-controls {
+        flex-direction: column;
+    }
 }

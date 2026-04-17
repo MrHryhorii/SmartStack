@@ -22,15 +22,16 @@
                 <textarea id="textInput" placeholder="Enter text here..."></textarea>
                 
                 <div class="main-controls">
-                    <button id="generateBtn" class="btn-primary">Генерувати Аудіо</button>
-                    <div class="toggle-wrap">
-                        <input type="checkbox" id="streamToggle" checked>
-                        <label for="streamToggle">Потокове відтворення (Stream)</label>
-                    </div>
+                    <button id="generateBtn" class="btn-primary">Генерувати (Generate)</button>
+                    <button id="downloadBtn" class="btn-secondary" disabled title="Download Audio">💾 Завантажити</button>
                 </div>
                 
-                <audio id="audioPlayer" controls style="display: none; width: 100%; margin-top: 20px;"></audio>
-                <div id="statusLog" class="terminal-log"></div>
+                <div class="toggle-wrap mt-2">
+                    <input type="checkbox" id="streamToggle" checked>
+                    <label for="streamToggle">Потокове відтворення (Stream)</label>
+                </div>
+                
+                <audio id="audioPlayer" controls style="width: 100%; margin-top: 20px;"></audio>
             </section>
 
             <aside class="panel settings-panel">
@@ -94,6 +95,10 @@
                     </div>
                 </div>
             </aside>
+
+            <section class="panel log-panel">
+                <div id="statusLog" class="terminal-log" style="margin-top: 0; height: 180px;"></div>
+            </section>
         </main>
     </div>
 
