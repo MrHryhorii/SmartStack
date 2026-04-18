@@ -82,7 +82,10 @@ public static class SpeechEndpoint
                 // Therefore, true chunked streaming is conceptually impossible for WAV.
                 bool useStreaming = shouldStream && !isWav;
 
-                bool useOpenVoice = !string.IsNullOrEmpty(request.Voice);
+                // Determine if OpenVoice cloning should be applied based on the requested voice and server configuration.
+                bool useOpenVoice = !string.IsNullOrEmpty(request.Voice) &&
+                    !string.Equals(request.Voice, "piper_base", StringComparison.OrdinalIgnoreCase);
+
                 var openVoice = services.GetService<OpenVoiceRunner>();
                 var audioProc = services.GetService<AudioProcessor>();
 

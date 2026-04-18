@@ -24,10 +24,10 @@ public class OpenAiSpeechRequest
 
     /// <summary>
     /// The voice to use. For OpenVoice cloning, this should match a saved voice fingerprint name.
-    /// If empty or "alloy", it defaults to the base Piper voice.
+    /// If empty or "piper_base", it defaults to the base Piper voice.
     /// </summary>
     [JsonPropertyName("voice")]
-    public string Voice { get; set; } = "alloy";
+    public string Voice { get; set; } = "piper_base";
 
     /// <summary>
     /// The format of the returned audio. 
@@ -39,8 +39,14 @@ public class OpenAiSpeechRequest
     /// <summary>
     /// Generation speed multiplier. Ranges from 0.25 to 4.0. Default is 1.0.
     /// </summary>
+    private float _speed = 1.0f;
     [JsonPropertyName("speed")]
-    public float Speed { get; set; } = 1.0f;
+    public float Speed
+    {
+        get => _speed;
+        // Clamp the value to a reasonable range to prevent extreme settings that could break the model.
+        set => _speed = Math.Clamp(value, 0.25f, 4.0f);
+    }
 
     // =====================================================================
     // CUSTOM EXTENSIONS (Piper/VITS & Server Specific)
@@ -56,14 +62,26 @@ public class OpenAiSpeechRequest
     /// <summary>
     /// Variance of pitch/intonation (Expression). Typically ranges from 0.0 to 1.0.
     /// </summary>
+    private float? _noiseScale;
     [JsonPropertyName("noise_scale")]
-    public float? NoiseScale { get; set; }
+    public float? NoiseScale
+    {
+        get => _noiseScale;
+        // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings that could break the model.
+        set => _noiseScale = value.HasValue ? Math.Clamp(value.Value, 0f, 1.0f) : null;
+    }
 
     /// <summary>
     /// Variance of phoneme duration (Rhythm/Pacing). Typically ranges from 0.0 to 1.0.
     /// </summary>
+    private float? _noiseW;
     [JsonPropertyName("noise_w")]
-    public float? NoiseW { get; set; }
+    public float? NoiseW
+    {
+        get => _noiseW;
+        // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings that could break the model.
+        set => _noiseW = value.HasValue ? Math.Clamp(value.Value, 0f, 1.0f) : null;
+    }
 
     /// <summary>
     /// Specifies an artistic DSP effect to apply (e.g., "Overdrive", "Telephone").
