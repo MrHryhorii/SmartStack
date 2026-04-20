@@ -150,20 +150,97 @@ textarea {
     resize: vertical;
 }
 
+textarea, select, input[type="number"] {
+    transition: border-color 0.2s, box-shadow 0.2s; /* Плавність */
+}
+
 textarea:focus, select:focus, input[type="number"]:focus {
     outline: none;
     border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
 }
 
 select,
-input[type="number"],
-input[type="range"] {
+input[type="number"]{
     width: 100%;
     padding: var(--space-2);
     border-radius: var(--radius-sm);
     border: 1px solid var(--border);
     background: var(--bg-base);
     color: var(--text-main);
+}
+
+/* ================================
+   CUSTOM RANGE SLIDER
+================================ */
+input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+
+input[type="range"]:focus {
+    outline: none;
+}
+
+input[type="range"]::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: var(--radius-sm);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    margin-top: -5px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: transform 0.1s;
+}
+
+input[type="range"]:not(:disabled)::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+}
+
+input[type="range"]::-moz-range-track {
+    width: 100%;
+    height: 6px;
+    background: var(--border);
+    border-radius: var(--radius-sm);
+}
+
+input[type="range"]::-moz-range-thumb {
+    height: 16px;
+    width: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    cursor: pointer;
+    border: none;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    transition: transform 0.1s;
+}
+
+input[type="range"]:not(:disabled)::-moz-range-thumb:hover {
+    transform: scale(1.15);
+}
+
+input[type="range"]:disabled::-webkit-slider-thumb {
+    background: var(--text-muted);
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+input[type="range"]:disabled::-moz-range-thumb {
+    background: var(--text-muted);
+    cursor: not-allowed;
+    box-shadow: none;
 }
 
 /* Row: slider + number */
@@ -244,11 +321,6 @@ input:disabled, select:disabled {
     color: var(--accent);
 }
 
-.btn-primary:disabled, .btn-secondary:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
-
 /* Icon button (theme toggle) */
 .btn-icon {
     width: 44px;
@@ -268,18 +340,50 @@ input:disabled, select:disabled {
 }
 
 /* ================================
-   TOGGLES
+   DISABLED STATES
+================================ */
+@keyframes pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 0.9; }
+    100% { opacity: 0.6; }
+}
+
+.btn-secondary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.btn-primary:disabled {
+    cursor: wait;
+    animation: pulse 1.5s infinite;
+    background: var(--accent);
+}
+
+/* ================================
+   TOGGLES / CHECKBOXES
 ================================ */
 .toggle {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: var(--space-2);
     margin-bottom: var(--space-2);
+    width: fit-content;
 }
+
 .toggle label {
     cursor: pointer;
     font-weight: 600;
     font-size: 0.9rem;
+    user-select: none;
+    color: var(--text-main);
+}
+
+input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    margin: 0;
 }
 
 /* ================================
@@ -304,6 +408,7 @@ input:disabled, select:disabled {
     height: 180px;
     overflow-y: auto;
     border: 1px solid var(--border);
+    text-shadow: 0 0 4px rgba(154, 255, 154, 0.4);
 }
 
 /* ================================
