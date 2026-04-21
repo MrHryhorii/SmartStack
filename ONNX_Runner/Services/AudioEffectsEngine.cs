@@ -5,276 +5,220 @@ using NAudio.Dsp;
 namespace ONNX_Runner.Services;
 
 /// <summary>
-/// Server-side audio effects engine optimized for stateless TTS requests.
-/// Acts as the "Sound Designer", routing audio through the primitives of AnalogDspCore
-/// to create expressive, character-driven Virtual Analog effects.
+/// Server-side audio effects engine for TTS.
+/// High-performance, zero-allocation DSP implementation with strict hardware safety.
+/// Features Deep Interpolation + real analog "life" through ThermalDrift and Pink Noise.
 /// </summary>
-public class AudioEffectsEngine
+public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 {
-    private readonly EffectsSettings _config;
-    private readonly int _sampleRate;
+    private readonly EffectsSettings _config = config;
+    private readonly int _sampleRate = sampleRate;
 
-    // Output gain compensation
-    private const float GainTelephone = 1.6f;
-    private const float GainOverdrive = 0.9f;
-    private const float GainBitcrusher = 1.2f;
-    private const float GainRingModulator = 1.2f;
-    private const float GainFlanger = 1.05f;
-    private const float GainChorus = 1.05f;
+    private readonly DelayBuffer _delay = new(4096);
+    private DcBlocker _dcBlocker = new();
 
-    // --- DSP Primitives (The Toolbox) ---
-    private NoiseGenerator _noise;
-    private ThermalDrift _thermal;
-    private readonly DelayLine _delayLine;
+    // === Analog Life Primitives ===
+    private NoiseGenerator _noise = new();
+    private ThermalDrift _thermal = new();
 
-    // Dedicated LFOs for modulation
-    private Lfo _ringLfo;
-    private Lfo _flangerLfo;
-    private Lfo _chorusLfo;
-    private Lfo _chorusWowLfo;
-
-    // Physical Component Tolerances (±5%)
-    private float _toleranceA;
-    private float _toleranceB;
-
-    // Dedicated One-Pole Filters for Analog Emulation
-    private OnePoleFilter _rcFilter; // For Bitcrusher reconstruction
-    private OnePoleFilter _bbd1, _bbd2, _bbd3; // For Flanger BBD cascade
-    private readonly float _rcCoeff;
-
-    // Bitcrusher ZOH State
-    private float _zohPhase;
-    private float _zohHold;
-    private float _zohOut;
-
-    // Fixed-size EQ filter bank (Zero-Allocation)
-    private readonly BiQuadFilter[] _filterBank = new BiQuadFilter[5];
+    private readonly BiQuadFilter[] _filters = new BiQuadFilter[5];
     private int _filterCount;
-    private BiQuadFilter? _odPostFilter;
 
-    private VoiceEffectType _currentEffect = VoiceEffectType.None;
-    private bool _eqInitialized = false;
+    private VoiceEffectType _current = VoiceEffectType.None;
 
-    public AudioEffectsEngine(EffectsSettings config, int sampleRate)
-    {
-        _config = config;
-        _sampleRate = sampleRate;
-        _delayLine = new DelayLine(4096);
-        _rcCoeff = OnePoleFilter.CalculateAlpha(sampleRate / 11f, sampleRate);
-        Reset();
-    }
+    // --- Isolated Effect States ---
+    private float _ringPhase;
+    private float _flangerPhase;
+    private float _chorusPhase;
+    private float _bcPhase;
+    private float _bcHold;
 
-    /// <summary>
-    /// Hard reset for stateless TTS generation. Generates new hardware tolerances.
-    /// </summary>
     public void Reset()
     {
-        _delayLine.Clear();
+        _delay.Clear();
+        _dcBlocker.Reset();
 
+        // Fresh hardware "personality" on every reset
         _noise.Seed((uint)(DateTime.UtcNow.Ticks % uint.MaxValue));
         _noise.Reset();
-
-        _toleranceA = _noise.NextWhite() * 0.05f;
-        _toleranceB = _noise.NextWhite() * 0.05f;
-
         _thermal.Reset();
-        _ringLfo.Reset();
-        _flangerLfo.Reset();
-        _chorusLfo.Reset();
-        _chorusWowLfo.Reset();
 
-        _rcFilter.Reset();
-        _bbd1.Reset();
-        _bbd2.Reset();
-        _bbd3.Reset();
+        _ringPhase = _flangerPhase = _chorusPhase = 0f;
+        _bcPhase = _bcHold = 0f;
 
-        _zohPhase = _zohHold = _zohOut = 0f;
-
-        _eqInitialized = false;
-        _currentEffect = VoiceEffectType.None;
+        _current = VoiceEffectType.None;
     }
 
-    public void ApplyEffect(Span<float> buffer, string? requestedEffect = null, float? requestedIntensity = null)
+    public void ApplyEffect(Span<float> buffer, string? effect = null, float? intensity = null)
     {
         if (!_config.EnableGlobalEffects) return;
 
-        if (!Enum.TryParse(requestedEffect ?? _config.DefaultEffect, true, out VoiceEffectType effectType) || effectType == VoiceEffectType.None)
+        if (!Enum.TryParse(effect ?? _config.DefaultEffect, true, out VoiceEffectType type) ||
+            type == VoiceEffectType.None)
             return;
 
-        float intensity = Math.Clamp(requestedIntensity ?? _config.DefaultIntensity, 0f, 1f);
-        if (intensity <= 0.001f) return;
+        float mix = Math.Clamp(intensity ?? _config.DefaultIntensity, 0f, 1f);
+        if (mix <= 0.001f) return;
 
-        if (!_eqInitialized || _currentEffect != effectType)
+        if (_current != type)
         {
-            SetupEqualizer(effectType);
-            _eqInitialized = true;
-            _currentEffect = effectType;
+            Setup(type);
+            _delay.Clear();
+            _dcBlocker.Reset();
+            _current = type;
         }
 
         int filterCount = _filterCount;
-        BiQuadFilter[] filters = _filterBank;
+        BiQuadFilter[] filters = _filters;
 
         for (int i = 0; i < buffer.Length; i++)
         {
-            // Evolve global physical state (Brownian drift)
+            float dry = buffer[i];
+            float x = Dsp.KillDenormal(dry);
+
+            // Evolve analog "life" every sample
             _thermal.Update(ref _noise);
 
-            float dry = buffer[i];
-            float eqSignal = dry;
+            // Wet EQ (Deep Interpolation)
+            if (filterCount > 0)
+            {
+                float eqSignal = x;
+                for (int f = 0; f < filterCount; f++)
+                    eqSignal = filters[f].Transform(eqSignal);
+                x = x + (eqSignal - x) * mix;
+            }
 
-            for (int f = 0; f < filterCount; f++)
-                eqSignal = filters[f].Transform(eqSignal);
+            // Native Effect Processing
+            float wet = Process(type, x, mix);
 
-            float wet = Process(_currentEffect, eqSignal);
+            // DC blocking
+            wet = _dcBlocker.Process(wet);
 
-            // Parallel Mix
-            buffer[i] = dry + (wet - dry) * intensity;
+            // Parallel mix
+            buffer[i] = dry + (wet - dry) * mix;
         }
     }
 
-    private void SetupEqualizer(VoiceEffectType type)
+    private void Setup(VoiceEffectType type)
     {
         _filterCount = 0;
-        _odPostFilter = null;
-
-        float nyquist = _sampleRate / 2f * 0.95f;
-        float Safe(float f) => Math.Min(f, nyquist);
+        float nyq = _sampleRate * 0.45f;
 
         switch (type)
         {
             case VoiceEffectType.Telephone:
-                // Hard plastic handset chamber resonances
-                _filterBank[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 400f, 1.2f);
-                _filterBank[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, 1000f, 5.0f, 6f);
-                _filterBank[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(2500f), 3.0f, 4f);
-                _filterBank[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 1.2f);
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 380f, 1.0f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, 950f, 4.5f, 7.5f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, 820f, 6.0f, 8.0f);
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, 3400f, 1.0f);
                 break;
 
             case VoiceEffectType.Overdrive:
-                _filterBank[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 200f, 1.0f);
-                _filterBank[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, 1500f, 1.0f, 2f);
-                _filterBank[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(5000f), 0.707f);
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 180f, 0.8f);
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, nyq, 0.707f);
                 break;
 
             case VoiceEffectType.Bitcrusher:
             case VoiceEffectType.RingModulator:
-                _filterBank[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 150f, 0.707f);
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 130f, 0.707f);
                 break;
         }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float Process(VoiceEffectType type, float x)
+    private float Process(VoiceEffectType type, float x, float mix)
     {
         return type switch
         {
-            VoiceEffectType.Telephone => Telephone(x) * GainTelephone,
-            VoiceEffectType.Overdrive => Overdrive(x) * GainOverdrive,
-            VoiceEffectType.Bitcrusher => Bitcrusher(x) * GainBitcrusher,
-            VoiceEffectType.RingModulator => RingModulator(x) * GainRingModulator,
-            VoiceEffectType.Flanger => Flanger(x) * GainFlanger,
-            VoiceEffectType.Chorus => Chorus(x) * GainChorus,
+            VoiceEffectType.Telephone => Telephone(x, mix),
+            VoiceEffectType.Overdrive => Overdrive(x, mix),
+            VoiceEffectType.Bitcrusher => Bitcrusher(x, mix),
+            VoiceEffectType.RingModulator => RingMod(x, mix),
+            VoiceEffectType.Flanger => Flanger(x, mix),
+            VoiceEffectType.Chorus => Chorus(x, mix),
             _ => x
         };
     }
 
-    // --- Sound Design Effect Implementations ---
+    // ====================== EFFECTS WITH ANALOG LIFE ======================
 
-    private float Telephone(float x)
+    private float Telephone(float x, float mix)
     {
-        // 1/f noise mixed with Brownian thermal variation
-        float noise = _noise.NextPink() * (0.005f + _thermal.State * 0.002f);
-        // Drives into the Shockley diode for authentic carbon mic crackle
-        return Saturation.Tape(Saturation.ShockleyHybrid(x * 1.8f + noise));
+        float noise = _noise.NextPink() * (0.0045f + _thermal.State * 0.0022f);
+        float fx = Dsp.ShockleyDiode(x * 1.8f + noise);
+        fx = Dsp.SoftClip(fx) * 0.95f;
+
+        return x + (fx - x) * mix;
     }
 
-    private float Overdrive(float x)
+    private static float Overdrive(float x, float mix)
     {
-        float distorted = Saturation.ShockleyHybrid(x * 3.0f);
-
-        if (_odPostFilter != null)
-            distorted = _odPostFilter.Transform(distorted);
-
-        return Saturation.Tape(distorted);
+        float fx = Dsp.ShockleyDiode(x * 2.8f);
+        fx = Dsp.SoftClip(fx);
+        return x + (fx - x) * mix;
     }
 
-    private float RingModulator(float x)
+    private float Bitcrusher(float x, float mix)
     {
-        // Low 60Hz carrier gives a harsh, robotic growl (amplitude modulation)
-        float driftFreq = 60f + _thermal.State * 1.5f;
-        _ringLfo.AdvancePhase(driftFreq, _sampleRate);
+        float jitter = _thermal.State * 0.007f;
+        _bcPhase += 11025f / _sampleRate * (1f + jitter);
 
-        return Saturation.Tape(x * _ringLfo.Sine() * 1.5f);
-    }
-
-    private float Bitcrusher(float x)
-    {
-        float clockJitter = _thermal.State * 0.008f;
-
-        // Arcade Style: Low sampling rate to induce metallic aliasing
-        _zohPhase += 5500f / _sampleRate * (1f + clockJitter);
-        if (_zohPhase >= 1f)
+        if (_bcPhase >= 1f)
         {
-            _zohPhase -= 1f;
-            _zohHold = x;
-
-            const float levels = 10f; // Approx 3-4 bit depth
-            // Raw truncation. No dither or noise shaping to preserve the 80s grit.
-            _zohOut = MathF.Round(_zohHold * levels) / levels;
+            _bcPhase -= 1f;
+            _bcHold = x;
         }
 
-        // Apply reconstruction filter, but mix with raw signal for aggressive bite
-        float smoothOut = _rcFilter.Process(_zohOut, _rcCoeff);
-        return _zohOut * 0.5f + smoothOut * 0.5f;
+        const float levels = 16f;
+        float crushed = MathF.Round(_bcHold * levels) / levels;
+        crushed = crushed * 0.4f + _bcHold * 0.6f;
+
+        return x + (crushed - x) * mix;
     }
 
-    private float Flanger(float x)
+    private float RingMod(float x, float mix)
     {
-        _flangerLfo.AdvancePhase(0.5f, _sampleRate);
+        float freq = 68f + _thermal.State * 2.2f;
+        _ringPhase = Dsp.AdvancePhase(_ringPhase, freq, _sampleRate);
 
-        float delayMs = 1.5f + _flangerLfo.Sine() * 1.0f;
-        float delayed = _delayLine.ReadLinear(delayMs * _sampleRate / 1000f);
+        float carrier = Dsp.Sine(_ringPhase);
+        float fx = Dsp.SoftClip(x * carrier * 1.4f);
 
-        const float feedback = 0.75f;
-        float fbInput = delayed * feedback;
-
-        // BBD charge transfer loss using the new OnePoleFilter struct
-        float dynamicAlpha = 0.90f - MathF.Abs(fbInput) * 0.05f;
-        float bbdOut = _bbd1.Process(fbInput, dynamicAlpha);
-        bbdOut = _bbd2.Process(bbdOut, dynamicAlpha);
-        bbdOut = _bbd3.Process(bbdOut, dynamicAlpha);
-
-        bbdOut = Saturation.Tape(bbdOut * 1.1f);
-        _delayLine.Write(x + bbdOut);
-
-        const float mix = 0.707f;
-        return Math.Clamp(x * mix + bbdOut * mix, -1f, 1f);
+        float effectiveMix = mix * 0.75f;
+        return x + (fx - x) * effectiveMix;
     }
 
-    private float Chorus(float x)
+    private float Flanger(float x, float mix)
     {
-        _chorusLfo.AdvancePhase(0.8f, _sampleRate);
+        _flangerPhase = Dsp.AdvancePhase(_flangerPhase, 0.45f, _sampleRate);
 
-        // Asynchronous tape wow driven by thermal drift
-        float wowSpeed = 0.2f + _thermal.State * 0.05f;
-        _chorusWowLfo.AdvancePhase(wowSpeed, _sampleRate);
-        float wowDrift = _chorusWowLfo.Sine() * 0.005f;
+        float delayMs = 1.8f + Dsp.Sine(_flangerPhase) * 1.1f;
+        float delayed = _delay.Read(delayMs * _sampleRate / 1000f);
 
-        // Sine and Cosine offsets ensure voices swing in different directions
-        float sweep1 = _chorusLfo.Sine();
-        float sweep2 = _chorusLfo.Sine(1.57f); // 90-degree phase offset
+        float fb = delayed * 0.68f * mix;
+        _delay.Write(x + fb);
 
-        // Tolerances affect both delay length and gain
-        float baseD1 = 15f * (1f + _toleranceA);
-        float baseD2 = 24f * (1f + _toleranceB);
+        float fx = delayed * 0.72f;
+        return x + (fx - x) * mix;
+    }
 
-        float d1 = baseD1 + sweep1 * 3f;
-        float d2 = baseD2 + sweep2 * 4f + wowDrift;
+    private float Chorus(float x, float mix)
+    {
+        _chorusPhase = Dsp.AdvancePhase(_chorusPhase, 0.65f, _sampleRate);
 
-        float s1 = _delayLine.ReadLinear(d1 * _sampleRate / 1000f) * (1f + _toleranceA);
-        float s2 = _delayLine.ReadLinear(d2 * _sampleRate / 1000f) * (1f + _toleranceB);
+        float wow = _thermal.State * 0.004f;
 
-        _delayLine.Write(x);
-        return Math.Clamp(x * 0.4f + s1 * 0.4f + s2 * 0.4f, -1f, 1f);
+        float d1 = 14f + Dsp.Sine(_chorusPhase) * 4.5f;
+        float d2 = 23f + Dsp.Sine(_chorusPhase + 2.1f) * 5.5f + wow;
+
+        float s1 = _delay.Read(d1 * _sampleRate / 1000f);
+        float s2 = _delay.Read(d2 * _sampleRate / 1000f);
+
+        _delay.Write(x);
+
+        float fx = s1 * 0.5f + s2 * 0.5f;
+        float effectiveMix = mix * 0.60f;
+
+        return x + (fx - x) * effectiveMix;
     }
 }
