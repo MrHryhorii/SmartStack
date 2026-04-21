@@ -102,25 +102,28 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private void Setup(VoiceEffectType type)
     {
         _filterCount = 0;
+        // Nyquist frequency for safety clamping of filter frequencies
         float nyq = _sampleRate * 0.45f;
+        // Clamp filter frequencies to Nyquist to prevent instability on low sample rates
+        float Safe(float f) => Math.Min(f, nyq);
 
         switch (type)
         {
             case VoiceEffectType.Telephone:
-                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 380f, 1.0f);
-                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, 950f, 4.5f, 7.5f);
-                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, 820f, 6.0f, 8.0f);
-                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, 3400f, 1.0f);
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(380f), 1.0f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(950f), 4.5f, 7.5f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(820f), 6.0f, 8.0f);
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 1.0f);
                 break;
 
             case VoiceEffectType.Overdrive:
-                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 180f, 0.8f);
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(180f), 0.8f);
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, nyq, 0.707f);
                 break;
 
             case VoiceEffectType.Bitcrusher:
             case VoiceEffectType.RingModulator:
-                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, 130f, 0.707f);
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
         }
     }
