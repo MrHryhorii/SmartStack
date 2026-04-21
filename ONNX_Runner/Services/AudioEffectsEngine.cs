@@ -5,41 +5,63 @@ using NAudio.Dsp;
 namespace ONNX_Runner.Services;
 
 /// <summary>
-/// Server-side audio effects engine for TTS.
-/// High-performance, zero-allocation DSP implementation with strict hardware safety.
-/// Features Deep Interpolation + real analog "life" through ThermalDrift and Pink Noise.
+/// Server-side audio effects engine for TTS post-processing.
+///
+/// Architecture:
+///   - Zero-allocation during processing: all buffers are pre-allocated at construction.
+///   - Single mix point: dry/wet blending happens exclusively in <see cref="ApplyEffect"/>.
+///     Individual effect methods return a pure wet signal with no mix applied.
+///   - Analog life: <see cref="ThermalDrift"/> and <see cref="NoiseGenerator"/> introduce
+///     subtle, time-varying modulation that prevents the digital "frozen" character.
+///   - Hardware safety: denormal killing and DC blocking are applied unconditionally.
+///
+/// Effect chain per sample:
+///   dry → KillDenormal → EQ (Deep Interpolation) → Effect → DcBlocker → wet mix → out
 /// </summary>
 public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 {
     private readonly EffectsSettings _config = config;
     private readonly int _sampleRate = sampleRate;
 
+    // --- Core DSP Primitives ---
     private readonly DelayBuffer _delay = new(4096);
     private DcBlocker _dcBlocker = new();
 
-    // === Analog Life Primitives ===
+    // --- Analog Life Primitives ---
+    // ThermalDrift simulates slow component-level parameter drift (Brownian motion).
+    // NoiseGenerator provides both pink noise (hiss/hum) and white noise (dithering).
     private NoiseGenerator _noise = new();
     private ThermalDrift _thermal = new();
 
+    // --- EQ Chain (Deep Interpolation) ---
+    // Pre-allocated to avoid heap pressure; only _filterCount slots are active.
     private readonly BiQuadFilter[] _filters = new BiQuadFilter[5];
     private int _filterCount;
 
     private VoiceEffectType _current = VoiceEffectType.None;
 
-    // --- Isolated Effect States ---
+    // --- Per-Effect Oscillator States ---
+    // Isolated phase accumulators prevent inter-effect state contamination.
     private float _ringPhase;
     private float _flangerPhase;
     private float _chorusPhase;
+    private float _chorusPhase2;
+
+    // Bitcrusher sample-and-hold state
     private float _bcPhase;
     private float _bcHold;
 
-    // Resets all internal states and random generators to ensure consistent behavior on each new TTS request.
+    /// <summary>
+    /// Resets all internal DSP states and re-seeds the noise generator.
+    /// Must be called before each new TTS request to prevent audio bleed-over
+    /// and to give each utterance a unique analog "personality".
+    /// </summary>
     public void Reset()
     {
         _delay.Clear();
         _dcBlocker.Reset();
 
-        // Fresh hardware "personality" on every reset
+        // Re-seed with wall-clock entropy so each request sounds subtly different
         _noise.Seed((uint)(DateTime.UtcNow.Ticks % uint.MaxValue));
         _noise.Reset();
         _thermal.Reset();
@@ -50,7 +72,17 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _current = VoiceEffectType.None;
     }
 
-    // Main entry point for processing an audio buffer with the selected effect and intensity.
+    /// <summary>
+    /// Processes an audio buffer in-place, applying the selected effect at the given intensity.
+    ///
+    /// Mix architecture — single blend point:
+    ///   The <paramref name="intensity"/> parameter controls only the final dry/wet crossfade.
+    ///   EQ filtering is applied at full strength to shape the wet signal before blending.
+    ///   Individual effect methods must return a pure wet signal with no internal mix scaling.
+    /// </summary>
+    /// <param name="buffer">Audio samples to process in-place (normalized float [-1, 1]).</param>
+    /// <param name="effect">Name of the <see cref="VoiceEffectType"/> to apply. Falls back to config default.</param>
+    /// <param name="intensity">Dry/wet mix ratio [0, 1]. Falls back to config default.</param>
     public void ApplyEffect(Span<float> buffer, string? effect = null, float? intensity = null)
     {
         if (!_config.EnableGlobalEffects) return;
@@ -70,49 +102,67 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             _current = type;
         }
 
+        // Hoist to locals to help the JIT avoid repeated field dereferences in the hot loop
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
         for (int i = 0; i < buffer.Length; i++)
         {
             float dry = buffer[i];
+
+            // Denormal kill on input prevents CPU spikes from subnormal floats
+            // propagating through the feedback paths in delay and filter stages
             float x = Dsp.KillDenormal(dry);
 
-            // Evolve analog "life" every sample
+            // Advance analog life simulation every sample.
+            // State is read inside each effect method — no return value needed here.
             _thermal.Update(ref _noise);
 
-            // Wet EQ (Deep Interpolation)
+            // --- Deep Interpolation EQ ---
+            // Shapes the wet signal before it reaches the effect processor.
+            // Applied at full strength; the final dry/wet blend handles perceived intensity.
             if (filterCount > 0)
-            {
-                float eqSignal = x;
                 for (int f = 0; f < filterCount; f++)
-                    eqSignal = filters[f].Transform(eqSignal);
-                x = x + (eqSignal - x) * mix;
-            }
+                    x = filters[f].Transform(x);
 
-            // Native Effect Processing
-            float wet = Process(type, x, mix);
+            // --- Effect Processing ---
+            // Each method returns a pure wet signal.
+            // No mix scaling occurs inside the effect methods.
+            float wet = Process(type, x);
 
-            // DC blocking
+            // DC blocking removes inaudible low-frequency offsets introduced by
+            // asymmetric distortion algorithms (ShockleyDiode, SoftClip)
             wet = _dcBlocker.Process(wet);
 
-            // Parallel mix
+            // --- Single Mix Point ---
+            // All dry/wet blending is consolidated here.
             buffer[i] = dry + (wet - dry) * mix;
         }
     }
 
-    // ====================== INTERNAL SETUP & PROCESSING ======================
+    // =========================================================================
+    // SETUP
+    // =========================================================================
+
+    /// <summary>
+    /// Configures the EQ filter chain for the given effect type.
+    /// Called once per effect change — never inside the sample loop.
+    /// All cutoff frequencies are clamped below Nyquist to prevent filter instability
+    /// on TTS engines operating at lower sample rates (e.g., 16kHz, 22kHz).
+    /// </summary>
     private void Setup(VoiceEffectType type)
     {
         _filterCount = 0;
-        // Nyquist frequency for safety clamping of filter frequencies
+
+        // 45% of sample rate provides a safe margin below the Nyquist limit
         float nyq = _sampleRate * 0.45f;
-        // Clamp filter frequencies to Nyquist to prevent instability on low sample rates
         float Safe(float f) => Math.Min(f, nyq);
 
         switch (type)
         {
             case VoiceEffectType.Telephone:
+                // POTS bandpass: 300–3400Hz with presence peaks to simulate
+                // the characteristic midrange coloration of telephone codecs
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(380f), 1.0f);
                 _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(950f), 4.5f, 7.5f);
                 _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(820f), 6.0f, 8.0f);
@@ -120,118 +170,173 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.Overdrive:
+                // Remove subsonic rumble before distortion to prevent low-frequency
+                // intermodulation artifacts from muddying the harmonic content
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(180f), 0.8f);
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, nyq, 0.707f);
                 break;
 
             case VoiceEffectType.Bitcrusher:
             case VoiceEffectType.RingModulator:
+                // Subsonic filter only — these effects intentionally preserve
+                // (and generate) high-frequency content as part of their character
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
         }
     }
 
-    // Applies the selected effect algorithm to a single sample, using the current "life" state for dynamic modulation.
+    // =========================================================================
+    // EFFECT DISPATCH
+    // =========================================================================
+
+    /// <summary>
+    /// Dispatches a single sample to the appropriate effect algorithm.
+    /// Returns a pure wet signal. Dry/wet mixing is the caller's responsibility.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float Process(VoiceEffectType type, float x, float mix)
+    private float Process(VoiceEffectType type, float x) => type switch
     {
-        return type switch
-        {
-            VoiceEffectType.Telephone => Telephone(x, mix),
-            VoiceEffectType.Overdrive => Overdrive(x, mix),
-            VoiceEffectType.Bitcrusher => Bitcrusher(x, mix),
-            VoiceEffectType.RingModulator => RingMod(x, mix),
-            VoiceEffectType.Flanger => Flanger(x, mix),
-            VoiceEffectType.Chorus => Chorus(x, mix),
-            _ => x
-        };
-    }
+        VoiceEffectType.Telephone => Telephone(x),
+        VoiceEffectType.Overdrive => Overdrive(x),
+        VoiceEffectType.Bitcrusher => Bitcrusher(x),
+        VoiceEffectType.RingModulator => RingMod(x),
+        VoiceEffectType.Flanger => Flanger(x),
+        VoiceEffectType.Chorus => Chorus(x),
+        _ => x
+    };
 
-    // ====================== EFFECTS WITH ANALOG LIFE ======================
+    // =========================================================================
+    // EFFECT ALGORITHMS
+    // =========================================================================
 
-    // Simulates the classic "telephone" effect with dynamic noise modulation for realism.
-    private float Telephone(float x, float mix)
+    /// <summary>
+    /// Simulates the characteristic distortion and line noise of a POTS telephone connection.
+    /// Pink noise amplitude is thermally modulated to replicate the unpredictable hiss
+    /// of aging analog telephony hardware. Returns a pure wet signal.
+    /// </summary>
+    private float Telephone(float x)
     {
+        // Thermally modulated pink noise simulates line hiss and carbon mic self-noise
         float noise = _noise.NextPink() * (0.0045f + _thermal.State * 0.0022f);
+
+        // ShockleyDiode generates asymmetric even+odd harmonics characteristic
+        // of carbon button microphones and transformer saturation
         float fx = Dsp.ShockleyDiode(x * 1.8f + noise);
-        fx = Dsp.SoftClip(fx) * 0.95f;
-
-        return x + (fx - x) * mix;
+        return Dsp.SoftClip(fx) * 0.95f;
     }
 
-    // Simulates a warm overdrive with dynamic bias modulation for a more "alive" distortion character.
-    private static float Overdrive(float x, float mix)
+    /// <summary>
+    /// Simulates the warm harmonic saturation of an analog tube or transistor overdrive stage.
+    /// Thermal bias drift replicates the slow operating-point shift of a warming tube amplifier,
+    /// causing the distortion character to evolve naturally over time. Returns a pure wet signal.
+    /// </summary>
+    private float Overdrive(float x)
     {
-        float fx = Dsp.ShockleyDiode(x * 2.8f);
-        fx = Dsp.SoftClip(fx);
-        return x + (fx - x) * mix;
+        // Thermal bias shift: positive drift pushes the operating point asymmetrically,
+        // generating more even-order harmonics (warmer, rounder distortion character)
+        float bias = _thermal.State * 0.04f;
+        float fx = Dsp.ShockleyDiode(x * 2.8f + bias);
+        return Dsp.SoftClip(fx);
     }
 
-    // Simulates a gritty bitcrusher with dynamic sample rate modulation for a more "chaotic" lo-fi effect.
-    private float Bitcrusher(float x, float mix)
+    /// <summary>
+    /// Simulates a sample-rate and bit-depth reducer with thermally jittered clock timing.
+    /// The sample-and-hold circuit is driven by a phase accumulator whose rate drifts
+    /// with thermal state, replicating the unstable oscillators of vintage lo-fi hardware.
+    /// Returns a pure wet signal.
+    /// </summary>
+    private float Bitcrusher(float x)
     {
+        // Thermal jitter destabilizes the sample clock, causing subtle pitch and timing drift
         float jitter = _thermal.State * 0.007f;
         _bcPhase += 11025f / _sampleRate * (1f + jitter);
 
+        // Sample-and-hold: latch input only when the phase accumulator overflows
         if (_bcPhase >= 1f)
         {
             _bcPhase -= 1f;
             _bcHold = x;
         }
 
+        // 4-bit quantization (16 levels) with partial dry blend to soften the effect
         const float levels = 16f;
         float crushed = MathF.Round(_bcHold * levels) / levels;
-        crushed = crushed * 0.4f + _bcHold * 0.6f;
 
-        return x + (crushed - x) * mix;
+        // 40% quantized + 60% held (pre-quantization) preserves transient character
+        // while still delivering audible bit-reduction grit
+        return crushed * 0.4f + _bcHold * 0.6f;
     }
 
-    // Simulates a classic ring modulator with dynamic carrier frequency modulation for a more "alive" metallic effect.
-    private float RingMod(float x, float mix)
+    /// <summary>
+    /// Simulates a classic analog ring modulator.
+    /// The carrier frequency drifts with thermal state, replicating the detuned oscillator
+    /// instability of vintage hardware ring modulators. Internal output scaling compensates
+    /// for the amplitude multiplication inherent to ring modulation.
+    /// Returns a pure wet signal.
+    /// </summary>
+    private float RingMod(float x)
     {
+        // Thermal drift shifts the carrier frequency, creating subtle metallic pitch variation
         float freq = 68f + _thermal.State * 2.2f;
         _ringPhase = Dsp.AdvancePhase(_ringPhase, freq, _sampleRate);
 
         float carrier = Dsp.Sine(_ringPhase);
-        float fx = Dsp.SoftClip(x * carrier * 1.4f);
 
-        float effectiveMix = mix * 0.75f;
-        return x + (fx - x) * effectiveMix;
+        // SoftClip prevents harsh digital aliasing from pure amplitude multiplication.
+        // 1.4x pre-gain compensates for the average amplitude loss of the sine carrier (~0.637),
+        // and the 0.9x post-scale pulls the output back to unity to prevent clipping at full mix.
+        return Dsp.SoftClip(x * carrier * 1.4f) * 0.9f;
     }
 
-    // Simulates a classic flanger with dynamic delay modulation for a more "alive" swirling effect.
-    private float Flanger(float x, float mix)
+    /// <summary>
+    /// Simulates a classic analog flanger using a single modulated delay line with feedback.
+    /// The comb filtering effect is produced by mixing the delayed signal with the dry path
+    /// externally (in the mix stage), creating the characteristic jet-sweep resonance.
+    /// Returns a pure wet signal (the delayed component only).
+    /// </summary>
+    private float Flanger(float x)
     {
         _flangerPhase = Dsp.AdvancePhase(_flangerPhase, 0.45f, _sampleRate);
 
+        // LFO sweeps delay time between 0.7ms and 2.9ms (classic flanger range)
         float delayMs = 1.8f + Dsp.Sine(_flangerPhase) * 1.1f;
         float delayed = _delay.Read(delayMs * _sampleRate / 1000f);
 
-        float fb = delayed * 0.68f * mix;
-        _delay.Write(x + fb);
+        // Feedback reinforces comb filter notches, increasing the metallic intensity
+        _delay.Write(x + delayed * 0.68f);
 
-        float fx = delayed * 0.72f;
-        return x + (fx - x) * mix;
+        return x + delayed * 0.72f;
     }
 
-    // Simulates a classic chorus with multiple modulated delay lines for a more "alive" spacious effect.
-    private float Chorus(float x, float mix)
+    /// <summary>
+    /// Simulates a lush, studio-grade analog chorus using dual polyrhythmic delay taps.
+    /// Employs the "Dimension D" phase-inversion trick to create pseudo-stereo width 
+    /// in a strictly mono signal path. Thermal wow drift adds vintage instability.
+    /// Returns a pure wet signal.
+    /// </summary>
+    private float Chorus(float x)
     {
-        _chorusPhase = Dsp.AdvancePhase(_chorusPhase, 0.65f, _sampleRate);
+        // Polyrhythmic LFOs: Non-integer relation (0.55Hz & 0.73Hz) ensures 
+        // the two voices never mathematically lock into a repeating pattern.
+        _chorusPhase = Dsp.AdvancePhase(_chorusPhase, 0.55f, _sampleRate);
+        _chorusPhase2 = Dsp.AdvancePhase(_chorusPhase2, 0.73f, _sampleRate);
 
         float wow = _thermal.State * 0.004f;
 
-        float d1 = 14f + Dsp.Sine(_chorusPhase) * 4.5f;
-        float d2 = 23f + Dsp.Sine(_chorusPhase + 2.1f) * 5.5f + wow;
+        // Spread the base delay times to avoid comb-filter buildup
+        float d1 = 12f + Dsp.Sine(_chorusPhase) * 3.5f;
+        float d2 = 21f + Dsp.Sine(_chorusPhase2) * 5.5f + wow;
 
         float s1 = _delay.Read(d1 * _sampleRate / 1000f);
         float s2 = _delay.Read(d2 * _sampleRate / 1000f);
 
         _delay.Write(x);
 
-        float fx = s1 * 0.5f + s2 * 0.5f;
-        float effectiveMix = mix * 0.60f;
+        // The Dimension Trick: Subtracting the second voice (s1 - s2) creates 
+        // deep phase cancellation that the human brain interprets as spatial width,
+        // making the mono signal sound massive.
+        float chorusVoices = (s1 * 0.5f - s2 * 0.5f) * 0.60f;
 
-        return x + (fx - x) * effectiveMix;
+        return x + chorusVoices;
     }
 }

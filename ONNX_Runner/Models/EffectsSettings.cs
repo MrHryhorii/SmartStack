@@ -35,3 +35,15 @@ public class EffectsSettings
     public string DefaultEffect { get; set; } = "None";
     public float DefaultIntensity { get; set; } = 1.0f;
 }
+
+/// <summary>
+/// Available server-side audio effects for post-processing spatial audio generation.
+/// </summary>
+public enum SpatialEnvironment
+{
+    None,           // No reverb, dry signal only.
+    LivingRoom,     // Small room with short, bright reverb.
+    ConcreteHall,   // Large hall with long, dense reverb and strong early reflections.
+    Forest,         // Open outdoor space with long, diffuse reverb and minimal early reflections.
+    Underwater      // Underwater environment with unique acoustic properties.
+}

@@ -240,3 +240,91 @@ public class DelayBuffer
         return _buffer[p1] * (1f - frac) + _buffer[p2] * frac;
     }
 }
+
+// ==============================================================================
+// SPATIAL EMULATION STRUCTURES (Reverb & Room Acoustics)
+// ==============================================================================
+
+/// <summary>
+/// Low-Pass Feedback Comb Filter (LPFCF) - based on James Moorer's design.
+/// Simulates a series of echoes decaying over time.
+/// The built-in low-pass filter mimics how high frequencies are absorbed by air and materials.
+/// </summary>
+public class CombFilter(int bufferSize)
+{
+    private readonly float[] _buffer = new float[bufferSize];
+    private int _bufferIdx = 0;
+    private float _filterStore = 0f;
+
+    // The amount of signal fed back into the loop (determines the length of the reverb tail)
+    public float Feedback { get; set; }
+
+    // How much high-frequency energy is lost per reflection (0.0 = bright room, 0.5+ = dark/carpeted room)
+    public float Damp { get; set; }
+
+    public void Clear()
+    {
+        Array.Clear(_buffer, 0, _buffer.Length);
+        _filterStore = 0f;
+        _bufferIdx = 0;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public float Process(float input)
+    {
+        float output = _buffer[_bufferIdx];
+
+        // Apply low-pass filter to the delayed signal (absorbs high frequencies)
+        _filterStore = (output * (1f - Damp)) + (_filterStore * Damp);
+
+        // Denormal kill is absolutely critical here to prevent CPU spikes during long decaying feedback tails
+        _filterStore = Dsp.KillDenormal(_filterStore);
+
+        // Write the new input mixed with the dampened feedback back into the delay line
+        _buffer[_bufferIdx] = input + (_filterStore * Feedback);
+
+        // Fast pointer wrap-around (faster than modulo %)
+        _bufferIdx++;
+        if (_bufferIdx >= _buffer.Length) _bufferIdx = 0;
+
+        return output;
+    }
+}
+
+/// <summary>
+/// Schroeder All-Pass Filter.
+/// Alters the phase of the signal without changing its frequency amplitude.
+/// Used to smear echoes together, creating dense, realistic acoustic reflections (diffusion).
+/// </summary>
+public class AllPassFilter(int bufferSize)
+{
+    private readonly float[] _buffer = new float[bufferSize];
+    private int _bufferIdx = 0;
+
+    public float Feedback { get; set; } = 0.5f;
+
+    public void Clear()
+    {
+        Array.Clear(_buffer, 0, _buffer.Length);
+        _bufferIdx = 0;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public float Process(float input)
+    {
+        float delayed = _buffer[_bufferIdx];
+
+        // Denormal kill for stability
+        delayed = Dsp.KillDenormal(delayed);
+
+        // Classic Schroeder All-Pass feedforward + feedback math
+        float output = -input + delayed;
+        _buffer[_bufferIdx] = input + (delayed * Feedback);
+
+        // Fast pointer wrap-around
+        _bufferIdx++;
+        if (_bufferIdx >= _buffer.Length) _bufferIdx = 0;
+
+        return output;
+    }
+}

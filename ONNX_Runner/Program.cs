@@ -23,11 +23,11 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
             Directory.CreateDirectory(targetDir);
 
             // Common locations for LAME on Ubuntu/Debian and CentOS/RHEL
-            string[] possibleSystemLibs = {
+            string[] possibleSystemLibs = [
                 "/usr/lib/x86_64-linux-gnu/libmp3lame.so.0",
                 "/usr/lib64/libmp3lame.so.0",
                 "/usr/lib/libmp3lame.so.0"
-            };
+            ];
 
             string? validSystemLib = possibleSystemLibs.FirstOrDefault(File.Exists);
 
