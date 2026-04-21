@@ -33,6 +33,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private float _bcPhase;
     private float _bcHold;
 
+    // Resets all internal states and random generators to ensure consistent behavior on each new TTS request.
     public void Reset()
     {
         _delay.Clear();
@@ -49,6 +50,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _current = VoiceEffectType.None;
     }
 
+    // Main entry point for processing an audio buffer with the selected effect and intensity.
     public void ApplyEffect(Span<float> buffer, string? effect = null, float? intensity = null)
     {
         if (!_config.EnableGlobalEffects) return;
@@ -99,6 +101,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
+    // ====================== INTERNAL SETUP & PROCESSING ======================
     private void Setup(VoiceEffectType type)
     {
         _filterCount = 0;
@@ -128,6 +131,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
+    // Applies the selected effect algorithm to a single sample, using the current "life" state for dynamic modulation.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float Process(VoiceEffectType type, float x, float mix)
     {
@@ -145,6 +149,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     // ====================== EFFECTS WITH ANALOG LIFE ======================
 
+    // Simulates the classic "telephone" effect with dynamic noise modulation for realism.
     private float Telephone(float x, float mix)
     {
         float noise = _noise.NextPink() * (0.0045f + _thermal.State * 0.0022f);
@@ -154,6 +159,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return x + (fx - x) * mix;
     }
 
+    // Simulates a warm overdrive with dynamic bias modulation for a more "alive" distortion character.
     private static float Overdrive(float x, float mix)
     {
         float fx = Dsp.ShockleyDiode(x * 2.8f);
@@ -161,6 +167,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return x + (fx - x) * mix;
     }
 
+    // Simulates a gritty bitcrusher with dynamic sample rate modulation for a more "chaotic" lo-fi effect.
     private float Bitcrusher(float x, float mix)
     {
         float jitter = _thermal.State * 0.007f;
@@ -179,6 +186,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return x + (crushed - x) * mix;
     }
 
+    // Simulates a classic ring modulator with dynamic carrier frequency modulation for a more "alive" metallic effect.
     private float RingMod(float x, float mix)
     {
         float freq = 68f + _thermal.State * 2.2f;
@@ -191,6 +199,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return x + (fx - x) * effectiveMix;
     }
 
+    // Simulates a classic flanger with dynamic delay modulation for a more "alive" swirling effect.
     private float Flanger(float x, float mix)
     {
         _flangerPhase = Dsp.AdvancePhase(_flangerPhase, 0.45f, _sampleRate);
@@ -205,6 +214,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return x + (fx - x) * mix;
     }
 
+    // Simulates a classic chorus with multiple modulated delay lines for a more "alive" spacious effect.
     private float Chorus(float x, float mix)
     {
         _chorusPhase = Dsp.AdvancePhase(_chorusPhase, 0.65f, _sampleRate);
