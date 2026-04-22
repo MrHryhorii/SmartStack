@@ -50,6 +50,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // Bitcrusher sample-and-hold state
     private float _bcPhase;
     private float _bcHold;
+    private readonly float _bcStep = 11025f / sampleRate;
 
     /// <summary>
     /// Resets all internal DSP states and re-seeds the noise generator.
@@ -66,7 +67,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _noise.Reset();
         _thermal.Reset();
 
-        _ringPhase = _flangerPhase = _chorusPhase = 0f;
+        _ringPhase = _flangerPhase = _chorusPhase = _chorusPhase2 = 0f;
         _bcPhase = _bcHold = 0f;
 
         _current = VoiceEffectType.None;
@@ -240,31 +241,34 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Simulates a sample-rate and bit-depth reducer with thermally jittered clock timing.
-    /// The sample-and-hold circuit is driven by a phase accumulator whose rate drifts
-    /// with thermal state, replicating the unstable oscillators of vintage lo-fi hardware.
-    /// Returns a pure wet signal.
+    /// Simulates the true aliasing and quantization artifacts of a lo-fi bitcrusher.
+    /// Academic implementation: strictly relies on Zero-Order Hold (decimation) and 
+    /// amplitude quantization. The "metallic" character naturally arises from 
+    /// foldover frequencies (aliasing) and sharp staircase waveforms.
     /// </summary>
     private float Bitcrusher(float x)
     {
-        // Thermal jitter destabilizes the sample clock, causing subtle pitch and timing drift
-        float jitter = _thermal.State * 0.007f;
-        _bcPhase += 11025f / _sampleRate * (1f + jitter);
+        // Thermal jitter adds vintage oscillator instability to the sample clock
+        float jitter = _thermal.State * 0.005f;
 
-        // Sample-and-hold: latch input only when the phase accumulator overflows
+        // Target sample rate: ~11kHz (classic lo-fi sampler territory)
+        _bcPhase += _bcStep * (1f + jitter);
+
+        // Decimation (Zero-Order Hold)
         if (_bcPhase >= 1f)
         {
             _bcPhase -= 1f;
-            _bcHold = x;
+
+            // Quantization (Bit Reduction)
+            // Calculated only on a new clock cycle. 
+            // 16 levels (4-bit) provides a much more aggressive, metallic crunch than 32 levels.
+            const float levels = 16f;
+            _bcHold = MathF.Round(x * levels) / levels;
         }
 
-        // 4-bit quantization (16 levels) with partial dry blend to soften the effect
-        const float levels = 16f;
-        float crushed = MathF.Round(_bcHold * levels) / levels;
-
-        // 40% quantized + 60% held (pre-quantization) preserves transient character
-        // while still delivering audible bit-reduction grit
-        return crushed * 0.4f + _bcHold * 0.6f;
+        // Return the raw, unprocessed staircase waveform. 
+        // Do NOT use SoftClip here — sharp edges are strictly required for the metallic high-end.
+        return _bcHold;
     }
 
     /// <summary>
@@ -309,34 +313,28 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Simulates a lush, studio-grade analog chorus using dual polyrhythmic delay taps.
-    /// Employs the "Dimension D" phase-inversion trick to create pseudo-stereo width 
-    /// in a strictly mono signal path. Thermal wow drift adds vintage instability.
-    /// Returns a pure wet signal.
+    /// Simulates a classic analog chorus effect using two modulated delay lines.
     /// </summary>
     private float Chorus(float x)
     {
-        // Polyrhythmic LFOs: Non-integer relation (0.55Hz & 0.73Hz) ensures 
-        // the two voices never mathematically lock into a repeating pattern.
+        // Non-integer LFO ratio prevents mathematical phase-locking between voices
         _chorusPhase = Dsp.AdvancePhase(_chorusPhase, 0.55f, _sampleRate);
-        _chorusPhase2 = Dsp.AdvancePhase(_chorusPhase2, 0.73f, _sampleRate);
+        _chorusPhase2 = Dsp.AdvancePhase(_chorusPhase2, 0.83f, _sampleRate);
 
-        float wow = _thermal.State * 0.004f;
+        // Thermally modulated wow: slow pitch instability of warming BBD hardware
+        float wow = _thermal.State * 0.006f;
 
-        // Spread the base delay times to avoid comb-filter buildup
-        float d1 = 12f + Dsp.Sine(_chorusPhase) * 3.5f;
-        float d2 = 21f + Dsp.Sine(_chorusPhase2) * 5.5f + wow;
+        // Wider modulation depth (±6ms / ±7ms) makes the chorus clearly audible
+        // while staying within the range the brain perceives as detuning, not echo
+        float d1 = 15f + Dsp.Sine(_chorusPhase) * 6.0f + wow;
+        float d2 = 24f + Dsp.Sine(_chorusPhase2) * 7.0f - wow; // Counter-drift for voice separation
 
         float s1 = _delay.Read(d1 * _sampleRate / 1000f);
         float s2 = _delay.Read(d2 * _sampleRate / 1000f);
 
         _delay.Write(x);
 
-        // The Dimension Trick: Subtracting the second voice (s1 - s2) creates 
-        // deep phase cancellation that the human brain interprets as spatial width,
-        // making the mono signal sound massive.
-        float chorusVoices = (s1 * 0.5f - s2 * 0.5f) * 0.60f;
-
-        return x + chorusVoices;
+        // Mix the two delayed signals together, then blend with the dry signal in the caller.
+        return x + (s1 + s2) * 0.45f;
     }
 }
