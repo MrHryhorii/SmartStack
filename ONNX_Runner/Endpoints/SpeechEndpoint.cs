@@ -168,7 +168,12 @@ public static class SpeechEndpoint
                         openVoice.VoiceLibrary.TryGetValue("piper_base", out sourceFingerprint);
                     }
 
+                    // Initialize audio processing engines with the final sample rate determined for this request
                     var effectsEngine = new AudioEffectsEngine(effectsConfig, finalSampleRate);
+                    var spatialEngine = new SpatialEffectsEngine(finalSampleRate);
+                    // Determine target effect settings, falling back to global defaults if not specified in the request
+                    string targetEnvironment = request.Environment ?? effectsConfig.DefaultEnvironment;
+                    float targetEnvIntensity = request.EnvironmentIntensity ?? effectsConfig.DefaultEnvironmentIntensity;
 
                     float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
                     int silenceSamplesCount = (int)(finalSampleRate * (chunkerConfig.SentencePauseSeconds / currentSpeed));
@@ -256,13 +261,19 @@ public static class SpeechEndpoint
                                         currentLength = r2.Length;
                                     }
 
-                                    // Apply post-processing DSP effects (reverb, EQ, etc.)
+                                    // Apply character DSP effects (Telephone, Cassette, etc.)
                                     effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), request.Effect, request.EffectIntensity);
+                                    // Apply spatial acoustics AFTER character effects
+                                    spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), targetEnvironment, targetEnvIntensity);
                                     streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
                                     // Append a brief pause (silence) between sentences for natural pacing
                                     Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
+
+                                    // Apply character effects to silence (e.g. tape hiss continues during pauses)
                                     effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), request.Effect, request.EffectIntensity);
+                                    // Apply spatial acoustics to silence so reverb tails ring out naturally
+                                    spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), targetEnvironment, targetEnvIntensity);
                                     streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
 
                                     if (useStreaming && streamConfig.FlushAfterEachSentence)

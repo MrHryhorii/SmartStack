@@ -440,6 +440,11 @@ app.MapGet("/v1/audio/effects", InfoEndpoints.GetEffects)
    .WithOpenApi()
    .AddEndpointFilter<LocalHostOnlyFilter>();
 
+app.MapGet("/v1/audio/environments", InfoEndpoints.GetEnvironments)
+   .WithName("GetEnvironments")
+   .WithOpenApi()
+   .AddEndpointFilter<LocalHostOnlyFilter>();
+
 // =================================================================
 // AUTO-OPEN BROWSER (LOCAL DASHBOARD)
 // =================================================================

@@ -69,4 +69,13 @@ public static class InfoEndpoints
 
         return Results.Ok(new { effects });
     }
+
+    /// <summary>
+    /// Retrieves all available spatial environments dynamically from the system enumeration.
+    /// </summary>
+    public static IResult GetEnvironments()
+    {
+        var environments = Enum.GetNames(typeof(SpatialEnvironment));
+        return Results.Ok(new { environments });
+    }
 }

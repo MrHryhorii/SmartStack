@@ -35,8 +35,14 @@ public enum VoiceEffectType
 public class EffectsSettings
 {
     public bool EnableGlobalEffects { get; set; } = true;
+
+    // Character Effects (Voice)
     public string DefaultEffect { get; set; } = "None";
     public float DefaultIntensity { get; set; } = 1.0f;
+
+    // Spatial Effects (Environment)
+    public string DefaultEnvironment { get; set; } = "None";
+    public float DefaultEnvironmentIntensity { get; set; } = 1.0f;
 }
 
 /// <summary>

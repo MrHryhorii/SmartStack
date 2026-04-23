@@ -77,13 +77,14 @@ public class SpatialEffectsEngine
     /// <summary>
     /// Clears all internal delay buffers, comb filters, and all-pass filters.
     /// Critical for preventing acoustic bleed-over between consecutive TTS requests.
+    /// Note: does NOT reset _current — environment tracking is the responsibility
+    /// of ApplyEnvironment, not of the buffer-clearing routine.
     /// </summary>
     public void Reset()
     {
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
         _echoDelay.Clear();
-        _current = SpatialEnvironment.None;
     }
 
     /// <summary>
@@ -138,29 +139,37 @@ public class SpatialEffectsEngine
     /// Configures all environment-specific filters and caches reverb coefficients.
     /// Called once per environment change, keeping the sample loop allocation-free and branch-light.
     /// Cutoff frequencies are clamped safely below the Nyquist limit to prevent BiQuadFilter instability.
+    ///
+    /// Forest deliberately does not configure comb filters because ForestEcho() uses a
+    /// discrete delay line only — comb/allpass parameters are irrelevant for that algorithm.
     /// </summary>
     private void Setup(SpatialEnvironment env)
     {
         _environmentEq = null;
 
-        // Determine acoustic coefficients for the target environment
-        (float feedback, float damp) = env switch
+        // Determine acoustic coefficients for reverb-based environments.
+        // Forest is excluded: it uses a delay-echo algorithm, not algorithmic reverb,
+        // so comb filter parameters have no effect and are intentionally left unconfigured.
+        (float feedback, float damp)? reverbParams = env switch
         {
             SpatialEnvironment.LivingRoom => (0.70f, 0.65f),
             SpatialEnvironment.ConcreteHall => (0.88f, 0.15f),
             SpatialEnvironment.Underwater => (0.85f, 0.90f),
-            _ => (0.70f, 0.50f)
+            _ => null  // Forest and any future delay-only environments: skip comb setup
         };
 
-        // Apply cached values to all comb filters once, here in Setup
-        foreach (var c in _combs)
+        if (reverbParams.HasValue)
         {
-            c.Feedback = feedback;
-            c.Damp = damp;
+            var (feedback, damp) = reverbParams.Value;
+            foreach (var c in _combs)
+            {
+                c.Feedback = feedback;
+                c.Damp = damp;
+            }
         }
 
-        // Configure environment-specific EQ
-        // Safe Nyquist margin (45% of sample rate) prevents BiQuadFilter edge instability
+        // Configure environment-specific EQ.
+        // Safe Nyquist margin (45% of sample rate) prevents BiQuadFilter edge instability.
         float nyq = _sampleRate * 0.45f;
         float Safe(float f) => Math.Min(f, nyq);
 
@@ -230,11 +239,11 @@ public class SpatialEffectsEngine
     {
         // Start with a dense, diffused reverb to simulate the enclosed, reflective nature of an underwater environment.
         float wet = AlgorithmicReverb(x);
-        // Add a short slapback echo with a delay of around 40ms, 
+        // Add a short slapback echo with a delay of around 40ms,
         // which simulates the characteristic "ringing" or "pinging" that occurs when sound reflects off nearby surfaces underwater.
         float delayed = _echoDelay.Read(_underwaterDelaySamples);
         _echoDelay.Write(x + delayed * 0.5f);
-        // Mix the reverb and echo together, with the echo attenuated to prevent it from overpowering the reverb tail, 
+        // Mix the reverb and echo together, with the echo attenuated to prevent it from overpowering the reverb tail,
         // creating a cohesive underwater soundscape.
         return (wet * 0.6f) + (delayed * 0.4f);
     }
@@ -251,6 +260,9 @@ public class SpatialEffectsEngine
     /// </summary>
     private static int GetNextPrime(int start)
     {
+        // Values below 2 are not prime; clamp to the first valid candidate.
+        if (start < 2) start = 2;
+
         while (true)
         {
             bool isPrime = true;

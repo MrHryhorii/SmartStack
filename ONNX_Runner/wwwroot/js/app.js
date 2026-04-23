@@ -1,5 +1,5 @@
 import { initTheme } from './theme.js';
-import { getVoices, getEffects, synthesizeSpeech } from './api.js';
+import { getVoices, getEffects, getEnvironments, synthesizeSpeech } from './api.js';
 import { AudioEngine } from './audio.js';
 
 let currentDownloadUrl = null;
@@ -32,18 +32,23 @@ async function bootEngine() {
     document.getElementById('statusLog').innerHTML = '';
     log('SYSTEM READY... Awaiting commands.');
 
-    const [voicesData, effectsData] = await Promise.all([getVoices(), getEffects()]);
+    // Fetch available voices, effects, and environments from backend
+    const [voicesData, effectsData, envData] = await Promise.all([getVoices(), getEffects(), getEnvironments()]);
     
     document.getElementById('voiceSelect').innerHTML = voicesData.voices.map(v => `<option value="${v}">${v}</option>`).join('');
     document.getElementById('effectSelect').innerHTML = effectsData.effects.map(e => `<option value="${e}">${e}</option>`).join('');
+    document.getElementById('environmentSelect').innerHTML = envData.environments.map(e => `<option value="${e}">${e}</option>`).join('');
     log('Resources synchronized successfully.');
 
+    // Set up UI bindings for sliders and toggles
     syncInputs('speedSlider', 'speedNum');
     syncInputs('effectIntSlider', 'effectIntNum');
+    syncInputs('envIntSlider', 'envIntNum');
     syncInputs('nsSlider', 'nsNum');
     syncInputs('nwSlider', 'nwNum');
-
+    // Bind toggles to enable/disable related controls
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
+    bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum']); 
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
 
@@ -51,6 +56,7 @@ async function bootEngine() {
     const downloadBtn = document.getElementById('downloadBtn');
     const player = document.getElementById('audioPlayer');
 
+    // Handle download button click to save the generated audio file
     downloadBtn.addEventListener('click', () => {
         if (!currentDownloadUrl) return;
         const a = document.createElement('a');
@@ -58,7 +64,7 @@ async function bootEngine() {
         a.download = `tsubaki_voice_${Date.now()}.${currentExtension}`;
         a.click();
     });
-
+    // Main click handler for generating speech
     btn.addEventListener('click', async () => {
         const text = document.getElementById('textInput').value.trim();
         if (!text) return alert("Please enter text!");
@@ -88,11 +94,18 @@ async function bootEngine() {
             payload.effect = document.getElementById('effectSelect').value;
             payload.effect_intensity = parseFloat(document.getElementById('effectIntNum').value);
         }
+        
+        // Include environment parameters if enabled
+        if (document.getElementById('useEnvironment').checked) {
+            payload.environment = document.getElementById('environmentSelect').value;
+            payload.environment_intensity = parseFloat(document.getElementById('envIntNum').value);
+        }
+        // Include noise parameters if enabled
         if (document.getElementById('useNoiseScale').checked) payload.noise_scale = parseFloat(document.getElementById('nsNum').value);
         if (document.getElementById('useNoiseW').checked) payload.noise_w = parseFloat(document.getElementById('nwNum').value);
 
         log(`Transmitting payload to backend...`);
-
+        // Log payload details while masking sensitive info
         try {
             const response = await synthesizeSpeech(payload);
             const mimeType = response.headers.get('Content-Type') || 'audio/mpeg';
@@ -101,21 +114,18 @@ async function bootEngine() {
             
             currentExtension = payload.response_format === 'opus' ? 'ogg' : payload.response_format;
             let totalBytes = 0;
-
-            // Callback for streaming logs
+            // Callbacks for streaming progress and completion
             const onChunk = (chunkSize) => {
                 totalBytes += chunkSize;
                 log(`⬇️ Chunk decoded: ${chunkSize} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
             };
-
-            // Callback when stream finishes
+            // Completion callback to enable download and log final status
             const onComplete = (finalBlob) => {
                 log("✅ Transmission complete.");
                 currentDownloadUrl = URL.createObjectURL(finalBlob);
                 downloadBtn.disabled = false;
             };
-
-            // BRANCH 1: Raw PCM
+            // Handle different response formats and streaming capabilities
             if (payload.response_format === 'pcm') {
                 if (payload.stream) {
                     log('Routing Raw PCM via Web Audio API Queue...');
@@ -123,12 +133,10 @@ async function bootEngine() {
                 } else {
                     log('Buffering complete Raw PCM payload...');
                     const blob = await response.blob();
-                    
-                    // Allow downloading the raw PCM
+                    // Create a playable WAV Blob by adding the appropriate header for raw PCM data
                     currentDownloadUrl = URL.createObjectURL(blob);
                     downloadBtn.disabled = false;
-                    
-                    // BUT play it in the browser by adding a temporary WAV header!
+                    // Convert raw PCM to WAV format for browser playback
                     const arrayBuffer = await blob.arrayBuffer();
                     const playableWavBlob = AudioEngine.addWavHeader(arrayBuffer, targetSampleRate);
                     player.src = URL.createObjectURL(playableWavBlob);
@@ -137,11 +145,11 @@ async function bootEngine() {
                     log(`✅ PCM Blob ready & Wrapped for playback. Size: ${(blob.size / 1024).toFixed(2)} KB`);
                 }
             } 
-            // BRANCH 2: Native MSE Streaming (MP3/Opus)
+            // For compressed formats (MP3, OGG/Opus), prefer MSE streaming if supported, otherwise fallback to buffering
             else if (payload.stream && supportsMSE) {
                 await AudioEngine.streamMSE(response.body.getReader(), mimeType, player, onChunk, onComplete);
             } 
-            // BRANCH 3: Standard Buffered Playback (WAV/MP3 without stream)
+            // Fallback for browsers that don't support MSE or if streaming is disabled: buffer the entire response and then play
             else {
                 if (payload.stream) log("⚠️ Native MSE unavailable for this format. Buffering...");
                 const blob = await response.blob();
@@ -161,8 +169,7 @@ async function bootEngine() {
         }
     });
 }
-
-// Bootstrap Event
+// Initialize the engine once the DOM is fully loaded
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bootEngine);
 } else {

@@ -23,6 +23,17 @@ export async function getEffects() {
     }
 }
 
+export async function getEnvironments() {
+    try {
+        const res = await fetch(`${BASE_URL}/environments`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+    } catch (e) {
+        console.error('API Error (Environments):', e);
+        return { environments: ["None"] }; // Fallback
+    }
+}
+
 export async function synthesizeSpeech(payload) {
     const res = await fetch(`${BASE_URL}/speech`, {
         method: 'POST',

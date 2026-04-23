@@ -94,4 +94,16 @@ public class OpenAiSpeechRequest
     /// </summary>
     [JsonPropertyName("effect_intensity")]
     public float? EffectIntensity { get; set; }
+
+    /// <summary>
+    /// Specifies an acoustic spatial environment to apply (e.g., "LivingRoom", "ConcreteHall").
+    /// </summary>
+    [JsonPropertyName("environment")]
+    public string? Environment { get; set; }
+
+    /// <summary>
+    /// Controls the intensity of the spatial environment. Ranges from 0.0 (bypass) to 1.0 (maximum).
+    /// </summary>
+    [JsonPropertyName("environment_intensity")]
+    public float? EnvironmentIntensity { get; set; }
 }
