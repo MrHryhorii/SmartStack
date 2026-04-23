@@ -50,7 +50,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // Bitcrusher sample-and-hold state
     private float _bcPhase;
     private float _bcHold;
+    // Pre-calculated phase increment for target sample rate (e.g., 11kHz) to avoid redundant math in the hot loop
     private readonly float _bcStep = 11025f / sampleRate;
+
+    // Cassette tape effect state
+    private float _lofiPhase;
+    private float _flutterPhase;
 
     /// <summary>
     /// Resets all internal DSP states and re-seeds the noise generator.
@@ -67,8 +72,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _noise.Reset();
         _thermal.Reset();
 
-        _ringPhase = _flangerPhase = _chorusPhase = _chorusPhase2 = 0f;
-        _bcPhase = _bcHold = 0f;
+        _ringPhase = _flangerPhase = _chorusPhase = _chorusPhase2 = _bcPhase = _bcHold = _lofiPhase = _flutterPhase = 0f;
 
         _current = VoiceEffectType.None;
     }
@@ -183,6 +187,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 // (and generate) high-frequency content as part of their character
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
+            case VoiceEffectType.LoFiTape:
+                // Bandpass filtering simulates the limited frequency response of cassette tape.
+                // The high-pass stage removes low-end mechanical rumble, while the low-pass stage emulates the tape's natural high-frequency roll-off.
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(100f), 0.707f);
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3800f), 0.5f);
+                break;
         }
     }
 
@@ -203,6 +213,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.RingModulator => RingMod(x),
         VoiceEffectType.Flanger => Flanger(x),
         VoiceEffectType.Chorus => Chorus(x),
+        VoiceEffectType.LoFiTape => LoFiTape(x),
         _ => x
     };
 
@@ -306,8 +317,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float delayMs = 1.8f + Dsp.Sine(_flangerPhase) * 1.1f;
         float delayed = _delay.Read(delayMs * _sampleRate / 1000f);
 
-        // Feedback reinforces comb filter notches, increasing the metallic intensity
-        _delay.Write(x + delayed * 0.68f);
+        // Feedback: the delayed signal is fed back into the delay line input, creating a resonant comb filter.
+        // 0.68x feedback gain is a sweet spot for a pronounced flanger effect without degenerating into self-oscillation.
+        _delay.Write(Dsp.SoftClip(x + delayed * 0.68f));
 
         return x + delayed * 0.72f;
     }
@@ -336,5 +348,32 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // Mix the two delayed signals together, then blend with the dry signal in the caller.
         return x + (s1 + s2) * 0.45f;
+    }
+
+    /// <summary>
+    /// Simulates the characteristic warmth and modulation of analog cassette tape.
+    /// A modulated delay line with feedback creates the tape's natural pitch instability,
+    /// while thermally modulated pink noise simulates the hiss and mechanical rumble of tape transport.
+    /// </summary>
+    private float LoFiTape(float x)
+    {
+        // Pre-emphasis simulates the high-frequency boost applied during recording to improve SNR,
+        // which also shapes the distortion character of the tape when driven hard.
+        float recorded = Dsp.SoftClip(x * 1.5f);
+        _delay.Write(recorded);
+        // Two independent LFOs create complex, evolving pitch modulation that mimics the wow/flutter of tape.
+        _lofiPhase = Dsp.AdvancePhase(_lofiPhase, 1.2f, _sampleRate);
+        _flutterPhase = Dsp.AdvancePhase(_flutterPhase, 9.0f, _sampleRate);
+        // Wow is a slow sine wave modulation that simulates the gradual speed fluctuations of a tape machine.
+        float wow = Dsp.Sine(_lofiPhase) * 1.5f;
+        float flutter = Dsp.Sine(_flutterPhase) * 0.3f + _noise.NextWhite() * 0.05f;
+        // Total delay modulation combines wow, flutter, and noise to create a rich, 
+        // dynamic pitch instability characteristic of tape.
+        float delayMs = 5f + wow + flutter;
+        float pitchWarped = _delay.Read(delayMs * _sampleRate / 1000f);
+        // Pink noise simulates tape hiss, with amplitude modulated by thermal state to create a living, 
+        // breathing noise floor that responds to the "tension" of the tape.
+        float tapeHiss = _noise.NextPink() * (0.012f + _thermal.State * 0.005f);
+        return (pitchWarped + tapeHiss) * 0.9f;
     }
 }

@@ -23,7 +23,10 @@ public enum VoiceEffectType
     Flanger,
 
     /// <summary>Modulated long delay (Thick, multi-voice ensemble effect).</summary>
-    Chorus
+    Chorus,
+
+    /// <summary> Simulates the characteristic warmth and coloration of analog cassette tape. </summary>
+    LoFiTape
 }
 
 /// <summary>

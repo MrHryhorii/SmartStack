@@ -27,10 +27,8 @@ public class SpatialEffectsEngine
 
     private SpatialEnvironment _current = SpatialEnvironment.None;
 
-    // Cached per-environment reverb parameters, written once in Setup() and read each sample.
-    // Avoids redundant property assignments inside the hot sample-processing loop.
-    private float _cachedFeedback;
-    private float _cachedDamp;
+    private readonly float _forestDelaySamples;
+    private readonly float _underwaterDelaySamples;
 
     /// <summary>
     /// Initializes the spatial engine, pre-allocating all necessary delay buffers.
@@ -40,6 +38,8 @@ public class SpatialEffectsEngine
     public SpatialEffectsEngine(int sampleRate)
     {
         _sampleRate = sampleRate;
+        _forestDelaySamples = 0.25f * sampleRate;
+        _underwaterDelaySamples = 0.04f * sampleRate;
 
         // Scaling factor keeps room sizes physically accurate regardless of TTS sample rate
         float scale = sampleRate / 44100f;
@@ -152,11 +152,6 @@ public class SpatialEffectsEngine
             _ => (0.70f, 0.50f)
         };
 
-        // Cache coefficients so that AlgorithmicReverb reads them without any
-        // per-sample property assignments on the filter objects.
-        _cachedFeedback = feedback;
-        _cachedDamp = damp;
-
         // Apply cached values to all comb filters once, here in Setup
         foreach (var c in _combs)
         {
@@ -216,11 +211,11 @@ public class SpatialEffectsEngine
     /// </summary>
     private float ForestEcho(float x)
     {
-        float delaySamples = 0.25f * _sampleRate;
-        float delayed = _echoDelay.Read(delaySamples);
-
+        // Echo delay is fixed at 250ms to simulate typical forest reflection distances.
+        float delayed = _echoDelay.Read(_forestDelaySamples);
+        // Echo feedback is set to 0.4 for a few discrete repeats that decay naturally over time.
         _echoDelay.Write(x + delayed * 0.4f);
-
+        // Output is a mix of the dry signal and the delayed echo, with the echo attenuated to prevent overpowering the source.
         return delayed * 0.5f;
     }
 
@@ -233,12 +228,14 @@ public class SpatialEffectsEngine
     /// </summary>
     private float Underwater(float x)
     {
+        // Start with a dense, diffused reverb to simulate the enclosed, reflective nature of an underwater environment.
         float wet = AlgorithmicReverb(x);
-
-        float delaySamples = 0.04f * _sampleRate; // 40ms enclosed pressure echo
-        float delayed = _echoDelay.Read(delaySamples);
+        // Add a short slapback echo with a delay of around 40ms, 
+        // which simulates the characteristic "ringing" or "pinging" that occurs when sound reflects off nearby surfaces underwater.
+        float delayed = _echoDelay.Read(_underwaterDelaySamples);
         _echoDelay.Write(x + delayed * 0.5f);
-
+        // Mix the reverb and echo together, with the echo attenuated to prevent it from overpowering the reverb tail, 
+        // creating a cohesive underwater soundscape.
         return (wet * 0.6f) + (delayed * 0.4f);
     }
 
