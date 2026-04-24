@@ -1,27 +1,34 @@
 namespace ONNX_Runner.Services;
 
 /// <summary>
-/// A highly optimized static DSP helper for in-place volume modification.
-/// Includes a soft-clipper (Tanh limiter) to prevent digital distortion when boosting volume.
+/// Professional Soft-Knee Limiter.
+/// Preserves perfect linearity up to 80%, then applies a smooth algebraic curve to peaks.
 /// </summary>
 public static class VolumeShifter
 {
-    /// <summary>
-    /// Multiplies the audio samples by the volume factor.
-    /// Uses Math.Tanh to smoothly limit audio peaks and prevent hard clipping.
-    /// </summary>
-    /// <param name="buffer">The audio buffer to modify in-place.</param>
-    /// <param name="volume">1.0 = original, < 1.0 = quieter, > 1.0 = louder (up to 10.0).</param>
     public static void ApplyVolume(Span<float> buffer, float volume)
     {
-        // Bypass if volume is unchanged to save CPU cycles
-        if (Math.Abs(volume - 1.0f) < 0.001f)
-            return;
-
+        if (MathF.Abs(volume - 1.0f) < 0.001f) return;
+        // The threshold is where the soft-knee curve starts. Below this, the signal is unchanged.
+        const float threshold = 0.8f;
+        const float headroom = 1.0f - threshold;
+        // For volume > 1.0, the effective threshold is reduced, making the curve more aggressive.
         for (int i = 0; i < buffer.Length; i++)
         {
-            // Apply gain and smoothly round off any peaks that exceed [-1.0, 1.0]
-            buffer[i] = (float)Math.Tanh(buffer[i] * volume);
+            float x = buffer[i] * volume;
+            float absX = MathF.Abs(x);
+
+            if (absX <= threshold)
+            {
+                buffer[i] = x;
+            }
+            else
+            {
+                // Soft-knee curve: y = threshold + headroom * (excess / (1 + excess))
+                float excess = (absX - threshold) / headroom;
+                float softPeak = threshold + headroom * (excess / (1.0f + excess));
+                buffer[i] = MathF.Sign(x) * softPeak;
+            }
         }
     }
 }

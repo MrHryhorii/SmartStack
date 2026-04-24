@@ -81,6 +81,7 @@ async function bootEngine() {
         // Reset audio player for new playback
         player.pause(); 
         player.removeAttribute('src');
+        player.srcObject = null;
         player.load();
         // ----------------
 
@@ -138,16 +139,32 @@ async function bootEngine() {
                 log(`⬇️ Chunk decoded: ${chunkSize} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
             };
             // Completion callback to enable download and log final status
-            const onComplete = (finalBlob) => {
+            const onComplete = async (finalBlob) => {
                 log("✅ Transmission complete.");
-                currentDownloadUrl = URL.createObjectURL(finalBlob);
+                
+                if (payload.response_format === 'pcm') {
+                    // Create a downloadable URL for the raw PCM data (for users who want the original stream)
+                    currentDownloadUrl = URL.createObjectURL(finalBlob);
+                    
+                    // Convert raw PCM to WAV format for browser playback
+                    const arrayBuffer = await finalBlob.arrayBuffer();
+                    const playableWavBlob = AudioEngine.addWavHeader(arrayBuffer, targetSampleRate);
+                    const playerUrl = URL.createObjectURL(playableWavBlob);
+                    
+                    // Set the player's source to the playable WAV URL instead of the raw PCM stream
+                    player.srcObject = null; 
+                    player.src = playerUrl;
+                } else {
+                    currentDownloadUrl = URL.createObjectURL(finalBlob);
+                }
+                
                 downloadBtn.disabled = false;
             };
             // Handle different response formats and streaming capabilities
             if (payload.response_format === 'pcm') {
                 if (payload.stream) {
                     log('Routing Raw PCM via Web Audio API Queue...');
-                    await AudioEngine.streamPCM(response.body.getReader(), targetSampleRate, onChunk, onComplete);
+                    await AudioEngine.streamPCM(response.body.getReader(), targetSampleRate, player, onChunk, onComplete);
                 } else {
                     log('Buffering complete Raw PCM payload...');
                     const blob = await response.blob();

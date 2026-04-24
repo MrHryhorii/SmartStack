@@ -11,9 +11,16 @@ export const AudioEngine = {
 
     /**
      * Handles raw PCM 16-bit (S16LE) byte streams using the Web Audio API.
+     * Routes the audio through the HTML5 player for UI control.
      */
-    async streamPCM(reader, sampleRate, onChunk, onComplete) {
+    async streamPCM(reader, sampleRate, player, onChunk, onComplete) {
         this.activeAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: sampleRate });
+        
+        // Create a MediaStream from the AudioContext and set it as the source for the player
+        const streamDestination = this.activeAudioContext.createMediaStreamDestination();
+        player.srcObject = streamDestination.stream;
+        player.play().catch(e => console.warn(`Autoplay blocked: ${e.message}`));
+
         let nextStartTime = this.activeAudioContext.currentTime;
         
         const audioChunks = []; 
@@ -23,6 +30,15 @@ export const AudioEngine = {
             const { done, value } = await reader.read();
             
             if (done) {
+                // Calculate how much time is left for the currently playing audio to finish
+                const timeToFinish = nextStartTime - this.activeAudioContext.currentTime;
+                
+                // If the audio is still playing, "sleep" the code until the speakers finish playing everything
+                if (timeToFinish > 0) {
+                    console.log(`[AudioEngine] Network finished. Waiting ${timeToFinish.toFixed(2)}s for audio playback to complete...`);
+                    await new Promise(resolve => setTimeout(resolve, timeToFinish * 1000));
+                }
+
                 const finalBlob = new Blob(audioChunks, { type: 'audio/pcm' });
                 onComplete(finalBlob);
                 break;
@@ -54,7 +70,9 @@ export const AudioEngine = {
 
                 const source = this.activeAudioContext.createBufferSource();
                 source.buffer = audioBuffer;
-                source.connect(this.activeAudioContext.destination);
+                
+                // Connect the source to the MediaStream destination so it can be played through the HTML5 player
+                source.connect(streamDestination);
 
                 const currentTime = this.activeAudioContext.currentTime;
                 if (nextStartTime < currentTime) nextStartTime = currentTime;

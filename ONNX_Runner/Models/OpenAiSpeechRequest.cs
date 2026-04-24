@@ -129,7 +129,7 @@ public class OpenAiSpeechRequest
     public float? Volume
     {
         get => _volume;
-        // Clamp from 0.0 (mute) to 10.0 (+20dB boost)
-        set => _volume = value.HasValue ? Math.Clamp(value.Value, 0.0f, 10.0f) : null;
+        // Clamp from 0.0 (mute) to 4.0 (+12dB boost)
+        set => _volume = value.HasValue ? Math.Clamp(value.Value, 0.0f, 4.0f) : null;
     }
 }
