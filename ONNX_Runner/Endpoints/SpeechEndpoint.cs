@@ -171,6 +171,24 @@ public static class SpeechEndpoint
                     // Initialize audio processing engines with the final sample rate determined for this request
                     var effectsEngine = new AudioEffectsEngine(effectsConfig, finalSampleRate);
                     var spatialEngine = new SpatialEffectsEngine(finalSampleRate);
+
+                    // =================================================================
+                    // PITCH SHIFTER SETUP
+                    // =================================================================
+                    // Piper can adjust speed but not pitch independently. 
+                    // If the client requests a pitch shift, we enable the SoundTouch-based PitchShifter.
+                    float targetPitch = request.Pitch.GetValueOrDefault(1.0f);
+                    // We use a small threshold to determine if pitch shifting is needed, 
+                    // to avoid unnecessary processing for values very close to 1.0.
+                    bool usePitchShift = Math.Abs(targetPitch - 1.0f) > 0.001f;
+                    // The PitchShifter is disposed at the end of this method, 
+                    // which will release any unmanaged resources it holds.
+                    using var pitchShifter = new PitchShifter(piperConfig!.Audio.SampleRate);
+                    if (usePitchShift)
+                    {
+                        pitchShifter.SetPitch(targetPitch);
+                    }
+
                     // Determine target effect settings, falling back to global defaults if not specified in the request
                     string targetEnvironment = request.Environment ?? effectsConfig.DefaultEnvironment;
                     float targetEnvIntensity = request.EnvironmentIntensity ?? effectsConfig.DefaultEnvironmentIntensity;
@@ -192,16 +210,69 @@ public static class SpeechEndpoint
                         // PRODUCER: Phonemizes text and generates raw base audio using Piper ONNX
                         var producerTask = Task.Run(async () =>
                         {
-                            foreach (var chunk in textChunks)
+                            try
                             {
-                                cancellationToken.ThrowIfCancellationRequested();
-
-                                string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
-                                var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
-
-                                await channel.Writer.WriteAsync(rawResult, cancellationToken);
+                                foreach (var chunk in textChunks)
+                                {
+                                    cancellationToken.ThrowIfCancellationRequested();
+                                    // Generate the base voice using neural network
+                                    string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
+                                    var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
+                                    // Apply Pitch Shifting if requested
+                                    if (usePitchShift)
+                                    {
+                                        // ZERO-ALLOCATION ACCUMULATOR:
+                                        // PitchShifter returns audio in small chunks. If we send them directly to the Consumer,
+                                        // the Consumer will think each chunk is a full sentence and insert silence between them (stuttering).
+                                        // We must accumulate these chunks back into a single array for the current sentence.
+                                        int estimatedSize = (int)(rawResult.Length * 1.5); // Provide safe margin
+                                        float[] accumulatedBuffer = ArrayPool<float>.Shared.Rent(estimatedSize);
+                                        int accumulatedLength = 0;
+                                        // Process the main audio
+                                        foreach (var segment in pitchShifter.ProcessChunk(rawResult.Buffer.AsSpan(0, rawResult.Length)))
+                                        {
+                                            if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
+                                            {
+                                                float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
+                                                Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
+                                                ArrayPool<float>.Shared.Return(accumulatedBuffer);
+                                                accumulatedBuffer = newBuffer;
+                                            }
+                                            segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
+                                            accumulatedLength += segment.Count;
+                                        }
+                                        // Flush internal WSOLA buffers immediately for THIS sentence
+                                        // This ensures the tail of the word isn't lost or blended into the next sentence.
+                                        foreach (var segment in pitchShifter.Flush())
+                                        {
+                                            if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
+                                            {
+                                                float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
+                                                Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
+                                                ArrayPool<float>.Shared.Return(accumulatedBuffer);
+                                                accumulatedBuffer = newBuffer;
+                                            }
+                                            segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
+                                            accumulatedLength += segment.Count;
+                                        }
+                                        // Send the fully reassembled sentence to the Consumer
+                                        await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength), cancellationToken);
+                                        // Return the original buffer from Piper back to the pool
+                                        ArrayPool<float>.Shared.Return(rawResult.Buffer);
+                                    }
+                                    else
+                                    {
+                                        // If Pitch is exactly 1.0, bypass DSP and send the original raw audio chunk directly
+                                        await channel.Writer.WriteAsync(rawResult, cancellationToken);
+                                    }
+                                }
                             }
-                            channel.Writer.Complete();
+                            finally
+                            {
+                                // CRITICAL: Always close the channel, even if an exception occurs or the client disconnects,
+                                // to prevent the Consumer task from waiting indefinitely (deadlocks).
+                                channel.Writer.Complete();
+                            }
                         }, cancellationToken);
 
                         // CONSUMER: Applies voice cloning, resampling, effects, and pushes to the network stream

@@ -106,4 +106,17 @@ public class OpenAiSpeechRequest
     /// </summary>
     [JsonPropertyName("environment_intensity")]
     public float? EnvironmentIntensity { get; set; }
+
+    /// <summary>
+    /// Pitch shift factor. 
+    /// 1.0 = original, >1.0 = higher pitch, <1.0 = lower pitch.
+    /// </summary>
+    private float? _pitch;
+    [JsonPropertyName("pitch")]
+    public float? Pitch
+    {
+        get => _pitch;
+        // Clamp the value to a safe range (0.5 to 2.0) to prevent extreme audio distortion or algorithm failure.
+        set => _pitch = value.HasValue ? Math.Clamp(value.Value, 0.5f, 2.0f) : null;
+    }
 }

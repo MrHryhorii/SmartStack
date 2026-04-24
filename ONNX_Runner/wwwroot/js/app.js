@@ -46,11 +46,13 @@ async function bootEngine() {
     syncInputs('envIntSlider', 'envIntNum');
     syncInputs('nsSlider', 'nsNum');
     syncInputs('nwSlider', 'nwNum');
+    syncInputs('pitchSlider', 'pitchNum');
     // Bind toggles to enable/disable related controls
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum']); 
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
+    bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
 
     const btn = document.getElementById('generateBtn');
     const downloadBtn = document.getElementById('downloadBtn');
@@ -108,6 +110,11 @@ async function bootEngine() {
         // Include noise parameters if enabled
         if (document.getElementById('useNoiseScale').checked) payload.noise_scale = parseFloat(document.getElementById('nsNum').value);
         if (document.getElementById('useNoiseW').checked) payload.noise_w = parseFloat(document.getElementById('nwNum').value);
+
+        // Include voice shift parameters if enabled
+        if (document.getElementById('usePitch').checked) {
+            payload.pitch = parseFloat(document.getElementById('pitchNum').value);
+        }
 
         log(`Transmitting payload to backend...`);
         // Log payload details while masking sensitive info
