@@ -140,30 +140,23 @@ body {
     grid-area: side;
 }
 
-/* Allows the text input to naturally consume remaining vertical space */
-.panel-main .field:first-child {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-}
-
 /* ==========================================================================
    5. SIDE PANEL & ACCORDIONS
    High-density styling and collapsible native menus.
 ========================================================================== */
 .panel-side .field {
-    margin-bottom: 12px;
+    margin-bottom: 20px;
 }
 
 .panel-side .label {
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    margin-bottom: 2px;
+    margin-bottom: 6px;
 }
 
 .panel-side .toggle {
-    margin-bottom: 2px;
+    margin-bottom: 8px;
 }
 
 .panel-side .toggle label {
@@ -177,13 +170,16 @@ body {
     height: 28px;
 }
 
-/* Margin utilities for compacting elements */
-.panel-side .mt-2 { margin-top: 4px; }
-.panel-side .mt-3 { margin-top: 8px; }
+/* A simple divider element to visually separate sections within the side panel */
+.panel-side .divider {
+    height: 1px;
+    background: var(--border);
+    margin: 24px 0;
+}
 
 /* Native Accordion Styles (<details> & <summary>) */
 details.advanced-group {
-    margin-bottom: 8px;
+    margin-bottom: 12px;
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--input-bg);
@@ -253,8 +249,6 @@ details[open].advanced-group summary {
     color: var(--text-muted);
     margin-bottom: var(--space-2);
 }
-
-.mt-2 { margin-top: var(--space-2); }
 
 textarea {
     width: 100%;

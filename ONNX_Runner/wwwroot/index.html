@@ -37,9 +37,9 @@
                     <button id="downloadBtn" class="btn-secondary" disabled>Download</button>
                 </div>
                 <!-- Toggle for enabling/disabling streaming audio response -->
-                <div class="toggle mt-2">
+                <div class="toggle">
                     <input type="checkbox" id="streamToggle" checked>
-                    <label for="streamToggle">Stream Audio Response</label>
+                    <label for="streamToggle">Real-time Playback</label>
                 </div>
                 <!-- Audio element for playing back the synthesized speech -->
                 <audio id="audioPlayer" class="audio" controls></audio>
@@ -67,7 +67,9 @@
                         <input type="number" id="speedNum" class="input-num" min="0.25" max="4" step="0.01" value="1">
                     </div>
                 </div>
-                <!-- Advanced settings grouped in collapsible sections for audio effects and prosody/rhythm controls -->
+
+                <div class="divider"></div>
+                <!-- Collapsible sections for advanced audio effect controls, initially hidden and disabled until a voice is selected -->
                 <details class="advanced-group">
                     <summary>Audio Effects</summary>
                     <div class="group-content">
@@ -78,7 +80,7 @@
                             </div>
                             <select id="effectSelect" disabled></select>
                             
-                            <label class="label mt-3">Intensity</label>
+                            <label class="label">Intensity</label>
                             <div class="row">
                                 <input type="range" id="effectIntSlider" min="0" max="1" step="0.01" value="1" disabled>
                                 <input type="number" id="effectIntNum" class="input-num" min="0" max="1" step="0.01" value="1" disabled>
@@ -91,7 +93,7 @@
                             </div>
                             <select id="environmentSelect" disabled></select>
                             
-                            <label class="label mt-3">Intensity</label>
+                            <label class="label">Intensity</label>
                             <div class="row">
                                 <input type="range" id="envIntSlider" min="0" max="1" step="0.01" value="1" disabled>
                                 <input type="number" id="envIntNum" class="input-num" min="0" max="1" step="0.01" value="1" disabled>
@@ -99,16 +101,16 @@
                         </div>
                     </div>
                 </details>
-                <!-- Collapsible section for controlling prosody and rhythm parameters of the synthesized speech -->
+                <!-- Collapsible section for prosody and rhythm controls, allowing users to adjust expression and rhythm parameters -->
                 <details class="advanced-group">
-                    <summary>Prosody & Rhythm</summary>
+                    <summary>Speech Dynamics</summary>
                     <div class="group-content">
                         <div class="field">
                             <div class="toggle">
                                 <input type="checkbox" id="useNoiseScale">
                                 <label for="useNoiseScale">Expression</label>
                             </div>
-                            <div class="row mt-2">
+                            <div class="row">
                                 <input type="range" id="nsSlider" min="0" max="1.0" step="0.001" value="0.667" disabled>
                                 <input type="number" id="nsNum" class="input-num" min="0" max="1.0" step="0.001" value="0.667" disabled>
                             </div>
@@ -118,7 +120,7 @@
                                 <input type="checkbox" id="useNoiseW">
                                 <label for="useNoiseW">Rhythm</label>
                             </div>
-                            <div class="row mt-2">
+                            <div class="row">
                                 <input type="range" id="nwSlider" min="0" max="1.0" step="0.001" value="0.8" disabled>
                                 <input type="number" id="nwNum" class="input-num" min="0" max="1.0" step="0.001" value="0.8" disabled>
                             </div>
