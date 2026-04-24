@@ -73,7 +73,12 @@ async function bootEngine() {
         btn.disabled = true;
         downloadBtn.disabled = true;
         btn.innerText = "Processing...";
+        
+        // Reset audio player for new playback
+        player.pause(); 
         player.removeAttribute('src');
+        player.load();
+        // ----------------
 
         if (currentDownloadUrl) {
             URL.revokeObjectURL(currentDownloadUrl);
