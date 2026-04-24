@@ -148,11 +148,11 @@ body {
 }
 
 /* ==========================================================================
-   5. SIDE PANEL (COMPACT UI)
-   High-density styling specifically for the settings sidebar.
+   5. SIDE PANEL & ACCORDIONS
+   High-density styling and collapsible native menus.
 ========================================================================== */
 .panel-side .field {
-    margin-bottom: 10px;
+    margin-bottom: 12px;
 }
 
 .panel-side .label {
@@ -162,23 +162,8 @@ body {
     margin-bottom: 2px;
 }
 
-.panel-side .section-title {
-    font-size: 0.85rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin-bottom: 6px;
-    margin-top: 8px;
-}
-
-.panel-side .divider {
-    height: 1px;
-    background: var(--border);
-    margin: 10px 0;
-}
-
 .panel-side .toggle {
-    margin-bottom: 0;
+    margin-bottom: 2px;
 }
 
 .panel-side .toggle label {
@@ -192,9 +177,66 @@ body {
     height: 28px;
 }
 
-/* Margin utilities strictly for compacting side panel elements */
+/* Margin utilities for compacting elements */
 .panel-side .mt-2 { margin-top: 4px; }
 .panel-side .mt-3 { margin-top: 8px; }
+
+/* Native Accordion Styles (<details> & <summary>) */
+details.advanced-group {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--input-bg);
+}
+
+details.advanced-group summary {
+    cursor: pointer;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent);
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    user-select: none;
+    transition: background-color 0.2s;
+}
+
+/* Custom arrow indicator for the summary element */
+details.advanced-group summary::after {
+    content: "▼";
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    transition: transform 0.2s;
+}
+
+details[open].advanced-group summary::after {
+    transform: rotate(-180deg);
+}
+
+details.advanced-group summary::-webkit-details-marker {
+    display: none; /* Hides the arrow in WebKit */
+}
+
+details.advanced-group summary:hover {
+    background: var(--bg-base);
+}
+
+details[open].advanced-group summary {
+    border-bottom: 1px solid var(--border);
+}
+
+.group-content {
+    padding: 12px;
+}
+
+/* The last field inside the group should not have a bottom margin */
+.group-content .field:last-child {
+    margin-bottom: 0;
+}
 
 /* ==========================================================================
    6. GLOBAL FORM ELEMENTS

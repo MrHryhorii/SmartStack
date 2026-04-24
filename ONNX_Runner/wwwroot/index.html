@@ -46,12 +46,10 @@
             </section>
             <!-- Side panel for selecting voice, format, and advanced DSP options -->
             <aside class="panel panel-side">
-                <!-- Dropdown for selecting the voice model to use for synthesis -->
                 <div class="field">
                     <label for="voiceSelect" class="label">Voice</label>
                     <select id="voiceSelect"></select>
                 </div>
-                <!-- Dropdown for selecting the output audio format -->
                 <div class="field">
                     <label for="formatSelect" class="label">Format</label>
                     <select id="formatSelect">
@@ -69,62 +67,64 @@
                         <input type="number" id="speedNum" class="input-num" min="0.25" max="4" step="0.01" value="1">
                     </div>
                 </div>
-                <!-- Divider to separate basic controls from advanced DSP options -->
-                <div class="divider"></div>
-
-                <div class="section-title">Advanced DSP</div>
-                <!-- Toggle and controls for applying character effects to the synthesized voice -->
-                <div class="field">
-                    <div class="toggle">
-                        <input type="checkbox" id="useEffect">
-                        <label for="useEffect">Character Effect</label>
+                <!-- Advanced settings grouped in collapsible sections for audio effects and prosody/rhythm controls -->
+                <details class="advanced-group">
+                    <summary>Audio Effects</summary>
+                    <div class="group-content">
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useEffect">
+                                <label for="useEffect">Character Effect</label>
+                            </div>
+                            <select id="effectSelect" disabled></select>
+                            
+                            <label class="label mt-3">Intensity</label>
+                            <div class="row">
+                                <input type="range" id="effectIntSlider" min="0" max="1" step="0.01" value="1" disabled>
+                                <input type="number" id="effectIntNum" class="input-num" min="0" max="1" step="0.01" value="1" disabled>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useEnvironment">
+                                <label for="useEnvironment">Acoustic Space</label>
+                            </div>
+                            <select id="environmentSelect" disabled></select>
+                            
+                            <label class="label mt-3">Intensity</label>
+                            <div class="row">
+                                <input type="range" id="envIntSlider" min="0" max="1" step="0.01" value="1" disabled>
+                                <input type="number" id="envIntNum" class="input-num" min="0" max="1" step="0.01" value="1" disabled>
+                            </div>
+                        </div>
                     </div>
-                    <select id="effectSelect" disabled></select>
-                    
-                    <label class="label mt-3">Intensity</label>
-                    <div class="row">
-                        <input type="range" id="effectIntSlider" min="0" max="1" step="0.01" value="1" disabled>
-                        <input type="number" id="effectIntNum" class="input-num" min="0" max="1" step="0.01" value="1" disabled>
+                </details>
+                <!-- Collapsible section for controlling prosody and rhythm parameters of the synthesized speech -->
+                <details class="advanced-group">
+                    <summary>Prosody & Rhythm</summary>
+                    <div class="group-content">
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useNoiseScale">
+                                <label for="useNoiseScale">Expression</label>
+                            </div>
+                            <div class="row mt-2">
+                                <input type="range" id="nsSlider" min="0" max="1.0" step="0.001" value="0.667" disabled>
+                                <input type="number" id="nsNum" class="input-num" min="0" max="1.0" step="0.001" value="0.667" disabled>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useNoiseW">
+                                <label for="useNoiseW">Rhythm</label>
+                            </div>
+                            <div class="row mt-2">
+                                <input type="range" id="nwSlider" min="0" max="1.0" step="0.001" value="0.8" disabled>
+                                <input type="number" id="nwNum" class="input-num" min="0" max="1.0" step="0.001" value="0.8" disabled>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <!-- Toggle and controls for applying acoustic space effects to the synthesized voice -->
-                <div class="field">
-                    <div class="toggle">
-                        <input type="checkbox" id="useEnvironment">
-                        <label for="useEnvironment">Acoustic Space</label>
-                    </div>
-                    <select id="environmentSelect" disabled></select>
-                    
-                    <label class="label mt-3">Intensity</label>
-                    <div class="row">
-                        <input type="range" id="envIntSlider" min="0" max="1" step="0.01" value="1" disabled>
-                        <input type="number" id="envIntNum" class="input-num" min="0" max="1" step="0.01" value="1" disabled>
-                    </div>
-                </div>
-                <!-- Divider to separate acoustic effects from noise parameters -->
-                <div class="divider"></div>
-                <!-- Toggle and controls for adjusting the noise scale parameter, which affects the expressiveness of the synthesized voice -->
-                <div class="field">
-                    <div class="toggle">
-                        <input type="checkbox" id="useNoiseScale">
-                        <label for="useNoiseScale">Expression (Noise Scale)</label>
-                    </div>
-                    <div class="row mt-2">
-                        <input type="range" id="nsSlider" min="0" max="1.0" step="0.001" value="0.667" disabled>
-                        <input type="number" id="nsNum" class="input-num" min="0" max="1.0" step="0.001" value="0.667" disabled>
-                    </div>
-                </div>
-                <!-- Toggle and controls for adjusting the noise W parameter, which affects the rhythm of the synthesized voice -->
-                <div class="field">
-                    <div class="toggle">
-                        <input type="checkbox" id="useNoiseW">
-                        <label for="useNoiseW">Rhythm (Noise W)</label>
-                    </div>
-                    <div class="row mt-2">
-                        <input type="range" id="nwSlider" min="0" max="1.0" step="0.001" value="0.8" disabled>
-                        <input type="number" id="nwNum" class="input-num" min="0" max="1.0" step="0.001" value="0.8" disabled>
-                    </div>
-                </div>
+                </details>
 
             </aside>
             <!-- Panel for displaying status logs and messages from the application -->
@@ -135,6 +135,7 @@
         </main>
     </div>
     <!-- Main application script that handles UI interactions, API communication, and audio processing -->
+    <script src="js/accordion.js"></script>
     <script type="module" src="js/app.js"></script>
 
 </body>
