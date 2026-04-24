@@ -311,6 +311,12 @@ input[type="number"] {
     align-items: center;
 }
 
+/* Extra top margin for rows that follow selects, 
+to visually separate the intensity controls from the dropdowns they belong to */
+.effect-row {
+    margin-top: 8px; 
+}
+
 .row input[type="range"] { flex: 1; }
 .input-num               { flex: 0 0 70px; }
 
