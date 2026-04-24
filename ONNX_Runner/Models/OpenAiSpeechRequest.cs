@@ -119,4 +119,17 @@ public class OpenAiSpeechRequest
         // Clamp the value to a safe range (0.5 to 2.0) to prevent extreme audio distortion or algorithm failure.
         set => _pitch = value.HasValue ? Math.Clamp(value.Value, 0.5f, 2.0f) : null;
     }
+
+    /// <summary>
+    /// Volume multiplier. 
+    /// 1.0 = original, <1.0 = quieter, >1.0 = louder.
+    /// </summary>
+    private float? _volume;
+    [JsonPropertyName("volume")]
+    public float? Volume
+    {
+        get => _volume;
+        // Clamp from 0.0 (mute) to 10.0 (+20dB boost)
+        set => _volume = value.HasValue ? Math.Clamp(value.Value, 0.0f, 10.0f) : null;
+    }
 }

@@ -69,6 +69,34 @@
                 </div>
 
                 <div class="divider"></div>
+
+                <!-- Collapsible section for voice shift controls, allowing users to adjust pitch and volume parameters -->
+                <details class="advanced-group">
+                    <summary>Voice Shift</summary>
+                    <div class="group-content">
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="usePitch">
+                                <label for="usePitch">Pitch</label>
+                            </div>
+                            <div class="row">
+                                <input type="range" id="pitchSlider" min="0.5" max="2.0" step="0.01" value="1.0" disabled>
+                                <input type="number" id="pitchNum" class="input-num" min="0.5" max="2.0" step="0.01" value="1.0" disabled>
+                            </div>
+                        </div>
+
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useVolume">
+                                <label for="useVolume">Volume Boost</label>
+                            </div>
+                            <div class="row">
+                                <input type="range" id="volumeSlider" min="0.0" max="10.0" step="0.1" value="1.0" disabled>
+                                <input type="number" id="volumeNum" class="input-num" min="0.0" max="10.0" step="0.1" value="1.0" disabled>
+                            </div>
+                        </div>
+                    </div>
+                </details>
                 <!-- Collapsible sections for advanced audio effect controls, initially hidden and disabled until a voice is selected -->
                 <details class="advanced-group">
                     <summary>Audio Effects</summary>
@@ -98,23 +126,6 @@
                             </div>
                         </div>
                     </div>
-                </details>
-                <!-- Collapsible section for pitch shifting controls, allowing users to adjust the pitch of the synthesized voice -->
-                <details class="advanced-group">
-                    <summary>Voice Shift</summary>
-                    <div class="group-content">
-                        <div class="field">
-                            <div class="toggle">
-                                <input type="checkbox" id="usePitch">
-                                <label for="usePitch">Pitch</label>
-                            </div>
-                            <div class="row">
-                                <input type="range" id="pitchSlider" min="0.5" max="2.0" step="0.01" value="1.0" disabled>
-                                <input type="number" id="pitchNum" class="input-num" min="0.5" max="2.0" step="0.01" value="1.0" disabled>
-                            </div>
-                        </div>
-                        
-                        </div>
                 </details>
                 <!-- Collapsible section for prosody and rhythm controls, allowing users to adjust expression and rhythm parameters -->
                 <details class="advanced-group">

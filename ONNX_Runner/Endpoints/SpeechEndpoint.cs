@@ -173,21 +173,22 @@ public static class SpeechEndpoint
                     var spatialEngine = new SpatialEffectsEngine(finalSampleRate);
 
                     // =================================================================
-                    // PITCH SHIFTER SETUP
+                    // DSP MODIFIERS SETUP (PITCH & VOLUME)
                     // =================================================================
-                    // Piper can adjust speed but not pitch independently. 
-                    // If the client requests a pitch shift, we enable the SoundTouch-based PitchShifter.
+                    // Pitch
                     float targetPitch = request.Pitch.GetValueOrDefault(1.0f);
-                    // We use a small threshold to determine if pitch shifting is needed, 
-                    // to avoid unnecessary processing for values very close to 1.0.
                     bool usePitchShift = Math.Abs(targetPitch - 1.0f) > 0.001f;
-                    // The PitchShifter is disposed at the end of this method, 
-                    // which will release any unmanaged resources it holds.
+
                     using var pitchShifter = new PitchShifter(piperConfig!.Audio.SampleRate);
                     if (usePitchShift)
                     {
                         pitchShifter.SetPitch(targetPitch);
                     }
+
+                    // Volume
+                    float targetVolume = request.Volume.GetValueOrDefault(1.0f);
+                    bool useVolumeShift = Math.Abs(targetVolume - 1.0f) > 0.001f;
+                    // =================================================================
 
                     // Determine target effect settings, falling back to global defaults if not specified in the request
                     string targetEnvironment = request.Environment ?? effectsConfig.DefaultEnvironment;
@@ -204,6 +205,22 @@ public static class SpeechEndpoint
 
                     using (var streamManager = new AudioStreamManager(request, finalSampleRate, targetStream))
                     {
+                        // =================================================================
+                        // PRE-CALCULATE VOICE BLEND (Zero-Allocation Optimization)
+                        // =================================================================
+                        // Calculate the latent space blending strictly once per request,
+                        // rather than re-calculating it for every audio chunk inside the loop.
+                        float[]? blendedTarget = null;
+                        if (canClone && targetFingerprint != null && sourceFingerprint != null)
+                        {
+                            blendedTarget = new float[targetFingerprint.Length];
+                            float intensity = clonerConfig.CloneIntensity;
+                            for (int j = 0; j < blendedTarget.Length; j++)
+                            {
+                                blendedTarget[j] = sourceFingerprint[j] + (targetFingerprint[j] - sourceFingerprint[j]) * intensity;
+                            }
+                        }
+
                         // Internal channel for passing raw audio chunks between the Generator and the DSP Processor
                         var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length)>(10);
 
@@ -218,14 +235,16 @@ public static class SpeechEndpoint
                                     // Generate the base voice using neural network
                                     string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
                                     var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
+                                    // Apply volume adjustment if requested
+                                    if (useVolumeShift)
+                                    {
+                                        VolumeShifter.ApplyVolume(rawResult.Buffer.AsSpan(0, rawResult.Length), targetVolume);
+                                    }
                                     // Apply Pitch Shifting if requested
                                     if (usePitchShift)
                                     {
                                         // ZERO-ALLOCATION ACCUMULATOR:
-                                        // PitchShifter returns audio in small chunks. If we send them directly to the Consumer,
-                                        // the Consumer will think each chunk is a full sentence and insert silence between them (stuttering).
-                                        // We must accumulate these chunks back into a single array for the current sentence.
-                                        int estimatedSize = (int)(rawResult.Length * 1.5); // Provide safe margin
+                                        int estimatedSize = (int)(rawResult.Length * 1.5);
                                         float[] accumulatedBuffer = ArrayPool<float>.Shared.Rent(estimatedSize);
                                         int accumulatedLength = 0;
                                         // Process the main audio
@@ -242,7 +261,6 @@ public static class SpeechEndpoint
                                             accumulatedLength += segment.Count;
                                         }
                                         // Flush internal WSOLA buffers immediately for THIS sentence
-                                        // This ensures the tail of the word isn't lost or blended into the next sentence.
                                         foreach (var segment in pitchShifter.Flush())
                                         {
                                             if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
@@ -269,8 +287,7 @@ public static class SpeechEndpoint
                             }
                             finally
                             {
-                                // CRITICAL: Always close the channel, even if an exception occurs or the client disconnects,
-                                // to prevent the Consumer task from waiting indefinitely (deadlocks).
+                                // CRITICAL: Always close the channel
                                 channel.Writer.Complete();
                             }
                         }, cancellationToken);
@@ -291,17 +308,8 @@ public static class SpeechEndpoint
 
                                 try
                                 {
-                                    if (canClone && targetFingerprint != null && sourceFingerprint != null)
+                                    if (canClone && blendedTarget != null && sourceFingerprint != null)
                                     {
-                                        // Latent Space Blending: mix base voice fingerprint with target voice fingerprint
-                                        float intensity = clonerConfig.CloneIntensity;
-                                        float[] blendedTarget = new float[targetFingerprint.Length];
-
-                                        for (int j = 0; j < blendedTarget.Length; j++)
-                                        {
-                                            blendedTarget[j] = sourceFingerprint[j] + (targetFingerprint[j] - sourceFingerprint[j]) * intensity;
-                                        }
-
                                         // OpenVoice requires a specific sample rate (typically 22050 Hz)
                                         var r1 = audioProc!.Resample(currentBuffer, currentLength, piperConfig!.Audio.SampleRate, outSampleRate);
                                         rentedBuffer1 = r1.Buffer;
@@ -310,6 +318,9 @@ public static class SpeechEndpoint
                                         if (specChunk.GetLength(0) > 0)
                                         {
                                             float tau = clonerConfig.ToneTemperature;
+                                            // Apply tone color cloning in the latent space and decode back to audio. 
+                                            // This is the most computationally expensive step, so we do it strictly 
+                                            // once per sentence rather than per smaller chunk to optimize performance.
                                             var rClone = openVoice!.ApplyToneColor(specChunk, sourceFingerprint, blendedTarget, tau);
 
                                             rentedBuffer3 = rClone.Buffer;

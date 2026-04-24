@@ -47,12 +47,14 @@ async function bootEngine() {
     syncInputs('nsSlider', 'nsNum');
     syncInputs('nwSlider', 'nwNum');
     syncInputs('pitchSlider', 'pitchNum');
+    syncInputs('volumeSlider', 'volumeNum');
     // Bind toggles to enable/disable related controls
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum']); 
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
     bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
+    bindToggle('useVolume', ['volumeSlider', 'volumeNum']);
 
     const btn = document.getElementById('generateBtn');
     const downloadBtn = document.getElementById('downloadBtn');
@@ -114,6 +116,10 @@ async function bootEngine() {
         // Include voice shift parameters if enabled
         if (document.getElementById('usePitch').checked) {
             payload.pitch = parseFloat(document.getElementById('pitchNum').value);
+        }
+        // Include volume adjustment if enabled
+        if (document.getElementById('useVolume').checked) {
+            payload.volume = parseFloat(document.getElementById('volumeNum').value);
         }
 
         log(`Transmitting payload to backend...`);

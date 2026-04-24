@@ -41,16 +41,23 @@ public class PitchShifter : IDisposable
     /// <summary>
     /// Processes a chunk of the audio stream.
     /// Iterates over all available output since pitch shifting may produce
-    /// more samples than the input (e.g. pitch &lt; 1.0 stretches audio internally).
+    /// more samples than the input.
     /// </summary>
     public IEnumerable<ArraySegment<float>> ProcessChunk(ReadOnlySpan<float> inputSamples)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        // Push raw samples into the processor.
-        // ToArray() allocation is unavoidable here — SoundTouch.Net 2.x does not
-        // expose a Span-based overload for PutSamples.
-        _soundTouch.PutSamples(inputSamples.ToArray(), inputSamples.Length);
+        // SoundTouch requires an array, so we rent a temporary buffer to avoid allocations.
+        float[] tempBuffer = System.Buffers.ArrayPool<float>.Shared.Rent(inputSamples.Length);
+        try
+        {
+            inputSamples.CopyTo(tempBuffer);
+            _soundTouch.PutSamples(tempBuffer, inputSamples.Length);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<float>.Shared.Return(tempBuffer);
+        }
 
         return DrainBuffer();
     }
