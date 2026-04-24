@@ -1,6 +1,27 @@
 /* ==========================================================================
-   1. DESIGN TOKENS
-   Global variables for spacing, border radii, and color themes.
+   TSUBAKI TTS ENGINE — STYLESHEET
+   
+   Sections:
+     1.  Spacing & Radius Tokens
+     2.  Light Theme  (Japanese corporate)
+     3.  Dark Theme   (City pop night)
+     4.  Base & Reset
+     5.  Layout
+     6.  Panels
+     7.  Side Panel & Accordions
+     8.  Form Elements
+     9.  Range Sliders
+     10. Toggles & Checkboxes
+     11. Buttons
+     12. Audio Player
+     13. Log Panel
+     14. Watermark & Scrollbars
+========================================================================== */
+
+
+/* ==========================================================================
+   1. SPACING & RADIUS TOKENS
+   Theme-independent. Edit here to adjust global rhythm and corner rounding.
 ========================================================================== */
 :root {
     --space-1: 4px;
@@ -14,37 +35,57 @@
     --radius-lg: 12px;
 }
 
-/* Theme: Light */
-:root[data-theme="light"] {
-    --bg-base: #f0f2f5;
-    --bg-panel: #ffffff;
-    --text-main: #1a1a24;
-    --text-muted: #646b73;
-    --accent: #004fa3;
-    --accent-hover: #003875;
-    --border: #d1d7e0;
-    --input-bg: #ffffff;
-    --shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-    --svg-opacity: 0.03;
-}
-
-/* Theme: Dark */
-:root[data-theme="dark"] {
-    --bg-base: #0b0a1a;
-    --bg-panel: #14122b;
-    --text-main: #f8f8f8;
-    --text-muted: #8b8a9e;
-    --accent: #ff2a85;
-    --accent-hover: #00f0ff;
-    --border: #2a274c;
-    --input-bg: #0b0a1a;
-    --shadow: 0 0 20px rgba(255, 42, 133, 0.15);
-    --svg-opacity: 0.06;
-}
 
 /* ==========================================================================
-   2. BASE STYLES
-   Browser resets and global document typography.
+   2. LIGHT THEME — Japanese Corporate
+   Cool-neutral surfaces, deep navy accent. Inspired by NTT/JR visual identity.
+   --accent       primary interactive color (buttons, focus rings, labels)
+   --accent-hover button hover state
+   --bg-base      page background
+   --bg-panel     card/panel surface
+   --input-bg     form field background
+   --border       all borders and dividers
+   --text-main    body copy
+   --text-muted   labels, secondary info
+   --shadow       panel drop shadow
+   --svg-opacity  background watermark opacity
+========================================================================== */
+:root[data-theme="light"] {
+    --bg-base:      #e8eaed;
+    --bg-panel:     #f6f7f9;
+    --text-main:    #1a1c22;
+    --text-muted:   #5c6472;
+    --accent:       #0047a0;
+    --accent-hover: #003480;
+    --border:       #c5cad5;
+    --input-bg:     #ffffff;
+    --shadow:       0 1px 3px rgba(0, 0, 0, 0.07);
+    --svg-opacity:  0.035;
+}
+
+
+/* ==========================================================================
+   3. DARK THEME — City Pop Night
+   Deep purple-black base, hot pink accent, cyan secondary.
+   --log-color    console text color (separate from --accent for retro effect)
+========================================================================== */
+:root[data-theme="dark"] {
+    --bg-base:      #0b0a1a;
+    --bg-panel:     #14122b;
+    --text-main:    #f8f8f8;
+    --text-muted:   #8b8a9e;
+    --accent:       #ff2a85;
+    --accent-hover: #00f0ff;
+    --border:       #2a274c;
+    --input-bg:     #0b0a1a;
+    --shadow:       0 0 20px rgba(255, 42, 133, 0.15);
+    --svg-opacity:  0.06;
+    --log-color:    #00f0ff;
+}
+
+
+/* ==========================================================================
+   4. BASE & RESET
 ========================================================================== */
 *, *::before, *::after {
     box-sizing: border-box;
@@ -63,9 +104,11 @@ body {
     line-height: 1.5;
 }
 
+
 /* ==========================================================================
-   3. STRUCTURAL LAYOUT
-   Main container, header, and CSS Grid definitions.
+   5. LAYOUT
+   CSS Grid for the main three-area layout: main input, sidebar, log.
+   Collapses to single column below 768px.
 ========================================================================== */
 .container {
     max-width: 1200px;
@@ -94,7 +137,7 @@ body {
     grid-template-rows: auto auto;
     grid-template-areas:
         "main side"
-        "log side";
+        "log  side";
     gap: clamp(var(--space-3), 3vw, var(--space-5));
 }
 
@@ -114,9 +157,10 @@ body {
     }
 }
 
+
 /* ==========================================================================
-   4. PANEL CONTAINERS
-   Base styles for all cards/panels and specific panel layouts.
+   6. PANELS
+   Shared card surface used by all three grid areas.
 ========================================================================== */
 .panel {
     background: var(--bg-panel);
@@ -126,42 +170,20 @@ body {
     padding: clamp(var(--space-2), 1.5vw, var(--space-3));
 }
 
-.panel-main {
-    grid-area: main;
-    display: flex;
-    flex-direction: column;
-}
+.panel-main { grid-area: main; display: flex; flex-direction: column; }
+.panel-log  { grid-area: log; }
+.panel-side { grid-area: side; }
 
-.panel-log {
-    grid-area: log;
-}
-
-.panel-side {
-    grid-area: side;
-}
 
 /* ==========================================================================
-   5. SIDE PANEL & ACCORDIONS
-   High-density styling and collapsible native menus.
+   7. SIDE PANEL & ACCORDIONS
+   High-density layout for the settings sidebar.
+   Native <details>/<summary> used for collapsible groups — no JS needed.
 ========================================================================== */
-.panel-side .field {
-    margin-bottom: 20px;
-}
-
-.panel-side .label {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 6px;
-}
-
-.panel-side .toggle {
-    margin-bottom: 8px;
-}
-
-.panel-side .toggle label {
-    font-size: 0.85rem;
-}
+.panel-side .field       { margin-bottom: 20px; }
+.panel-side .label       { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+.panel-side .toggle      { margin-bottom: 8px; }
+.panel-side .toggle label { font-size: 0.85rem; }
 
 .panel-side select,
 .panel-side input[type="number"] {
@@ -170,14 +192,12 @@ body {
     height: 28px;
 }
 
-/* A simple divider element to visually separate sections within the side panel */
 .panel-side .divider {
     height: 1px;
     background: var(--border);
     margin: 24px 0;
 }
 
-/* Native Accordion Styles (<details> & <summary>) */
 details.advanced-group {
     margin-bottom: 12px;
     border: 1px solid var(--border);
@@ -201,7 +221,6 @@ details.advanced-group summary {
     transition: background-color 0.2s;
 }
 
-/* Custom arrow indicator for the summary element */
 details.advanced-group summary::after {
     content: "▼";
     font-size: 0.7rem;
@@ -214,7 +233,7 @@ details[open].advanced-group summary::after {
 }
 
 details.advanced-group summary::-webkit-details-marker {
-    display: none; /* Hides the arrow in WebKit */
+    display: none;
 }
 
 details.advanced-group summary:hover {
@@ -229,14 +248,15 @@ details[open].advanced-group summary {
     padding: 12px;
 }
 
-/* The last field inside the group should not have a bottom margin */
 .group-content .field:last-child {
     margin-bottom: 0;
 }
 
+
 /* ==========================================================================
-   6. GLOBAL FORM ELEMENTS
-   Textareas, selects, labels, and layouts shared across the app.
+   8. FORM ELEMENTS
+   Shared styles for textareas, selects, number inputs, and field labels.
+   Focus ring uses --accent for both border and glow.
 ========================================================================== */
 .field {
     margin-bottom: var(--space-4);
@@ -265,15 +285,15 @@ textarea {
     transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-textarea:focus, 
-select:focus, 
+textarea:focus,
+select:focus,
 input[type="number"]:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent);
 }
 
-select, 
+select,
 input[type="number"] {
     width: 100%;
     padding: var(--space-2);
@@ -284,30 +304,27 @@ input[type="number"] {
     transition: border-color 0.2s, box-shadow 0.2s;
 }
 
-/* Row wrapper for elements that sit side-by-side (e.g. slider + input) */
+/* Side-by-side wrapper, used for slider + number input pairs */
 .row {
     display: flex;
     gap: var(--space-2);
     align-items: center;
 }
 
-.row input[type="range"] {
-    flex: 1;
-}
+.row input[type="range"] { flex: 1; }
+.input-num               { flex: 0 0 70px; }
 
-.input-num {
-    flex: 0 0 70px;
-}
-
-input:disabled, 
+input:disabled,
 select:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
+
 /* ==========================================================================
-   7. CUSTOM RANGE SLIDER
-   Cross-browser styling for range inputs.
+   9. RANGE SLIDERS
+   Cross-browser custom styling. Track height is 4px, thumb is 14px.
+   Disabled state uses --text-muted to signal inactivity.
 ========================================================================== */
 input[type="range"] {
     -webkit-appearance: none;
@@ -318,11 +335,9 @@ input[type="range"] {
     margin: 0;
 }
 
-input[type="range"]:focus {
-    outline: none;
-}
+input[type="range"]:focus { outline: none; }
 
-/* WebKit (Chrome, Safari, Edge) */
+/* WebKit */
 input[type="range"]::-webkit-slider-runnable-track {
     width: 100%;
     height: 4px;
@@ -373,8 +388,9 @@ input[type="range"]:disabled::-moz-range-thumb {
     cursor: not-allowed;
 }
 
+
 /* ==========================================================================
-   8. TOGGLES & CHECKBOXES
+   10. TOGGLES & CHECKBOXES
 ========================================================================== */
 .toggle {
     display: inline-flex;
@@ -401,9 +417,11 @@ input[type="checkbox"] {
     border-radius: 4px;
 }
 
+
 /* ==========================================================================
-   9. BUTTONS
-   Primary actions, secondary actions, and icon buttons.
+   11. BUTTONS
+   Three variants: primary (filled), secondary (outlined), icon (round).
+   Primary pulses via animation while disabled to indicate loading.
 ========================================================================== */
 .actions {
     display: flex;
@@ -411,7 +429,7 @@ input[type="checkbox"] {
     margin-bottom: var(--space-3);
 }
 
-.btn-primary, 
+.btn-primary,
 .btn-secondary {
     flex: 1;
     padding: 0.6rem 1.25rem;
@@ -454,7 +472,6 @@ input[type="checkbox"] {
     align-items: center;
     justify-content: center;
     transition: 0.2s;
-    /* Precise emoji centering */
     padding: 0;
     line-height: 0;
 }
@@ -463,36 +480,38 @@ input[type="checkbox"] {
     border-color: var(--text-muted);
 }
 
-/* Button States */
 @keyframes pulse {
-    0% { opacity: 0.6; }
-    50% { opacity: 0.9; }
+    0%   { opacity: 0.6; }
+    50%  { opacity: 0.9; }
     100% { opacity: 0.6; }
 }
 
-.btn-secondary:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-}
+.btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-primary:disabled   { cursor: wait; animation: pulse 1.5s infinite; }
 
-.btn-primary:disabled {
-    cursor: wait;
-    animation: pulse 1.5s infinite;
-}
 
 /* ==========================================================================
-   10. AUDIO PLAYER
+   12. AUDIO PLAYER
+   Native <audio> element, full width, fixed height for consistent layout.
 ========================================================================== */
 .audio {
     width: 100%;
     height: 36px;
     margin-top: var(--space-3);
     border-radius: var(--radius-md);
+    accent-color: var(--accent);    /* Controls color of play button and progress bar */
 }
 
+
 /* ==========================================================================
-   11. LOG PANEL
-   Console-like output area for system events.
+   13. LOG PANEL
+   Monospace console output. Color is --accent in light mode.
+
+   Dark mode override:
+   - text color switches to --log-color (cyan) for retro terminal contrast
+   - text-shadow creates a soft phosphor glow
+   - inset shadow simulates a recessed CRT screen
+   - outer glow and tinted border tie the panel into the neon palette
 ========================================================================== */
 .log {
     background: var(--input-bg);
@@ -507,8 +526,19 @@ input[type="checkbox"] {
     border: 1px solid var(--border);
 }
 
+[data-theme="dark"] .log {
+    color: var(--log-color, var(--accent));
+    text-shadow:  0 0 6px rgba(0, 240, 255, 0.55);
+    box-shadow:   inset 0 0 28px rgba(0, 0, 0, 0.5),
+                  0 0 10px rgba(0, 240, 255, 0.08);
+    border-color: rgba(0, 240, 255, 0.15);
+}
+
+
 /* ==========================================================================
-   12. DECORATIVE ELEMENTS & SCROLLBARS
+   14. WATERMARK & SCROLLBARS
+   The watermark SVG is fixed, centered, and non-interactive.
+   Custom scrollbar styles apply to the textarea and log only.
 ========================================================================== */
 .watermark {
     position: fixed;
