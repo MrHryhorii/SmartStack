@@ -114,6 +114,7 @@ var streamConfig = builder.Configuration.GetSection("StreamSettings").Get<Stream
 var onnxConfig = builder.Configuration.GetSection("OnnxSettings").Get<OnnxSettings>() ?? new OnnxSettings();
 var effectsConfig = builder.Configuration.GetSection("EffectsSettings").Get<EffectsSettings>() ?? new EffectsSettings();
 var clonerConfig = builder.Configuration.GetSection("ClonerSettings").Get<ClonerSettings>() ?? new ClonerSettings();
+var rateLimitConfig = builder.Configuration.GetSection("RateLimitSettings").Get<RateLimitSettings>() ?? new RateLimitSettings();
 
 // =================================================================
 // SERVICE REGISTRATION (Dependency Injection)
@@ -127,6 +128,7 @@ builder.Services.AddSingleton(clonerConfig);
 builder.Services.AddSingleton(hardwareConfig);
 builder.Services.AddSingleton(chunkerConfig);
 builder.Services.AddSingleton(dspConfig);
+builder.Services.AddSingleton(rateLimitConfig);
 
 // Only wire up the heavy services if the base Piper model was successfully loaded
 if (piperConfig != null && piperModelPath != null)
@@ -336,9 +338,10 @@ builder.Services.AddRateLimiter(options =>
             factory: partition => new FixedWindowRateLimiterOptions
             {
                 AutoReplenishment = true,
-                PermitLimit = 5,
-                Window = TimeSpan.FromSeconds(10),
-                QueueLimit = 0
+                // Use values from configuration, allowing dynamic tuning without code changes
+                PermitLimit = rateLimitConfig.PermitLimit,
+                Window = TimeSpan.FromSeconds(rateLimitConfig.WindowSeconds),
+                QueueLimit = rateLimitConfig.QueueLimit
             }));
 });
 
@@ -432,18 +435,18 @@ app.MapPost("/v1/audio/phonemize", PhonemizeEndpoint.HandlePhonemizeRequest)
 // these endpoints are designed for local dashboard integration and should not be exposed publicly.
 app.MapGet("/v1/audio/voices", InfoEndpoints.GetVoices)
    .WithName("GetVoices")
-   .WithOpenApi()
-   .AddEndpointFilter<LocalHostOnlyFilter>();
+   .WithOpenApi();
+//.AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.MapGet("/v1/audio/effects", InfoEndpoints.GetEffects)
    .WithName("GetEffects")
-   .WithOpenApi()
-   .AddEndpointFilter<LocalHostOnlyFilter>();
+   .WithOpenApi();
+//.AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.MapGet("/v1/audio/environments", InfoEndpoints.GetEnvironments)
    .WithName("GetEnvironments")
-   .WithOpenApi()
-   .AddEndpointFilter<LocalHostOnlyFilter>();
+   .WithOpenApi();
+//.AddEndpointFilter<LocalHostOnlyFilter>();
 
 // =================================================================
 // AUTO-OPEN BROWSER (LOCAL DASHBOARD)
