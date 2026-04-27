@@ -27,12 +27,12 @@ RUN apt-get update && apt-get install -y \
 # Copy the compiled application from the build stage
 COPY --from=build /app/publish .
 
-# Configure the server to listen on port 5000
-ENV ASPNETCORE_URLS=http://+:5000
-EXPOSE 5000
+# Configure the server to listen on port 5045
+ENV ASPNETCORE_URLS=http://+:5045
+EXPOSE 5045
 
 # Define mount points (Volumes) for external models and voice caches
 VOLUME ["/app/Model", "/app/Cloner", "/app/Voices"]
 
 # Start the server
-ENTRYPOINT ["dotnet", "ONNX_Runner.dll"]
+ENTRYPOINT ["dotnet", "TsubakiTTS.dll"]

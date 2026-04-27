@@ -5,10 +5,10 @@ services:
       dockerfile: Dockerfile
     container_name: onnx-tts-runner
     ports:
-      - "5000:5000"
+      - "5045:5045"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development # Set to "Production" in production for better performance and security
-      - ASPNETCORE_URLS=http://+:5000 # Bind to all network interfaces
+      - ASPNETCORE_URLS=http://+:5045 # Bind to all network interfaces
     volumes:
       # Mount paths: Left side is the host machine directory, right side is the container directory
       - ./Model:/app/Model
