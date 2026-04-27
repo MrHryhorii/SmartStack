@@ -19,8 +19,12 @@
     <PackageReference Include="SoundTouch.Net" Version="2.3.2" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
 
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.2" Condition="'$(OS)' == 'Windows_NT'" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" Condition="'$(OS)' != 'Windows_NT'" /> 
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.2" 
+                  Condition="$(RuntimeIdentifier.StartsWith('win')) OR 
+                             ('$(RuntimeIdentifier)' == '' AND '$(OS)' == 'Windows_NT')" />
+
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" 
+                      Condition="$(RuntimeIdentifier.StartsWith('linux'))" />
   </ItemGroup>
 
   <!--
