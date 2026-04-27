@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <AssemblyName>TsubakiTTS</AssemblyName>
+    <ApplicationIcon>tsubaki.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
@@ -32,7 +35,7 @@
       Reason: The CPU-only package does not contain GPU methods,
               so the Linux-specific GPU code must be disabled to prevent compilation errors.
   -->
-  
+
   <!--
   [LIGHTWEIGHT CPU-ONLY BUILD FOR WINDOWS]
 

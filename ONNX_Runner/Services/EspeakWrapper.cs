@@ -14,6 +14,11 @@ public partial class EspeakWrapper : IDisposable
     // .NET will automatically append .dll on Windows, .so on Linux, and .dylib on macOS.
     private const string DllPath = "espeak-ng";
 
+    // Windows-specific API to convert long paths to short 8.3 format, ensuring compatibility with older C++ libraries that may not handle long paths well.
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetShortPathName(string lpszLongPath, System.Text.StringBuilder lpszShortPath, int cchBuffer);
+
     /// <summary>
     /// Static constructor sets up a smart cross-platform DLL resolver.
     /// Since espeak-ng is a native C++ binary and not a standard .NET NuGet package, 
@@ -38,20 +43,36 @@ public partial class EspeakWrapper : IDisposable
         return IntPtr.Zero;
     }
 
-    [LibraryImport(DllPath, StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(System.Runtime.InteropServices.Marshalling.AnsiStringMarshaller))]
+    // UTF-8 marshalling is critical for correctly passing string data (like voice names) to the native library,
+    // especially when dealing with internationalization and non-ASCII characters.
+    [LibraryImport(DllPath, StringMarshalling = StringMarshalling.Utf8)]
     [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
     private static partial int espeak_Initialize(int output, int buflength, string path, int options);
 
-    [LibraryImport(DllPath, StringMarshalling = StringMarshalling.Custom, StringMarshallingCustomType = typeof(System.Runtime.InteropServices.Marshalling.AnsiStringMarshaller))]
+    // Setting the voice by name allows for dynamic language switching at runtime, which is essential for multi-language TTS applications.
+    [LibraryImport(DllPath, StringMarshalling = StringMarshalling.Utf8)]
     [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
     private static partial int espeak_SetVoiceByName(string name);
 
+    // This function is the core of the wrapper, converting raw text to IPA phonemes.
     [LibraryImport(DllPath)]
     [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
     private static partial IntPtr espeak_TextToPhonemes(ref IntPtr textptr, int textmode, int phonememode);
 
     public EspeakWrapper(string dataDirectory, string voice)
     {
+        // MAGIC: If we are on Windows, convert potentially problematic paths (like Cyrillic or spaces) 
+        // into safe 8.3 ASCII short paths before passing them to the C++ library.
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            var shortPath = new System.Text.StringBuilder(255);
+            int result = GetShortPathName(dataDirectory, shortPath, shortPath.Capacity);
+            if (result > 0)
+            {
+                dataDirectory = shortPath.ToString();
+            }
+        }
+
         int initResult = espeak_Initialize(2, 0, dataDirectory, 0);
         if (initResult < 0)
         {

@@ -184,7 +184,7 @@ Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect p
   "DefaultEffect": "LoFiTape",
   "DefaultIntensity": 1.0,
   "DefaultEnvironment": "LivingRoom",
-  "DefaultEnvironmentIntensity": 0.8
+  "DefaultEnvironmentIntensity": 0.25
 }
 ```
 

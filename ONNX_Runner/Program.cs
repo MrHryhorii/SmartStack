@@ -3,6 +3,9 @@ using ONNX_Runner.Services;
 using ONNX_Runner.Endpoints;
 using System.Threading.RateLimiting;
 
+// Set console output encoding to UTF-8 to properly display international characters and phonemes in logs and diagnostics.
+Console.OutputEncoding = System.Text.Encoding.UTF8;
+
 var builder = WebApplication.CreateBuilder(args);
 
 
@@ -147,7 +150,7 @@ if (piperConfig != null && piperModelPath != null)
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig);
     builder.Services.AddSingleton(punctuationMapper);
 
-    string dataPath = Path.GetFullPath("PiperNative");
+    string dataPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PiperNative"));
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
     builder.Services.AddSingleton(mixedEspeak);
 
