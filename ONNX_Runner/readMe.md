@@ -99,6 +99,22 @@ Most voices come in multiple quality levels. Higher quality = larger file and mo
 | `medium` | ~60 MB       | Recommended for most use cases   |
 | `high`   | ~130 MB      | Best quality, requires more VRAM |
 
+### OpenVoice V2 — Voice Cloning Models (ONNX)
+
+The voice cloning engine requires separate OpenVoice models. Tsubaki downloads them automatically on first run, but you can also download them manually:
+
+**👉 [Hinotsuba/OpenVoice-ONNX-v2 on HuggingFace](https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2)**
+
+This repository contains 3 files needed for cloning:
+
+| File                | Description                                                                 |
+| ------------------- | --------------------------------------------------------------------------- |
+| `tone_extract.onnx` | Extracts a 256-dimensional voice fingerprint from a reference audio sample  |
+| `tone_color.onnx`   | Transfers the extracted voice characteristics onto the generated base audio |
+| `tone_config.json`  | Hyperparameters and structural configuration for both models                |
+
+> These models are released under the **MIT License** and are free for commercial use.
+
 ---
 
 ## 📂 Installation & Model Management
