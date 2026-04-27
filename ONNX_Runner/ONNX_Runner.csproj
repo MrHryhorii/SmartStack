@@ -32,6 +32,19 @@
       Reason: The CPU-only package does not contain GPU methods,
               so the Linux-specific GPU code must be disabled to prevent compilation errors.
   -->
+  
+  <!--
+  [LIGHTWEIGHT CPU-ONLY BUILD FOR WINDOWS]
+
+  1. In this file: 
+      Replace "Microsoft.ML.OnnxRuntime.DirectML" with "Microsoft.ML.OnnxRuntime".
+
+  2. In PiperRunner.cs and OpenVoiceRunner.cs: 
+      Comment out the line: options.AppendExecutionProvider_DML(deviceId);
+
+      Reason: The standard CPU-only package does not contain DirectML methods, 
+              so the Windows-specific GPU code must be disabled to prevent compilation errors.
+  -->
 
   <ItemGroup>
     <None Update="Model\**\*.onnx;Model\**\*.json">
