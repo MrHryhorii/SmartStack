@@ -77,7 +77,7 @@ try
     }
     else
     {
-        var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelDirectory);
+        var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelConfig);
         piperModelPath = onnxPath;
         piperConfig = config;
 
@@ -154,8 +154,8 @@ if (piperConfig != null && piperModelPath != null)
     // =================================================================
     // OPENVOICE (CLONER) CHECK & AUTO-DOWNLOAD
     // =================================================================
-    string clonerDirectory = "Cloner";
-    string voicesDirectory = "Voices";
+    string clonerDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Cloner"));
+    string voicesDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Voices"));
 
     string extractPath = Path.Combine(clonerDirectory, "tone_extract.onnx");
     string colorPath = Path.Combine(clonerDirectory, "tone_color.onnx");
