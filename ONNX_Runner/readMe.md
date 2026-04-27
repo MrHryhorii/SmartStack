@@ -65,6 +65,42 @@ The compiled server will be located in `bin/Release/net8.0/[OS]/publish/`.
 
 ---
 
+## 🗣️ Finding Voice Models
+
+All official Piper voices are hosted on HuggingFace:
+
+**👉 [rhasspy/piper-voices on HuggingFace](https://huggingface.co/rhasspy/piper-voices/tree/main)**
+
+The repository contains **35 languages**, each in its own folder (`en`, `de`, `fr`, `uk`, `zh`, etc.). For each voice you need to download exactly **2 files**:
+
+| File          | Extension    | Description                                  |
+| ------------- | ------------ | -------------------------------------------- |
+| Model weights | `.onnx`      | The neural network — this is the large file  |
+| Model config  | `.onnx.json` | Metadata: sample rate, phonemes, speaker IDs |
+
+### How to download a voice
+
+1. Browse to your language folder, e.g. [`/en`](https://huggingface.co/rhasspy/piper-voices/tree/main/en)
+2. Navigate into a voice subfolder (e.g. `en_US/lessac/medium/`)
+3. Download both files:
+   - `en_US-lessac-medium.onnx`
+   - `en_US-lessac-medium.onnx.json`
+4. Place both files into your `Model` folder next to the executable
+   > ⚠️ Both files **must be present** — the engine will fail to load without the accompanying `.json` config.
+
+### Available quality tiers
+
+Most voices come in multiple quality levels. Higher quality = larger file and more VRAM:
+
+| Quality  | Approx. Size | Notes                            |
+| -------- | ------------ | -------------------------------- |
+| `x_low`  | ~5 MB        | Fast, lower fidelity             |
+| `low`    | ~15 MB       | Good for low-end hardware        |
+| `medium` | ~60 MB       | Recommended for most use cases   |
+| `high`   | ~130 MB      | Best quality, requires more VRAM |
+
+---
+
 ## 📂 Installation & Model Management
 
 ### 1. Adding a Piper Model (ONNX)
