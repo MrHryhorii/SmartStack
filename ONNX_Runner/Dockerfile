@@ -4,13 +4,13 @@ WORKDIR /src
 
 # Copy the project file and restore dependencies (cached by Docker for faster builds)
 COPY ["ONNX_Runner.csproj", "./"]
-RUN dotnet restore "ONNX_Runner.csproj"
+RUN dotnet restore "ONNX_Runner.csproj" -r linux-x64
 
 # Copy the remaining source code
 COPY . .
 
 # Build the release version
-RUN dotnet publish "ONNX_Runner.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "ONNX_Runner.csproj" -c Release -r linux-x64 -o /app/publish /p:UseAppHost=false
 
 # Stage 2: Runtime Environment
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final

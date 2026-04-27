@@ -9,47 +9,58 @@ Console.OutputEncoding = System.Text.Encoding.UTF8;
 var builder = WebApplication.CreateBuilder(args);
 
 
+/// =================================================================
+// LINUX SELF-HEALING
 // =================================================================
-// LINUX SELF-HEALING (NAudio.Lame Fix)
-// =================================================================
-// NAudio.Lame expects a Windows DLL path. On bare-metal Linux, we automatically 
-// create the required symlink so the sysadmin doesn't have to do it manually.
+// This block addresses common issues with native library loading on Linux, especially in containerized environments.
+// For the LAME MP3 encoder, if the Windows DLL is accidentally copied during publish, it will cause an ELF header error. 
+// We check for this and remove it if found.
 if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
 {
     try
     {
-        string targetDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "runtimes", "linux-x64", "native");
-        string symlinkPath = Path.Combine(targetDir, "libmp3lame.64.dll");
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
 
-        if (!File.Exists(symlinkPath))
+        // --- LAME MP3 ENCODER FIX ---
+        string lameSymlinkPath = Path.Combine(baseDir, "libmp3lame.64.dll");
+
+        // Remove the Windows DLL if it was copied during publish
+        if (File.Exists(lameSymlinkPath) && !File.GetAttributes(lameSymlinkPath).HasFlag(FileAttributes.ReparsePoint))
         {
-            Directory.CreateDirectory(targetDir);
+            File.Delete(lameSymlinkPath);
+            Console.WriteLine("[SYSTEM] Removed Windows-specific LAME DLL to prevent ELF header errors.");
+        }
 
-            // Common locations for LAME on Ubuntu/Debian and CentOS/RHEL
-            string[] possibleSystemLibs = [
-                "/usr/lib/x86_64-linux-gnu/libmp3lame.so.0",
-                "/usr/lib64/libmp3lame.so.0",
-                "/usr/lib/libmp3lame.so.0"
-            ];
-
-            string? validSystemLib = possibleSystemLibs.FirstOrDefault(File.Exists);
-
-            if (validSystemLib != null)
+        // Link to the real Linux LAME library
+        if (!File.Exists(lameSymlinkPath))
+        {
+            string[] possibleLame = ["/usr/lib/x86_64-linux-gnu/libmp3lame.so.0", "/usr/lib64/libmp3lame.so.0", "/usr/lib/libmp3lame.so.0"];
+            string? validLame = possibleLame.FirstOrDefault(File.Exists);
+            if (validLame != null)
             {
-                File.CreateSymbolicLink(symlinkPath, validSystemLib);
-                Console.WriteLine($"[SYSTEM] Auto-created symlink for LAME MP3 Encoder: {symlinkPath} -> {validSystemLib}");
+                File.CreateSymbolicLink(lameSymlinkPath, validLame);
+                Console.WriteLine($"[SYSTEM] Auto-linked LAME: {lameSymlinkPath} -> {validLame}");
             }
-            else
+        }
+
+        // --- ESPEAK-NG FIX ---
+        // P/Invoke looks for 'libespeak-ng.so', but Linux usually only has 'libespeak-ng.so.1'
+        string espeakSymlinkPath = Path.Combine(baseDir, "libespeak-ng.so");
+
+        if (!File.Exists(espeakSymlinkPath))
+        {
+            string[] possibleEspeak = ["/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1", "/usr/lib64/libespeak-ng.so.1", "/usr/lib/libespeak-ng.so.1"];
+            string? validEspeak = possibleEspeak.FirstOrDefault(File.Exists);
+            if (validEspeak != null)
             {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine("[WARNING] libmp3lame.so.0 not found on the system. MP3 streaming may fail. Please run: apt-get install libmp3lame0");
-                Console.ResetColor();
+                File.CreateSymbolicLink(espeakSymlinkPath, validEspeak);
+                Console.WriteLine($"[SYSTEM] Auto-linked Espeak-ng: {espeakSymlinkPath} -> {validEspeak}");
             }
         }
     }
     catch (Exception ex)
     {
-        Console.WriteLine($"[WARNING] Failed to auto-heal LAME library link: {ex.Message}");
+        Console.WriteLine($"[WARNING] Failed to auto-heal Linux libraries: {ex.Message}");
     }
 }
 
@@ -454,40 +465,44 @@ app.MapGet("/v1/audio/environments", InfoEndpoints.GetEnvironments)
 // =================================================================
 // AUTO-OPEN BROWSER (LOCAL DASHBOARD)
 // =================================================================
-// Listen for the application started event to open the dashboard automatically
+// This block attempts to open the default web browser to the dashboard URL when the application starts.
 app.Lifetime.ApplicationStarted.Register(() =>
 {
     try
     {
-        // Retrieve the local URL where the server is listening (e.g., http://localhost:5045)
+        // Find the first HTTP URL the application is listening on (e.g., http://localhost:5000)
         string? url = app.Urls.FirstOrDefault(u => u.StartsWith("http://"));
-
-        // If a valid URL is found, attempt to open the default web browser
+        // If the application is running in a headless environment (e.g., Docker without DISPLAY), this may fail, so we catch exceptions to prevent crashes.
         if (!string.IsNullOrEmpty(url))
         {
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"\n[SYSTEM] Launching Tsubaki Dashboard in default browser: {url}");
-            Console.ResetColor();
+            // Replace wildcard hostnames with localhost for better compatibility across different environments (Docker, WSL, native)
+            string browserUrl = url
+                .Replace("[::]", "localhost")
+                .Replace("0.0.0.0", "localhost")
+                .Replace("+", "localhost");
 
-            // Cross-platform browser launch logic
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine($"\n[SYSTEM] Launching Tsubaki Dashboard in default browser: {browserUrl}");
+            Console.ResetColor();
+            // Cross-platform way to open the default browser
             if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
             {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true });
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(browserUrl) { UseShellExecute = true });
             }
             else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
             {
-                System.Diagnostics.Process.Start("xdg-open", url);
+                System.Diagnostics.Process.Start("xdg-open", browserUrl);
             }
             else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
             {
-                System.Diagnostics.Process.Start("open", url);
+                System.Diagnostics.Process.Start("open", browserUrl);
             }
         }
     }
     catch (Exception ex)
     {
-        // Graceful degradation: If running in a headless environment (e.g., Docker, Linux server),
-        // we just log a warning instead of crashing the application.
+        // If auto-opening the browser fails (common in headless environments), 
+        // we log a warning but do not crash the application.
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine($"[WARNING] Could not auto-open browser (headless environment?): {ex.Message}");
         Console.ResetColor();
