@@ -43,10 +43,20 @@ Tsubaki is built with an **engineering-first approach** to distribution:
 
 Ensure you have the [.NET 8 SDK](https://dotnet.microsoft.com/download) installed.
 
+**Option A — Clone only the `ONNX_Runner` folder (recommended):**
+
 ```bash
-# Clone the repository
-git clone https://github.com/YourUsername/Tsubaki-TTS.git
-cd Tsubaki-TTS
+git clone --filter=blob:none --sparse https://github.com/MrHryhorii/SmartStack.git
+cd SmartStack
+git sparse-checkout set ONNX_Runner
+cd ONNX_Runner
+```
+
+**Option B — Clone the full SmartStack monorepo:**
+
+```bash
+git clone https://github.com/MrHryhorii/SmartStack.git
+cd SmartStack/ONNX_Runner
 ```
 
 **Build for Windows (Self-Contained `.exe`):**
