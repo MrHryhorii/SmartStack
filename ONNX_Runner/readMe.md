@@ -205,11 +205,13 @@ The server will automatically download the necessary base cloner models from Hug
 
 ## ⚙️ Server Configuration (`appsettings.json`)
 
-The `appsettings.json` file is pre-configured and ready to use out-of-the-box. Most users only ever need to set the model path and the languages list below — everything else can be left at its defaults.
+The `appsettings.json` file is completely pre-configured and ready to use out-of-the-box, but you can deeply customize the engine's behavior to fit your specific needs. Most users only ever need to set the model path and the languages list — everything else can safely be left at its defaults.
 
-### 🌍 Multi-Language Support — Most Important Setting
+---
 
-The `PhonemizerSettings` block controls how the server handles foreign words encountered in text. This is the **most impactful setting** to configure after your model path.
+### 🌍 Phonemizer & Language Settings — Most Important Setting
+
+The `PhonemizerSettings` block controls how the server handles foreign words encountered in text. **In most cases, you should manually configure the `"SupportedLanguages"` list** — this is the single most impactful setting to configure after your model path.
 
 ```json
 "PhonemizerSettings": {
@@ -217,41 +219,57 @@ The `PhonemizerSettings` block controls how the server handles foreign words enc
 }
 ```
 
-**How it works:** Add languages that your base Piper model doesn't speak natively, but might encounter in your texts (e.g., an English model reading a Ukrainian name or a French phrase). The engine uses offline language detection via Lingua to identify foreign words and approximate their pronunciation using the base model's available phonemes — producing a natural "accented" result rather than skipping or mangling the word.
+- **How it works:** Add languages that your base Piper model doesn't speak natively, but might encounter in your texts — for example, an English model reading a French name or a Ukrainian phrase. The engine uses offline language detection via [Lingua](https://github.com/searchpioneer/lingua-dotnet) to identify the foreign words and approximate their pronunciation using the base model's available phonemes, producing a natural "accented" result rather than skipping or mangling the word.
 
-**Format:** Use short espeak language codes — `"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc.
+- **Format:** Use short espeak language codes — `"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc.
 
-> ⚠️ **Performance Warning:** Every language added to this list increases memory consumption and slows down synthesis. It is strongly recommended to limit this list to **2–3 languages** most likely to appear in your texts.
+- **Performance Warning:** ⚠️ Every language added to this list increases memory consumption and slows down the overall voice synthesis. It is highly recommended to limit this list to **2–3 languages** that are most likely to appear in your texts.
 
-**Tips for better accuracy:**
+- **Context & Punctuation:** If foreign words are phonetically similar to the model's native language and appear in a "wall of text" without proper punctuation, the detector might misidentify them and pronounce them incorrectly. Proper punctuation (commas, quotes, separate sentences) drastically improves accuracy. Languages with completely different alphabets (e.g., Cyrillic vs. Latin) are detected far more reliably than similar-looking Latin languages.
 
-- Use proper punctuation (commas, quotes, separate sentences) around foreign words — this helps the detector identify language boundaries.
-- Languages with completely different alphabets (e.g., Cyrillic vs. Latin) are detected far more reliably than similar-looking Latin languages.
+- **Priority Tweaks:** Other parameters in this block (like `"MaxBonusMultiplier"`) shift the detection priority back towards the model's native language for short, ambiguous, or borrowed words. The defaults are well-tuned and rarely need adjustment.
 
 ---
 
 ### 🌐 Network & Access
 
-| Setting                               | Description                                                               |
-| ------------------------------------- | ------------------------------------------------------------------------- |
-| `Kestrel > Endpoints > Http > Url`    | Port the server listens on. Default: `http://+:5045`                      |
-| `CorsSettings > AllowAnyOrigin: true` | Disables all origin restrictions — fine for local/home use                |
-| `CorsSettings > AllowedOrigins`       | If `AllowAnyOrigin` is `false`, only listed domains are accepted          |
-| `ApiSettings > MaxTextLength`         | Hard character limit per request. Set to `0` to remove the limit entirely |
+- **`Kestrel > Endpoints > Http > Url`** — Defines the port the server listens on. Default is `http://+:5045`.
+
+- **`CorsSettings`** — Controls Cross-Origin Resource Sharing. Setting `"AllowAnyOrigin": true` completely disables access limits and is perfectly fine for local or home use. If set to `false`, the server will only accept requests from the domains listed in the `"AllowedOrigins"` array, which you can freely edit to secure your endpoints.
+
+- **`ApiSettings > MaxTextLength`** — Imposes a hard character limit on text-to-speech requests. Setting this to `0` removes the limit entirely, which is perfectly fine for personal or home use.
 
 ---
 
-### ⚙️ Other Settings Reference
+### ✂️ Text Processing
 
-| Section             | Description                                                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ChunkerSettings`   | Automatically splits long "walls of text" into smaller logical chunks. Piper models struggle with massive unbroken blocks — keep this enabled.                      |
-| `HardwareSettings`  | Not a strict hardware cap — just hints for the internal queueing system. Safe to ignore for home use.                                                               |
-| `RateLimitSettings` | Basic anti-spam protection: limits requests per IP within a time window. Useful for public-facing deployments.                                                      |
-| `DspSettings`       | Adds a Low-Pass Filter cleanup pass to reduce high-frequency noise. Recommended if using a lower-quality model or a tricky voice clone.                             |
-| `ClonerSettings`    | Controls OpenVoice cloning intensity. Best left at defaults — increasing it produces caricature-like exaggeration, decreasing it reverts to the base model's voice. |
-| `StreamSettings`    | Keep `EnableStreaming: true`. Streaming chunks is always faster and less memory-intensive than buffering the full audio before sending.                             |
-| `OnnxSettings`      | For advanced users testing experimental models only.                                                                                                                |
+- **`ChunkerSettings`** — Piper models notoriously struggle with massive, unbroken blocks of text. This setting automatically slices "walls of text" and run-on sentences into smaller, logical chunks for stable and high-quality generation. Keep this enabled.
+
+---
+
+### 🛡️ Resource Management (Hardware & Limits)
+
+- **`HardwareSettings`** — Note that this is **not** a strict hardware cap. It simply tells the server's internal queueing system how much free resources you generally have versus how much a single request consumes. Actual memory usage depends entirely on your chosen Piper model. **For home use, you can completely ignore this section.**
+
+- **`RateLimitSettings`** — Provides basic anti-spam and anti-DDoS protection by restricting the number of requests allowed from a single IP address within a specific time window. Useful for public-facing deployments.
+
+---
+
+### 🎛️ Audio & DSP
+
+- **`EffectsSettings`** — Standard OpenAI API clients (like SillyTavern or AutoGen) do not support sending custom DSP parameters in their requests. This section allows you to define a `"DefaultEffect"` that the server will automatically apply to all incoming API requests unless explicitly overridden by a custom client (like the built-in web dashboard). See the [Default Effects & Environments](#️-default-effects--environments) section for all available values.
+
+- **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter) to the generated speech, ensuring high-frequency noise reduction. This is heavily recommended if you are using a lower-quality Piper model or a tricky voice clone.
+
+- **`ClonerSettings`** — Controls the OpenVoice cloning behavior. It is best not to touch these. Increasing the intensity often yields a caricature-like exaggeration of the voice characteristics, while decreasing it simply reverts the audio back to the default base model's voice.
+
+---
+
+### 🚫 Advanced Modules
+
+- **`OnnxSettings`** — Designed for advanced users testing highly specific experimental models. Leave at defaults unless you know exactly what you are doing.
+
+- **`StreamSettings`** — Keep `"EnableStreaming": true`. Streaming audio chunks directly to the client is always faster and less resource-intensive than forcing the server to build and hold a complete audio file in memory before sending. There is no reason to disable this.
 
 ---
 
