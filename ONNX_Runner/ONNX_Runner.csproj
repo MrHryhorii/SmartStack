@@ -18,40 +18,28 @@
     <PackageReference Include="SearchPioneer.Lingua" Version="1.0.5" />
     <PackageReference Include="SoundTouch.Net" Version="2.3.2" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
-
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.2" 
-                      Condition="$(RuntimeIdentifier.StartsWith('win')) OR 
-                                ('$(RuntimeIdentifier)' == '' AND '$(OS)' == 'Windows_NT')" />
-
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" 
-                      Condition="$(RuntimeIdentifier.StartsWith('linux'))" />
   </ItemGroup>
 
-  <!--
-  [LIGHTWEIGHT CPU-ONLY BUILD FOR LINUX]
+  <PropertyGroup>
+    <IsWindows Condition="$(RuntimeIdentifier.StartsWith('win')) Or ('$(RuntimeIdentifier)' == '' And '$(OS)' == 'Windows_NT')">true</IsWindows>
+    <IsLinux Condition="$(RuntimeIdentifier.StartsWith('linux')) Or ('$(RuntimeIdentifier)' == '' And '$(OS)' != 'Windows_NT')">true</IsLinux>
+  </PropertyGroup>
 
-  1. In this file: 
-      Replace "Microsoft.ML.OnnxRuntime.Gpu" with "Microsoft.ML.OnnxRuntime".
+  <PropertyGroup Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true'">
+    <DefineConstants>$(DefineConstants);USE_CUDA</DefineConstants>
+  </PropertyGroup>
 
-  2. In PiperRunner.cs and OpenVoiceRunner.cs: 
-      Comment out the entire "else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))" block.
+  <PropertyGroup Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true'">
+    <DefineConstants>$(DefineConstants);USE_DML</DefineConstants>
+  </PropertyGroup>
 
-      Reason: The CPU-only package does not contain GPU methods,
-              so the Linux-specific GPU code must be disabled to prevent compilation errors.
-  -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" Condition="'$(CpuOnly)' == 'true'" />
 
-  <!--
-  [LIGHTWEIGHT CPU-ONLY BUILD FOR WINDOWS]
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.2" Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true'" />
 
-  1. In this file: 
-      Replace "Microsoft.ML.OnnxRuntime.DirectML" with "Microsoft.ML.OnnxRuntime".
-
-  2. In PiperRunner.cs and OpenVoiceRunner.cs: 
-      Comment out the line: options.AppendExecutionProvider_DML(deviceId);
-
-      Reason: The standard CPU-only package does not contain DirectML methods, 
-              so the Windows-specific GPU code must be disabled to prevent compilation errors.
-  -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true'" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Update="Model\**\*.onnx;Model\**\*.json">
@@ -73,7 +61,6 @@
     <None Update="Voices\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-
 
     <Content Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

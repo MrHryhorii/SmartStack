@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using System.Buffers;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -34,62 +33,60 @@ public class OpenVoiceRunner : IDisposable
     }
 
     /// <summary>
-    /// Attempts to initialize ONNX sessions on the GPU using DirectML (on Windows).
-    /// If no compatible GPU is found or running on non-Windows OS, it gracefully falls back to CPU execution.
+    /// Dynamically selects the best available hardware based on compile-time flags.
+    /// Falls back to CPU if no compatible GPU is detected or if built as CPU-only.
     /// </summary>
     private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings)
     {
+        // ====================================================================
+        // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
+        // ====================================================================
+#if USE_CUDA || USE_DML
         int maxGpusToTry = 4;
-
         for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
         {
             try
             {
-                var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-                onnxSettings.ApplyTo(options); // Apply performance tuning settings
+                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                onnxSettings.ApplyTo(gpuOptions); // Apply performance tuning settings
 
-                // SMART CROSS-PLATFORM HARDWARE DETECTION:
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                {
-                    // DirectML (Windows)
-                    options.AppendExecutionProvider_DML(deviceId);
+#if USE_CUDA
+                // CUDA (Linux / Docker with Nvidia Runtime)
+                gpuOptions.AppendExecutionProvider_CUDA(deviceId);
+                var extract = new InferenceSession(extractPath, gpuOptions);
+                var color = new InferenceSession(colorPath, gpuOptions);
 
-                    var extract = new InferenceSession(extractPath, options);
-                    var color = new InferenceSession(colorPath, options);
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (CUDA, Device ID: {deviceId})");
+                Console.ResetColor();
+                return (extract, color);
+#elif USE_DML
+                // DirectML (Windows)
+                gpuOptions.AppendExecutionProvider_DML(deviceId);
+                var extract = new InferenceSession(extractPath, gpuOptions);
+                var color = new InferenceSession(colorPath, gpuOptions);
 
-                    Console.ForegroundColor = ConsoleColor.Magenta;
-                    Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {deviceId})");
-                    Console.ResetColor();
-
-                    return (extract, color);
-                }
-                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                {
-                    // CUDA (Linux / Docker WITH Nvidia Runtime)
-                    options.AppendExecutionProvider_CUDA(deviceId);
-
-                    var extract = new InferenceSession(extractPath, options);
-                    var color = new InferenceSession(colorPath, options);
-
-                    Console.ForegroundColor = ConsoleColor.Magenta;
-                    Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (CUDA, Device ID: {deviceId})");
-                    Console.ResetColor();
-
-                    return (extract, color);
-                }
-                else
-                {
-                    Console.WriteLine("[HARDWARE] Unsupported OS for GPU acceleration. Proceeding to CPU execution.");
-                    break; // Exit the GPU loop and proceed directly to CPU fallback
-                }
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {deviceId})");
+                Console.ResetColor();
+                return (extract, color);
+#endif
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[DEBUG] OpenVoice failed on GPU {deviceId}: {ex.Message}");
             }
         }
+        Console.WriteLine("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
 
-        // FALLBACK: CPU Execution
+        // ====================================================================
+        // CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)
+        // ====================================================================
+#else
+        Console.WriteLine("[HARDWARE] Lightweight CPU-only build detected. Skipping GPU checks.");
+#endif
+
+        // FALLBACK / CPU EXECUTION
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
         onnxSettings.ApplyTo(cpuOptions);
 
@@ -170,7 +167,7 @@ public class OpenVoiceRunner : IDisposable
         _extractSession?.Dispose();
         _extractSession = null;
         Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("[INFO] OpenVoice Tone Extractor has been unloaded from memory to save VRAM.");
+        Console.WriteLine("[INFO] OpenVoice Tone Extractor has been unloaded to free up system resources.");
         Console.ResetColor();
     }
 

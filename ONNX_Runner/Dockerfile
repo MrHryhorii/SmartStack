@@ -4,13 +4,13 @@ WORKDIR /src
 
 # Copy the project file and restore dependencies (cached by Docker for faster builds)
 COPY ["ONNX_Runner.csproj", "./"]
-RUN dotnet restore "ONNX_Runner.csproj" -r linux-x64
+RUN dotnet restore "ONNX_Runner.csproj" -r linux-x64 -p:CpuOnly=true
 
 # Copy the remaining source code
 COPY . .
 
 # Build the release version
-RUN dotnet publish "ONNX_Runner.csproj" -c Release -r linux-x64 -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "ONNX_Runner.csproj" -c Release -r linux-x64 -p:CpuOnly=true -o /app/publish /p:UseAppHost=false
 
 # Stage 2: Runtime Environment
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
@@ -19,9 +19,7 @@ WORKDIR /app
 # CRITICAL FOR LINUX: Install the native espeak-ng engine AND lame (for MP3 encoding).
 RUN apt-get update && apt-get install -y \
     espeak-ng \
-    libespeak-ng-dev \
     libmp3lame0 \
-    libmp3lame-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled application from the build stage

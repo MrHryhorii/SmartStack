@@ -1,4 +1,3 @@
-using System.Runtime.InteropServices;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using NAudio.Wave;
@@ -33,43 +32,40 @@ public class PiperRunner : IDisposable
     }
 
     /// <summary>
-    /// Dynamically selects the best available hardware. 
-    /// Iterates through available GPUs using DirectML (on Windows) before gracefully falling back to the CPU.
+    /// Dynamically selects the best available hardware based on compile-time flags.
+    /// Falls back to CPU if no compatible GPU is detected or if built as CPU-only.
     /// </summary>
     private static (InferenceSession, bool) InitializeSession(string modelPath, OnnxSettings onnxSettings)
     {
+        // ====================================================================
+        // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
+        // ====================================================================
+#if USE_CUDA || USE_DML
         int maxGpusToTry = 4;
         for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
         {
             try
             {
-                var options = new Microsoft.ML.OnnxRuntime.SessionOptions();
-                onnxSettings.ApplyTo(options); // Apply performance tuning from appsettings.json
+                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                onnxSettings.ApplyTo(gpuOptions); // Apply performance tuning from appsettings.json
 
-                // SMART CROSS-PLATFORM HARDWARE DETECTION:
-                if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                {
-                    // DirectML (Windows)
-                    options.AppendExecutionProvider_DML(deviceId);
-
-                    var session = new InferenceSession(modelPath, options);
-                    Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
-                    return (session, true);
-                }
-                else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-                {
-                    // CUDA (Linux / Docker with Nvidia Runtime)
-                    options.AppendExecutionProvider_CUDA(deviceId);
-
-                    var session = new InferenceSession(modelPath, options);
-                    Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {deviceId})");
-                    return (session, true);
-                }
-                else
-                {
-                    Console.WriteLine("[HARDWARE] Unsupported OS for GPU acceleration (e.g. macOS). Proceeding to CPU execution.");
-                    break; // Exit the GPU loop and proceed directly to CPU initialization
-                }
+#if USE_CUDA
+                // CUDA (Linux / Docker with Nvidia Runtime)
+                gpuOptions.AppendExecutionProvider_CUDA(deviceId);
+                var session = new InferenceSession(modelPath, gpuOptions);
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {deviceId})");
+                Console.ResetColor();
+                return (session, true);
+#elif USE_DML
+                // DirectML (Windows)
+                gpuOptions.AppendExecutionProvider_DML(deviceId);
+                var session = new InferenceSession(modelPath, gpuOptions);
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
+                Console.ResetColor();
+                return (session, true);
+#endif
             }
             catch (Exception ex)
             {
@@ -78,8 +74,16 @@ public class PiperRunner : IDisposable
                 Console.ResetColor();
             }
         }
+        Console.WriteLine("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
 
-        // FALLBACK: CPU Execution if no compatible GPU is detected, initialization fails, or running on non-Windows OS
+// ====================================================================
+// CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)
+// ====================================================================
+#else
+        Console.WriteLine("[HARDWARE] Lightweight CPU-only build detected. Skipping GPU checks.");
+#endif
+
+        // FALLBACK / CPU EXECUTION
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
         onnxSettings.ApplyTo(cpuOptions);
 
