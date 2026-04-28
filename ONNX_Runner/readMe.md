@@ -203,6 +203,58 @@ The server will automatically download the necessary base cloner models from Hug
 
 ---
 
+## ⚙️ Server Configuration (`appsettings.json`)
+
+The `appsettings.json` file is pre-configured and ready to use out-of-the-box. Most users only ever need to set the model path and the languages list below — everything else can be left at its defaults.
+
+### 🌍 Multi-Language Support — Most Important Setting
+
+The `PhonemizerSettings` block controls how the server handles foreign words encountered in text. This is the **most impactful setting** to configure after your model path.
+
+```json
+"PhonemizerSettings": {
+  "SupportedLanguages": ["en", "uk", "fr"]
+}
+```
+
+**How it works:** Add languages that your base Piper model doesn't speak natively, but might encounter in your texts (e.g., an English model reading a Ukrainian name or a French phrase). The engine uses offline language detection via Lingua to identify foreign words and approximate their pronunciation using the base model's available phonemes — producing a natural "accented" result rather than skipping or mangling the word.
+
+**Format:** Use short espeak language codes — `"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc.
+
+> ⚠️ **Performance Warning:** Every language added to this list increases memory consumption and slows down synthesis. It is strongly recommended to limit this list to **2–3 languages** most likely to appear in your texts.
+
+**Tips for better accuracy:**
+
+- Use proper punctuation (commas, quotes, separate sentences) around foreign words — this helps the detector identify language boundaries.
+- Languages with completely different alphabets (e.g., Cyrillic vs. Latin) are detected far more reliably than similar-looking Latin languages.
+
+---
+
+### 🌐 Network & Access
+
+| Setting                               | Description                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| `Kestrel > Endpoints > Http > Url`    | Port the server listens on. Default: `http://+:5045`                      |
+| `CorsSettings > AllowAnyOrigin: true` | Disables all origin restrictions — fine for local/home use                |
+| `CorsSettings > AllowedOrigins`       | If `AllowAnyOrigin` is `false`, only listed domains are accepted          |
+| `ApiSettings > MaxTextLength`         | Hard character limit per request. Set to `0` to remove the limit entirely |
+
+---
+
+### ⚙️ Other Settings Reference
+
+| Section             | Description                                                                                                                                                         |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ChunkerSettings`   | Automatically splits long "walls of text" into smaller logical chunks. Piper models struggle with massive unbroken blocks — keep this enabled.                      |
+| `HardwareSettings`  | Not a strict hardware cap — just hints for the internal queueing system. Safe to ignore for home use.                                                               |
+| `RateLimitSettings` | Basic anti-spam protection: limits requests per IP within a time window. Useful for public-facing deployments.                                                      |
+| `DspSettings`       | Adds a Low-Pass Filter cleanup pass to reduce high-frequency noise. Recommended if using a lower-quality model or a tricky voice clone.                             |
+| `ClonerSettings`    | Controls OpenVoice cloning intensity. Best left at defaults — increasing it produces caricature-like exaggeration, decreasing it reverts to the base model's voice. |
+| `StreamSettings`    | Keep `EnableStreaming: true`. Streaming chunks is always faster and less memory-intensive than buffering the full audio before sending.                             |
+| `OnnxSettings`      | For advanced users testing experimental models only.                                                                                                                |
+
+---
+
 ## 🎛️ Default Effects & Environments
 
 Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect parameters, Tsubaki allows you to set a **Default Effect** in `appsettings.json`. This effect will be automatically applied to all incoming API requests unless overridden.
