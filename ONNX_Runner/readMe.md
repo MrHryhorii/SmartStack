@@ -59,19 +59,47 @@ git clone https://github.com/MrHryhorii/SmartStack.git
 cd SmartStack/ONNX_Runner
 ```
 
-**Build for Windows (Self-Contained `.exe`):**
+### 🏗️ Compiling the Server
+
+Tsubaki uses a smart build system. You can build a **"Full"** version (includes GPU libraries, very large) or a **"Lightweight CPU-only"** version.
+
+> ⭐ For 90% of users and home servers, the **CPU-only version is highly recommended**. It is significantly smaller, completely hardware-agnostic, and the performance difference on modern CPUs is negligible.
+
+**1. Windows (Full: DirectML + CPU)**
+Automatically uses your GPU via DirectX 12 (works with NVIDIA, AMD, and Intel GPUs).
 
 ```bash
-dotnet publish -c Release -r win-x64 --self-contained true
+dotnet publish -c Release -r win-x64 --self-contained true -o ./Publish/Tsubaki-Windows-Full
 ```
 
-**Build for Linux:**
+**2. Windows (Lightweight: CPU Only)**
 
 ```bash
-dotnet publish -c Release -r linux-x64 --self-contained true
+dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./Publish/Tsubaki-Windows-CPU
 ```
 
-The compiled server will be located in `bin/Release/net8.0/[OS]/publish/`.
+**3. Linux (Lightweight: CPU Only) — ⭐ RECOMMENDED**
+
+```bash
+dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./Publish/Tsubaki-Linux-CPU
+```
+
+**4. Linux (Full: CUDA + CPU) — ⚠️ ADVANCED USERS ONLY**
+Builds the massive NVIDIA CUDA version. See the [Linux Deployment](#-docker--linux-deployment) section below for strict hardware and software requirements.
+
+```bash
+dotnet publish -c Release -r linux-x64 --self-contained true -o ./Publish/Tsubaki-Linux-Full
+```
+
+**5. Docker (Lightweight CPU)**
+The provided `Dockerfile` is pre-configured to build the lightweight CPU version to keep your container small and stable.
+
+```bash
+docker-compose up --build -d
+```
+
+> ⚠️ **IMPORTANT: Voice Model Required**
+> The compiled application does not include a Piper voice model out-of-the-box to keep the binary size small. Before starting the server, you must download a voice model (`.onnx` + `.json`) and configure its path. See the [Installation & Model Management](#-installation--model-management) section below for details.
 
 ---
 
@@ -96,7 +124,8 @@ The repository contains **35 languages**, each in its own folder (`en`, `de`, `f
    - `en_US-lessac-medium.onnx`
    - `en_US-lessac-medium.onnx.json`
 4. Place both files into your `Model` folder next to the executable
-   > ⚠️ Both files **must be present** — the engine will fail to load without the accompanying `.json` config.
+
+> ⚠️ Both files **must be present** — the engine will fail to load without the accompanying `.json` config.
 
 ### Available quality tiers
 
@@ -135,7 +164,7 @@ The server features a highly flexible model discovery system. You have **3 ways*
 
 #### Option A: "Out of the Box" (Relative Path)
 
-Place your model files into the `Model` folder next to the executable. The server will automatically find them on startup.
+Place your model files into the `Model` folder exactly next to your compiled executable. The server will automatically find them on startup.
 
 #### Option B: Change Directory (via `appsettings.json`)
 
@@ -166,7 +195,7 @@ If your files have custom names or are scattered across the system, you can spec
 
 The server will automatically download the necessary base cloner models from HuggingFace on the first run.
 
-**To add a new voice:**
+**To add a new cloneable voice:**
 
 1. Place a clean voice sample (`.wav`, 5–15 seconds) into the `Voices` folder.
 2. The filename (e.g., `John.wav`) becomes the voice ID.
@@ -215,13 +244,39 @@ Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect p
 
 ## 💻 Docker & Linux Deployment
 
-A `Dockerfile` is provided for containerized deployments.
+### 🐳 Docker (Recommended for Servers)
 
-> **Important for Bare-Metal Linux:** The TTS engine and MP3 encoder rely on native system packages. If running directly on a Linux host (without Docker), install them first:
+The provided `docker-compose.yml` and `Dockerfile` are highly optimized and pre-configured to build the **Lightweight CPU** version. It automatically handles all native dependencies.
 
 ```bash
-sudo apt-get update && sudo apt-get install espeak-ng libmp3lame0
+docker-compose up --build -d
 ```
+
+### 🐧 Bare-Metal Linux (CPU)
+
+If you are running directly on a Linux host (without Docker), you must install the native TTS engine and MP3 encoder libraries before running the server:
+
+```bash
+sudo apt-get update && sudo apt-get install -y espeak-ng libmp3lame0
+```
+
+### 🐉 Bare-Metal Linux (CUDA GPU) — ⚠️ WARNING
+
+Tsubaki supports NVIDIA GPU acceleration on Linux, but we **strongly advise against using it** unless absolutely necessary.
+
+For TTS tasks, the performance gain over a modern CPU is often negligible, while the downsides are significant:
+
+- **Massive Build Size:** The CUDA build is over 1.5 GB larger.
+- **High Power Consumption:** Keeps the GPU active and draws significantly more power.
+- **Dependency Hell:** You must manually install and strictly match exact versions of proprietary NVIDIA libraries.
+
+If you still want to proceed, your host system must have the following installed and correctly added to your `$PATH`:
+
+- Proprietary NVIDIA Linux Drivers
+- NVIDIA CUDA Toolkit (v12.x compatible)
+- NVIDIA cuDNN (v9.x)
+
+> **Note:** If any of these are missing or mismatched, the ONNX runtime will crash with `libcudnn.so.9: cannot open shared object file` and gracefully fall back to CPU execution anyway.
 
 ---
 
