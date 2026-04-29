@@ -11,6 +11,13 @@ _Built-in web interface for testing voices and DSP effects_
 
 ---
 
+## 📥 Download
+
+**[💻 Tsubaki TTS Engine v1.0.0 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.0)**
+_Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices!_
+
+---
+
 ## 🚀 Why Tsubaki over Python alternatives?
 
 Most modern open-source TTS engines are written in Python. This often leads to "dependency hell": CUDA version conflicts, gigabytes of PyTorch libraries, and virtual environment nightmares.
@@ -38,8 +45,6 @@ Tsubaki is built with an **engineering-first approach** to distribution:
 ---
 
 ## 🛠️ Building from Source
-
-> **Note:** Pre-compiled binaries (ready-to-use `.exe` and Linux builds) will be available in the **Releases** tab soon.
 
 Ensure you have the [.NET 8 SDK](https://dotnet.microsoft.com/download) installed.
 
