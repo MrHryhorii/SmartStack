@@ -435,6 +435,9 @@ using (var scope = app.Services.CreateScope())
 
         // Free up memory since extraction is only needed once at startup
         openVoiceSvc.UnloadExtractor();
+
+        // Pre-warm the color converter with the base fingerprint to reduce latency on the first cloning request
+        openVoiceSvc.WarmUpColorConverter();
     }
 }
 

@@ -277,6 +277,54 @@ public class OpenVoiceRunner : IDisposable
         }
     }
 
+    /// <summary>
+    /// Performs a dummy inference pass through the Tone Color Converter to trigger JIT compilation and graph optimization.
+    /// </summary>
+    public void WarmUpColorConverter()
+    {
+        try
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine("[AUTO-BASE] Warming up OpenVoice Color Converter (Cold Start Prevention)...");
+            Console.ResetColor();
+            // Create dummy inputs that match the expected dimensions of the model to trigger JIT compilation and graph optimization.
+            int frames = 300;
+            int bins = (_config.Data.FilterLength / 2) + 1;
+            int channels = _config.Model.GinChannels;
+            // Use a fixed seed for reproducibility in dummy data generation
+            var rng = new Random(42);
+            // Generate a dummy spectrogram with small random values to simulate real input
+            //  without causing extreme activations in the model.
+            var dummySpectrogram = new float[frames, bins];
+            for (int i = 0; i < frames; i++)
+                for (int j = 0; j < bins; j++)
+                    dummySpectrogram[i, j] = (float)(rng.NextDouble() * 0.1);
+            // Generate dummy source and destination fingerprints with small random values to simulate real embeddings.
+            var dummySrcFingerprint = Enumerable.Range(0, channels)
+                .Select(_ => (float)(rng.NextDouble() * 0.1))
+                .ToArray();
+            // The destination fingerprint can be the same as the source for this warmup, 
+            // since we're just triggering the model's execution path.
+            var dummyDestFingerprint = Enumerable.Range(0, channels)
+                .Select(_ => (float)(rng.NextDouble() * 0.1))
+                .ToArray();
+            // Perform multiple passes to ensure all parts of the model are warmed up, including any dynamic graph optimizations.
+            for (int pass = 0; pass < 2; pass++)
+            {
+                var result = ApplyToneColor(dummySpectrogram, dummySrcFingerprint, dummyDestFingerprint, 1.0f);
+                ArrayPool<float>.Shared.Return(result.Buffer);
+            }
+            // If we reach this point without exceptions, the warmup is successful.
+            Console.WriteLine("[AUTO-BASE] OpenVoice warmup complete. System is fully ready.");
+        }
+        catch (Exception ex)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"[WARNING] OpenVoice warmup failed, first request may be slower: {ex.Message}");
+            Console.ResetColor();
+        }
+    }
+
     public void Dispose()
     {
         _extractSession?.Dispose();
