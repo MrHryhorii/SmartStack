@@ -14,4 +14,9 @@ services:
       - ./Model:/app/Model
       - ./Cloner:/app/Cloner
       - ./Voices:/app/Voices
+    logging: # Configure logging to prevent log files from growing indefinitely
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped

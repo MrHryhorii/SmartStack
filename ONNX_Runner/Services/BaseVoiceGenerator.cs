@@ -219,15 +219,26 @@ public class BaseVoiceGenerator(
         var samples = new float[reader.Length / 2];
         provider.Read(samples, 0, samples.Length);
 
-        // 4. Generate the Magnitude Spectrogram from the float samples
-        var spec = _audioProcessor.GetMagnitudeSpectrogram(samples);
+        // Resample the audio to match the OpenVoice Extractor's expected sampling rate (e.g., 22050 Hz).
+        int openVoiceRate = _openVoice.GetTargetSamplingRate();
+        var resampled = _audioProcessor.Resample(samples, samples.Length, _piperConfig.Audio.SampleRate, openVoiceRate);
 
-        // 5. Extract the voice footprint (tone embedding) using the OpenVoice Extractor model
-        var baseFingerprint = _openVoice.ExtractToneColor(spec);
+        try
+        {
+            // 4. Generate the Magnitude Spectrogram from the resampled samples
+            var spec = _audioProcessor.GetMagnitudeSpectrogram(resampled.Buffer.AsSpan(0, resampled.Length));
 
-        // 6. Cache it in the Voice Library under the reserved key "piper_base". 
-        // This acts as the mathematical anchor for all future voice cloning operations.
-        _openVoice.VoiceLibrary["piper_base"] = baseFingerprint;
+            // 5. Extract the voice footprint (tone embedding) using the OpenVoice Extractor model
+            var baseFingerprint = _openVoice.ExtractToneColor(spec);
+
+            // 6. Cache it in the Voice Library under the reserved key "piper_base". 
+            _openVoice.VoiceLibrary["piper_base"] = baseFingerprint;
+        }
+        finally
+        {
+            // Return the rented array to the pool to prevent memory leaks
+            System.Buffers.ArrayPool<float>.Shared.Return(resampled.Buffer);
+        }
 
         Console.WriteLine("[AUTO-BASE] Dynamic base footprint successfully calculated and stored in memory.");
         Console.ResetColor();

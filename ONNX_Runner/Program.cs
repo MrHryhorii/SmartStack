@@ -67,7 +67,7 @@ if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtim
 
 // Add Swagger support for API documentation and easy testing
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddOpenApi();
 
 // Read the model directory configuration BEFORE attempting to load the model.
 // This prevents CrashLoopBackOff in Docker if the folder doesn't exist yet.
@@ -401,8 +401,15 @@ app.UseStaticFiles();
 
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI();
+    // Serve the OpenAPI spec at /openapi/v1.json instead of the default /swagger/v1/swagger.json 
+    // for better consistency with our API versioning and cleaner URLs.
+    app.MapOpenApi();
+    app.UseSwaggerUI(options =>
+    {
+        // Point Swagger UI to the custom OpenAPI endpoint that we serve, 
+        // which is more intuitive and consistent with our API versioning.
+        options.SwaggerEndpoint("/openapi/v1.json", "Tsubaki API v1");
+    });
 }
 
 app.UseCors("DynamicCorsPolicy");
@@ -437,29 +444,24 @@ using (var scope = app.Services.CreateScope())
 
 app.MapPost("/v1/audio/speech", SpeechEndpoint.HandleSpeechRequest)
    .WithName("GetSpeech")
-   .WithOpenApi()
    .RequireRateLimiting("ip_limit");
 
 app.MapPost("/v1/audio/phonemize", PhonemizeEndpoint.HandlePhonemizeRequest)
    .WithName("GetPhonemes")
-   .WithOpenApi()
    .RequireRateLimiting("ip_limit");
 
 // With limited access for security,
 // these endpoints are designed for local dashboard integration and should not be exposed publicly.
 app.MapGet("/v1/audio/voices", InfoEndpoints.GetVoices)
-   .WithName("GetVoices")
-   .WithOpenApi();
+   .WithName("GetVoices");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.MapGet("/v1/audio/effects", InfoEndpoints.GetEffects)
-   .WithName("GetEffects")
-   .WithOpenApi();
+   .WithName("GetEffects");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.MapGet("/v1/audio/environments", InfoEndpoints.GetEnvironments)
-   .WithName("GetEnvironments")
-   .WithOpenApi();
+   .WithName("GetEnvironments");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 // =================================================================

@@ -270,6 +270,30 @@ The `PhonemizerSettings` block controls how the server handles foreign words enc
 
 ---
 
+### 🧬 Fine-Tuning Voice Cloning (`ClonerSettings`)
+
+The parameters in the `ClonerSettings` block control exactly how the OpenVoice V2 architecture transfers timbre onto the base audio. If a cloned voice sounds unstable, trembles, or produces a "crying" effect, adjust the following values:
+
+#### 🌡️ Tone Temperature (`ToneTemperature` / `tau`)
+
+This parameter controls the variance in the latent space during voice color transfer.
+
+- **High temperature (1.0 and above):** Makes the voice more emotional and lively, but significantly increases sensitivity to base model noise. On low-frequency models (16 kHz) or `medium` quality, this often causes micro-vibrations perceived as trembling or sobbing.
+
+- **Low temperature (0.5 – 0.7):** Stabilizes the sound wave, making the voice feel "firmer" and more confident. This is the recommended setting for eliminating the trembling effect on models with a limited frequency range.
+
+#### 🎚️ Clone Intensity (`CloneIntensity`)
+
+Defines the blending coefficient (Latent Space Blending) between the base Piper fingerprint and the target voice.
+
+- **Value 1.0:** Full timbre transfer, which can amplify digital artifacts.
+
+- **Value 0.8 – 0.9 (Recommended):** Preserves some of the original Piper model's articulatory stability while overlaying the character of the chosen voice. This provides the best balance between voice similarity and audio cleanliness.
+
+> 💡 **Quality Tip:** To achieve crystal-clear cloning without temperature adjustments, use Piper models at the **High (22050 Hz)** quality tier. Their fuller frequency spectrum allows the OpenVoice neural network to operate without producing instability artifacts.
+
+---
+
 ### 🚫 Advanced Modules
 
 - **`OnnxSettings`** — Designed for advanced users testing highly specific experimental models. Leave at defaults unless you know exactly what you are doing.

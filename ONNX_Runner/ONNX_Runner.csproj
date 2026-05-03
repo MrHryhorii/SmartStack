@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -12,12 +12,12 @@
 
   <ItemGroup>
     <PackageReference Include="Concentus.OggFile" Version="1.0.7" />
-    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="8.0.2" />
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Lame" Version="2.1.0" />
     <PackageReference Include="SearchPioneer.Lingua" Version="1.0.5" />
     <PackageReference Include="SoundTouch.Net" Version="2.3.2" />
-    <PackageReference Include="Swashbuckle.AspNetCore" Version="6.6.2" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
   </ItemGroup>
 
   <PropertyGroup>
@@ -34,11 +34,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.2" Condition="'$(CpuOnly)' == 'true'" />
-
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.2" Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true'" />
-
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.2" Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" Condition="'$(CpuOnly)' == 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.4" Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>
