@@ -6,131 +6,162 @@ using System.Text;
 namespace STT_Runner.Services;
 
 /// <summary>
-/// The core engine responsible for analyzing audio.
-/// It uses Silero VAD to detect speech segments and Whisper.net to transcribe them.
+/// The core engine responsible for audio inference.
+/// It utilizes Silero VAD to filter out silence and Whisper.net for Speech-to-Text and Translation.
 /// </summary>
 public class Transcriptor(IConfiguration config, string whisperPath, string vadPath) : IDisposable
 {
     private readonly string _whisperPath = whisperPath;
     private readonly string _vadPath = vadPath;
-    private readonly string _language = config["SttSettings:Language"] ?? "uk";
+    private readonly string _defaultLanguage = config["SttSettings:Language"] ?? "auto";
 
-    // Whisper components
+    // Core Whisper Factory (Holds the heavy neural network weights in memory)
     private WhisperFactory? _whisperFactory;
-    private WhisperProcessor? _whisperProcessor;
 
-    // ONNX components for VAD
+    // Silero VAD component
     private InferenceSession? _vadSession;
 
-    // Silero VAD requires a specific sample rate and window size
+    // Silero VAD strict requirements
     private const int SampleRate = 16000;
     private const int WindowSize = 512;
     private const float SpeechThreshold = 0.5f;
 
     /// <summary>
-    /// Initializes models into memory. Must be called before processing audio.
+    /// Loads the heavy neural network models into RAM/VRAM. 
+    /// Must be called once during application startup.
     /// </summary>
     public void Initialize()
     {
         Console.WriteLine("[SYSTEM] Initializing Transcriptor Engine...");
 
-        // Initialize Whisper
-        _whisperFactory = WhisperFactory.FromPath(_whisperPath);
-        _whisperProcessor = _whisperFactory.CreateBuilder()
-            .WithLanguage(_language)
-            .WithProbabilities() // Enables confidence scores
-            .Build();
+#if GPU_SUPPORT
+        // =========================================================
+        // GPU BUILD LOGIC
+        // =========================================================
+        var factoryOptions = new WhisperFactoryOptions { UseGpu = true };
+        string? gpuIndexStr = config["SttSettings:GpuDeviceIndex"];
 
-        // Initialize Silero VAD (ONNX)
-        // We use CPU for VAD because it is extremely lightweight and transferring 
-        // tiny 512-sample chunks to the GPU actually slows it down due to bus latency.
+        if (int.TryParse(gpuIndexStr, out int targetGpu))
+        {
+            factoryOptions.GpuDevice = targetGpu;
+            Console.ForegroundColor = ConsoleColor.Magenta;
+            Console.WriteLine($"[HARDWARE] GPU Acceleration active. Forcing Device Index: {targetGpu}");
+            Console.ResetColor();
+        }
+        else
+        {
+            Console.WriteLine("[HARDWARE] GPU Acceleration active. Using default Device 0.");
+        }
+#else
+        // =========================================================
+        // CPU BUILD LOGIC
+        // =========================================================
+        var factoryOptions = new WhisperFactoryOptions { UseGpu = false };
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("[HARDWARE] Running in CPU-only mode (GPU support disabled by build target).");
+        Console.ResetColor();
+#endif
+
+        // Load factory with appropriate options
+        _whisperFactory = WhisperFactory.FromPath(_whisperPath, factoryOptions);
+
+        // Initialize VAD session
         var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
         _vadSession = new InferenceSession(_vadPath, sessionOptions);
 
-        Console.WriteLine("[SYSTEM] Transcriptor initialized successfully.");
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("[SYSTEM] Transcriptor Engine initialized successfully.");
+        Console.ResetColor();
     }
 
     /// <summary>
-    /// Processes the full audio array, filters silence using VAD, and returns transcribed text.
+    /// Processes the audio array, filters silence, and returns text.
+    /// Thread-safe: Creates a lightweight WhisperProcessor per request.
     /// </summary>
-    public async Task<string> TranscribeAsync(float[] audioSamples)
+    /// <param name="audioSamples">16kHz Mono float array.</param>
+    /// <param name="languageOverride">Optional ISO language code from the API request.</param>
+    /// <param name="isTranslation">If true, translates the audio to English.</param>
+    /// <returns>Transcribed or translated text.</returns>
+    public async Task<string> ProcessAudioAsync(float[] audioSamples, string? languageOverride = null, bool isTranslation = false)
     {
-        if (_whisperProcessor == null || _vadSession == null)
-            throw new InvalidOperationException("Transcriptor is not initialized.");
+        if (_whisperFactory == null || _vadSession == null)
+            throw new InvalidOperationException("Transcriptor Engine is not initialized.");
 
-        // We will store the extracted active speech here
+        // Fallback logic: 1. API Parameter -> 2. AppSettings -> 3. Auto
+        var targetLanguage = !string.IsNullOrWhiteSpace(languageOverride)
+                             ? languageOverride
+                             : (!string.IsNullOrWhiteSpace(_defaultLanguage) ? _defaultLanguage : "auto");
+
         var activeSpeechBuffer = new List<float>();
 
-        // Silero VAD internal state tensors (h and c). 
-        // They must be maintained across chunks for continuous context.
-        var hTensor = new DenseTensor<float>(new[] { 2, 1, 64 });
-        var cTensor = new DenseTensor<float>(new[] { 2, 1, 64 });
-        hTensor.Fill(0f);
-        cTensor.Fill(0f);
+        // ==========================================================
+        // SILERO VAD V5 INFERENCE
+        // ==========================================================
+        var stateTensor = new DenseTensor<float>([2, 1, 128]);
+        stateTensor.Fill(0f);
+        var srTensor = new DenseTensor<long>(new long[] { SampleRate }, [1]);
 
-        var srTensor = new DenseTensor<long>(new long[] { SampleRate }, new[] { 1 });
-
-        // Iterate through the audio in chunks of 512 samples
         for (int i = 0; i < audioSamples.Length - WindowSize; i += WindowSize)
         {
             var chunk = new float[WindowSize];
             Array.Copy(audioSamples, i, chunk, 0, WindowSize);
 
-            // Create input tensor for the current chunk
-            var inputTensor = new DenseTensor<float>(chunk, new[] { 1, WindowSize });
-
+            var inputTensor = new DenseTensor<float>(chunk, [1, WindowSize]);
             var inputs = new List<NamedOnnxValue>
             {
                 NamedOnnxValue.CreateFromTensor("input", inputTensor),
                 NamedOnnxValue.CreateFromTensor("sr", srTensor),
-                NamedOnnxValue.CreateFromTensor("h", hTensor),
-                NamedOnnxValue.CreateFromTensor("c", cTensor)
+                NamedOnnxValue.CreateFromTensor("state", stateTensor)
             };
 
-            // Run VAD Inference
             using var results = _vadSession.Run(inputs);
 
-            // Extract the speech probability
             var probTensor = results.First(v => v.Name == "output").AsTensor<float>();
             float probability = probTensor.GetValue(0);
 
-            // Update internal states for the next iteration
-            var nextH = (DenseTensor<float>)results.First(v => v.Name == "hn").AsTensor<float>();
-            var nextC = (DenseTensor<float>)results.First(v => v.Name == "cn").AsTensor<float>();
+            var nextState = (DenseTensor<float>)results.First(v => v.Name == "stateN").AsTensor<float>();
+            nextState.Buffer.Span.CopyTo(stateTensor.Buffer.Span);
 
-            nextH.Buffer.Span.CopyTo(hTensor.Buffer.Span);
-            nextC.Buffer.Span.CopyTo(cTensor.Buffer.Span);
-
-            // If probability is above threshold, save the chunk
             if (probability >= SpeechThreshold)
             {
                 activeSpeechBuffer.AddRange(chunk);
             }
         }
 
-        // If no speech was detected in the entire file
         if (activeSpeechBuffer.Count == 0)
         {
             return string.Empty;
         }
 
-        // Send the filtered speech buffer to Whisper
+        // ==========================================================
+        // WHISPER INFERENCE (Dynamically built per request)
+        // ==========================================================
+        var builder = _whisperFactory.CreateBuilder()
+            .WithLanguage(targetLanguage)
+            .WithProbabilities(); // Optional: Allows confidence score extraction if needed later
+
+        if (isTranslation)
+        {
+            builder.WithTranslate();
+        }
+
+        // The 'using' statement ensures the lightweight processor is destroyed after the request
+        using var processor = builder.Build();
         var sb = new StringBuilder();
 
-        // ProcessAsync expects an IAsyncEnumerable or array
-        await foreach (var segment in _whisperProcessor.ProcessAsync(activeSpeechBuffer.ToArray()))
+        await foreach (var segment in processor.ProcessAsync([.. activeSpeechBuffer]))
         {
-            // We can also check segment.Probability here to filter out hallucinations
             sb.Append(segment.Text);
         }
 
         return sb.ToString().Trim();
     }
 
-    // Dispose pattern to clean up ONNX sessions and Whisper resources
+    /// <summary>
+    /// Cleans up unmanaged resources and ONNX sessions.
+    /// </summary>
     public void Dispose()
     {
-        _whisperProcessor?.Dispose();
         _whisperFactory?.Dispose();
         _vadSession?.Dispose();
         GC.SuppressFinalize(this);

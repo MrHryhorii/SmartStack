@@ -69,7 +69,7 @@ public class AudioProcessor
                 audioSamples.AddRange(new ReadOnlySpan<float>(buffer, 0, read).ToArray());
             }
 
-            return audioSamples.ToArray();
+            return [.. audioSamples];
         }
         finally
         {

@@ -125,14 +125,12 @@ public static class ModelManager
     }
 
     /// <summary>
-    /// Downloads a file over HTTP with a progress timer and graceful error handling.
-    /// Uses ResponseHeadersRead to stream data directly to disk without loading the entire file into RAM.
+    /// Downloads a file over HTTP and displays a dynamic progress bar in the console.
     /// </summary>
     private static async Task DownloadFileAsync(string url, string destinationPath, string modelName)
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine($"[INFO] {modelName} is missing locally. Downloading from Hugging Face...");
-        Console.WriteLine($"       -> URL: {url}");
         Console.ResetColor();
 
         var stopwatch = Stopwatch.StartNew();
@@ -140,17 +138,43 @@ public static class ModelManager
         try
         {
             using var client = new HttpClient();
-            // Using ResponseHeadersRead allows us to start processing the response 
-            // as soon as headers are received, enabling streaming large files directly to disk
-            //  without consuming large amounts of memory.
+            // We use ResponseHeadersRead to start processing the stream as soon as headers are received, 
+            // allowing us to show progress.
             using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
 
-            // Write stream directly to disk
-            using var fs = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
-            await response.Content.CopyToAsync(fs);
+            // Try to get total file size for percentage calculation
+            var totalBytes = response.Content.Headers.ContentLength ?? -1L;
+            using var contentStream = await response.Content.ReadAsStreamAsync();
+            using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+
+            var totalRead = 0L;
+            var buffer = new byte[8192];
+            var isMoreToRead = true;
+
+            do
+            {
+                var read = await contentStream.ReadAsync(buffer, 0, buffer.Length);
+                if (read == 0)
+                {
+                    isMoreToRead = false;
+                }
+                else
+                {
+                    await fileStream.WriteAsync(buffer.AsMemory(0, read));
+                    totalRead += read;
+
+                    // Update the console progress bar
+                    if (totalBytes != -1)
+                    {
+                        DrawProgressBar(modelName, totalRead, totalBytes);
+                    }
+                }
+            }
+            while (isMoreToRead);
 
             stopwatch.Stop();
+            Console.WriteLine(); // Add a new line after the progress bar is done
 
             var fileInfo = new FileInfo(destinationPath);
             double sizeMb = fileInfo.Length / (1024.0 * 1024.0);
@@ -161,12 +185,25 @@ public static class ModelManager
         }
         catch (Exception ex)
         {
-            // If download fails (e.g., no internet), clean up the potentially corrupted partial file
-            if (File.Exists(destinationPath))
-            {
-                File.Delete(destinationPath);
-            }
+            if (File.Exists(destinationPath)) File.Delete(destinationPath);
             throw new Exception($"Failed to download {modelName} from {url}. Error: {ex.Message}", ex);
         }
+    }
+
+    /// <summary>
+    /// Draws an inline progress bar in the console using \r to overwrite the current line.
+    /// </summary>
+    private static void DrawProgressBar(string modelName, long current, long total)
+    {
+        int progressLength = 30; // Length of the progress bar UI
+        double percentage = (double)current / total;
+        int filled = (int)(progressLength * percentage);
+
+        string bar = new string('#', filled).PadRight(progressLength, '-');
+        double currentMb = current / (1024.0 * 1024.0);
+        double totalMb = total / (1024.0 * 1024.0);
+
+        // \r moves the cursor to the beginning of the line, allowing us to overwrite it
+        Console.Write($"\r   -> [{bar}] {percentage:P0} ({currentMb:F1}/{totalMb:F1} MB) ");
     }
 }

@@ -4,38 +4,56 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Defines the hardware target. Defaults to CPU. Use -p:HardwareTarget=VULKAN for GPU build -->
+    <HardwareTarget Condition="'$(HardwareTarget)' == ''">CPU</HardwareTarget>
 
     <!-- Open Source Metadata -->
     <AssemblyName>STTRunner</AssemblyName>
     <Version>1.0.0</Version>
-    <Authors>YourName</Authors>
-    <Description>A lightweight, cross-platform, OpenAI API compatible Speech-to-Text server utilizing Whisper.net and Silero VAD.</Description>
+    <Authors>MrHruhorii</Authors>
+    <Description>A lightweight, cross-platform, OpenAI API compatible STT server using Whisper (Vulkan) and Silero VAD.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
 
+  <!-- ==================================================================== -->
+  <!-- BASE PACKAGES (Common dependencies required for all builds)          -->
+  <!-- ==================================================================== -->
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.25.1" />
-    <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+    <PackageReference Include="NAudio" Version="2.3.0" />
     <PackageReference Include="Whisper.net" Version="1.9.0" />
+    
+    <!-- Base ONNX Runtime is sufficient for all builds since VAD runs on CPU -->
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.25.1" />
   </ItemGroup>
 
-  <!-- Windows: DirectML Support for ONNX and Whisper -->
-  <ItemGroup Condition="'$(IsWindows)' == 'true'">
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.18.0" />
-    <PackageReference Include="Whisper.net.Runtime.DirectML" Version="1.5.0" />
+  <!-- ==================================================================== -->
+  <!-- CPU-ONLY TARGET (Fallback / Servers without GPU)                     -->
+  <!-- ==================================================================== -->
+  <ItemGroup Condition="'$(HardwareTarget)' == 'CPU'">
+    <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />
   </ItemGroup>
 
-  <!-- Linux: CUDA Support -->
-  <ItemGroup Condition="'$(IsLinux)' == 'true'">
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.18.0" />
-    <PackageReference Include="Whisper.net.Runtime.Cuda.Linux" Version="1.5.0" />
+  <!-- ==================================================================== -->
+  <!-- UNIVERSAL GPU TARGET (Vulkan: Works on Windows/Linux, AMD/Nvidia)    -->
+  <!-- ==================================================================== -->
+  <ItemGroup Condition="'$(HardwareTarget)' == 'VULKAN'">
+    <PackageReference Include="Whisper.net.Runtime.Vulkan" Version="1.9.0" />
   </ItemGroup>
 
-  <!-- Auto-copy settings to the build output -->
+  <!-- Define a compiler symbol for GPU builds -->
+  <PropertyGroup Condition="'$(HardwareTarget)' == 'VULKAN'">
+    <DefineConstants>$(DefineConstants);GPU_SUPPORT</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(HardwareTarget)' == 'CPU'">
+    <DefineConstants>$(DefineConstants);CPU_ONLY</DefineConstants>
+  </PropertyGroup>
+
+  <!-- ==================================================================== -->
   <ItemGroup>
     <Content Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
