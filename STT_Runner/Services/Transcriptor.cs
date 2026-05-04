@@ -2,6 +2,7 @@ using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using Whisper.net;
 using System.Text;
+using System.Diagnostics;
 
 namespace STT_Runner.Services;
 
@@ -155,6 +156,71 @@ public class Transcriptor(IConfiguration config, string whisperPath, string vadP
         }
 
         return sb.ToString().Trim();
+    }
+
+    /// <summary>
+    /// Performs a dummy inference run to pre-JIT the Whisper and VAD pipelines,
+    /// eliminating cold-start latency on the first real HTTP request.
+    /// Uses low-amplitude white noise to guarantee VAD passes audio through to Whisper.
+    /// </summary>
+    public async Task WarmUpAsync()
+    {
+        // Sanity check to prevent null reference exceptions during warmup if Initialize() wasn't called.
+        if (_whisperFactory == null || _vadSession == null)
+            throw new InvalidOperationException("Cannot warm up: Transcriptor Engine is not initialized.");
+        // Log the start of the warmup process to give users feedback during startup, 
+        // especially since GPU shader caching can take several seconds.
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine("[SYSTEM] Warming up inference pipelines...");
+        Console.ResetColor();
+        // We run multiple iterations for GPU builds to ensure Vulkan shader pipelines are fully cached, 
+        // while a single pass is sufficient for CPU-only builds.
+#if GPU_SUPPORT
+        const int WarmupIterations = 3; // Vulkan shader pipeline caching
+#else
+        const int WarmupIterations = 1; // JIT + ONNX kernel init is single-shot on CPU
+#endif
+        // We use a fixed seed for reproducibility, but the actual audio content doesn't matter as long as it's non-silent.
+        var stopwatch = Stopwatch.StartNew();
+        // Generate 1 second of low-amplitude white noise at 16kHz to ensure VAD detects "speech" and passes it to Whisper.
+        var rng = new Random(42);
+        var warmupAudio = new float[SampleRate];
+        for (int i = 0; i < warmupAudio.Length; i++)
+            warmupAudio[i] = (float)(rng.NextDouble() * 0.1 - 0.05);
+        // Run the warmup iterations
+        for (int iteration = 1; iteration <= WarmupIterations; iteration++)
+        {
+            Console.WriteLine($"[SYSTEM] Warmup pass {iteration}/{WarmupIterations}...");
+
+            // --- VAD warmup ---
+            var stateTensor = new DenseTensor<float>([2, 1, 128]);
+            stateTensor.Fill(0f);
+            var srTensor = new DenseTensor<long>(new long[] { SampleRate }, [1]);
+            var chunk = new float[WindowSize];
+            Array.Copy(warmupAudio, chunk, WindowSize);
+
+            var inputs = new List<NamedOnnxValue>
+            {
+                NamedOnnxValue.CreateFromTensor("input", new DenseTensor<float>(chunk, [1, WindowSize])),
+                NamedOnnxValue.CreateFromTensor("sr", srTensor),
+                NamedOnnxValue.CreateFromTensor("state", stateTensor)
+            };
+            using var _ = _vadSession.Run(inputs);
+
+            // --- Whisper warmup ---
+            using var processor = _whisperFactory
+                .CreateBuilder()
+                .WithLanguage(_defaultLanguage ?? "auto")
+                .Build();
+
+            await foreach (var __ in processor.ProcessAsync(warmupAudio)) { }
+        }
+        // Stop the timer after all iterations are complete to get an accurate measure of total warmup time.
+        stopwatch.Stop();
+        // Log the total warmup time and the number of iterations to give users a clear understanding of the startup process.
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine($"[SYSTEM] All pipelines warmed up ({WarmupIterations} pass(es)) in {stopwatch.Elapsed.TotalMilliseconds:F0} ms. Server ready.");
+        Console.ResetColor();
     }
 
     /// <summary>

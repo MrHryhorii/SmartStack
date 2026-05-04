@@ -63,6 +63,7 @@ builder.Services.AddSingleton<AudioProcessor>();
 // once during startup, rather than on every HTTP request.
 var transcriptor = new Transcriptor(builder.Configuration, whisperPath, vadPath);
 transcriptor.Initialize(); // Unpack models into memory
+await transcriptor.WarmUpAsync();  // Run a dummy inference to ensure everything is loaded and ready before accepting requests
 builder.Services.AddSingleton(transcriptor);
 
 // -----------------------------------------------------------------
