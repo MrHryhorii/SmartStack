@@ -22,14 +22,20 @@ namespace STT_Runner.Endpoints;
 /// "json"         (default) → { "text": "..." }
 /// "text"                   → plain text body
 /// "verbose_json"           → { "task": ..., "language": ..., "text": "..." }
+///
+/// Concurrency guard
+/// ─────────────────
+/// A <see cref="SemaphoreSlim"/> injected from DI limits how many requests run the
+/// AI pipeline simultaneously. Requests that arrive when all slots are occupied are
+/// rejected immediately with 503 rather than queued, keeping memory and latency bounded.
+/// The limit is configured via <c>ServerSecurity:MaxConcurrentInference</c>.
 /// </summary>
 public static class TranscriptionEndpoints
 {
-    // ── Channel capacity constants ────────────────────────────────────────────
-    // Channel 1 (AudioProcessor → VAD): larger buffer because 512-sample chunks arrive fast.
+    // Channel 1 (AudioProcessor → VAD): larger — 512-sample chunks arrive very fast.
     private const int AudioChannelCapacity = 500;
 
-    // Channel 2 (VAD → Whisper): small — each item is a full sentence (potentially megabytes).
+    // Channel 2 (VAD → Whisper): small — each item is a full sentence (many kilobytes).
     private const int SentenceChannelCapacity = 20;
 
     public static void MapTranscriptionEndpoints(this IEndpointRouteBuilder app)
@@ -39,14 +45,13 @@ public static class TranscriptionEndpoints
         // =====================================================================
         // OpenAI reference: https://platform.openai.com/docs/api-reference/audio/createTranscription
         //
-        // Accepted form fields:
-        //   file            (required) — audio file
-        //   model           (ignored)  — kept for API compatibility; model path comes from config
-        //   language        (optional) — BCP-47 source language hint, e.g. "uk", "en"; defaults to "auto"
-        //   response_format (optional) — "json" | "text" | "verbose_json"; defaults to "json"
+        // Accepted multipart/form-data fields:
+        //   file            (required) — audio file in any format NAudio supports
+        //   model           (optional) — accepted but ignored; model path comes from config
+        //   language        (optional) — BCP-47 source language hint, e.g. "uk", "en"
+        //   response_format (optional) — "json" | "text" | "verbose_json"  (default: "json")
         // =====================================================================
         app.MapPost("/v1/audio/transcriptions", async (
-            HttpContext context,
             IFormFile file,
             [FromForm] string? model,
             [FromForm] string? language,
@@ -54,10 +59,23 @@ public static class TranscriptionEndpoints
             [FromServices] AudioProcessor audioProcessor,
             [FromServices] VadProcessor vadProcessor,
             [FromServices] Transcriptor transcriptor,
+            [FromServices] SemaphoreSlim inferenceSemaphore,
             CancellationToken ct) =>
         {
             if (file is null || file.Length == 0)
-                return Results.BadRequest(new { error = new { message = "Audio file is required.", type = "invalid_request_error" } });
+                return Results.BadRequest(new
+                {
+                    error = new { message = "Audio file is required.", type = "invalid_request_error" }
+                });
+
+            // Try to enter the semaphore without waiting.
+            // If all inference slots are occupied, return 503 immediately.
+            if (!await inferenceSemaphore.WaitAsync(TimeSpan.Zero, ct))
+            {
+                return Results.Json(
+                    new { error = new { message = "Server is busy. Please retry shortly.", type = "server_busy" } },
+                    statusCode: 503);
+            }
 
             try
             {
@@ -75,7 +93,7 @@ public static class TranscriptionEndpoints
             }
             catch (OperationCanceledException)
             {
-                return Results.StatusCode(499); // Client Closed Request
+                return Results.StatusCode(499); // Nginx convention: Client Closed Request
             }
             catch (Exception ex)
             {
@@ -83,6 +101,11 @@ public static class TranscriptionEndpoints
                 Console.WriteLine($"[ERROR] Transcription failed: {ex.Message}");
                 Console.ResetColor();
                 return Results.Problem("An internal error occurred during transcription.", statusCode: 500);
+            }
+            finally
+            {
+                // Always release the slot, even if the pipeline threw.
+                inferenceSemaphore.Release();
             }
         })
         .DisableAntiforgery()
@@ -96,32 +119,43 @@ public static class TranscriptionEndpoints
         // OpenAI reference: https://platform.openai.com/docs/api-reference/audio/createTranslation
         //
         // Always outputs English regardless of the source language.
-        // Source language is auto-detected by Whisper — no language parameter accepted,
-        // matching the OpenAI API contract exactly.
+        // The `language` parameter is intentionally absent — the OpenAI Translations
+        // endpoint does not accept it; Whisper auto-detects the source language
+        // internally via the WithTranslate() decoder task.
         //
-        // Accepted form fields:
+        // Accepted multipart/form-data fields:
         //   file            (required) — audio file
-        //   model           (ignored)  — kept for API compatibility
-        //   response_format (optional) — "json" | "text" | "verbose_json"; defaults to "json"
+        //   model           (optional) — accepted but ignored
+        //   response_format (optional) — "json" | "text" | "verbose_json"  (default: "json")
         // =====================================================================
         app.MapPost("/v1/audio/translations", async (
-            HttpContext context,
             IFormFile file,
             [FromForm] string? model,
             [FromForm] string? response_format,
             [FromServices] AudioProcessor audioProcessor,
             [FromServices] VadProcessor vadProcessor,
             [FromServices] Transcriptor transcriptor,
+            [FromServices] SemaphoreSlim inferenceSemaphore,
             CancellationToken ct) =>
         {
             if (file is null || file.Length == 0)
-                return Results.BadRequest(new { error = new { message = "Audio file is required.", type = "invalid_request_error" } });
+                return Results.BadRequest(new
+                {
+                    error = new { message = "Audio file is required.", type = "invalid_request_error" }
+                });
+
+            if (!await inferenceSemaphore.WaitAsync(TimeSpan.Zero, ct))
+            {
+                return Results.Json(
+                    new { error = new { message = "Server is busy. Please retry shortly.", type = "server_busy" } },
+                    statusCode: 503);
+            }
 
             try
             {
                 string translated = await RunPipelineAsync(
                     file, audioProcessor, vadProcessor, transcriptor,
-                    languageHint: null,  // auto-detect source; Whisper handles this internally
+                    languageHint: null, // Source language is auto-detected by Whisper's translation task.
                     translate: true,
                     ct);
 
@@ -142,6 +176,10 @@ public static class TranscriptionEndpoints
                 Console.ResetColor();
                 return Results.Problem("An internal error occurred during translation.", statusCode: 500);
             }
+            finally
+            {
+                inferenceSemaphore.Release();
+            }
         })
         .DisableAntiforgery()
         .WithName("CreateTranslation")
@@ -153,11 +191,11 @@ public static class TranscriptionEndpoints
 
     /// <summary>
     /// Runs the full three-stage pipeline (AudioProcessor → VAD → Whisper) for a single
-    /// audio file and returns the concatenated transcript as a single string.
+    /// audio file and returns the concatenated transcript.
     ///
-    /// The two background tasks (audio chunking and VAD segmentation) are awaited after
-    /// the Whisper enumeration finishes, so any exception from either stage propagates
-    /// to the caller rather than being silently swallowed.
+    /// Ordering matters: stage 3 (Whisper) drains channel2 inline before we await the
+    /// background tasks. Awaiting stage 1/2 first would deadlock because VAD blocks
+    /// writing to the full channel2 while Whisper hasn't started reading yet.
     /// </summary>
     private static async Task<string> RunPipelineAsync(
         IFormFile file,
@@ -168,8 +206,8 @@ public static class TranscriptionEndpoints
         bool translate,
         CancellationToken ct)
     {
-        // Bounded channels apply back-pressure so a slow Whisper cannot cause
-        // the audio or VAD stages to buffer unbounded data in memory.
+        // Create the two channels that connect the pipeline stages. 
+        // Both are bounded to prevent unbounded memory growth when downstream stages are slower than upstream ones.'
         var channel1 = Channel.CreateBounded<IMemoryOwner<float>>(
             new BoundedChannelOptions(AudioChannelCapacity)
             {
@@ -186,12 +224,12 @@ public static class TranscriptionEndpoints
 
         await using var fileStream = file.OpenReadStream();
 
-        // Stage 1 and 2 run concurrently in the background.
-        // Do not await them yet — we need to drain the channel first.
+        // Stages 1 and 2 run as fire-and-forget tasks; exceptions are captured and
+        // re-thrown by Task.WhenAll after stage 3 has finished draining the channel.
         var audioTask = audioProcessor.ProcessStreamToChannelAsync(fileStream, channel1.Writer, ct);
         var vadTask = vadProcessor.ProcessVadChannelAsync(channel1.Reader, channel2.Writer, ct);
 
-        // Stage 3 runs inline, streaming sentences out of channel2 as they arrive.
+        // Stage 3 runs inline so we can stream the transcript sentences as they arrive.
         var sb = new StringBuilder();
         await foreach (var sentence in transcriptor.ProcessWhisperChannelAsync(
                            channel2.Reader, languageHint, translate, ct))
@@ -200,9 +238,7 @@ public static class TranscriptionEndpoints
             sb.Append(sentence);
         }
 
-        // Await background tasks to surface any exceptions from stages 1 and 2.
-        // Both channels are already completed at this point (TryComplete was called
-        // in their respective finally blocks), so this should resolve immediately.
+        // Both channels are completed at this point; WhenAll surfaces any background exceptions.
         await Task.WhenAll(audioTask, vadTask);
 
         return sb.ToString();
@@ -211,8 +247,8 @@ public static class TranscriptionEndpoints
     // ── Response formatting ───────────────────────────────────────────────────
 
     /// <summary>
-    /// Formats the transcript according to the requested <paramref name="responseFormat"/>.
-    /// Unrecognised format values fall back to "json" to match OpenAI's behaviour.
+    /// Formats the transcript per the OpenAI <c>response_format</c> contract.
+    /// Unknown values fall back to <c>json</c>, matching OpenAI's behaviour.
     /// </summary>
     private static IResult FormatResponse(
         string? responseFormat,
@@ -224,14 +260,9 @@ public static class TranscriptionEndpoints
         {
             "text" => Results.Text(text, contentType: "text/plain; charset=utf-8"),
 
-            "verbose_json" => Results.Ok(new
-            {
-                task,
-                language,
-                text,
-            }),
+            "verbose_json" => Results.Ok(new { task, language, text }),
 
-            // "json" is the default, matches exactly what OpenAI returns.
+            // Default: plain { "text": "..." } — identical to OpenAI's response shape.
             _ => Results.Ok(new { text }),
         };
     }

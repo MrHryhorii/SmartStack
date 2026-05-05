@@ -1,5 +1,7 @@
 using STT_Runner.Services;
 using STT_Runner.Endpoints;
+using Microsoft.AspNetCore.RateLimiting;
+using System.Threading.RateLimiting;
 
 // =============================================================================
 // STT RUNNER — OpenAI-compatible local inference server (Three-Body Pipeline)
@@ -25,6 +27,45 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+// ── CORS configuration ──────────────────────────────────────────────────────
+bool allowAnyOrigin = builder.Configuration.GetValue<bool>("ServerSecurity:CorsAllowAnyOrigin", true);
+string[] allowedOrigins = builder.Configuration.GetSection("ServerSecurity:CorsAllowedOrigins").Get<string[]>() ?? [];
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("SttCorsPolicy", policy =>
+    {
+        if (allowAnyOrigin)
+        {
+            policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+        }
+        else
+        {
+            policy.WithOrigins(allowedOrigins).AllowAnyMethod().AllowAnyHeader();
+        }
+    });
+});
+
+// ── Rate limiting configuration ──────────────────────────────────────────────
+bool enableRateLimiting = builder.Configuration.GetValue<bool>("ServerSecurity:EnableRateLimiting", true);
+if (enableRateLimiting)
+{
+    int maxRequests = builder.Configuration.GetValue<int>("ServerSecurity:RateLimitMaxRequests", 100);
+    int windowSec = builder.Configuration.GetValue<int>("ServerSecurity:RateLimitWindowSeconds", 60);
+
+    builder.Services.AddRateLimiter(options =>
+    {
+        options.AddFixedWindowLimiter("SttRateLimit", opt =>
+        {
+            opt.PermitLimit = maxRequests;
+            opt.Window = TimeSpan.FromSeconds(windowSec);
+            opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
+            opt.QueueLimit = 50; // Allow some queuing beyond the immediate limit, but reject if the queue is too long.
+        });
+        options.RejectionStatusCode = 429; // Too Many Requests
+    });
+}
+
 // ── Model path resolution ─────────────────────────────────────────────────────
 string whisperPath;
 string vadPath;
@@ -44,6 +85,10 @@ catch (Exception ex)
 }
 
 // ── Dependency injection ──────────────────────────────────────────────────────
+
+// SemaphoreSlim to limit concurrent inference requests and prevent resource exhaustion.
+int maxConcurrency = builder.Configuration.GetValue<int>("ServerSecurity:MaxConcurrentInference", 2);
+builder.Services.AddSingleton(new SemaphoreSlim(maxConcurrency, maxConcurrency));
 
 // Stage 1: stateless audio normaliser — safe to share across requests.
 builder.Services.AddSingleton<AudioProcessor>();
@@ -67,12 +112,21 @@ await transcriptor.WarmUpAsync();
 // ── HTTP pipeline ─────────────────────────────────────────────────────────────
 var app = builder.Build();
 
+// CORS should be configured early to ensure all endpoints are covered, including error responses.
+app.UseCors("SttCorsPolicy");
+// Rate limiting should be configured after CORS but before authentication/authorization and endpoint mapping.
+if (enableRateLimiting)
+{
+    app.UseRateLimiter();
+}
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
+// Map the transcription endpoints, which implement the Three-Body Channel pipeline internally.
 app.MapTranscriptionEndpoints();
 
 app.Run();
