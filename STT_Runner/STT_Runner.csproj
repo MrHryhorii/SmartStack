@@ -14,12 +14,12 @@
   </PropertyGroup>
   <!-- Dependencies -->
   <ItemGroup>
+    <!-- Web API and OpenAPI/Swagger support -->
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
-    
-    <PackageReference Include="NAudio" Version="2.3.0" />
+    <!-- FFmpeg downloader and runtime -->    
+    <PackageReference Include="Xabe.FFmpeg.Downloader" Version="6.0.2" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.25.1" />
-    
     <!-- Whisper.net and its runtimes -->
     <PackageReference Include="Whisper.net" Version="1.9.0" />
     <PackageReference Include="Whisper.net.Runtime" Version="1.9.0" />

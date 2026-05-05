@@ -66,19 +66,23 @@ if (enableRateLimiting)
     });
 }
 
-// ── Model path resolution ─────────────────────────────────────────────────────
+// ── Dependency checks and initialisation ──────────────────────────────────────
 string whisperPath;
 string vadPath;
 
 try
 {
-    Console.WriteLine("[SYSTEM] Running pre-flight checks for AI models...");
+    Console.WriteLine("[SYSTEM] Running pre-flight checks for dependencies...");
+    // Check and download FFmpeg if not present, since it's required for audio preprocessing. 
+    // This also ensures the correct version is available for the host OS.
+    await FfmpegManager.EnsureInitializedAsync();
+    // Check and download AI models if not present.
     (whisperPath, vadPath) = await ModelManager.EnsureModelsExistAsync(builder.Configuration);
 }
 catch (Exception ex)
 {
     Console.ForegroundColor = ConsoleColor.Red;
-    Console.WriteLine($"[FATAL] Failed to initialise AI models: {ex.Message}");
+    Console.WriteLine($"[FATAL] Failed to initialise dependencies: {ex.Message}");
     Console.ResetColor();
     Environment.Exit(1);
     return; // Unreachable, but satisfies the compiler's definite-assignment rules.
