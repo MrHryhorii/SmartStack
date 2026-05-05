@@ -1,235 +1,200 @@
-using Microsoft.ML.OnnxRuntime;
-using Microsoft.ML.OnnxRuntime.Tensors;
-using Whisper.net;
+using System.Buffers;
+using System.Runtime.CompilerServices;
 using System.Text;
-using System.Diagnostics;
+using System.Threading.Channels;
+using Whisper.net;
 
 namespace STT_Runner.Services;
 
 /// <summary>
-/// The core engine responsible for audio inference.
-/// It utilizes Silero VAD to filter out silence and Whisper.net for Speech-to-Text and Translation.
+/// Task 3: Whisper Transcription Engine.
+///
+/// Reads VAD-segmented speech sentences from Channel 2, transcribes each one with
+/// Whisper.net, and streams the resulting text strings to the caller via IAsyncEnumerable.
+///
+/// Design notes
+/// ────────────
+/// • WhisperFactory (the heavy GGML model matrix) is loaded once at construction
+///   and reused for the lifetime of this instance.
+/// • A single WhisperProcessor is created per audio stream (not per sentence) because
+///   processor construction is expensive and the processor is not thread-safe.
+/// • StringBuilder is allocated once per stream and cleared between sentences
+///   to avoid per-sentence heap pressure.
+/// • Incoming audio rentals (IMemoryOwner<float>) are disposed immediately after
+///   each sentence is transcribed — ownership is consumed here.
+///
+/// Transcription vs. Translation
+/// ──────────────────────────────
+/// Whisper has two distinct inference tasks:
+///   • Transcription — converts speech to text in its original language.
+///   • Translation   — converts speech to English regardless of source language.
+/// These are separate decoder tasks in the model, not post-processing steps.
+/// Pass <c>translate: true</c> to activate the translation task.
 /// </summary>
-public class Transcriptor(IConfiguration config, string whisperPath, string vadPath) : IDisposable
+public sealed class Transcriptor : IDisposable
 {
-    private readonly string _whisperPath = whisperPath;
-    private readonly string _vadPath = vadPath;
-    private readonly string _defaultLanguage = config["SttSettings:Language"] ?? "auto";
-
-    // Core Whisper Factory (Holds the heavy neural network weights in memory)
-    private WhisperFactory? _whisperFactory;
-
-    // Silero VAD component
-    private InferenceSession? _vadSession;
-
-    // Silero VAD strict requirements
-    private const int SampleRate = 16000;
-    private const int WindowSize = 512;
-    private const float SpeechThreshold = 0.5f;
+    private readonly WhisperFactory _whisperFactory;
 
     /// <summary>
-    /// Loads the heavy neural network models into RAM/VRAM. 
-    /// Must be called once during application startup.
+    /// Default language used when the caller does not provide an override.
+    /// "auto" lets Whisper detect the language from the first ~30 s of audio.
     /// </summary>
-    public void Initialize()
+    private readonly string _defaultLanguage;
+
+    public Transcriptor(string modelPath, IConfiguration config)
     {
-        Console.WriteLine("[SYSTEM] Initializing Transcriptor Engine...");
+        var factoryOptions = new WhisperFactoryOptions();
 
-#if GPU_SUPPORT
-        // =========================================================
-        // GPU BUILD LOGIC
-        // =========================================================
-        var factoryOptions = new WhisperFactoryOptions { UseGpu = true };
-        string? gpuIndexStr = config["SttSettings:GpuDeviceIndex"];
+        bool useGpu = config.GetValue<bool>("SttSettings:UseGpu", false);
 
-        if (int.TryParse(gpuIndexStr, out int targetGpu))
+        if (useGpu)
         {
-            factoryOptions.GpuDevice = targetGpu;
+            factoryOptions.UseGpu = true;
+            factoryOptions.GpuDevice = config.GetValue<int>("SttSettings:GpuDeviceIndex", 0);
+
             Console.ForegroundColor = ConsoleColor.Magenta;
-            Console.WriteLine($"[HARDWARE] GPU Acceleration active. Forcing Device Index: {targetGpu}");
-            Console.ResetColor();
+            Console.WriteLine($"[HARDWARE] Whisper: GPU acceleration active (device {factoryOptions.GpuDevice}).");
         }
         else
         {
-            Console.WriteLine("[HARDWARE] GPU Acceleration active. Using default Device 0.");
+            factoryOptions.UseGpu = false;
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("[HARDWARE] Whisper: CPU-only mode.");
         }
-#else
-        // =========================================================
-        // CPU BUILD LOGIC
-        // =========================================================
-        var factoryOptions = new WhisperFactoryOptions { UseGpu = false };
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("[HARDWARE] Running in CPU-only mode (GPU support disabled by build target).");
         Console.ResetColor();
-#endif
 
-        // Load factory with appropriate options
-        _whisperFactory = WhisperFactory.FromPath(_whisperPath, factoryOptions);
+        _defaultLanguage = config.GetValue<string>("SttSettings:DefaultLanguage") ?? "auto";
 
-        // Initialize VAD session
-        var sessionOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
-        _vadSession = new InferenceSession(_vadPath, sessionOptions);
-
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("[SYSTEM] Transcriptor Engine initialized successfully.");
-        Console.ResetColor();
+        // Load the GGML weight matrix once — this is the expensive operation.
+        _whisperFactory = WhisperFactory.FromPath(modelPath, factoryOptions);
     }
 
     /// <summary>
-    /// Processes the audio array, filters silence, and returns text.
-    /// Thread-safe: Creates a lightweight WhisperProcessor per request.
-    /// </summary>
-    /// <param name="audioSamples">16kHz Mono float array.</param>
-    /// <param name="languageOverride">Optional ISO language code from the API request.</param>
-    /// <param name="isTranslation">If true, translates the audio to English.</param>
-    /// <returns>Transcribed or translated text.</returns>
-    public async Task<string> ProcessAudioAsync(float[] audioSamples, string? languageOverride = null, bool isTranslation = false)
-    {
-        if (_whisperFactory == null || _vadSession == null)
-            throw new InvalidOperationException("Transcriptor Engine is not initialized.");
-
-        // Fallback logic: 1. API Parameter -> 2. AppSettings -> 3. Auto
-        var targetLanguage = !string.IsNullOrWhiteSpace(languageOverride)
-                             ? languageOverride
-                             : (!string.IsNullOrWhiteSpace(_defaultLanguage) ? _defaultLanguage : "auto");
-
-        var activeSpeechBuffer = new List<float>();
-
-        // ==========================================================
-        // SILERO VAD V5 INFERENCE
-        // ==========================================================
-        var stateTensor = new DenseTensor<float>([2, 1, 128]);
-        stateTensor.Fill(0f);
-        var srTensor = new DenseTensor<long>(new long[] { SampleRate }, [1]);
-
-        for (int i = 0; i < audioSamples.Length - WindowSize; i += WindowSize)
-        {
-            var chunk = new float[WindowSize];
-            Array.Copy(audioSamples, i, chunk, 0, WindowSize);
-
-            var inputTensor = new DenseTensor<float>(chunk, [1, WindowSize]);
-            var inputs = new List<NamedOnnxValue>
-            {
-                NamedOnnxValue.CreateFromTensor("input", inputTensor),
-                NamedOnnxValue.CreateFromTensor("sr", srTensor),
-                NamedOnnxValue.CreateFromTensor("state", stateTensor)
-            };
-
-            using var results = _vadSession.Run(inputs);
-
-            var probTensor = results.First(v => v.Name == "output").AsTensor<float>();
-            float probability = probTensor.GetValue(0);
-
-            var nextState = (DenseTensor<float>)results.First(v => v.Name == "stateN").AsTensor<float>();
-            nextState.Buffer.Span.CopyTo(stateTensor.Buffer.Span);
-
-            if (probability >= SpeechThreshold)
-            {
-                activeSpeechBuffer.AddRange(chunk);
-            }
-        }
-
-        if (activeSpeechBuffer.Count == 0)
-        {
-            return string.Empty;
-        }
-
-        // ==========================================================
-        // WHISPER INFERENCE (Dynamically built per request)
-        // ==========================================================
-        var builder = _whisperFactory.CreateBuilder()
-            .WithLanguage(targetLanguage)
-            .WithProbabilities(); // Optional: Allows confidence score extraction if needed later
-
-        if (isTranslation)
-        {
-            builder.WithTranslate();
-        }
-
-        // The 'using' statement ensures the lightweight processor is destroyed after the request
-        using var processor = builder.Build();
-        var sb = new StringBuilder();
-
-        await foreach (var segment in processor.ProcessAsync([.. activeSpeechBuffer]))
-        {
-            sb.Append(segment.Text);
-        }
-
-        return sb.ToString().Trim();
-    }
-
-    /// <summary>
-    /// Performs a dummy inference run to pre-JIT the Whisper and VAD pipelines,
-    /// eliminating cold-start latency on the first real HTTP request.
-    /// Uses low-amplitude white noise to guarantee VAD passes audio through to Whisper.
+    /// Primes Whisper before the first real request by running a full inference pass
+    /// on dummy audio. On GPU backends this forces CUDA/Vulkan shader compilation and
+    /// cuBLAS plan caching, eliminating the latency spike on the first real sentence.
+    ///
+    /// Why 3 seconds of silence instead of 1?
+    /// A longer dummy clip exercises more of the encoder's attention layers and ensures
+    /// the GPU driver pre-compiles all kernel variants Whisper actually uses during
+    /// decoding. One second of silence often misses the decoder warmup path entirely.
+    ///
+    /// Both inference tasks (transcription and translation) are warmed up independently
+    /// because they compile different decoder kernels on the GPU.
     /// </summary>
     public async Task WarmUpAsync()
     {
-        // Sanity check to prevent null reference exceptions during warmup if Initialize() wasn't called.
-        if (_whisperFactory == null || _vadSession == null)
-            throw new InvalidOperationException("Cannot warm up: Transcriptor Engine is not initialized.");
-        // Log the start of the warmup process to give users feedback during startup, 
-        // especially since GPU shader caching can take several seconds.
-        Console.ForegroundColor = ConsoleColor.Cyan;
-        Console.WriteLine("[SYSTEM] Warming up inference pipelines...");
-        Console.ResetColor();
-        // We run multiple iterations for GPU builds to ensure Vulkan shader pipelines are fully cached, 
-        // while a single pass is sufficient for CPU-only builds.
-#if GPU_SUPPORT
-        const int WarmupIterations = 3; // Vulkan shader pipeline caching
-#else
-        const int WarmupIterations = 1; // JIT + ONNX kernel init is single-shot on CPU
-#endif
-        // We use a fixed seed for reproducibility, but the actual audio content doesn't matter as long as it's non-silent.
-        var stopwatch = Stopwatch.StartNew();
-        // Generate 1 second of low-amplitude white noise at 16kHz to ensure VAD detects "speech" and passes it to Whisper.
-        var rng = new Random(42);
-        var warmupAudio = new float[SampleRate];
-        for (int i = 0; i < warmupAudio.Length; i++)
-            warmupAudio[i] = (float)(rng.NextDouble() * 0.1 - 0.05);
-        // Run the warmup iterations
-        for (int iteration = 1; iteration <= WarmupIterations; iteration++)
+        Console.WriteLine("[SYSTEM] Warming up Whisper...");
+
+        const int dummySamples = 16_000 * 3; // 3 seconds of silence
+        float[] dummyAudio = ArrayPool<float>.Shared.Rent(dummySamples);
+        try
         {
-            Console.WriteLine($"[SYSTEM] Warmup pass {iteration}/{WarmupIterations}...");
+            // ArrayPool may return a dirty buffer — zero it so Whisper sees clean silence.
+            dummyAudio.AsSpan(0, dummySamples).Clear();
 
-            // --- VAD warmup ---
-            var stateTensor = new DenseTensor<float>([2, 1, 128]);
-            stateTensor.Fill(0f);
-            var srTensor = new DenseTensor<long>(new long[] { SampleRate }, [1]);
-            var chunk = new float[WindowSize];
-            Array.Copy(warmupAudio, chunk, WindowSize);
+            var dummyMemory = dummyAudio.AsMemory(0, dummySamples);
 
-            var inputs = new List<NamedOnnxValue>
-            {
-                NamedOnnxValue.CreateFromTensor("input", new DenseTensor<float>(chunk, [1, WindowSize])),
-                NamedOnnxValue.CreateFromTensor("sr", srTensor),
-                NamedOnnxValue.CreateFromTensor("state", stateTensor)
-            };
-            using var _ = _vadSession.Run(inputs);
-
-            // --- Whisper warmup ---
-            using var processor = _whisperFactory
-                .CreateBuilder()
-                .WithLanguage(_defaultLanguage ?? "auto")
+            // Warm up the transcription decoder path.
+            using var transcriptionProcessor = _whisperFactory.CreateBuilder()
+                .WithLanguage(_defaultLanguage)
+                .WithTemperature(0.0f)
                 .Build();
+            await foreach (var _ in transcriptionProcessor.ProcessAsync(dummyMemory)) { }
 
-            await foreach (var __ in processor.ProcessAsync(warmupAudio)) { }
+            // Warm up the translation decoder path — different GPU kernels are involved.
+            using var translationProcessor = _whisperFactory.CreateBuilder()
+                .WithLanguage(_defaultLanguage)
+                .WithTranslate()
+                .WithTemperature(0.0f)
+                .Build();
+            await foreach (var _ in translationProcessor.ProcessAsync(dummyMemory)) { }
         }
-        // Stop the timer after all iterations are complete to get an accurate measure of total warmup time.
-        stopwatch.Stop();
-        // Log the total warmup time and the number of iterations to give users a clear understanding of the startup process.
+        finally
+        {
+            ArrayPool<float>.Shared.Return(dummyAudio);
+        }
+
         Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine($"[SYSTEM] All pipelines warmed up ({WarmupIterations} pass(es)) in {stopwatch.Elapsed.TotalMilliseconds:F0} ms. Server ready.");
+        Console.WriteLine("[SYSTEM] Whisper warm-up complete (transcription + translation paths).");
         Console.ResetColor();
     }
 
     /// <summary>
-    /// Cleans up unmanaged resources and ONNX sessions.
+    /// Consumes VAD-segmented sentences from <paramref name="vadChannel"/> and yields
+    /// each transcribed (or translated) sentence as a string the moment it is ready,
+    /// enabling real-time streaming to the caller.
+    ///
+    /// The method disposes every <see cref="IMemoryOwner{T}"/> it dequeues — ownership
+    /// is fully transferred from VadProcessor to this method.
     /// </summary>
+    /// <param name="vadChannel">
+    ///     Channel of <c>(IMemoryOwner&lt;float&gt; Owner, int Length)</c> tuples produced
+    ///     by <see cref="VadProcessor"/>.
+    /// </param>
+    /// <param name="languageHint">
+    ///     BCP-47 source language code (e.g. "en", "uk") or "auto" for automatic detection.
+    ///     For translation, this is a source language hint — the output is always English.
+    /// </param>
+    /// <param name="translate">
+    ///     <c>true</c>  — activates Whisper's translation task: speech → English text.<br/>
+    ///     <c>false</c> — activates Whisper's transcription task: speech → same-language text.
+    /// </param>
+    /// <param name="ct">Cancellation token.</param>
+    public async IAsyncEnumerable<string> ProcessWhisperChannelAsync(
+        ChannelReader<(IMemoryOwner<float> Owner, int Length)> vadChannel,
+        string? languageHint = null,
+        bool translate = false,
+        [EnumeratorCancellation] CancellationToken ct = default)
+    {
+        string sourceLanguage = string.IsNullOrWhiteSpace(languageHint)
+            ? _defaultLanguage
+            : languageHint;
+
+        var builder = _whisperFactory.CreateBuilder()
+            .WithLanguage(sourceLanguage)
+            .WithTemperature(0.0f); // Deterministic output; avoids hallucination loops.
+
+        // WithTranslate() switches the decoder task from transcription to translation.
+        // This is a fundamentally different inference path — not a post-processing step.
+        if (translate)
+            builder = builder.WithTranslate();
+
+        // One processor for the entire audio stream — construction is expensive.
+        using var processor = builder.Build();
+
+        // Reused across sentences to avoid per-sentence StringBuilder allocation.
+        var sb = new StringBuilder();
+
+        await foreach (var (owner, length) in vadChannel.ReadAllAsync(ct))
+        {
+            // We own this rental; dispose it as soon as transcription is done.
+            using (owner)
+            {
+                sb.Clear();
+
+                // Slice to the exact valid sample count reported by VadProcessor.
+                ReadOnlyMemory<float> audioSlice = owner.Memory[..length];
+
+                await foreach (var segment in processor.ProcessAsync(audioSlice, ct))
+                {
+                    sb.Append(segment.Text);
+                }
+            }
+            // owner is returned to MemoryPool here — safe to yield after the using block.
+
+            string sentence = sb.ToString().Trim();
+
+            // Whisper occasionally emits empty strings or filler tokens on near-silence;
+            // discard them to keep the output stream clean.
+            if (!string.IsNullOrWhiteSpace(sentence))
+                yield return sentence;
+        }
+    }
+
     public void Dispose()
     {
         _whisperFactory?.Dispose();
-        _vadSession?.Dispose();
         GC.SuppressFinalize(this);
     }
 }

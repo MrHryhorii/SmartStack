@@ -1,18 +1,18 @@
 using STT_Runner.Services;
 using STT_Runner.Endpoints;
 
-// =================================================================
-// STT RUNNER - OPENAI API COMPATIBLE LOCAL SERVER
-// =================================================================
-// This is the entry point of the application. It configures the Web API,
-// ensures AI models are downloaded and loaded into memory, and maps
-// the OpenAI-compatible endpoints for speech-to-text processing.
+// =============================================================================
+// STT RUNNER — OpenAI-compatible local inference server (Three-Body Pipeline)
+//
+// Architecture:
+//   AudioProcessor  →  [Channel<IMemoryOwner<float>>]
+//   VadProcessor    →  [Channel<(IMemoryOwner<float>, int)>]
+//   Transcriptor    →  IAsyncEnumerable<string>  →  HTTP response
+// =============================================================================
 
 var builder = WebApplication.CreateBuilder(args);
 
-// -----------------------------------------------------------------
-// SWAGGER & API DOCUMENTATION
-// -----------------------------------------------------------------
+// ── Swagger / API documentation ───────────────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -20,66 +20,59 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Local STT API",
         Version = "v1",
-        Description = "A drop-in, local replacement for the OpenAI Whisper API. Powered by Whisper.net and Silero VAD."
+        Description = "A drop-in local replacement for the OpenAI Whisper API " +
+                      "built on the Three-Body Channel pipeline.",
     });
 });
 
-// -----------------------------------------------------------------
-// PRE-FLIGHT CHECKS & MODEL INITIALIZATION
-// -----------------------------------------------------------------
-// Before starting the HTTP server, we must ensure the .onnx (VAD) 
-// and .bin (Whisper) models exist on disk.
-string whisperPath = string.Empty;
-string vadPath = string.Empty;
+// ── Model path resolution ─────────────────────────────────────────────────────
+string whisperPath;
+string vadPath;
 
 try
 {
     Console.WriteLine("[SYSTEM] Running pre-flight checks for AI models...");
-
-    // ModelManager will verify file existence and auto-download them from 
-    // HuggingFace if they are missing, preventing crash-loops in Docker.
     (whisperPath, vadPath) = await ModelManager.EnsureModelsExistAsync(builder.Configuration);
 }
 catch (Exception ex)
 {
     Console.ForegroundColor = ConsoleColor.Red;
-    Console.WriteLine($"[FATAL] Failed to initialize AI models: {ex.Message}");
+    Console.WriteLine($"[FATAL] Failed to initialise AI models: {ex.Message}");
     Console.ResetColor();
-
-    // Hard exit. The server cannot function without its neural networks.
     Environment.Exit(1);
+    return; // Unreachable, but satisfies the compiler's definite-assignment rules.
 }
 
-// -----------------------------------------------------------------
-// DEPENDENCY INJECTION (DI) CONTAINER
-// -----------------------------------------------------------------
+// ── Dependency injection ──────────────────────────────────────────────────────
 
-// AudioProcessor handles resampling and mono-conversion.
-// It holds no state, so it's safe to register as a Singleton.
+// Stage 1: stateless audio normaliser — safe to share across requests.
 builder.Services.AddSingleton<AudioProcessor>();
 
-// Transcriptor is the core engine. It loads the heavy Whisper model into 
-// RAM/VRAM. We MUST register it as a Singleton so the model is only loaded 
-// once during startup, rather than on every HTTP request.
-var transcriptor = new Transcriptor(builder.Configuration, whisperPath, vadPath);
-transcriptor.Initialize(); // Unpack models into memory
-await transcriptor.WarmUpAsync();  // Run a dummy inference to ensure everything is loaded and ready before accepting requests
+// Stage 2: holds a single ONNX Runtime session; ONNX inference is thread-safe.
+var vadProcessor = new VadProcessor(vadPath);
+builder.Services.AddSingleton(vadProcessor);
+
+// Stage 3: holds the GGML weight matrix in RAM/VRAM; WhisperFactory is thread-safe,
+// but each ProcessWhisperChannelAsync call creates its own WhisperProcessor internally.
+var transcriptor = new Transcriptor(whisperPath, builder.Configuration);
 builder.Services.AddSingleton(transcriptor);
 
-// -----------------------------------------------------------------
-// SERVER BUILD & PIPELINE CONFIGURATION
-// -----------------------------------------------------------------
+// ── Model warm-up ─────────────────────────────────────────────────────────────
+// Warm up both models before accepting traffic so the first real request is fast.
+// VAD: triggers ONNX Runtime JIT graph compilation.
+// Whisper: triggers CUDA/Vulkan shader compilation and cuBLAS plan caching.
+vadProcessor.WarmUp();
+await transcriptor.WarmUpAsync();
+
+// ── HTTP pipeline ─────────────────────────────────────────────────────────────
 var app = builder.Build();
 
-// Enable Swagger UI if running in development mode
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
 }
 
-// Map the transcription and translation endpoints to the application pipeline
 app.MapTranscriptionEndpoints();
 
-// Start accepting HTTP requests
 app.Run();

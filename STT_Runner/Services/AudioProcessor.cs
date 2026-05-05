@@ -1,83 +1,109 @@
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
+using System.Buffers;
+using System.Threading.Channels;
 
 namespace STT_Runner.Services;
 
 /// <summary>
-/// Handles incoming audio files, normalizes them, and converts them to the 
-/// 16kHz Mono float array format required by Whisper and Silero VAD models.
+/// Task 1: Smart Audio Preprocessing Pipeline.
+///
+/// Accepts any audio stream (file or network), normalises it to 16 kHz mono float PCM,
+/// then writes fixed-size 512-sample chunks to a channel for the Silero VAD to consume.
+///
+/// Allocation strategy
+/// ───────────────────
+/// • One ArrayPool<float> rental for the NAudio read buffer — returned after the loop.
+/// • Each outgoing chunk is a MemoryPool<float> rental whose ownership is transferred
+///   to the channel consumer (VadProcessor), which is responsible for disposing it.
+/// • No per-chunk heap allocations inside the hot loop.
+///
+/// File-input trade-off
+/// ────────────────────
+/// NAudio's AudioFileReader needs a seekable file path, so streaming input is buffered
+/// to a temp file first. For real-time STT this adds latency that is acceptable; if true
+/// streaming is needed, replace AudioFileReader with a streaming codec pipeline.
 /// </summary>
 public class AudioProcessor
 {
-    private const int TargetSampleRate = 16000;
+    private const int TargetSampleRate = 16_000;
 
     /// <summary>
-    /// Reads an uploaded audio file, converts it to Mono, resamples to 16kHz, 
-    /// and extracts the raw float samples for neural network inference.
+    /// 512 samples @ 16 kHz = 32 ms per frame — the standard Silero VAD window size.
     /// </summary>
-    /// <param name="file">The audio file uploaded via HTTP multipart form data.</param>
-    /// <returns>A normalized array of floats representing the audio waveform.</returns>
-    public async Task<float[]> ProcessIncomingAudioAsync(IFormFile file)
-    {
-        // Save the incoming stream to a temporary file.
-        // NAudio's AudioFileReader works best with physical files rather than memory streams, 
-        // as it needs to probe the file headers to determine the codec (MP3, WAV, etc.).
-        string tempPath = Path.GetTempFileName();
+    private const int VadChunkSize = 512;
 
+    /// <summary>
+    /// Reads <paramref name="inputStream"/>, converts it to 16 kHz mono float PCM,
+    /// and writes <see cref="VadChunkSize"/>-sample chunks to <paramref name="outputChannel"/>.
+    /// The last chunk is zero-padded when the stream length is not an exact multiple.
+    /// Completes the channel writer when done (or on error) so downstream consumers can finish.
+    /// </summary>
+    public async Task ProcessStreamToChannelAsync(
+        Stream inputStream,
+        ChannelWriter<IMemoryOwner<float>> outputChannel,
+        CancellationToken ct = default)
+    {
+        string tempPath = Path.GetTempFileName();
         try
         {
-            using (var stream = new FileStream(tempPath, FileMode.Create))
+            // ── 1. Buffer to disk so NAudio can seek ──────────────────────────────
+            await using (var fs = new FileStream(
+                             tempPath, FileMode.Create, FileAccess.Write,
+                             FileShare.None, bufferSize: 65_536, useAsync: true))
             {
-                await file.CopyToAsync(stream);
+                await inputStream.CopyToAsync(fs, ct);
             }
 
-            // Open the file with auto-format detection
+            // ── 2. Open, downmix, resample ────────────────────────────────────────
             using var reader = new AudioFileReader(tempPath);
             ISampleProvider provider = reader;
 
-            // Downmix to Mono if the audio has multiple channels
-            if (reader.WaveFormat.Channels == 2)
+            provider = reader.WaveFormat.Channels switch
             {
-                Console.WriteLine("[AUDIO] Stereo file detected. Downmixing to mono...");
-                provider = new StereoToMonoSampleProvider(provider)
-                {
-                    LeftVolume = 0.5f,
-                    RightVolume = 0.5f
-                };
-            }
-            else if (reader.WaveFormat.Channels > 2)
-            {
-                provider = provider.ToMono(); // Handles 5.1 or 7.1 surround
-            }
+                1 => provider,
+                2 => new StereoToMonoSampleProvider(provider) { LeftVolume = 0.5f, RightVolume = 0.5f },
+                _ => provider.ToMono(),   // > 2 channels
+            };
 
-            // Resample to 16000 Hz if necessary
             if (provider.WaveFormat.SampleRate != TargetSampleRate)
-            {
-                Console.WriteLine($"[AUDIO] Resampling from {provider.WaveFormat.SampleRate}Hz to {TargetSampleRate}Hz...");
                 provider = new WdlResamplingSampleProvider(provider, TargetSampleRate);
-            }
 
-            // Read all processed samples into memory
-            // A 1-minute audio file at 16kHz float takes exactly 3.84 MB of RAM.
-            var audioSamples = new List<float>();
-            float[] buffer = new float[TargetSampleRate]; // 1-second read buffer
-            int read;
-
-            while ((read = provider.Read(buffer, 0, buffer.Length)) > 0)
+            // ── 3. Hot loop — one rental for the entire stream ────────────────────
+            // Rent once; each iteration copies from here into an individually rented
+            // IMemoryOwner<float> whose lifetime is owned by the channel consumer.
+            float[] readBuffer = ArrayPool<float>.Shared.Rent(VadChunkSize);
+            try
             {
-                // Only take the actual read amount (important for the last chunk)
-                audioSamples.AddRange(new ReadOnlySpan<float>(buffer, 0, read).ToArray());
-            }
+                int samplesRead;
+                while (!ct.IsCancellationRequested &&
+                       (samplesRead = provider.Read(readBuffer, 0, VadChunkSize)) > 0)
+                {
+                    // Rent a pooled owner; consumer (VadProcessor) disposes it.
+                    IMemoryOwner<float> owner = MemoryPool<float>.Shared.Rent(VadChunkSize);
+                    Span<float> dest = owner.Memory.Span[..VadChunkSize];
 
-            return [.. audioSamples];
+                    readBuffer.AsSpan(0, samplesRead).CopyTo(dest);
+
+                    // Zero-pad the tail when the stream ends mid-frame.
+                    if (samplesRead < VadChunkSize)
+                        dest[samplesRead..].Clear();
+
+                    await outputChannel.WriteAsync(owner, ct);
+                }
+            }
+            finally
+            {
+                ArrayPool<float>.Shared.Return(readBuffer);
+            }
         }
         finally
         {
-            // Cleanup: Always delete the temporary file to prevent disk space leaks
             if (File.Exists(tempPath))
-            {
                 File.Delete(tempPath);
-            }
+
+            // Signal to VAD that no more chunks are coming.
+            outputChannel.TryComplete();
         }
     }
 }
