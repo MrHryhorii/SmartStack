@@ -1,6 +1,6 @@
 # 🌸 Tsubaki TTS Engine (ONNX Runner)
 
-Tsubaki TTS Engine is a blazingly fast, portable, and production-grade Text-to-Speech server written in **C# (.NET 8)**. It leverages the power of **Piper (VITS)** neural networks and **OpenVoice** to generate high-fidelity audio with support for instant voice cloning and real-time DSP effects.
+Tsubaki TTS Engine is a blazingly fast, portable, and production-grade Text-to-Speech server written in **C# (.NET 10)**. It leverages the power of **Piper (VITS)** neural networks and **OpenVoice** to generate high-fidelity audio with support for instant voice cloning and real-time DSP effects.
 
 ---
 
@@ -294,11 +294,25 @@ Defines the blending coefficient (Latent Space Blending) between the base Piper 
 
 ---
 
-### 🚫 Advanced Modules
+### 🧠 Low-Level ONNX Optimization (`OnnxSettings`)
 
-- **`OnnxSettings`** — Designed for advanced users testing highly specific experimental models. Leave at defaults unless you know exactly what you are doing.
+This section provides low-level control over the internal MLAS (Microsoft Linear Algebra Subprograms) math engine, heavily optimizing CPU execution. The defaults are already configured as the "golden standard" for cross-platform hardware acceleration.
 
-- **`StreamSettings`** — Keep `"EnableStreaming": true`. Streaming audio chunks directly to the client is always faster and less resource-intensive than forcing the server to build and hold a complete audio file in memory before sending. There is no reason to disable this.
+| Parameter             | Description                                                                                                                                                                                                                             |
+| :-------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IntraOpNumThreads`   | Threads used for matrix math _within_ a single neural network node. `0` enables smart auto-detection of all available physical cores (Highly Recommended). To manually constrain CPU usage, set this to your exact physical core count. |
+| `InterOpNumThreads`   | Parallelization _across_ different graph nodes. For TTS (which is strictly sequential), this must **always be `1`**. Higher values cause thread thrashing and micro-stutters.                                                           |
+| `EnableMemoryPattern` | Pre-allocates memory blocks during model load rather than dynamically during inference. Decreases latency per request by 5-10%.                                                                                                         |
+| `EnableCpuMemArena`   | Utilizes an isolated memory arena for ONNX tensors. **Critical for .NET:** Bypasses the C# Garbage Collector entirely during audio generation, eliminating GC-induced freezes on long texts.                                            |
+| `ExecutionMode`       | `"Sequential"` is the safest and fastest mode for Piper and OpenVoice architectures, as they do not benefit from parallel graph execution.                                                                                              |
+
+> **⚡ Concurrency & CPU Bottlenecks**
+> The TTS engine and API are fully thread-safe and natively support concurrent HTTP requests. However, by default, the engine is optimized for maximum single-request speed (utilizing all cores via `IntraOpNumThreads: 0`). Hitting the CPU with multiple simultaneous requests in this mode will cause severe CPU context-switching, scaling down generation speed linearly.
+>
+> **Handling High-Load Environments:**
+>
+> - **Option A (Lowest Latency):** Keep defaults and process requests sequentially using the built-in `RateLimitSettings` or a message queue (e.g., RabbitMQ, Redis).
+> - **Option B (Maximum Concurrency):** To optimize for parallel processing, lower `IntraOpNumThreads` to `1` or `2`. This restricts each request to fewer cores, allowing the CPU to smoothly handle multiple simultaneous users without thread thrashing.
 
 ---
 

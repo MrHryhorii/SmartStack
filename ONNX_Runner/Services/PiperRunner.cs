@@ -76,9 +76,9 @@ public class PiperRunner : IDisposable
         }
         Console.WriteLine("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
 
-// ====================================================================
-// CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)
-// ====================================================================
+        // ====================================================================
+        // CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)
+        // ====================================================================
 #else
         Console.WriteLine("[HARDWARE] Lightweight CPU-only build detected. Skipping GPU checks.");
 #endif
