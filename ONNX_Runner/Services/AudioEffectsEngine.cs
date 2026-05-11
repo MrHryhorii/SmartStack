@@ -57,6 +57,31 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private float _lofiPhase;
     private float _flutterPhase;
 
+    // Glitch Freeze — pre-allocated capture ring (power-of-2 for mask trick)
+    // 4096 samples: ~93ms at 44.1kHz, ~256ms at 16kHz — plenty for a 30ms loop window
+    private readonly float[] _glitchCapture = new float[4096];
+    private const int GlitchCaptureMask = 4095;
+    private int _glitchWritePos;
+
+    // State machine
+    private bool _glitchFrozen;
+    private int _glitchLoopStart;   // ring index where the frozen loop begins
+    private int _glitchLoopLen;     // loop window length in samples (~30ms)
+    private int _glitchPlayPos;     // current playback position within the loop [0, loopLen)
+    private int _glitchRemain;      // samples left before thaw
+    private int _glitchCooldown;    // samples until next trigger is allowed
+
+    // Vowel detector
+    private float _glitchEnergy;    // asymmetric envelope follower on x²
+    private float _glitchZcr;       // smoothed zero-crossing rate (crossings / sample)
+    private float _glitchPrevSample;
+    private int _glitchZcrCount;
+    private int _glitchZcrWindowLen;
+    private int _glitchZcrWindowPos;
+
+    // intensity → freeze duration (not dry/wet — see ApplyEffect override below)
+    private float _glitchIntensity;
+
     /// <summary>
     /// Resets all internal DSP states and re-seeds the noise generator.
     /// Must be called before each new TTS request to prevent audio bleed-over
@@ -75,6 +100,17 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _ringPhase = _flangerPhase = _chorusPhase = _chorusPhase2 = _bcPhase = _bcHold = _lofiPhase = _flutterPhase = 0f;
 
         _current = VoiceEffectType.None;
+
+        _glitchFrozen = false;
+        _glitchCooldown = 0;
+        _glitchEnergy = _glitchZcr = _glitchPrevSample = 0f;
+        _glitchZcrCount = 0;
+        Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
+        _glitchWritePos = 0;
+
+        _glitchZcrWindowLen = 0;
+        _glitchZcrWindowPos = 0;
+        _glitchLoopLen = 0;
     }
 
     /// <summary>
@@ -107,6 +143,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             _current = type;
         }
 
+        // NeuralStutter redefines intensity as freeze duration (not dry/wet).
+        // Store it, then force mix = 1.0 so the single blend point passes output unchanged.
+        if (type == VoiceEffectType.NeuralStutter)
+        {
+            _glitchIntensity = mix;
+            mix = 1.0f;
+        }
+
         // Hoist to locals to help the JIT avoid repeated field dereferences in the hot loop
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
@@ -135,9 +179,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             // No mix scaling occurs inside the effect methods.
             float wet = Process(type, x);
 
-            // DC blocking removes inaudible low-frequency offsets introduced by
-            // asymmetric distortion algorithms (ShockleyDiode, SoftClip)
-            wet = _dcBlocker.Process(wet);
+            // DC blocking on the wet path prevents low-frequency buildup from feedback and non-linearities,
+            // which can cause muddy sound and excessive CPU usage from denormal floats.
+            wet = type != VoiceEffectType.NeuralStutter ? _dcBlocker.Process(wet) : wet;
 
             // --- Single Mix Point ---
             // All dry/wet blending is consolidated here.
@@ -193,6 +237,20 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(100f), 0.707f);
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3800f), 0.5f);
                 break;
+            case VoiceEffectType.NeuralStutter:
+                // No EQ: we want the raw signal for accurate phonetic capture.
+                _glitchFrozen = false;
+                _glitchCooldown = 0;
+                _glitchEnergy = 0f;
+                _glitchZcr = 0f;
+                _glitchPrevSample = 0f;
+                _glitchZcrCount = 0;
+                _glitchZcrWindowLen = Math.Max(1, _sampleRate / 100);    // 10ms estimation window
+                _glitchZcrWindowPos = _glitchZcrWindowLen;
+                _glitchLoopLen = Math.Max(1, _sampleRate * 30 / 1000);   // 30ms loop — ~2 pitch periods
+                Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
+                _glitchWritePos = 0;
+                break;
         }
     }
 
@@ -214,6 +272,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Flanger => Flanger(x),
         VoiceEffectType.Chorus => Chorus(x),
         VoiceEffectType.LoFiTape => LoFiTape(x),
+        VoiceEffectType.NeuralStutter => NeuralStutter(x),
         _ => x
     };
 
@@ -375,5 +434,108 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // breathing noise floor that responds to the "tension" of the tape.
         float tapeHiss = _noise.NextPink() * (0.012f + _thermal.State * 0.005f);
         return (pitchWarped + tapeHiss) * 0.9f;
+    }
+
+    /// <summary>
+    /// Digital freeze glitch: Captures a short piece of sound (like a vowel) and loops it.
+    /// This makes the AI sound like it is lagging or crashing.
+    /// </summary>
+    private float NeuralStutter(float x)
+    {
+        // --- Capture Ring Buffer ---
+        // Always record the live sound so we have a fresh piece ready to freeze.
+        _glitchCapture[_glitchWritePos] = x;
+        _glitchWritePos = (_glitchWritePos + 1) & GlitchCaptureMask;
+
+        // --- Vowel Detector ---
+        // Calculate voice volume (energy). Quick to rise, slow to fall.
+        float xSq = x * x;
+        _glitchEnergy += (xSq > _glitchEnergy ? 0.9f : 0.001f) * (xSq - _glitchEnergy);
+
+        // Count how often the sound wave crosses zero (polarity change).
+        // Vowels are smooth (low count), consonants are noisy (high count).
+        if ((x >= 0f) != (_glitchPrevSample >= 0f)) _glitchZcrCount++;
+        _glitchPrevSample = x;
+
+        // Check the detector every window (~10ms) to save CPU and sound natural.
+        if (--_glitchZcrWindowPos <= 0)
+        {
+            // Calculate smoothed zero-crossing rate.
+            float rawZcr = (float)_glitchZcrCount / _glitchZcrWindowLen;
+            _glitchZcr = 0.85f * _glitchZcr + 0.15f * rawZcr;
+
+            // Reset window counters.
+            _glitchZcrCount = 0;
+            _glitchZcrWindowPos = _glitchZcrWindowLen;
+
+            // Trigger the glitch randomly if the voice is loud and smooth (vowel).
+            if (!_glitchFrozen && _glitchCooldown <= 0
+                && _glitchEnergy > 0.004f       // Voice is loud enough
+                && _glitchZcr < 0.08f           // Voice is a smooth vowel, not a harsh consonant
+                && _noise.NextWhite() > 0.48f)  // Random chance to trigger (prevents it from happening on every vowel)
+            {
+                _glitchFrozen = true;
+
+                // Duration is based on intensity (from 50ms up to 600ms).
+                _glitchRemain = (int)((50f + _glitchIntensity * 550f) * _sampleRate / 1000f);
+
+                // Find where our captured sound loop starts in the ring buffer.
+                _glitchLoopStart = (_glitchWritePos - _glitchLoopLen + _glitchCapture.Length) & GlitchCaptureMask;
+                _glitchPlayPos = 0;
+
+                // Set a cooldown so it doesn't glitch constantly. 
+                // Cooldown = freeze time + 200ms of safety time.
+                _glitchCooldown = _glitchRemain + (_sampleRate / 5);
+            }
+        }
+
+        // Always reduce the cooldown timer.
+        if (_glitchCooldown > 0) _glitchCooldown--;
+
+        // --- Normal State Output ---
+        // If not glitching, just return the normal live sound.
+        if (!_glitchFrozen) return x;
+
+
+        // --- Frozen State Output ---
+        // Dynamic fade length (2 milliseconds), works on any sample rate.
+        int fadeLen = _sampleRate * 2 / 1000;
+
+        // If the freeze time is over, stop the glitch.
+        if (--_glitchRemain <= 0)
+        {
+            _glitchFrozen = false;
+            return x;
+        }
+
+        // Read the frozen sound from the buffer.
+        float frozen = _glitchCapture[(_glitchLoopStart + _glitchPlayPos) & GlitchCaptureMask];
+
+        // Add a robotic/digital bite ONLY to the frozen sound.
+        frozen = Dsp.SoftClip(frozen * 1.15f);
+
+        // Smooth the start and end of the loop so it doesn't click like a machine gun.
+        int samplesLeftInLoop = _glitchLoopLen - _glitchPlayPos;
+        if (samplesLeftInLoop < fadeLen)
+        {
+            frozen *= (float)samplesLeftInLoop / fadeLen; // Fade out at the end of the loop
+        }
+        else if (_glitchPlayPos < fadeLen)
+        {
+            frozen *= (float)_glitchPlayPos / fadeLen;    // Fade in at the start of the loop
+        }
+
+        // Move the loop player forward.
+        _glitchPlayPos = (_glitchPlayPos + 1) % _glitchLoopLen;
+
+        // --- Exit Crossfade ---
+        // Smoothly blend the frozen sound back into the live sound at the very end of the glitch.
+        if (_glitchRemain < fadeLen)
+        {
+            float t = (float)_glitchRemain / fadeLen; // Goes from 1.0 down to 0.0
+            frozen = frozen * t + x * (1f - t);       // Mix frozen and live sound safely
+        }
+
+        return frozen;
     }
 }

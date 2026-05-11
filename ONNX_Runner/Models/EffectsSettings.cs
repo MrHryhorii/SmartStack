@@ -26,7 +26,10 @@ public enum VoiceEffectType
     Chorus,
 
     /// <summary> Simulates the characteristic warmth and coloration of analog cassette tape. </summary>
-    LoFiTape
+    LoFiTape,
+
+    /// <summary>Glitch effect that randomly freezes and repeats small segments of audio, creating a stuttering, robotic sound. Triggered by loud, smooth vowel sounds to add rhythmic interest without overwhelming the original voice.</summary>
+    NeuralStutter
 }
 
 /// <summary>

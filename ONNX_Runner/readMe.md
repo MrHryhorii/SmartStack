@@ -332,16 +332,17 @@ Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect p
 
 ### Available Voice Effects (`DefaultEffect`)
 
-| Value           | Description                                                    |
-| --------------- | -------------------------------------------------------------- |
-| `None`          | Bypass — clean audio                                           |
-| `Telephone`     | Lo-Fi equalization with hard transistor clipping               |
-| `Overdrive`     | Warm tube saturation and cubic waveshaping distortion          |
-| `Bitcrusher`    | Retro 8-bit / Arcade style sample rate decimation              |
-| `RingModulator` | Classic Robot / Dalek metallic effect                          |
-| `Flanger`       | Modulated short delay with heavy feedback                      |
-| `Chorus`        | Thick, multi-voice ensemble effect                             |
-| `LoFiTape`      | Simulates the warmth and coloration of an analog cassette tape |
+| Value           | Description                                                                                              |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| `None`          | Bypass — clean audio                                                                                     |
+| `Telephone`     | Lo-Fi equalization with hard transistor clipping                                                         |
+| `Overdrive`     | Warm tube saturation and cubic waveshaping distortion                                                    |
+| `Bitcrusher`    | Retro 8-bit / Arcade style sample rate decimation                                                        |
+| `RingModulator` | Classic Robot / Dalek metallic effect                                                                    |
+| `Flanger`       | Modulated short delay with heavy feedback                                                                |
+| `Chorus`        | Thick, multi-voice ensemble effect                                                                       |
+| `LoFiTape`      | Simulates the warmth and coloration of an analog cassette tape                                           |
+| `NeuralStutter` | Simulates a cognitive malfunction in the AI's neural core by intelligently looping tonal voice fragments |
 
 ### Available Spatial Environments (`DefaultEnvironment`)
 
