@@ -264,9 +264,57 @@ The `PhonemizerSettings` block controls how the server handles foreign words enc
 
 - **`EffectsSettings`** — Standard OpenAI API clients (like SillyTavern or AutoGen) do not support sending custom DSP parameters in their requests. This section allows you to define a `"DefaultEffect"` that the server will automatically apply to all incoming API requests unless explicitly overridden by a custom client (like the built-in web dashboard). See the [Default Effects & Environments](#️-default-effects--environments) section for all available values.
 
-- **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter) to the generated speech, ensuring high-frequency noise reduction. This is heavily recommended if you are using a lower-quality Piper model or a tricky voice clone.
+- **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter) to remove high-frequency noise, and allows setting **server-wide default pitch and volume** applied to every request. This is especially useful when Tsubaki is used as a personal AI assistant backend — you can tune the voice character once in the config and every client, including standard OpenAI-compatible ones that cannot send custom parameters, will automatically receive the adjusted audio.
 
 - **`ClonerSettings`** — Controls the OpenVoice cloning behavior. It is best not to touch these. Increasing the intensity often yields a caricature-like exaggeration of the voice characteristics, while decreasing it simply reverts the audio back to the default base model's voice.
+
+---
+
+### 🎵 Default Pitch & Volume (`DspSettings`)
+
+```json
+"DspSettings": {
+  "EnableLowPassFilter": true,
+  "LowPassCutoffFrequency": 11000.0,
+  "LowPassQFactor": 0.577,
+  "DefaultPitch": 1.0,
+  "DefaultVolume": 1.0
+}
+```
+
+#### 🎵 DefaultPitch
+
+Sets the server-wide pitch shift applied to all generated audio.
+
+| Value  | Effect                  |
+| ------ | ----------------------- |
+| `0.5`  | One octave lower        |
+| `0.85` | Noticeably deeper voice |
+| `1.0`  | Original (no change)    |
+| `1.15` | Slightly higher voice   |
+| `2.0`  | One octave higher       |
+
+- **Why use it?** Standard OpenAI-compatible clients (SillyTavern, AutoGen, LangChain) have no way to send a `pitch` parameter in their requests. If the base voice or a cloned voice feels too deep or too bright for your AI assistant's character, set this once and every request will automatically use the adjusted pitch — no client changes required.
+- **Per-request override:** If a client explicitly sends `"pitch": 0.85` in the request body, that value takes priority and the server default is ignored for that request only.
+- **Performance:** The pitch shifter (WSOLA algorithm) is activated **only** when the effective pitch differs from `1.0` by more than 0.001. Leaving `DefaultPitch` at `1.0` means zero additional processing.
+
+#### 🔊 DefaultVolume
+
+Sets the server-wide volume multiplier applied to all generated audio. The engine uses a **soft-knee limiter** — the gain is applied linearly up to 80% of the signal ceiling, after which a smooth algebraic curve prevents harsh digital clipping on loud peaks.
+
+| Value  | Gain (approx.) | Practical effect                               |
+| ------ | -------------- | ---------------------------------------------- |
+| `0.25` | −12 dB         | Very quiet — good for mixing under other audio |
+| `0.5`  | −6 dB          | Noticeably quieter                             |
+| `0.71` | −3 dB          | Slightly quieter                               |
+| `1.0`  | 0 dB           | Original level (no change)                     |
+| `1.41` | +3 dB          | Slightly louder                                |
+| `2.0`  | +6 dB          | Noticeably louder — good for quiet clones      |
+| `4.0`  | +12 dB         | Maximum boost — soft-knee limiter fully active |
+
+- **Why use it?** The perceived loudness of a cloned voice is determined almost entirely by the recording level of the reference `.wav` file. If your voice sample was recorded quietly, the cloned output will also be quiet — regardless of the base Piper model's output level. `DefaultVolume` lets you compensate for this once in `appsettings.json` rather than adjusting every client.
+- **Per-request override:** If a client explicitly sends `"volume": 2.0` in the request body, that value takes priority and the server default is ignored for that request only.
+- **Performance:** The volume processor is activated **only** when the effective value differs from `1.0` by more than 0.001. Leaving `DefaultVolume` at `1.0` means zero additional processing.
 
 ---
 
@@ -289,6 +337,26 @@ Defines the blending coefficient (Latent Space Blending) between the base Piper 
 - **Value 1.0:** Full timbre transfer, which can amplify digital artifacts.
 
 - **Value 0.8 – 0.9 (Recommended):** Preserves some of the original Piper model's articulatory stability while overlaying the character of the chosen voice. This provides the best balance between voice similarity and audio cleanliness.
+
+#### 🔊 Cloned Voice Volume
+
+The perceived loudness of a cloned voice is **not** controlled by `ClonerSettings` — it is determined entirely by the **reference audio sample** itself.
+
+- If your `.wav` file was recorded quietly or at a low gain level, the cloned voice will sound quiet regardless of the base Piper model's output level. The OpenVoice architecture transfers voice timbre — including its energy envelope — directly from the fingerprint.
+- If the sample is too loud or peaks above 0 dBFS (clipping), the cloned audio will also clip and distort.
+
+**Recommended recording level:** aim for peaks around **−6 to −3 dBFS** — loud enough to fully capture the voice character, with just enough headroom to avoid distortion.
+
+If you cannot re-record the sample, compensate using `DefaultVolume` in `DspSettings` (see above), or send `"volume"` per request:
+
+```json
+{
+  "voice": "John",
+  "volume": 2.0
+}
+```
+
+This applies a clean gain stage with soft-knee limiting **before** the audio is encoded, so the result stays clean without harsh digital clipping.
 
 > 💡 **Quality Tip:** To achieve crystal-clear cloning without temperature adjustments, use Piper models at the **High (22050 Hz)** quality tier. Their fuller frequency spectrum allows the OpenVoice neural network to operate without producing instability artifacts.
 
@@ -415,7 +483,7 @@ curl http://localhost:5045/v1/audio/speech \
   }'
 ```
 
-A detailed **Swagger UI** with all extended parameters (Pitch, NoiseScale, etc.) is available at `http://localhost:5045/swagger` when the server is running.
+A detailed **Swagger UI** with all extended parameters (Pitch, Volume, NoiseScale, etc.) is available at `http://localhost:5045/swagger` when the server is running.
 
 ---
 

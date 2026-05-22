@@ -21,4 +21,17 @@ public class DspSettings
     /// Resonance Q-Factor. 0.707 (Butterworth) provides the most natural, flat frequency response without peaking.
     /// </summary>
     public float LowPassQFactor { get; set; } = 0.707f;
+
+
+    /// <summary>
+    /// Server-wide default pitch. Overridden per-request if 'pitch' is provided.
+    /// 1.0 = original voice, >1.0 = higher, <1.0 = lower. Range: 0.5–2.0.
+    /// </summary>
+    public float DefaultPitch { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Server-wide default volume. Overridden per-request if 'volume' is provided.
+    /// 1.0 = original, <1.0 = quieter, >1.0 = louder (soft-knee limiter applies above 0.8). Range: 0.0–4.0.
+    /// </summary>
+    public float DefaultVolume { get; set; } = 1.0f;
 }

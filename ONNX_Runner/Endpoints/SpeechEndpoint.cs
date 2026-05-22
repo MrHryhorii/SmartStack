@@ -175,8 +175,8 @@ public static class SpeechEndpoint
                     // =================================================================
                     // DSP MODIFIERS SETUP (PITCH & VOLUME)
                     // =================================================================
-                    // Pitch
-                    float targetPitch = request.Pitch.GetValueOrDefault(1.0f);
+                    // Pitch Priority: explicit request value → server default from config → fallback 1.0 (no shift)
+                    float targetPitch = request.Pitch ?? dspConfig.DefaultPitch;
                     bool usePitchShift = Math.Abs(targetPitch - 1.0f) > 0.001f;
 
                     using var pitchShifter = new PitchShifter(piperConfig!.Audio.SampleRate);
@@ -185,8 +185,8 @@ public static class SpeechEndpoint
                         pitchShifter.SetPitch(targetPitch);
                     }
 
-                    // Volume
-                    float targetVolume = request.Volume.GetValueOrDefault(1.0f);
+                    // Volume Priority: explicit request value → server default from config → fallback 1.0 (no change)
+                    float targetVolume = request.Volume ?? dspConfig.DefaultVolume;
                     bool useVolumeShift = Math.Abs(targetVolume - 1.0f) > 0.001f;
                     // =================================================================
 

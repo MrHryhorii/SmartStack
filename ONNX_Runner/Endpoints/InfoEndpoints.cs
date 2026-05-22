@@ -35,7 +35,8 @@ public static class InfoEndpoints
     public static IResult GetVoices()
     {
         var voices = new List<string> { "piper_base" };
-        string voicesDirectory = "Voices";
+        // The 'Voices' directory is expected to be in the same location as the server executable.
+        string voicesDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Voices");
 
         try
         {
@@ -65,7 +66,7 @@ public static class InfoEndpoints
     public static IResult GetEffects()
     {
         // Automatically extract all values from the VoiceEffectType enum
-        var effects = Enum.GetNames(typeof(VoiceEffectType));
+        var effects = Enum.GetNames<VoiceEffectType>();
 
         return Results.Ok(new { effects });
     }
@@ -75,7 +76,7 @@ public static class InfoEndpoints
     /// </summary>
     public static IResult GetEnvironments()
     {
-        var environments = Enum.GetNames(typeof(SpatialEnvironment));
+        var environments = Enum.GetNames<SpatialEnvironment>();
         return Results.Ok(new { environments });
     }
 }
