@@ -296,7 +296,6 @@ Sets the server-wide pitch shift applied to all generated audio.
 
 - **Why use it?** Standard OpenAI-compatible clients (SillyTavern, AutoGen, LangChain) have no way to send a `pitch` parameter in their requests. If the base voice or a cloned voice feels too deep or too bright for your AI assistant's character, set this once and every request will automatically use the adjusted pitch — no client changes required.
 - **Per-request override:** If a client explicitly sends `"pitch": 0.85` in the request body, that value takes priority and the server default is ignored for that request only.
-- **Performance:** The pitch shifter (WSOLA algorithm) is activated **only** when the effective pitch differs from `1.0` by more than 0.001. Leaving `DefaultPitch` at `1.0` means zero additional processing.
 
 #### 🔊 DefaultVolume
 
@@ -312,9 +311,8 @@ Sets the server-wide volume multiplier applied to all generated audio. The engin
 | `2.0`  | +6 dB          | Noticeably louder — good for quiet clones      |
 | `4.0`  | +12 dB         | Maximum boost — soft-knee limiter fully active |
 
-- **Why use it?** The perceived loudness of a cloned voice is determined almost entirely by the recording level of the reference `.wav` file. If your voice sample was recorded quietly, the cloned output will also be quiet — regardless of the base Piper model's output level. `DefaultVolume` lets you compensate for this once in `appsettings.json` rather than adjusting every client.
+- **Why use it?** The perceived loudness of a cloned voice is determined almost entirely by the recording level of the reference `.wav` file. If your voice sample was recorded quietly, the cloned output will also be quiet. `DefaultVolume` lets you compensate for this once in `appsettings.json` rather than adjusting every client.
 - **Per-request override:** If a client explicitly sends `"volume": 2.0` in the request body, that value takes priority and the server default is ignored for that request only.
-- **Performance:** The volume processor is activated **only** when the effective value differs from `1.0` by more than 0.001. Leaving `DefaultVolume` at `1.0` means zero additional processing.
 
 ---
 
@@ -340,14 +338,15 @@ Defines the blending coefficient (Latent Space Blending) between the base Piper 
 
 #### 🔊 Cloned Voice Volume
 
-The perceived loudness of a cloned voice is **not** controlled by `ClonerSettings` — it is determined entirely by the **reference audio sample** itself.
+The perceived loudness of a cloned voice is **not** controlled by `ClonerSettings` — it is shaped by two factors: the **recording level of the reference sample** and the **natural pitch of the cloned voice**.
 
-- If your `.wav` file was recorded quietly or at a low gain level, the cloned voice will sound quiet regardless of the base Piper model's output level. The OpenVoice architecture transfers voice timbre — including its energy envelope — directly from the fingerprint.
-- If the sample is too loud or peaks above 0 dBFS (clipping), the cloned audio will also clip and distort.
+- **Recording level:** OpenVoice extracts a voice fingerprint from the magnitude spectrogram of your `.wav` file and transfers its energy envelope onto the generated audio. A quietly recorded sample produces a quietly cloned voice, regardless of the base Piper model's output level. If the sample is too loud or peaks above 0 dBFS (clipping), the cloned audio will also clip and distort.
+
+- **Voice pitch:** Lower-pitched voices — deep male voices, bass characters — naturally concentrate their spectral energy in the low-frequency range, which results in a lower overall magnitude in the spectrogram. Because OpenVoice transfers this energy profile directly, deep voices will consistently sound quieter than brighter, higher-pitched ones, even from identically recorded samples. This is an inherent property of the cloning architecture, not a bug.
 
 **Recommended recording level:** aim for peaks around **−6 to −3 dBFS** — loud enough to fully capture the voice character, with just enough headroom to avoid distortion.
 
-If you cannot re-record the sample, compensate using `DefaultVolume` in `DspSettings` (see above), or send `"volume"` per request:
+If the cloned voice is too quiet, compensate using `DefaultVolume` in `DspSettings` (see above), or send `"volume"` per request:
 
 ```json
 {
