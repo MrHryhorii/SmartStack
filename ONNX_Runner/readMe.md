@@ -46,7 +46,7 @@ Tsubaki is built with an **engineering-first approach** to distribution:
 
 ## 🛠️ Building from Source
 
-Ensure you have the [.NET 8 SDK](https://dotnet.microsoft.com/download) installed.
+Ensure you have the [.NET 10 SDK](https://dotnet.microsoft.com/download) installed.
 
 **Option A — Clone only the `ONNX_Runner` folder (recommended):**
 
