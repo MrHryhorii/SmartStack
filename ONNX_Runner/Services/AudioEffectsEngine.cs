@@ -369,18 +369,18 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // the difference (x - LP) is the HF boost applied before tape saturation.
         _lofiPreState += _lofiPreCoeff * (x - _lofiPreState);
         _lofiPreState = Dsp.KillDenormal(_lofiPreState);
-        float preEmph = x + (x - _lofiPreState) * 0.7f;
+        float preEmph = x + (x - _lofiPreState) * 1.1f;
 
         // Tape oxide saturation with the pre-emphasized signal.
-        float recorded = Dsp.SoftClip(preEmph * 1.4f);
+        float recorded = Dsp.SoftClip(preEmph * 1.9f);
         _delay.Write(recorded);
 
-        // Wow: ±0.8ms at 1.2Hz — speed drift of the tape transport capstan.
-        // Flutter: ±0.3ms at 9Hz — high-frequency mechanical instability.
+        // Wow: ±1.05ms at 1.2Hz — speed drift of the tape transport capstan.
+        // Flutter: ±0.4ms at 9Hz — high-frequency mechanical instability.
         _lofiPhase = Dsp.AdvancePhase(_lofiPhase, 1.2f, _sampleRate);
         _flutterPhase = Dsp.AdvancePhase(_flutterPhase, 9.0f, _sampleRate);
-        float wow = Dsp.Sine(_lofiPhase) * 0.8f;
-        float flutter = Dsp.Sine(_flutterPhase) * 0.3f + _noise.NextWhite() * 0.05f;
+        float wow = Dsp.Sine(_lofiPhase) * 1.05f;
+        float flutter = Dsp.Sine(_flutterPhase) * 0.4f + _noise.NextWhite() * 0.05f;
         float pitchWarped = _delay.Read((5f + wow + flutter) * _sampleRate / 1000f);
 
         // De-emphasis: exact mirror of pre-emphasis — restores spectral balance on playback.
@@ -389,7 +389,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // Tape hiss filtered through the playback head LP (~6kHz) —
         // places the noise "behind" the signal, not on top of it.
-        float rawHiss = _noise.NextPink() * (0.012f + _thermal.State * 0.005f);
+        float rawHiss = _noise.NextPink() * (0.022f + _thermal.State * 0.005f);
         _lofiHissState += _lofiHissCoeff * (rawHiss - _lofiHissState);
 
         return (_lofiDeState + _lofiHissState) * 0.9f;
