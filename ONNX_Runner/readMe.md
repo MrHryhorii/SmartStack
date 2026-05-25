@@ -13,7 +13,7 @@ _Built-in web interface for testing voices and DSP effects_
 
 ## 📥 Download
 
-**[💻 Tsubaki TTS Engine v1.0.2 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.2)**
+**[💻 Tsubaki TTS Engine v1.0.3 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.3)**
 _Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices!_
 
 ---
