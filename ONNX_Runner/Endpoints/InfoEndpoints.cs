@@ -79,4 +79,61 @@ public static class InfoEndpoints
         var environments = Enum.GetNames<SpatialEnvironment>();
         return Results.Ok(new { environments });
     }
+
+    /// <summary>
+    /// Simulates an OpenAI-style models endpoint for compatibility with clients that expect to query available TTS models.
+    /// </summary>
+    public static IResult GetModels()
+    {
+        return Results.Ok(new
+        {
+            @object = "list",
+            data = new[]
+            {
+                // Since our API is designed to mimic OpenAI's TTS endpoint, 
+                // we return a single "model" in the list for compatibility 
+                // with clients that expect to query available models.
+                new {
+                    id = "tts-1",
+                    @object = "model",
+                    created = 1699043956,
+                    owned_by = "system"
+                }
+            }
+        });
+    }
+
+    /// <summary>
+    /// Simulates an OpenAI-style model details endpoint for compatibility with clients that expect to query specific TTS model information.
+    /// </summary>
+    /// <param name="id"></param>
+    public static IResult GetModelById(string id)
+    {
+        if (id != "tts-1")
+        {
+            return Results.NotFound();
+        }
+
+        return Results.Ok(new
+        {
+            id = "tts-1",
+            @object = "model",
+            created = 1699043956,
+            owned_by = "system"
+        });
+    }
+
+    /// <summary>
+    /// Health check endpoint to verify that the server is running and responsive.
+    /// </summary>
+    public static IResult GetHealth()
+    {
+        return Results.Ok(new
+        {
+            status = "ok",
+            service = "Tsubaki TTS Engine",
+            version = "1.0.4",
+            timestamp = DateTimeOffset.UtcNow
+        });
+    }
 }

@@ -52,6 +52,8 @@ public static class SpeechEndpoint
             });
         }
 
+        System.Threading.Channels.Channel<(byte[] Buffer, int Length)>? networkChannel = null;
+        Task? networkSenderTask = null;
         try
         {
             // =================================================================
@@ -111,8 +113,8 @@ public static class SpeechEndpoint
                 // NETWORK GATEWAY SETUP (BRIDGING & BACKPRESSURE)
                 // =================================================================
                 Stream targetStream;
-                System.Threading.Channels.Channel<byte[]>? networkChannel = null;
-                Task? networkSenderTask = null;
+                networkChannel = null;
+                networkSenderTask = null;
 
                 if (useStreaming)
                 {
@@ -128,7 +130,9 @@ public static class SpeechEndpoint
                     {
                         FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait
                     };
-                    networkChannel = System.Threading.Channels.Channel.CreateBounded<byte[]>(channelOptions);
+
+                    // Passing tuple with rented Buffer and its actual Length for zero-allocation
+                    networkChannel = System.Threading.Channels.Channel.CreateBounded<(byte[] Buffer, int Length)>(channelOptions);
 
                     int chunkSize = streamConfig.MinChunkSizeKb * 1024;
                     targetStream = new BridgingStream(networkChannel.Writer, chunkSize);
@@ -138,9 +142,19 @@ public static class SpeechEndpoint
                     {
                         await foreach (var chunk in networkChannel.Reader.ReadAllAsync(cancellationToken))
                         {
-                            cancellationToken.ThrowIfCancellationRequested();
-                            await httpContext.Response.Body.WriteAsync(chunk, cancellationToken);
-                            await httpContext.Response.Body.FlushAsync(cancellationToken);
+                            try
+                            {
+                                cancellationToken.ThrowIfCancellationRequested();
+                                // Write only the valid data length from the rented array
+                                await httpContext.Response.Body.WriteAsync(chunk.Buffer.AsMemory(0, chunk.Length), cancellationToken);
+                                await httpContext.Response.Body.FlushAsync(cancellationToken);
+                            }
+                            finally
+                            {
+                                // CRITICAL ZERO-ALLOCATION REQUIREMENT: 
+                                // Always return the network chunk array to the shared pool after it has been sent.
+                                ArrayPool<byte>.Shared.Return(chunk.Buffer);
+                            }
                         }
                     }, cancellationToken);
                 }
@@ -424,12 +438,20 @@ public static class SpeechEndpoint
         }
         catch (Exception ex)
         {
+            // Always complete the channel so networkSenderTask doesn't hang indefinitely
+            networkChannel?.Writer.TryComplete(ex);
+
             if (httpContext.Response.HasStarted)
             {
                 // If streaming already started, we can't send a 500 status code anymore, just abort gracefully
                 Console.ForegroundColor = ConsoleColor.Red;
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [ERROR] Stream aborted unexpectedly: {ex.Message}");
                 Console.ResetColor();
+                // Wait for the sender task to finish cleanly before releasing resources
+                if (networkSenderTask != null)
+                {
+                    try { await networkSenderTask; } catch { /* expected cancellation */ }
+                }
                 return Results.Empty;
             }
             return Results.Problem(detail: ex.Message, statusCode: 500);

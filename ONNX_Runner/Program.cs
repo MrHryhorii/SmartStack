@@ -467,6 +467,16 @@ app.MapGet("/v1/audio/environments", InfoEndpoints.GetEnvironments)
    .WithName("GetEnvironments");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
+// Endpoints to imitate OpenAI's model listing for better compatibility with existing tools and dashboards that expect this format.
+app.MapGet("/v1/models", InfoEndpoints.GetModels)
+   .WithName("GetModels");
+app.MapGet("/v1/models/{id}", InfoEndpoints.GetModelById)
+   .WithName("GetModelById");
+app.MapGet("/health", InfoEndpoints.GetHealth)
+   .WithName("GetHealth");
+app.MapGet("/v1/health", InfoEndpoints.GetHealth)
+   .WithName("GetV1Health");
+
 // =================================================================
 // AUTO-OPEN BROWSER (LOCAL DASHBOARD)
 // =================================================================
