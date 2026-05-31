@@ -241,7 +241,6 @@ curl http://localhost:5045/v1/audio/speech \
 
     "noise_scale": 0.667,
     "noise_w": 0.8,
-    "length_scale": 1.0,
 
     "clone_intensity": 0.85,
     "tone_temperature": 0.7
@@ -283,14 +282,13 @@ curl http://localhost:5045/v1/audio/speech \
 
 ## Synthesis Parameters
 
-| Parameter      | Type  | Description                                                             |
-| -------------- | ----- | ----------------------------------------------------------------------- |
-| `pitch`        | float | Pitch shift multiplier. `1.0` is original. `0.85` is noticeably deeper. |
-| `volume`       | float | Output volume multiplier with soft-knee limiter. `1.0` is original.     |
-| `noise_scale`  | float | Controls pronunciation variance (intonation noise). Default: `0.667`.   |
-| `noise_w`      | float | Phoneme duration variance (rhythm). Default: `0.8`.                     |
-| `length_scale` | float | Global speech speed at the phoneme level. Equivalent to `speed`.        |
-| `stream`       | bool  | Enable or disable streaming for this specific request.                  |
+| Parameter     | Type  | Description                                                             |
+| ------------- | ----- | ----------------------------------------------------------------------- |
+| `pitch`       | float | Pitch shift multiplier. `1.0` is original. `0.85` is noticeably deeper. |
+| `volume`      | float | Output volume multiplier with soft-knee limiter. `1.0` is original.     |
+| `noise_scale` | float | Controls pronunciation variance (intonation noise). Default: `0.667`.   |
+| `noise_w`     | float | Phoneme duration variance (rhythm). Default: `0.8`.                     |
+| `stream`      | bool  | Enable or disable streaming for this specific request.                  |
 
 ## Cloning Parameters
 
@@ -299,7 +297,7 @@ curl http://localhost:5045/v1/audio/speech \
 | `clone_intensity`  | float | Latent space blend ratio between Piper base fingerprint and target voice. `0.85–0.9` recommended.     |
 | `tone_temperature` | float | Variance during timbre transfer (tau). `0.7` is stable. `1.0` is more expressive but noise-sensitive. |
 
-> **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension. Standard OpenAI clients ignore these fields silently, so backward compatibility is always preserved.
+> **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or tweaking `tone_temperature` to stabilize voice artifacts on the fly. Standard OpenAI clients ignore these fields silently, so backward compatibility is always preserved.
 
 ---
 

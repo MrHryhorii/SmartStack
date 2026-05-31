@@ -228,7 +228,10 @@ public static class SpeechEndpoint
                         if (canClone && targetFingerprint != null && sourceFingerprint != null)
                         {
                             blendedTarget = new float[targetFingerprint.Length];
-                            float intensity = clonerConfig.CloneIntensity;
+
+                            // Priority: explicit request value → global server config
+                            float intensity = request.CloneIntensity ?? clonerConfig.CloneIntensity;
+
                             for (int j = 0; j < blendedTarget.Length; j++)
                             {
                                 blendedTarget[j] = sourceFingerprint[j] + (targetFingerprint[j] - sourceFingerprint[j]) * intensity;
@@ -331,7 +334,9 @@ public static class SpeechEndpoint
                                         var specChunk = audioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
                                         if (specChunk.GetLength(0) > 0)
                                         {
-                                            float tau = clonerConfig.ToneTemperature;
+                                            // Priority: explicit request value → global server config
+                                            float tau = request.ToneTemperature ?? clonerConfig.ToneTemperature;
+
                                             // Apply tone color cloning in the latent space and decode back to audio. 
                                             // This is the most computationally expensive step, so we do it strictly 
                                             // once per sentence rather than per smaller chunk to optimize performance.

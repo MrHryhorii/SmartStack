@@ -132,4 +132,30 @@ public class OpenAiSpeechRequest
         // Clamp from 0.0 (mute) to 4.0 (+12dB boost)
         set => _volume = value.HasValue ? Math.Clamp(value.Value, 0.0f, 4.0f) : null;
     }
+
+    /// <summary>
+    /// Intensity of voice cloning. 
+    /// 1.0 = Exact copy of the target voice (Standard).
+    /// </summary>
+    private float? _cloneIntensity;
+    [JsonPropertyName("clone_intensity")]
+    public float? CloneIntensity
+    {
+        get => _cloneIntensity;
+        // Clamp the value to a reasonable range (0.0 to 2.0) to prevent extreme settings that could break the model.
+        set => _cloneIntensity = value.HasValue ? Math.Clamp(value.Value, 0.0f, 2.0f) : null;
+    }
+
+    /// <summary>
+    /// Tau parameter for adjusting tone diversity. 
+    /// 1.0 = Standard. < 1.0 = More conservative/stable. > 1.0 = More expressive/diverse.
+    /// </summary>
+    private float? _toneTemperature;
+    [JsonPropertyName("tone_temperature")]
+    public float? ToneTemperature
+    {
+        get => _toneTemperature;
+        // Clamp the value to a reasonable range (0.1 to 2.0) to prevent extreme settings that could break the model.
+        set => _toneTemperature = value.HasValue ? Math.Clamp(value.Value, 0.1f, 2.0f) : null;
+    }
 }
