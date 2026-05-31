@@ -47,6 +47,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 - **Portable (Self-Contained):** Can be compiled into a single executable. Just download and run.
 - **Dynamic Hardware Acceleration:** Automatically detects and utilizes your GPU (DirectML for Windows, CUDA for Linux) and gracefully falls back to CPU without crashing.
 - **Memory Protection (OOM Guard):** Built-in queueing and semaphore system that calculates available VRAM/RAM to prevent server crashes under heavy load.
+- **True Concurrency (Shared Memory):** Python servers often duplicate massive 2GB+ neural networks in RAM for every parallel worker just to bypass the GIL. Tsubaki loads the model exactly once. Multiple API requests are processed concurrently using a shared memory space, keeping RAM usage flat regardless of how many AI agents are talking at the same time.
 
 | Tsubaki                               | Typical Python TTS                   |
 | ------------------------------------- | ------------------------------------ |
@@ -57,6 +58,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 | Real-time streaming                   | Full audio generated before playback |
 | CPU-first deployment                  | GPU dependency pressure              |
 | Portable self-contained builds        | Fragile installations                |
+| True multithreading (Shared RAM)      | GIL bottleneck / Memory duplication  |
 
 ---
 
