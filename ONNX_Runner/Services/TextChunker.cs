@@ -109,7 +109,7 @@ public class TextChunker(ChunkerSettings settings)
                 char nextChar = textSpan[nextTerminator + 1];
 
                 // A valid period must be followed by whitespace or another punctuation mark (e.g., "End. Next").
-                if (char.IsWhiteSpace(nextChar) || SentenceTerminators.Contains(nextChar) || PauseMarks.Contains(nextChar))
+                if (char.IsWhiteSpace(nextChar) || SentenceTerminators.AsSpan().Contains(nextChar) || PauseMarks.AsSpan().Contains(nextChar))
                 {
                     int nextVisibleCharIdx = nextTerminator + 1;
                     while (nextVisibleCharIdx < textSpan.Length && char.IsWhiteSpace(textSpan[nextVisibleCharIdx]))
@@ -128,11 +128,19 @@ public class TextChunker(ChunkerSettings settings)
                     wordStart++;
 
                     ReadOnlySpan<char> wordBeforeDot = textSpan[wordStart..nextTerminator];
+
+                    // Clean the word from leading punctuation (e.g., opening brackets or quotes like "(Mr" or "«Dr")
+                    ReadOnlySpan<char> cleanWord = wordBeforeDot;
+                    while (cleanWord.Length > 0 && char.IsPunctuation(cleanWord[0]))
+                    {
+                        cleanWord = cleanWord[1..];
+                    }
+
                     bool isAbbreviation = false;
 
                     // ABBREVIATION DETECTION RULES:
                     // 1. Single character initials (e.g., "A. Smith").
-                    if (wordBeforeDot.Length == 1 && char.IsLetter(wordBeforeDot[0]))
+                    if (cleanWord.Length == 1 && char.IsLetter(cleanWord[0]))
                     {
                         isAbbreviation = true;
                     }
@@ -142,14 +150,14 @@ public class TextChunker(ChunkerSettings settings)
                         isAbbreviation = true;
                     }
                     // 3. Mixed segments check (Distinguishes "U.S.A." from a URL like "site.com").
-                    else if (wordBeforeDot.IndexOf('.') != -1)
+                    else if (cleanWord.IndexOf('.') != -1)
                     {
                         int maxSegmentLength = 0;
                         int currentSegmentLength = 0;
 
-                        for (int i = 0; i < wordBeforeDot.Length; i++)
+                        for (int i = 0; i < cleanWord.Length; i++)
                         {
-                            if (wordBeforeDot[i] == '.')
+                            if (cleanWord[i] == '.')
                             {
                                 if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
                                 currentSegmentLength = 0;
@@ -164,10 +172,10 @@ public class TextChunker(ChunkerSettings settings)
                         // Abbreviations typically have short segments (e.g., "i.e.").
                         if (maxSegmentLength <= 3) isAbbreviation = true;
                     }
-                    // 4. Global Titles Dictionary check.
+                    // 4. Global Titles Dictionary check. (Zero-allocation using .NET 8+ alternate lookup)
                     else
                     {
-                        if (CommonTitles.Contains(wordBeforeDot.ToString()))
+                        if (CommonTitles.GetAlternateLookup<ReadOnlySpan<char>>().Contains(cleanWord))
                         {
                             isAbbreviation = true;
                         }
@@ -192,7 +200,7 @@ public class TextChunker(ChunkerSettings settings)
             {
                 endIndex = nextTerminator + 1;
                 // Capture trailing terminators (e.g., "Wait!!!" -> captures all three exclamation marks).
-                while (endIndex < textSpan.Length && SentenceTerminators.Contains(textSpan[endIndex])) endIndex++;
+                while (endIndex < textSpan.Length && SentenceTerminators.AsSpan().Contains(textSpan[endIndex])) endIndex++;
             }
 
             string sentence = textSpan[currentIndex..endIndex].Trim().ToString();
