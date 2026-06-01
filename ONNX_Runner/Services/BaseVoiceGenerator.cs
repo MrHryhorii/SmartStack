@@ -206,7 +206,7 @@ public class BaseVoiceGenerator(
 
         // 1. Phonemize the reference text and synthesize the raw audio using the base Piper model
         string phonemes = _phonemizer.GetPhonemes(textToSpeak);
-        byte[] baseAudioBytes = _piperRunner.SynthesizeAudio(phonemes, 1.0f);
+        byte[] baseAudioBytes = _piperRunner.SynthesizeAudio(phonemes, false, true, 1.0f);
 
         // 2. Read the raw 16-bit PCM bytes into memory via NAudio
         using var ms = new MemoryStream(baseAudioBytes);

@@ -10,7 +10,7 @@ namespace ONNX_Runner.Services;
 public class TextChunker(ChunkerSettings settings)
 {
     // High-performance search values for common sentence terminators across multiple languages.
-    private static readonly System.Buffers.SearchValues<char> s_sentenceTerminators = System.Buffers.SearchValues.Create(".!?\n。！？؟۔։;");
+    private static readonly System.Buffers.SearchValues<char> s_sentenceTerminators = System.Buffers.SearchValues.Create(".!?\n。！？｡؟۔।॥๚๛։;;።။");
 
     // Limits the length of a single audio generation task to prevent GPU timeouts.
     private readonly int _maxLength = settings.MaxChunkLength > 50 ? settings.MaxChunkLength : 250;
@@ -18,7 +18,19 @@ public class TextChunker(ChunkerSettings settings)
     // Symbol used to indicate an "emergency" split in the middle of a sentence (helps with prosody).
     private const string EmergencyGlue = "_";
 
-    private static readonly char[] SentenceTerminators = ['.', '!', '?', '\n', '。', '！', '？', '؟', '۔', '։', ';'];
+    // Global multilingual array of sentence terminators to improve smart context detection for streaming.
+    private static readonly char[] SentenceTerminators =
+    [
+        '.', '!', '?', '\n',
+        '。', '！', '？', '｡',
+        '؟', '۔',
+        '।', '॥',
+        '๚', '๛',
+        '։',
+        ';', ';',
+        '።', '။'
+    ];
+    // Additional pause marks that often indicate natural break points in sentences, even if they aren't full terminators.
     private static readonly char[] PauseMarks = [',', ';', ':', '-', '—', '，', '、', '；', '：'];
 
     /// <summary>

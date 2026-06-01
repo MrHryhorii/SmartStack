@@ -5,7 +5,8 @@ namespace ONNX_Runner.Services;
 
 public interface IPhonemizer
 {
-    long[] PhonemesToIds(string phonemes);
+    // Converts a phoneme string into an array of numeric IDs, applying the necessary "Interspersing" logic for VITS-based models.
+    long[] PhonemesToIds(string phonemes, bool isContinuation = false, bool isFinished = true);
 }
 
 /// <summary>
@@ -20,7 +21,7 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
     /// Translates a phoneme string into a padded ID array.
     /// Uses high-performance Span-based parsing to minimize memory allocations.
     /// </summary>
-    public long[] PhonemesToIds(string phonemes)
+    public long[] PhonemesToIds(string phonemes, bool isContinuation = false, bool isFinished = true)
     {
         // Initial capacity of 128 is usually enough for a standard sentence to avoid list reallocations.
         var corePhonemes = new List<long>(128);
@@ -31,9 +32,16 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
         int padId = _config.PhonemeIdMap.TryGetValue("_", out var padArr) ? padArr[0] : 0;
         int spaceId = _config.PhonemeIdMap.TryGetValue(" ", out var spaceArr) ? spaceArr[0] : 3;
 
-        // Sentence Initialization
+        // =====================================================================
+        // SENTENCE INITIALIZATION
+        // =====================================================================
         corePhonemes.Add(sentenceStartId);
-        corePhonemes.Add(spaceId); // Piper models typically expect a leading space for better natural prosody.
+
+        // Add a breathing space (micro-pause) ONLY if this is a true sentence start.
+        if (!isContinuation)
+        {
+            corePhonemes.Add(spaceId); // Piper models typically expect a leading space for better natural prosody.
+        }
 
         // =====================================================================
         // UNICODE PARSING (Zero-Allocation via Spans)
@@ -70,10 +78,16 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
             index += length;
         }
 
-        // Sentence Finalization with silence
-        if (corePhonemes.Count > 0 && corePhonemes[^1] != spaceId)
+        // =====================================================================
+        // SENTENCE FINALIZATION
+        // =====================================================================
+        // Add absolute silence ONLY if the thought is fully finished by a terminator.
+        if (isFinished)
         {
-            corePhonemes.Add(spaceId);
+            if (corePhonemes.Count > 0 && corePhonemes[^1] != spaceId)
+            {
+                corePhonemes.Add(spaceId);
+            }
         }
         corePhonemes.Add(sentenceEndId);
 

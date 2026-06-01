@@ -99,7 +99,7 @@ public class PiperRunner : IDisposable
     /// 2. Prepares three input tensors: input (phonemes), input_lengths, and scales (noise parameters).
     /// 3. Executes the model and rents a buffer from ArrayPool to store the result.
     /// </summary>
-    public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
+    public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, bool isContinuation = false, bool isFinished = true, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
         float safeSpeed = Math.Clamp(speed, 0.1f, 10.0f);
 
@@ -113,7 +113,8 @@ public class PiperRunner : IDisposable
         // The 'scales' tensor controls the 'robotic vs natural' variance and the speed.
         var scalesTensor = new DenseTensor<float>(new float[] { safeNoiseScale, targetLengthScale, safeNoiseW }, [3]);
 
-        long[] phonemeIds = _phonemizer.PhonemesToIds(phonemes);
+        // Передаємо прапорці стрімінгу до фонемізатора
+        long[] phonemeIds = _phonemizer.PhonemesToIds(phonemes, isContinuation, isFinished);
         var inputTensor = new DenseTensor<long>(phonemeIds, [1, phonemeIds.Length]);
         var inputLengthsTensor = new DenseTensor<long>(new[] { (long)phonemeIds.Length }, [1]);
 
@@ -151,9 +152,9 @@ public class PiperRunner : IDisposable
     /// <summary>
     /// A high-level wrapper that produces a standard WAV byte array.
     /// </summary>
-    public byte[] SynthesizeAudio(string phonemes, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
+    public byte[] SynthesizeAudio(string phonemes, bool isContinuation = false, bool isFinished = true, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
-        var rawResult = SynthesizeAudioRaw(phonemes, speed, requestNoiseScale, requestNoiseW);
+        var rawResult = SynthesizeAudioRaw(phonemes, isContinuation, isFinished, speed, requestNoiseScale, requestNoiseW);
         try
         {
             // Convert the raw neural float samples (-1.0 to 1.0) into a standard WAV file.

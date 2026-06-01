@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 using System.Buffers;
+using System.Globalization;
 
 namespace ONNX_Runner.Endpoints;
 
@@ -12,6 +13,34 @@ public static class SpeechEndpoint
     {
         "wav", "mp3", "opus", "pcm"
     };
+
+    // Global multilingual array of sentence terminators to improve smart context detection for streaming.
+    private static readonly char[] _globalTerminators =
+    [
+        // Common Latin punctuation
+        '.', '!', '?', '\n',
+        
+        // East Asian (Chinese, Japanese, Korean)
+        '。', '！', '？', '｡', 
+        
+        // Arabic and Persian
+        '؟', '۔', 
+        
+        // Devanagari and other Indic scripts
+        '।', '॥', 
+        
+        // Thai and Lao
+        '๚', '๛',
+        
+        // Armenian
+        '։', 
+        
+        // Greek question mark (U+037E) and Standard Semicolon (U+003B)
+        ';', ';', 
+        
+        // Ethiopic and Myanmar
+        '።', '။'
+    ];
 
     public static async Task<IResult> HandleSpeechRequest(
         HttpContext httpContext,
@@ -228,10 +257,7 @@ public static class SpeechEndpoint
                         if (canClone && targetFingerprint != null && sourceFingerprint != null)
                         {
                             blendedTarget = new float[targetFingerprint.Length];
-
-                            // Priority: explicit request value → global server config
-                            float intensity = request.CloneIntensity ?? clonerConfig.CloneIntensity;
-
+                            float intensity = clonerConfig.CloneIntensity;
                             for (int j = 0; j < blendedTarget.Length; j++)
                             {
                                 blendedTarget[j] = sourceFingerprint[j] + (targetFingerprint[j] - sourceFingerprint[j]) * intensity;
@@ -249,14 +275,38 @@ public static class SpeechEndpoint
                                 foreach (var chunk in textChunks)
                                 {
                                     cancellationToken.ThrowIfCancellationRequested();
+
+                                    // =========================================================
+                                    // MULTILINGUAL SMART CONTEXT DETECTION FOR STREAMING
+                                    // =========================================================
+                                    ReadOnlySpan<char> cleanChunk = chunk.AsSpan().Trim();
+                                    bool isContinuation = false;
+                                    bool isFinished = false;
+
+                                    if (cleanChunk.Length > 0)
+                                    {
+                                        char firstChar = cleanChunk[0];
+
+                                        // If the first character is lowercase, we can reasonably assume this chunk is a continuation of the previous sentence rather than a new one. 
+                                        // This heuristic helps maintain natural prosody in streaming scenarios where text is split into smaller chunks.
+                                        isContinuation = char.IsLower(firstChar);
+
+                                        // Use the global multilingual array of sentence terminators
+                                        isFinished = _globalTerminators.AsSpan().Contains(cleanChunk[^1]);
+                                    }
+
                                     // Generate the base voice using neural network
                                     string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
-                                    var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, request.Speed, request.NoiseScale, request.NoiseW);
+
+                                    // Pass the streaming flags to the generator
+                                    var rawResult = piperRunner.SynthesizeAudioRaw(phonemes, isContinuation, isFinished, request.Speed, request.NoiseScale, request.NoiseW);
+
                                     // Apply volume adjustment if requested
                                     if (useVolumeShift)
                                     {
                                         VolumeShifter.ApplyVolume(rawResult.Buffer.AsSpan(0, rawResult.Length), targetVolume);
                                     }
+
                                     // Apply Pitch Shifting if requested
                                     if (usePitchShift)
                                     {
@@ -334,9 +384,7 @@ public static class SpeechEndpoint
                                         var specChunk = audioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
                                         if (specChunk.GetLength(0) > 0)
                                         {
-                                            // Priority: explicit request value → global server config
-                                            float tau = request.ToneTemperature ?? clonerConfig.ToneTemperature;
-
+                                            float tau = clonerConfig.ToneTemperature;
                                             // Apply tone color cloning in the latent space and decode back to audio. 
                                             // This is the most computationally expensive step, so we do it strictly 
                                             // once per sentence rather than per smaller chunk to optimize performance.
