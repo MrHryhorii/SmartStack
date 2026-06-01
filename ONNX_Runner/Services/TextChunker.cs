@@ -9,29 +9,113 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public class TextChunker(ChunkerSettings settings)
 {
-    // High-performance search values for common sentence terminators across multiple languages.
-    private static readonly System.Buffers.SearchValues<char> s_sentenceTerminators = System.Buffers.SearchValues.Create(".!?\n。！？｡؟۔।॥๚๛։;;።။");
+    // =========================================================================================
+    // SINGLE SOURCE OF TRUTH: Global multilingual array of sentence terminators.
+    // Made PUBLIC so SpeechEndpoint can use it for smart context detection without duplicating data.
+    // =========================================================================================
+    public static readonly char[] SentenceTerminators =
+    [
+        // Common Latin punctuation
+        '.', '!', '?', '\n',
+
+        // Compound Latin punctuation — frequently used in chat and AI-generated text
+        '‼',  // U+203C  DOUBLE EXCLAMATION MARK
+        '‽',  // U+203D  INTERROBANG (combination of ? and !)
+        '⁇',  // U+2047  DOUBLE QUESTION MARK
+        '⁈',  // U+2048  QUESTION EXCLAMATION MARK
+        '⁉',  // U+2049  EXCLAMATION QUESTION MARK
+
+        // East Asian — fullwidth and halfwidth variants (Chinese, Japanese, Korean)
+        '。',  // U+3002  IDEOGRAPHIC FULL STOP
+        '！',  // U+FF01  FULLWIDTH EXCLAMATION MARK
+        '？',  // U+FF1F  FULLWIDTH QUESTION MARK
+        '｡',   // U+FF61  HALFWIDTH IDEOGRAPHIC FULL STOP
+        '．',  // U+FF0E  FULLWIDTH FULL STOP (common in Japanese formal text)
+        '﹒',  // U+FE52  SMALL FULL STOP
+        '﹗',  // U+FE57  SMALL EXCLAMATION MARK
+
+        // Arabic and Persian
+        '؟',  // U+061F  ARABIC QUESTION MARK
+        '۔',  // U+06D4  ARABIC FULL STOP (Urdu)
+
+        // Syriac — ancient Aramaic script, still used in liturgical texts
+        '܀',  // U+0700  SYRIAC END OF PARAGRAPH
+        '܁',  // U+0701  SYRIAC SUPRALINEAR FULL STOP
+        '܂',  // U+0702  SYRIAC SUBLINEAR FULL STOP
+
+        // Devanagari and other Indic scripts (Hindi, Sanskrit, Marathi, Nepali)
+        '।',  // U+0964  DEVANAGARI DANDA (single)
+        '॥',  // U+0965  DEVANAGARI DOUBLE DANDA
+
+        // Thai
+        '๚',  // U+0E5A  THAI CHARACTER ANGKHANKHU
+        '๛',  // U+0E5B  THAI CHARACTER KHOMUT
+
+        // Armenian
+        '։',  // U+0589  ARMENIAN FULL STOP
+        '՞',  // U+055E  ARMENIAN QUESTION MARK
+
+        // Greek — visually identical to semicolon but a different Unicode codepoint
+        ';',  // U+037E  GREEK QUESTION MARK
+        ';',  // U+003B  LATIN SEMICOLON (kept as a sentence boundary for streaming heuristics)
+
+        // Ethiopic (Amharic, Tigrinya)
+        '።',  // U+1362  ETHIOPIC FULL STOP
+        '፧',   // U+1367  ETHIOPIC QUESTION MARK
+        '፨',  // U+1368  ETHIOPIC PARAGRAPH SEPARATOR
+
+        // Myanmar (Burmese)
+        '၊',  // U+104A  MYANMAR SIGN LITTLE SECTION (clause boundary, often sentence-level)
+        '။',  // U+104B  MYANMAR SIGN SECTION (full sentence terminator)
+
+        // Mongolian
+        '᠃',  // U+1803  MONGOLIAN FULL STOP
+        '᠉',  // U+1809  MONGOLIAN MANCHU FULL STOP
+
+        // Canadian Syllabics — used for Indigenous languages of Canada (Cree, Inuktitut, etc.)
+        '᙮',  // U+166E  CANADIAN SYLLABICS FULL STOP
+    ];
+
+    // High-performance search values dynamically created from the array above to prevent duplication.
+    private static readonly System.Buffers.SearchValues<char> s_sentenceTerminators = System.Buffers.SearchValues.Create(SentenceTerminators);
 
     // Limits the length of a single audio generation task to prevent GPU timeouts.
     private readonly int _maxLength = settings.MaxChunkLength > 50 ? settings.MaxChunkLength : 250;
 
-    // Symbol used to indicate an "emergency" split in the middle of a sentence (helps with prosody).
-    private const string EmergencyGlue = "_";
+    // Symbol used to glue chunks together when an emergency split is necessary
+    // (e.g., splitting in the middle of a long sentence without good break points).
+    private const string EmergencyGlue = ",";
 
-    // Global multilingual array of sentence terminators to improve smart context detection for streaming.
-    private static readonly char[] SentenceTerminators =
-    [
-        '.', '!', '?', '\n',
-        '。', '！', '？', '｡',
-        '؟', '۔',
-        '।', '॥',
-        '๚', '๛',
-        '։',
-        ';', ';',
-        '።', '။'
-    ];
     // Additional pause marks that often indicate natural break points in sentences, even if they aren't full terminators.
-    private static readonly char[] PauseMarks = [',', ';', ':', '-', '—', '，', '、', '；', '：'];
+    // These are NOT sentence terminators — they signal a softer pause used by SplitLongSentence for emergency splitting.
+    private static readonly char[] PauseMarks =
+    [
+        ',', // U+002C  COMMA
+        ';', // U+003B  SEMICOLON
+        ':', // U+003A  COLON
+        '-', // U+002D  HYPHEN-MINUS
+        '–', // U+2013  EN DASH
+        '—', // U+2014  EM DASH
+        '…', // U+2026  HORIZONTAL ELLIPSIS (pause in speech)
+
+        // Arabic pause punctuation
+        '،', // U+060C  ARABIC COMMA
+        '؛', // U+061B  ARABIC SEMICOLON
+
+        // East Asian pause punctuation
+        '，', // U+FF0C  FULLWIDTH COMMA
+        '、', // U+3001  IDEOGRAPHIC COMMA
+        '；', // U+FF1B  FULLWIDTH SEMICOLON
+        '：', // U+FF1A  FULLWIDTH COLON
+        '﹐', // U+FE50  SMALL COMMA
+        '﹑', // U+FE51  SMALL IDEOGRAPHIC COMMA
+        '﹔', // U+FE54  SMALL SEMICOLON
+        '﹕', // U+FE55  SMALL COLON
+
+        // Mongolian pause punctuation
+        '᠂', // U+1802  MONGOLIAN COMMA
+        '᠄', // U+1804  MONGOLIAN COLON
+    ];
 
     /// <summary>
     /// A comprehensive list of global abbreviations and titles that should NOT trigger a sentence split.
@@ -66,7 +150,23 @@ public class TextChunker(ChunkerSettings settings)
         
         // ================= UKRAINIAN / KYRILLIC =================
         "проф", "доц", "акад", "гр", "тов", "пан", "пані", "дир", "інж", "зав", "заст", "пом", "д-р", "ст", "мол",
-        "вул", "пров", "просп", "бул", "обл", "пл", "ім", "буд", "кв", "мкр", "р-н", "пт", "сел", "смт", "рис", "табл", "див", "пор", "напр"
+        "вул", "пров", "просп", "бул", "обл", "пл", "ім", "буд", "кв", "мкр", "р-н", "пт", "сел", "смт", "рис", "табл", "див", "пор", "напр",
+
+        // ================= RUSSIAN =================
+        "г", "гр", "д-р", "доц", "акад", "проф", "тов", "ул", "пр", "пер", "бул", "пл", "наб", "ш", "пос", "дер",
+        "обл", "р-н", "кв", "стр", "корп", "пом", "рис", "табл", "см", "ср", "напр", "т", "д", "п", "тп", "св",
+
+        // ================= TURKISH =================
+        "dr", "prof", "doç", "yrd", "uzm", "öğr", "mh", "sk", "cd", "bul", "sok",
+
+        // ================= JAPANESE (Romaji titles used in multilingual contexts) =================
+        "dr", "prof",
+
+        // ================= ARABIC (Latin transliterations commonly used in multilingual AI output) =================
+        "dr", "prof", "st",
+
+        // ================= HEBREW =================
+        "דר", "פרופ", "עו"
     };
 
     /// <summary>

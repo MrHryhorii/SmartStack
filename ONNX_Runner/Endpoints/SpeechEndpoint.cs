@@ -14,34 +14,6 @@ public static class SpeechEndpoint
         "wav", "mp3", "opus", "pcm"
     };
 
-    // Global multilingual array of sentence terminators to improve smart context detection for streaming.
-    private static readonly char[] _globalTerminators =
-    [
-        // Common Latin punctuation
-        '.', '!', '?', '\n',
-        
-        // East Asian (Chinese, Japanese, Korean)
-        '。', '！', '？', '｡', 
-        
-        // Arabic and Persian
-        '؟', '۔', 
-        
-        // Devanagari and other Indic scripts
-        '।', '॥', 
-        
-        // Thai and Lao
-        '๚', '๛',
-        
-        // Armenian
-        '։', 
-        
-        // Greek question mark (U+037E) and Standard Semicolon (U+003B)
-        ';', ';', 
-        
-        // Ethiopic and Myanmar
-        '።', '။'
-    ];
-
     public static async Task<IResult> HandleSpeechRequest(
         HttpContext httpContext,
         [FromBody] OpenAiSpeechRequest request,
@@ -272,28 +244,59 @@ public static class SpeechEndpoint
                         {
                             try
                             {
+                                // LOCAL STATE: Tracks sentence continuation across chunks within the same request.
+                                // Defaults to true, assuming the very first chunk is the start of a new thought.
+                                bool previousChunkWasFinished = true;
+
                                 foreach (var chunk in textChunks)
                                 {
                                     cancellationToken.ThrowIfCancellationRequested();
 
+                                    ReadOnlySpan<char> cleanChunk = chunk.AsSpan().Trim();
+
+                                    // =========================================================
+                                    // ULTIMATE DEFENSIVE PARANOIA
+                                    // =========================================================
+                                    // If the chunk is empty (e.g., due to a chunker edge case or specific input), 
+                                    // we skip it to save GPU resources and preserve the current state.
+                                    if (cleanChunk.IsEmpty)
+                                    {
+                                        continue;
+                                    }
+
                                     // =========================================================
                                     // MULTILINGUAL SMART CONTEXT DETECTION FOR STREAMING
                                     // =========================================================
-                                    ReadOnlySpan<char> cleanChunk = chunk.AsSpan().Trim();
                                     bool isContinuation = false;
                                     bool isFinished = false;
 
-                                    if (cleanChunk.Length > 0)
+                                    // Ignore leading punctuation (e.g., quotes, dashes) to find the first actual letter
+                                    int firstLetterIdx = 0;
+                                    while (firstLetterIdx < cleanChunk.Length && !char.IsLetter(cleanChunk[firstLetterIdx]))
                                     {
-                                        char firstChar = cleanChunk[0];
-
-                                        // If the first character is lowercase, we can reasonably assume this chunk is a continuation of the previous sentence rather than a new one. 
-                                        // This heuristic helps maintain natural prosody in streaming scenarios where text is split into smaller chunks.
-                                        isContinuation = char.IsLower(firstChar);
-
-                                        // Use the global multilingual array of sentence terminators
-                                        isFinished = _globalTerminators.AsSpan().Contains(cleanChunk[^1]);
+                                        firstLetterIdx++;
                                     }
+
+                                    // Determine if this chunk is a continuation of the previous thought
+                                    // If the previous chunk ended with an EmergencyGlue or lacked a terminator, 
+                                    // this is 100% a continuation, regardless of case.
+                                    if (!previousChunkWasFinished)
+                                    {
+                                        isContinuation = true;
+                                    }
+                                    // Otherwise, rely on the lowercase heuristic for cased languages.
+                                    // For uncased languages (Asian, Arabic), this safely returns false, preserving pitch attack.
+                                    else if (firstLetterIdx < cleanChunk.Length)
+                                    {
+                                        isContinuation = char.IsLower(cleanChunk[firstLetterIdx]);
+                                    }
+
+                                    // Check if the chunk ends with a known sentence terminator
+                                    // Using the single source of truth from TextChunker.
+                                    isFinished = TextChunker.SentenceTerminators.AsSpan().Contains(cleanChunk[^1]);
+
+                                    // Update local state for the next iteration safely
+                                    previousChunkWasFinished = isFinished;
 
                                     // Generate the base voice using neural network
                                     string phonemes = unifiedPhonemizer.GetPhonemes(chunk);
