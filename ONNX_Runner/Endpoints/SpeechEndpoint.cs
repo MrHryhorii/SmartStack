@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Mvc;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 using System.Buffers;
-using System.Globalization;
 
 namespace ONNX_Runner.Endpoints;
 
@@ -188,8 +187,18 @@ public static class SpeechEndpoint
                     var spatialEngine = new SpatialEffectsEngine(finalSampleRate);
 
                     // =================================================================
-                    // DSP MODIFIERS SETUP (PITCH & VOLUME)
+                    // DSP MODIFIERS SETUP (PITCH, VOLUME & EFFECTS)
                     // =================================================================
+
+                    // PRE-PARSE CHARACTER EFFECT:
+                    // Resolve strings to exact Enums ONCE per request to avoid string parsing inside the hot audio loop.
+                    if (!Enum.TryParse(request.Effect ?? effectsConfig.DefaultEffect, true, out VoiceEffectType effectType))
+                    {
+                        effectType = VoiceEffectType.None;
+                    }
+
+                    float effectAmount = Math.Clamp(request.EffectIntensity ?? effectsConfig.DefaultIntensity, 0f, 1f);
+
                     // Pitch Priority: explicit request value → server default from config → fallback 1.0 (no shift)
                     float targetPitch = request.Pitch ?? dspConfig.DefaultPitch;
                     bool usePitchShift = Math.Abs(targetPitch - 1.0f) > 0.001f;
@@ -205,7 +214,7 @@ public static class SpeechEndpoint
                     bool useVolumeShift = Math.Abs(targetVolume - 1.0f) > 0.001f;
                     // =================================================================
 
-                    // Determine target effect settings, falling back to global defaults if not specified in the request
+                    // Determine target environment settings
                     string targetEnvironment = request.Environment ?? effectsConfig.DefaultEnvironment;
                     float targetEnvIntensity = request.EnvironmentIntensity ?? effectsConfig.DefaultEnvironmentIntensity;
 
@@ -413,8 +422,9 @@ public static class SpeechEndpoint
                                         currentLength = r2.Length;
                                     }
 
-                                    // Apply character DSP effects (Telephone, Cassette, etc.)
-                                    effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), request.Effect, request.EffectIntensity);
+                                    // Apply character DSP effects (Telephone, Cassette, etc.) using parsed Enums
+                                    effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
+
                                     // Apply spatial acoustics AFTER character effects
                                     spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), targetEnvironment, targetEnvIntensity);
                                     streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
@@ -423,7 +433,8 @@ public static class SpeechEndpoint
                                     Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
 
                                     // Apply character effects to silence (e.g. tape hiss continues during pauses)
-                                    effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), request.Effect, request.EffectIntensity);
+                                    effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
+
                                     // Apply spatial acoustics to silence so reverb tails ring out naturally
                                     spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), targetEnvironment, targetEnvIntensity);
                                     streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);

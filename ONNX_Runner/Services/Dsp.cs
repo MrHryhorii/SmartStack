@@ -4,68 +4,129 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Stateless Digital Signal Processing (DSP) kernel.
-/// Provides core mathematical functions and safe audio operations.
+/// Provides core mathematical functions, safe audio operations, and physical modeling primitives.
 /// All methods are pure or operate exclusively on explicitly passed state.
 /// </summary>
 public static class Dsp
 {
-    // --- Safety & Stability ---
+    // =========================================================================
+    // SAFETY & MATH
+    // =========================================================================
+
+    /// <summary>
+    /// Linear interpolation (Equal-Gain crossfade).
+    /// At t=0.5, each signal is attenuated by -6dB, causing a perceptible dip on
+    /// correlated signals. Prefer <see cref="EqualPowerCrossfade"/> for wet/dry mixing.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float Lerp(float a, float b, float t) => a + (b - a) * t;
+
+    /// <summary>
+    /// Equal-Power (Constant-Power) crossfade using sqrt-of-complementary-gains.
+    /// Preserves constant RMS energy at all mix positions — the correct choice for
+    /// perceptually smooth wet/dry blending of uncorrelated audio signals.
+    /// At t=0.5: dryGain = wetGain = sqrt(0.5) ≈ 0.707 (-3dB each, 0dB combined).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float EqualPowerCrossfade(float dry, float wet, float t)
+    {
+        float dryGain = MathF.Sqrt(1f - t);
+        float wetGain = MathF.Sqrt(t);
+        return dry * dryGain + wet * wetGain;
+    }
 
     /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
-    /// Crucial for stabilizing infinite feedback loops and IIR filters.
+    /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
+    /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float KillDenormal(float x)
-    {
-        return MathF.Abs(x) < 1e-15f ? 0f : x;
-    }
+    public static float KillDenormal(float x) => MathF.Abs(x) < 1e-15f ? 0f : x;
 
-    // --- Phase & Oscillators ---
+    // =========================================================================
+    // PHASE & OSCILLATORS
+    // =========================================================================
 
     /// <summary>
-    /// Advances an oscillator's phase by a specific frequency and wraps it safely at 2*PI.
+    /// Advances an oscillator phase by one sample and wraps at 2π.
+    /// Phase is in radians [0, 2π). Increment = 2π * f / fs.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float AdvancePhase(float currentPhase, float freqHz, int sampleRate)
+    public static float AdvancePhase(float phase, float freqHz, int sampleRate)
     {
-        float nextPhase = currentPhase + (MathF.PI * 2f * freqHz / sampleRate);
-        if (nextPhase > MathF.PI * 2f) nextPhase -= MathF.PI * 2f;
-        return nextPhase;
+        phase += 2f * MathF.PI * freqHz / sampleRate;
+        if (phase >= 2f * MathF.PI) phase -= 2f * MathF.PI;
+        return phase;
     }
 
-    /// <summary>
-    /// Computes a standard sine wave based on the current phase.
-    /// </summary>
+    /// <summary>Sine oscillator output from phase in radians.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Sine(float phase) => MathF.Sin(phase);
 
-    // --- Saturation & Wave-Shaping ---
+    /// <summary>
+    /// Sawtooth oscillator output in [-1, 1] from phase in [0, 2π).
+    /// Linearly ramps from -1 to +1 per cycle. Rich in both even and odd harmonics.
+    /// Formula: y = phase / π - 1
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float Sawtooth(float phase) => phase / MathF.PI - 1f;
+
+    // =========================================================================
+    // SATURATION & WAVE-SHAPING
+    // =========================================================================
 
     /// <summary>
-    /// Applies soft clipping (hyperbolic tangent) to smoothly limit audio peaks.
-    /// Simulates analog tape or console saturation.
+    /// Hyperbolic tangent soft clipper.
+    /// Maps ℝ → (-1, 1) with a smooth S-curve. Generates only odd harmonics (symmetric).
+    /// Output is normalized: SoftClip(1) ≈ 0.762, SoftClip(3) ≈ 0.995.
+    /// Industry standard for tube/console saturation emulation.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float SoftClip(float x) => MathF.Tanh(x);
 
     /// <summary>
-    /// Piecewise Exponential Shockley Diode Model.
-    /// Creates realistic asymmetric overdrive by generating both even and odd harmonics.
+    /// Asymmetric soft clipper modeled after a single-transistor common-emitter amplifier.
+    /// Produces both even and odd harmonics due to the asymmetric transfer curve,
+    /// giving a warmer, more "analog" character than symmetric clippers.
+    ///
+    /// Positive half (forward-biased): cubic polynomial approximation of the
+    /// collector current saturation curve — y = x - x³/3, clamped at 1.0.
+    /// This is the standard textbook approximation for BJT soft saturation.
+    ///
+    /// Negative half (reverse-biased): scaled tanh for smooth, gentle limiting.
+    /// The asymmetry between halves is what generates the even-harmonic content.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float ShockleyDiode(float x)
+    public static float AsymmetricSaturation(float x)
     {
-        const float TwoDivPi = 2f / MathF.PI;
-
-        if (x > 0f)
+        if (x >= 0f)
         {
-            // Optimization: avoid expensive Exp calculation for heavily clipped signals
-            if (x > 6f) return 1f;
-            return TwoDivPi * MathF.Atan(MathF.Exp(x * 1.5f) - 1f);
+            // Cubic soft clip: y = x - x³/3, valid for |x| ≤ 1 (unit gain below clipping threshold).
+            // For |x| > 1, hard-clip at ±2/3 (the cubic's peak value at x=1).
+            if (x >= 1f) return 2f / 3f;
+            return x - (x * x * x) / 3f;
         }
 
-        return TwoDivPi * MathF.Atan(x * 1.2f);
+        // Negative half: tanh gives a gentler, more rounded limiting curve.
+        // Scale keeps the slope continuous at x=0 (both halves have dy/dx = 1 at origin).
+        return MathF.Tanh(x);
+    }
+
+    // =========================================================================
+    // WINDOWING
+    // =========================================================================
+
+    /// <summary>
+    /// Hann window (raised cosine) for index i in a window of length N.
+    /// w(i) = 0.5 * (1 - cos(2π * i / (N - 1)))
+    /// Zero at both endpoints (i=0, i=N-1), peak of 1.0 at center.
+    /// Standard window for granular synthesis, FFT analysis, and crossfade envelopes.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float HannWindow(int i, int N)
+    {
+        if (N <= 1) return 1f;
+        return 0.5f * (1f - MathF.Cos(2f * MathF.PI * i / (N - 1)));
     }
 }
 
@@ -74,170 +135,263 @@ public static class Dsp
 // ==============================================================================
 
 /// <summary>
-/// Fast, zero-allocation Pseudo-Random Number Generator.
-/// Produces both White and Pink noise for audio character and dithering.
+/// Fast, zero-allocation Linear Congruential PRNG.
+/// Produces White Noise and Pink Noise (1/f spectrum) for audio applications.
+///
+/// White: uniform distribution, flat spectrum.
+/// Pink:  Paul Kellett's 6-pole IIR approximation of 1/f rolloff.
+///        Each octave carries equal energy — matches psychoacoustic equal-loudness curves.
 /// </summary>
 public struct NoiseGenerator
 {
-    private uint _prngState;
-    private float _pink0, _pink1, _pink2, _pink3, _pink4, _pink5;
+    private uint _state;
+    private float _b0, _b1, _b2, _b3, _b4, _b5;
+
+    /// <summary>Seeds the PRNG. Must be non-zero for non-degenerate output.</summary>
+    public void Seed(uint seed) => _state = seed == 0u ? 1u : seed;
+
+    /// <summary>Clears the pink noise IIR state. Call between requests to prevent bleed.</summary>
+    public void Reset() => _b0 = _b1 = _b2 = _b3 = _b4 = _b5 = 0f;
 
     /// <summary>
-    /// Initializes the random sequence based on a given seed.
-    /// </summary>
-    public void Seed(uint seed) => _prngState = seed;
-
-    /// <summary>
-    /// Clears the history of the pink noise filters to prevent state bleed between sessions.
-    /// </summary>
-    public void Reset()
-    {
-        _pink0 = _pink1 = _pink2 = _pink3 = _pink4 = _pink5 = 0f;
-    }
-
-    /// <summary>
-    /// Generates uniformly distributed White Noise in the range [-0.5, 0.5].
+    /// White noise sample in [-0.5, 0.5].
+    /// Uses the Knuth LCG: x(n+1) = 1664525 * x(n) + 1013904223 (mod 2³²).
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float NextWhite()
     {
-        _prngState = 1664525u * _prngState + 1013904223u;
-        return ((float)_prngState / uint.MaxValue) - 0.5f;
+        _state = 1664525u * _state + 1013904223u;
+        return (float)_state / uint.MaxValue - 0.5f;
     }
 
     /// <summary>
-    /// Generates true Pink Noise (1/f frequency spectrum) using Paul Kellett's algorithm.
-    /// Replicates physically accurate analog circuit hiss and vintage tape noise.
+    /// Pink noise sample (1/f spectrum) via Paul Kellett's refined method.
+    /// Six one-pole IIR filters at geometrically spaced cutoffs sum to approximate
+    /// a -10dB/decade slope across the audible range.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float NextPink()
     {
-        float white = NextWhite();
-        _pink0 = 0.99886f * _pink0 + white * 0.0555179f;
-        _pink1 = 0.99332f * _pink1 + white * 0.0750759f;
-        _pink2 = 0.96900f * _pink2 + white * 0.1538520f;
-        _pink3 = 0.86650f * _pink3 + white * 0.3104856f;
-        _pink4 = 0.55000f * _pink4 + white * 0.5329522f;
-        _pink5 = -0.76160f * _pink5 - white * 0.0168980f;
-
-        return (_pink0 + _pink1 + _pink2 + _pink3 + _pink4 + _pink5 + white * 0.5362f) * 0.115f;
+        float w = NextWhite();
+        _b0 = 0.99886f * _b0 + w * 0.0555179f;
+        _b1 = 0.99332f * _b1 + w * 0.0750759f;
+        _b2 = 0.96900f * _b2 + w * 0.1538520f;
+        _b3 = 0.86650f * _b3 + w * 0.3104856f;
+        _b4 = 0.55000f * _b4 + w * 0.5329522f;
+        _b5 = -0.76160f * _b5 - w * 0.0168980f;
+        return (_b0 + _b1 + _b2 + _b3 + _b4 + _b5 + w * 0.5362f) * 0.115f;
     }
 }
 
 /// <summary>
-/// Simulates the slow, unpredictable thermal drift of physical analog components.
-/// Uses Brownian motion (Red Noise) to slowly modulate parameters over time.
+/// Brownian (Red) noise generator for simulating slow thermal drift of analog components.
+/// Implemented as a heavily over-damped 1-pole IIR lowpass on white noise.
+/// The -6dB/octave slope creates an ultra-slow random walk — the statistical model
+/// of resistor Johnson noise and capacitor ESR drift over temperature.
 /// </summary>
 public struct ThermalDrift
 {
-    /// <summary>
-    /// The current thermal offset value.
-    /// </summary>
+    /// <summary>Current drift value. Typical range: ±0.001 after steady state.</summary>
     public float State { get; private set; }
 
-    /// <summary>
-    /// Resets the thermal state to a "cold" start.
-    /// </summary>
+    /// <summary>Resets drift to a cold-start (zero) condition.</summary>
     public void Reset() => State = 0f;
 
     /// <summary>
-    /// Updates the thermal state by heavily filtering new white noise.
-    /// Must be called per-sample or per-block to evolve the hardware life.
+    /// Advances the drift by one sample.
+    /// Pole at 0.9999 → fc ≈ 0.16 Hz at 44.1kHz — moves imperceptibly slowly.
+    /// Must be called once per sample in the processing loop.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Update(ref NoiseGenerator noise)
-    {
-        // 1-pole lowpass filter applied to white noise creates ultra-slow Brownian motion
-        State = 0.9999f * State + 0.0001f * noise.NextWhite();
-    }
+        => State = 0.9999f * State + 0.0001f * noise.NextWhite();
 }
 
 /// <summary>
-/// A first-order high-pass filter (cutoff ~20Hz) used as a Direct Current (DC) Blocker.
-/// Crucial for removing inaudible low-frequency offsets generated by asymmetric distortion.
+/// First-order IIR high-pass DC blocker (Julius O. Smith design).
+/// Transfer function: H(z) = (1 - z⁻¹) / (1 - R·z⁻¹), R = 0.995.
+/// Cutoff ≈ (1 - R) / (2π) * fs ≈ 35 Hz at 44.1kHz — removes DC offset while
+/// leaving the entire audible band intact.
+/// Essential after asymmetric distortion (ShockleyDiode, AsymmetricSaturation)
+/// which shifts the signal's mean away from zero.
 /// </summary>
 public struct DcBlocker
 {
-    private float _prevX;
-    private float _prevY;
+    private float _x1;
+    private float _y1;
 
-    /// <summary>
-    /// Processes a single sample through the high-pass filter, neutralizing DC offset.
-    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Process(float x)
     {
-        float y = x - _prevX + 0.995f * _prevY;
-        _prevX = x;
-        _prevY = y;
+        float y = x - _x1 + 0.995f * _y1;
+        _x1 = x;
+        _y1 = y;
         return y;
     }
 
-    /// <summary>
-    /// Clears the filter history to prevent pops on new audio streams.
-    /// </summary>
-    public void Reset()
-    {
-        _prevX = _prevY = 0f;
-    }
+    public void Reset() => _x1 = _y1 = 0f;
 }
 
 /// <summary>
-/// A highly optimized, memory-backed circular buffer for delay-based effects (Chorus, Flanger).
-/// Uses bitwise masking for wrap-around instead of modulo operations.
+/// Power-of-2 circular delay line with fractional read via linear interpolation.
+/// Uses bitwise AND masking for O(1) wrap-around — faster than modulo on all platforms.
+///
+/// Capacity must be a power of 2. Maximum readable delay = capacity - 1 samples.
+/// Suitable for chorus, flanger, and short tape delay (up to ~93ms at 44.1kHz for 4096).
 /// </summary>
 public class DelayBuffer
 {
-    private readonly float[] _buffer;
-    private int _writePos;
+    private readonly float[] _buf;
     private readonly int _mask;
+    private int _writePos;
 
-    /// <summary>
-    /// Initializes the delay buffer. Capacity MUST be a power of 2 for fast bitwise masking.
-    /// </summary>
     public DelayBuffer(int capacity = 4096)
     {
         if ((capacity & (capacity - 1)) != 0)
-            throw new ArgumentException("Capacity must be a power of 2.");
-
-        _buffer = new float[capacity];
+            throw new ArgumentException("Capacity must be a power of 2.", nameof(capacity));
+        _buf = new float[capacity];
         _mask = capacity - 1;
     }
 
-    /// <summary>
-    /// Silences the delay line and resets the write pointer.
-    /// </summary>
+    /// <summary>Zeros all samples and resets the write pointer.</summary>
     public void Clear()
     {
-        Array.Clear(_buffer, 0, _buffer.Length);
+        Array.Clear(_buf, 0, _buf.Length);
         _writePos = 0;
     }
 
     /// <summary>
-    /// Writes a clamped sample into the delay line and increments the pointer.
+    /// Writes one sample and advances the pointer.
+    /// Input is clamped to [-1, 1] to prevent feedback runaway.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Write(float sample)
     {
-        _buffer[_writePos] = Math.Clamp(sample, -1f, 1f);
+        _buf[_writePos] = Math.Clamp(sample, -1f, 1f);
         _writePos = (_writePos + 1) & _mask;
     }
 
     /// <summary>
-    /// Reads a fractional number of samples from the past using linear interpolation.
-    /// Accurate read offset (-1f) ensures delaySamples=0 perfectly fetches the last written value.
+    /// Reads a fractional delay (in samples) into the past via linear interpolation.
+    /// The -1 offset ensures Read(0) returns the sample written on the immediately
+    /// preceding Write() call — consistent with a zero-delay tap.
+    /// Valid range: delaySamples ∈ [0, capacity - 1].
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Read(float delaySamples)
     {
-        float readPos = _writePos - delaySamples - 1f;
-        if (readPos < 0f) readPos += _buffer.Length;
+        float pos = _writePos - delaySamples - 1f;
+        if (pos < 0f) pos += _buf.Length;
+        int p0 = (int)pos & _mask;
+        int p1 = (p0 + 1) & _mask;
+        float frac = pos - MathF.Floor(pos);
+        return _buf[p0] * (1f - frac) + _buf[p1] * frac;
+    }
+}
 
-        int p1 = (int)readPos & _mask;
-        int p2 = (p1 + 1) & _mask;
-        float frac = readPos - (int)readPos;
+/// <summary>
+/// Physical simulation of random tape dropouts caused by worn magnetic oxide.
+/// A slow phase accumulator (~1.5 Hz) periodically samples a noise gate threshold.
+/// When triggered, a target attenuation depth is chosen; a slew-rate limiter
+/// (one-pole lowpass on depth) smooths the transition to avoid clicks.
+/// Slew coefficient 0.002 → ~150ms rise/fall time — matches real oxide wear behavior.
+/// </summary>
+public struct TapeDropout
+{
+    private float _phase;
+    private float _targetDepth;
+    private float _currentDepth;
 
-        return _buffer[p1] * (1f - frac) + _buffer[p2] * frac;
+    public void Reset() => _phase = _targetDepth = _currentDepth = 0f;
+
+    /// <summary>
+    /// Applies a slew-limited stochastic volume dip to the input.
+    /// </summary>
+    /// <param name="input">Input sample.</param>
+    /// <param name="intensity">Dropout probability and depth scale [0, 1].</param>
+    /// <param name="noise">Noise source (passed by ref to avoid copy).</param>
+    /// <param name="sampleRate">Sample rate in Hz.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public float Process(float input, float intensity, ref NoiseGenerator noise, int sampleRate)
+    {
+        if (intensity <= 0.001f) return input;
+
+        // Phase accumulator at a rate that scales with intensity.
+        // At intensity=1.0 → ~6 Hz (frequent, short dropouts).
+        // At intensity=0.1 → ~0.15 Hz (rare, long dropouts).
+        float rate = intensity * 6f;
+        _phase += rate / sampleRate;
+        if (_phase >= 1f)
+        {
+            _phase -= 1f;
+            // Probability of a dropout increases with intensity.
+            _targetDepth = noise.NextWhite() < intensity * 0.5f
+                ? 0.3f + (noise.NextWhite() + 0.5f) * 0.6f * intensity
+                : 0f;
+        }
+
+        // Slew limiter: one-pole LP on depth — prevents clicks at dropout edges.
+        _currentDepth += (_targetDepth - _currentDepth) * 0.002f;
+
+        return input * (1f - _currentDepth);
+    }
+}
+
+/// <summary>
+/// Feed-forward RMS compressor with asymmetric attack/release envelope follower.
+/// Based on the standard gain-computer model described in:
+///   Zölzer, U. — "DAFX: Digital Audio Effects", 2nd ed., Ch. 4.
+///
+/// Gain reduction is computed in the linear domain (not dB) for efficiency.
+/// The envelope follower uses pre-computed one-pole IIR coefficients:
+///   coeff = exp(-1 / (time_s * fs))
+///
+/// IMPORTANT: attackCoeff and releaseCoeff must be pre-computed once in Setup()
+/// via <see cref="TimeToCoeff"/> and passed in per-block — NOT per-sample —
+/// to avoid calling MathF.Exp in the hot path.
+/// </summary>
+public struct FeedForwardCompressor
+{
+    private float _envelope;
+
+    public void Reset() => _envelope = 0f;
+
+    /// <summary>
+    /// Converts a time constant in milliseconds to a one-pole IIR coefficient.
+    /// Call once in Setup(), store the result, pass it to Process().
+    /// coeff = exp(-1 / (timeMs * sampleRate / 1000))
+    /// </summary>
+    public static float TimeToCoeff(float timeMs, int sampleRate)
+        => MathF.Exp(-1f / (timeMs * sampleRate / 1000f));
+
+    /// <summary>
+    /// Processes one sample through the compressor.
+    /// </summary>
+    /// <param name="input">Input sample.</param>
+    /// <param name="threshold">Linear amplitude threshold above which gain reduction begins.</param>
+    /// <param name="ratio">Compression ratio (e.g. 4.0 = 4:1). Must be ≥ 1.0.</param>
+    /// <param name="attackCoeff">Pre-computed attack coefficient from <see cref="TimeToCoeff"/>.</param>
+    /// <param name="releaseCoeff">Pre-computed release coefficient from <see cref="TimeToCoeff"/>.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public float Process(float input, float threshold, float ratio, float attackCoeff, float releaseCoeff)
+    {
+        float absIn = MathF.Abs(input);
+
+        // Asymmetric envelope follower: fast attack tracks peaks, slow release tracks decay.
+        _envelope = absIn > _envelope
+            ? attackCoeff * _envelope + (1f - attackCoeff) * absIn
+            : releaseCoeff * _envelope + (1f - releaseCoeff) * absIn;
+
+        _envelope = Dsp.KillDenormal(_envelope);
+
+        if (_envelope <= threshold) return input;
+
+        // Linear-domain gain computer: reduce excess above threshold by (1 - 1/ratio).
+        float overshoot = _envelope - threshold;
+        float gainReduction = overshoot * (1f - 1f / ratio);
+        float gainMultiplier = (_envelope - gainReduction) / _envelope;
+
+        return input * gainMultiplier;
     }
 }
 
@@ -246,84 +400,91 @@ public class DelayBuffer
 // ==============================================================================
 
 /// <summary>
-/// Low-Pass Feedback Comb Filter (LPFCF) - based on James Moorer's design.
-/// Simulates a series of echoes decaying over time.
-/// The built-in low-pass filter mimics how high frequencies are absorbed by air and materials.
+/// Low-Pass Feedback Comb Filter (LPFCF) — Moorer / Freeverb design.
+/// Models a single reflection path with frequency-dependent decay:
+///   y(n) = x(n - D) + g · H_lp(y(n - D))
+/// where D = buffer length, g = feedback gain, H_lp = one-pole LP filter.
+/// The LP filter absorbs high frequencies each reflection, simulating air absorption.
+/// <para>
+/// Stability: feedback must satisfy |g · (1 - damp / 2)| &lt; 1.
+/// Safe operating range: Feedback ∈ [0, 0.98], Damp ∈ [0, 1].
+/// </para>
 /// </summary>
 public class CombFilter(int bufferSize)
 {
-    private readonly float[] _buffer = new float[bufferSize];
-    private int _bufferIdx = 0;
-    private float _filterStore = 0f;
+    private readonly float[] _buf = new float[bufferSize];
+    private int _idx;
+    private float _lpStore;
 
-    // The amount of signal fed back into the loop (determines the length of the reverb tail)
+    /// <summary>Feedback gain [0, 0.98]. Controls reverb decay time (RT60).</summary>
     public float Feedback { get; set; }
 
-    // How much high-frequency energy is lost per reflection (0.0 = bright room, 0.5+ = dark/carpeted room)
+    /// <summary>
+    /// LP damping coefficient [0, 1].
+    /// 0 = bright (no HF absorption), 0.5+ = dark/carpeted room.
+    /// </summary>
     public float Damp { get; set; }
 
     public void Clear()
     {
-        Array.Clear(_buffer, 0, _buffer.Length);
-        _filterStore = 0f;
-        _bufferIdx = 0;
+        Array.Clear(_buf, 0, _buf.Length);
+        _lpStore = 0f;
+        _idx = 0;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Process(float input)
     {
-        float output = _buffer[_bufferIdx];
+        float output = _buf[_idx];
 
-        // Apply low-pass filter to the delayed signal (absorbs high frequencies)
-        _filterStore = (output * (1f - Damp)) + (_filterStore * Damp);
+        // One-pole LP on the feedback path: absorbs HF per reflection.
+        _lpStore = output * (1f - Damp) + _lpStore * Damp;
+        _lpStore = Dsp.KillDenormal(_lpStore);
 
-        // Denormal kill is absolutely critical here to prevent CPU spikes during long decaying feedback tails
-        _filterStore = Dsp.KillDenormal(_filterStore);
+        _buf[_idx] = input + _lpStore * Feedback;
 
-        // Write the new input mixed with the dampened feedback back into the delay line
-        _buffer[_bufferIdx] = input + (_filterStore * Feedback);
-
-        // Fast pointer wrap-around (faster than modulo %)
-        _bufferIdx++;
-        if (_bufferIdx >= _buffer.Length) _bufferIdx = 0;
+        if (++_idx >= _buf.Length) _idx = 0;
 
         return output;
     }
 }
 
 /// <summary>
-/// Schroeder All-Pass Filter.
-/// Alters the phase of the signal without changing its frequency amplitude.
-/// Used to smear echoes together, creating dense, realistic acoustic reflections (diffusion).
+/// Schroeder All-Pass Filter — phase disperser for reverb diffusion.
+/// Transfer function: H(z) = (-g + z⁻ᴺ) / (1 - g · z⁻ᴺ)
+/// Flat magnitude response (all-pass property) but non-linear phase:
+/// smears echoes in time without coloring the frequency spectrum.
+/// Used in series chains to increase reverb density.
+/// <para>
+/// Stability: |Feedback| must be strictly &lt; 1. Typical value: 0.5.
+/// </para>
 /// </summary>
 public class AllPassFilter(int bufferSize)
 {
-    private readonly float[] _buffer = new float[bufferSize];
-    private int _bufferIdx = 0;
+    private readonly float[] _buf = new float[bufferSize];
+    private int _idx;
 
+    /// <summary>Feedback/feedforward gain. Must satisfy |Feedback| &lt; 1.</summary>
     public float Feedback { get; set; } = 0.5f;
 
     public void Clear()
     {
-        Array.Clear(_buffer, 0, _buffer.Length);
-        _bufferIdx = 0;
+        Array.Clear(_buf, 0, _buf.Length);
+        _idx = 0;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Process(float input)
     {
-        float delayed = _buffer[_bufferIdx];
+        float delayed = Dsp.KillDenormal(_buf[_idx]);
 
-        // Denormal kill for stability
-        delayed = Dsp.KillDenormal(delayed);
-
-        // Classic Schroeder All-Pass feedforward + feedback math
+        // Classic Schroeder lattice structure:
+        //   output   = -input + delayed
+        //   buf[idx] =  input + delayed * g
         float output = -input + delayed;
-        _buffer[_bufferIdx] = input + (delayed * Feedback);
+        _buf[_idx] = input + delayed * Feedback;
 
-        // Fast pointer wrap-around
-        _bufferIdx++;
-        if (_bufferIdx >= _buffer.Length) _bufferIdx = 0;
+        if (++_idx >= _buf.Length) _idx = 0;
 
         return output;
     }

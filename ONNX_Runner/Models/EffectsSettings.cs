@@ -25,11 +25,14 @@ public enum VoiceEffectType
     /// <summary>Modulated long delay (Thick, multi-voice ensemble effect).</summary>
     Chorus,
 
-    /// <summary> Simulates the characteristic warmth and coloration of analog cassette tape. </summary>
+    /// <summary>Simulates the characteristic warmth and coloration of analog cassette tape. </summary>
     LoFiTape,
 
-    /// <summary>Glitch effect that randomly freezes and repeats small segments of audio, creating a stuttering, robotic sound. Triggered by loud, smooth vowel sounds to add rhythmic interest without overwhelming the original voice.</summary>
-    NeuralStutter
+    /// <summary>
+    /// Stutters the voice by randomly repeating short segments of audio on vocals, creating a glitchy, jittery effect. 
+    /// The intensity controls the frequency and length of the stutters.
+    /// </summary>
+    VocalStutter
 }
 
 /// <summary>
