@@ -65,6 +65,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private FeedForwardCompressor _tapeCompressor;
     private float _tapeCompAttackCoeff;
     private float _tapeCompReleaseCoeff;
+    private BiQuadFilter? _boomboxBump;
     private BiQuadFilter? _boomboxHp;
     private BiQuadFilter? _boomboxLp;
 
@@ -97,7 +98,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// which can be useful for debugging or consistent rendering in certain applications. 
     /// If no seed is provided, it will use the current time to generate a seed, resulting in non-deterministic noise patterns.
     /// </summary>
-    /// <param name="fixedSeed"></param>
     public void Reset(uint? fixedSeed = null)
     {
         _delay.Clear();
@@ -137,12 +137,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// <summary>
     /// Applies the specified audio effect to the input buffer in-place.
     /// The 'amount' parameter controls the intensity of the effect, 
-    /// typically ranging from 0 (no effect) to 1 (full effect), but can exceed 1 for exaggerated processing.
-    /// The method is optimized for real-time processing with zero allocations in the audio thread.
+    /// typically ranging from 0 (no effect) to 1 (full effect).
+    /// Optimized for real-time processing with zero allocations in the audio thread.
     /// </summary>
-    /// <param name="buffer"></param>
-    /// <param name="type"></param>
-    /// <param name="amount"></param>
     public void ApplyEffect(Span<float> buffer, VoiceEffectType type, float amount)
     {
         if (!_config.EnableGlobalEffects || type == VoiceEffectType.None)
@@ -245,7 +242,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.LoFiTape:
-                // Pre-HPF isolated inside the effect to allow perfect Bypass mapping
+                // Pre-emphasis high-pass filter to simulate tape head response
                 _lofiPreHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(100f), 0.707f);
 
                 float iecFc = 1326f;
@@ -258,15 +255,18 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _tapeCompressor.Reset();
 
                 _tapeCompAttackCoeff = FeedForwardCompressor.TimeToCoeff(2f, _sampleRate);
-                _tapeCompReleaseCoeff = FeedForwardCompressor.TimeToCoeff(50f, _sampleRate);
+                _tapeCompReleaseCoeff = FeedForwardCompressor.TimeToCoeff(200f, _sampleRate);
 
-                _boomboxHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(250f), 0.5f);
-                _boomboxLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(5000f), 0.5f);
+                // 1. Head Bump: Adds a low-frequency resonance (~90Hz) to simulate the physical contour effect of the playback head.
+                // 2. High/Low Pass: Gently rolls off extreme highs and lows to mimic a small speaker enclosure.
+                _boomboxBump = BiQuadFilter.PeakingEQ(_sampleRate, Safe(90f), 0.7f, 3.0f);
+                _boomboxHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(50f), 0.707f);
+                _boomboxLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(5500f), 0.707f);
                 break;
 
             case VoiceEffectType.VocalStutter:
-                _glitchZcrFilterLow = BiQuadFilter.BandPassFilterConstantPeakGain(_sampleRate, 800f, 1.0f);
-                _glitchZcrFilterHigh = BiQuadFilter.BandPassFilterConstantPeakGain(_sampleRate, 1200f, 1.0f);
+                _glitchZcrFilterLow = BiQuadFilter.BandPassFilterConstantPeakGain(_sampleRate, Safe(800f), 1.0f);
+                _glitchZcrFilterHigh = BiQuadFilter.BandPassFilterConstantPeakGain(_sampleRate, Safe(1200f), 1.0f);
 
                 _glitchFrozen = false;
                 _glitchCooldown = 0;
@@ -301,13 +301,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     /// <summary>
     /// Simulates analog telephone line degradation.
-    /// Applies non-linear symmetric soft-clipping driven by pink noise and thermal bias.
+    /// Applies non-linear asymmetric soft-clipping driven by pink noise and thermal bias.
     /// </summary>
     private float Telephone(float x, float amount)
     {
         float noise = _noise.NextPink() * (0.003f + _thermal.State * 0.002f + 0.018f * amount * amount) * amount;
         float drive = 1f + amount * 1.1f;
-        return Dsp.SoftClip(Dsp.AsymmetricSaturation(x * drive + noise)) * 0.95f;
+        return Dsp.AsymmetricSaturation(x * drive + noise) * 0.95f;
     }
 
     /// <summary>
@@ -338,7 +338,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             _bcPhase -= 1f;
             int bits = (int)MathF.Round(16f - (amount * 12f));
 
-            // Quantization levels are centered around zero, so we round to the nearest level and then divide back down.
+            // Quantization levels are centered around zero.
             float levels = 1 << (bits - 1);
 
             _bcHold = MathF.Round(x * levels) / levels;
@@ -369,7 +369,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         _flangerPhase = Dsp.AdvancePhase(_flangerPhase, 0.45f, _sampleRate);
         float delayMs = 0.1f + 1.7f * amount + Dsp.Sine(_flangerPhase) * (1.1f * amount);
-        float delayed = _delay.Read(delayMs * _sampleRate / 1000f);
+        float delayed = _delay.Read(delayMs * _sampleRate * 0.001f);
         _delay.Write(Dsp.SoftClip(x + delayed * 0.68f));
         return delayed * (0.72f * amount);
     }
@@ -386,8 +386,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float d1 = 0.1f + 14.9f * amount + Dsp.Sine(_chorusPhase) * (6.0f * amount) + wow;
         float d2 = 0.1f + 23.9f * amount + Dsp.Sine(_chorusPhase2) * (7.0f * amount) - wow;
 
-        float s1 = _delay.Read(d1 * _sampleRate / 1000f);
-        float s2 = _delay.Read(d2 * _sampleRate / 1000f);
+        float msToSamples = _sampleRate * 0.001f;
+        float s1 = _delay.Read(d1 * msToSamples);
+        float s2 = _delay.Read(d2 * msToSamples);
         _delay.Write(x);
 
         return (s1 + s2) * (0.45f * amount);
@@ -395,62 +396,65 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     /// <summary>
     /// Physical simulation of the IEC 60094 cassette tape recording/playback chain.
-    /// Sequentially applies pre-emphasis, saturation, Dolby NR compression, delay buffer,
-    /// wow/flutter, playback dropout, de-emphasis, playhead hiss, and boombox speaker EQ.
-    /// Mathematically neutral at intensity=0 through localized Lerp bridging.
+    /// Implemented as a sequential 6-stage DSP pipeline for authentic analog behavior.
     /// </summary>
     private float LoFiTape(float x, float amount)
     {
+        // Pre-emphasis
         float hpf = _lofiPreHp != null ? _lofiPreHp.Transform(x) : x;
         float input = Dsp.Lerp(x, hpf, amount);
-
-        // Pre-emphasis filter with non-linear drive to simulate tape head saturation and high-frequency boost.
         _lofiPreState += _lofiPreCoeff * (input - _lofiPreState);
         _lofiPreState = Dsp.KillDenormal(_lofiPreState);
-        float preEmph = input + (input - _lofiPreState) * (1.1f * amount);
+        float preEmph = input + (input - _lofiPreState) * (1.0f * amount);
 
-        float sat = Dsp.AsymmetricSaturation(preEmph * (1f + 0.9f * amount));
-        float saturated = Dsp.Lerp(preEmph, sat, amount);
+        // Tape saturation
+        float drive = 1f + 1.8f * amount;
+        float sat = Dsp.SoftClip(preEmph * drive);
+        float satCompensation = 1f / (1f + 0.55f * amount);
+        float saturated = Dsp.Lerp(preEmph, sat * satCompensation, amount);
 
-        float compThreshold = Dsp.Lerp(1.0f, 0.3f, amount);
-        float comp = _tapeCompressor.Process(saturated, compThreshold, 4.0f, _tapeCompAttackCoeff, _tapeCompReleaseCoeff);
+        // Compression
+        float compThreshold = Dsp.Lerp(1.0f, 0.35f, amount);
+        float comp = _tapeCompressor.Process(saturated, compThreshold, 3.5f, _tapeCompAttackCoeff, _tapeCompReleaseCoeff);
         float recorded = Dsp.Lerp(saturated, comp, amount);
 
+        // Tape write
         _delay.Write(recorded);
 
+        // Wow / Flutter
         _lofiPhase = Dsp.AdvancePhase(_lofiPhase, 1.2f, _sampleRate);
-        _flutterPhase = Dsp.AdvancePhase(_flutterPhase, 9.0f, _sampleRate);
-        float wow = Dsp.Sine(_lofiPhase) * 1.05f * amount;
-        float flutter = (Dsp.Sine(_flutterPhase) * 0.4f + _noise.NextWhite() * 0.05f) * amount;
-        float delayMs = 0.1f + 4.9f * amount;
-        float pitchWarped = _delay.Read((delayMs + wow + flutter) * _sampleRate / 1000f);
-        float playback = Dsp.Lerp(recorded, pitchWarped, amount);
+        _flutterPhase = Dsp.AdvancePhase(_flutterPhase, 8.0f, _sampleRate);
 
-        float dropped = _tapeDropOut.Process(playback, amount, ref _noise, _sampleRate);
+        float wow = Dsp.Sine(_lofiPhase) * (0.65f * amount);
+        float flutter = (Dsp.Sine(_flutterPhase) * 0.12f + _noise.NextWhite() * 0.03f) * amount;
+        float delayMs = 0.1f + 1.3f * amount;
+        float msToSamples = _sampleRate * 0.001f;
+        float pitchWarped = _delay.Read((delayMs + wow + flutter) * msToSamples);
+        float dropped = _tapeDropOut.Process(pitchWarped, amount, ref _noise, _sampleRate);
 
-        // De-emphasis filter with dynamic high-frequency roll-off to simulate tape hiss and loss of treble detail at higher intensities.
+        // De-emphasis
         _lofiDeState += _lofiDeCoeff * (dropped - _lofiDeState);
         _lofiDeState = Dsp.KillDenormal(_lofiDeState);
-        float hfCut = (dropped - _lofiDeState) * (0.55f * amount);
+
+        float hfCut = (dropped - _lofiDeState) * (0.50f * amount);
         float deEmph = dropped - hfCut;
 
-        float hissAmount = 0.012f * amount + 0.010f * amount * amount;
-        float rawHiss = _noise.NextPink() * (hissAmount + _thermal.State * 0.004f);
+        // Hiss
+        float hissAmount = 0.004f * amount + 0.004f * amount * amount;
+        float rawHiss = _noise.NextWhite() * (hissAmount + _thermal.State * 0.003f);
         _lofiHissState += _lofiHissCoeff * (rawHiss - _lofiHissState);
-
         float tapeSignal = deEmph + _lofiHissState;
-        float outSignal = tapeSignal;
 
-        if (_boomboxHp != null && _boomboxLp != null)
+        // Speaker simulation
+        if (_boomboxBump != null && _boomboxHp != null && _boomboxLp != null)
         {
-            float filtered = _boomboxLp.Transform(_boomboxHp.Transform(outSignal));
-            outSignal = Dsp.EqualPowerCrossfade(outSignal, filtered, amount);
+            float bumped = _boomboxBump.Transform(tapeSignal);
+            float filtered = _boomboxLp.Transform(_boomboxHp.Transform(bumped));
+            tapeSignal = Dsp.Lerp(tapeSignal, filtered, amount);
         }
 
-        float makeup = 1f - (0.05f * amount);
-        float finalVol = outSignal * makeup * (1f + 0.5f * amount);
-
-        return Dsp.Lerp(x, Dsp.SoftClip(finalVol), amount);
+        // Final limiter
+        return Dsp.Lerp(tapeSignal, Dsp.SoftClip(tapeSignal * 1.1f), amount);
     }
 
     /// <summary>
@@ -491,10 +495,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     _glitchFrozen = true;
 
                     float durationMs = 40f + amount * 260f;
-                    _glitchRemain = (int)(durationMs * _sampleRate / 1000f);
+                    _glitchRemain = (int)(durationMs * _sampleRate * 0.001f);
 
                     float jitterMs = 25f + (_noise.NextWhite() + 0.5f) * 20f;
-                    _glitchLoopLen = Math.Max(1, (int)(jitterMs * _sampleRate / 1000f));
+                    _glitchLoopLen = Math.Max(1, (int)(jitterMs * _sampleRate * 0.001f));
 
                     _glitchLoopStart = (_glitchWritePos - _glitchLoopLen + _glitchCapture.Length) & GlitchCaptureMask;
                     _glitchPlayPos = 0;

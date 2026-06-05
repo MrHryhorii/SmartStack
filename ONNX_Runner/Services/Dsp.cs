@@ -316,21 +316,19 @@ public struct TapeDropout
     {
         if (intensity <= 0.001f) return input;
 
-        // Phase accumulator at a rate that scales with intensity.
-        // At intensity=1.0 → ~6 Hz (frequent, short dropouts).
-        // At intensity=0.1 → ~0.15 Hz (rare, long dropouts).
-        float rate = intensity * 6f;
+        // Advance the dropout phase and check for trigger.
+        float rate = intensity * 2.5f;
         _phase += rate / sampleRate;
         if (_phase >= 1f)
         {
             _phase -= 1f;
-            // Probability of a dropout increases with intensity.
-            _targetDepth = noise.NextWhite() < intensity * 0.5f
-                ? 0.3f + (noise.NextWhite() + 0.5f) * 0.6f * intensity
+            // 25% of the time, trigger a dropout with random depth scaled by intensity.
+            _targetDepth = noise.NextWhite() < intensity * 0.25f
+                ? 0.05f + (noise.NextWhite() + 0.5f) * 0.25f * intensity
                 : 0f;
         }
 
-        // Slew limiter: one-pole LP on depth — prevents clicks at dropout edges.
+        // Slew the current depth toward the target to create a smooth, natural-sounding dropout.
         _currentDepth += (_targetDepth - _currentDepth) * 0.002f;
 
         return input * (1f - _currentDepth);
