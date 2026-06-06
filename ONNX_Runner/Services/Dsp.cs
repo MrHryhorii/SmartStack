@@ -322,14 +322,18 @@ public struct TapeDropout
         if (_phase >= 1f)
         {
             _phase -= 1f;
-            // 25% of the time, trigger a dropout with random depth scaled by intensity.
-            _targetDepth = noise.NextWhite() < intensity * 0.25f
-                ? 0.05f + (noise.NextWhite() + 0.5f) * 0.25f * intensity
+            // 25% of the time, trigger a dropout.
+            // Depth is scaled for a subtle, realistic tape oxide wear profile.
+            _targetDepth = (noise.NextWhite() + 0.5f) < intensity * 0.25f
+                ? 0.03f + (noise.NextWhite() + 0.5f) * 0.20f * intensity
                 : 0f;
         }
 
         // Slew the current depth toward the target to create a smooth, natural-sounding dropout.
         _currentDepth += (_targetDepth - _currentDepth) * 0.002f;
+
+        // Safety clamp to prevent negative gain or phase inversion on extreme inputs.
+        _currentDepth = Math.Clamp(_currentDepth, 0f, 0.95f);
 
         return input * (1f - _currentDepth);
     }
