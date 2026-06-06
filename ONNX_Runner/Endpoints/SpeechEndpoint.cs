@@ -191,13 +191,18 @@ public static class SpeechEndpoint
                     // =================================================================
 
                     // PRE-PARSE CHARACTER EFFECT:
-                    // Resolve strings to exact Enums ONCE per request to avoid string parsing inside the hot audio loop.
                     if (!Enum.TryParse(request.Effect ?? effectsConfig.DefaultEffect, true, out VoiceEffectType effectType))
                     {
                         effectType = VoiceEffectType.None;
                     }
-
                     float effectAmount = Math.Clamp(request.EffectIntensity ?? effectsConfig.DefaultIntensity, 0f, 1f);
+
+                    // PRE-PARSE SPATIAL ENVIRONMENT:
+                    if (!Enum.TryParse(request.Environment ?? effectsConfig.DefaultEnvironment, true, out SpatialEnvironment envType))
+                    {
+                        envType = SpatialEnvironment.None;
+                    }
+                    float envIntensity = Math.Clamp(request.EnvironmentIntensity ?? effectsConfig.DefaultEnvironmentIntensity, 0f, 1f);
 
                     // Pitch Priority: explicit request value → server default from config → fallback 1.0 (no shift)
                     float targetPitch = request.Pitch ?? dspConfig.DefaultPitch;
@@ -213,10 +218,6 @@ public static class SpeechEndpoint
                     float targetVolume = request.Volume ?? dspConfig.DefaultVolume;
                     bool useVolumeShift = Math.Abs(targetVolume - 1.0f) > 0.001f;
                     // =================================================================
-
-                    // Determine target environment settings
-                    string targetEnvironment = request.Environment ?? effectsConfig.DefaultEnvironment;
-                    float targetEnvIntensity = request.EnvironmentIntensity ?? effectsConfig.DefaultEnvironmentIntensity;
 
                     float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
                     int silenceSamplesCount = (int)(finalSampleRate * (chunkerConfig.SentencePauseSeconds / currentSpeed));
@@ -422,11 +423,11 @@ public static class SpeechEndpoint
                                         currentLength = r2.Length;
                                     }
 
-                                    // Apply character DSP effects (Telephone, Cassette, etc.) using parsed Enums
+                                    // Apply character effects FIRST (Overdrive, Telephone, LoFiTape, etc.)
                                     effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
 
                                     // Apply spatial acoustics AFTER character effects
-                                    spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), targetEnvironment, targetEnvIntensity);
+                                    spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
                                     streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
                                     // Append a brief pause (silence) between sentences for natural pacing
@@ -436,7 +437,7 @@ public static class SpeechEndpoint
                                     effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
 
                                     // Apply spatial acoustics to silence so reverb tails ring out naturally
-                                    spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), targetEnvironment, targetEnvIntensity);
+                                    spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
                                     streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
 
                                     if (useStreaming && streamConfig.FlushAfterEachSentence)

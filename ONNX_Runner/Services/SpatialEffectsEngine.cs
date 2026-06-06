@@ -92,13 +92,11 @@ public class SpatialEffectsEngine
     /// Handles hardware stability (denormals) and dry/wet mixing automatically.
     /// Environment parameters are configured once per environment change, not per sample.
     /// </summary>
-    public void ApplyEnvironment(Span<float> buffer, string? environment = null, float? intensity = null)
+    public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
     {
-        if (!Enum.TryParse(environment ?? "None", true, out SpatialEnvironment env) || env == SpatialEnvironment.None)
+        // Fast-path bypass
+        if (env == SpatialEnvironment.None || mix <= 0.001f)
             return;
-
-        float mix = Math.Clamp(intensity ?? 1.0f, 0f, 1f);
-        if (mix <= 0.001f) return;
 
         if (_current != env)
         {
