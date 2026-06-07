@@ -86,12 +86,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public int PlayPos;
         public int Remain;
         public int Cooldown;
-
-        public BiQuadFilter? ZcrFilterLow;
-        public BiQuadFilter? ZcrFilterHigh;
-        public float Energy;
-        public float Ratio;
         public int TriggerWindowTimer;
+
+        // ZCR detector
+        public float Energy;
+        public float Zcr;
+        public float PrevSample;
+        public int ZcrCount;
     }
 
     // =========================================================================
@@ -164,7 +165,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         _stutter = default;
         _stutter.TriggerWindowTimer = _sampleRate / 100;
-
         Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
     }
 
@@ -211,7 +211,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             // Algorithm runs on filtered path.
             float wet = Process(type, filtered, amount);
-            wet = type != VoiceEffectType.VocalStutter ? _dcBlocker.Process(wet) : wet;
+            wet = type != VoiceEffectType.DigitalStutter ? _dcBlocker.Process(wet) : wet;
 
             // Mathematical routing guarantees True Bypass when amount=0.
             switch (mode)
@@ -245,7 +245,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
         VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
         VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
-        VoiceEffectType.VocalStutter => RoutingMode.StrictInsert,
+        VoiceEffectType.DigitalStutter => RoutingMode.StrictInsert,
         _ => RoutingMode.StrictInsert
     };
 
@@ -300,19 +300,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _tape.BoomboxLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(7500f), 0.707f);
                 break;
 
-            case VoiceEffectType.VocalStutter:
-                _stutter.ZcrFilterLow = BiQuadFilter.BandPassFilterConstantPeakGain(_sampleRate, Safe(800f), 1.0f);
-                _stutter.ZcrFilterHigh = BiQuadFilter.BandPassFilterConstantPeakGain(_sampleRate, Safe(1200f), 1.0f);
-
-                _stutter.Frozen = false;
-                _stutter.Cooldown = 0;
-                _stutter.Energy = 0f;
-                _stutter.Ratio = 0f;
-                _stutter.TriggerWindowTimer = _sampleRate / 100;
-
-                _stutter.LoopLen = 0;
+            case VoiceEffectType.DigitalStutter:
+                _stutter = default;
+                _stutter.TriggerWindowTimer = _sampleRate / 100;         // 10ms window
+                _stutter.LoopLen = Math.Max(1, _sampleRate * 30 / 1000); // 30ms loop
                 Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
-                _stutter.WritePos = 0;
                 break;
         }
     }
@@ -327,7 +319,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Flanger => Flanger(x, amount),
         VoiceEffectType.Chorus => Chorus(x, amount),
         VoiceEffectType.LoFiTape => LoFiTape(x, amount),
-        VoiceEffectType.VocalStutter => VocalStutter(x, amount),
+        VoiceEffectType.DigitalStutter => DigitalStutter(x, amount),
         _ => x
     };
 
@@ -336,8 +328,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // =========================================================================
 
     /// <summary>
-    /// Simulates analog telephone line degradation.
-    /// Applies non-linear asymmetric soft-clipping driven by pink noise and thermal bias.
+    /// Simulates the characteristic distortion and line noise of a POTS telephone connection.
+    /// Pink noise amplitude is thermally modulated to replicate the unpredictable hiss
+    /// of aging analog telephony hardware. Returns a pure wet signal.
     /// </summary>
     private float Telephone(float x, float amount)
     {
@@ -348,8 +341,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Simulates tube/transistor signal saturation.
-    /// Applies asymmetric clipping (cubic polynomial + tanh) to generate warm even-harmonics.
+    /// Simulates the warm harmonic saturation of an analog tube or transistor overdrive stage.
+    /// Thermal bias drift replicates the slow operating-point shift of a warming tube amplifier,
+    /// causing the distortion character to evolve naturally over time. Returns a pure wet signal.
     /// </summary>
     private float Overdrive(float x, float amount)
     {
@@ -361,8 +355,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Digital degradation via Zero-Order Hold (ZOH) decimation and bit quantization.
-    /// Dynamically scales from native sample rate to 11kHz and 16-bit to 4-bit based on intensity.
+    /// Simulates the true aliasing and quantization artifacts of a lo-fi bitcrusher.
+    /// Academic implementation: strictly relies on Zero-Order Hold (decimation) and 
+    /// amplitude quantization. The "metallic" character naturally arises from 
+    /// foldover frequencies (aliasing) and sharp staircase waveforms.
     /// </summary>
     private float Bitcrusher(float x, float amount)
     {
@@ -384,8 +380,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Amplitude modulation using a sine carrier wave with drifting frequency (~30Hz).
-    /// Smoothly morphs from AM Tremolo (low intensity) to Dalek-style Ring Modulation.
+    /// Simulates a classic analog ring modulator.
+    /// The carrier frequency drifts with thermal state, replicating the detuned oscillator
+    /// instability of vintage hardware ring modulators. Internal output scaling compensates
+    /// for the amplitude multiplication inherent to ring modulation.
+    /// Returns a pure wet signal.
     /// </summary>
     private float RingMod(float x, float amount)
     {
@@ -397,7 +396,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Classic flanger effect using a single modulated delay line with a sine LFO.
+    /// Simulates a classic analog flanger using a single modulated delay line with feedback.
+    /// The comb filtering effect is produced by mixing the delayed signal with the dry path
+    /// externally (in the mix stage), creating the characteristic jet-sweep resonance.
+    /// Returns a pure wet signal (the delayed component only).
     /// </summary>
     private float Flanger(float x, float amount)
     {
@@ -409,7 +411,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Analog-style chorus utilizing dual asynchronous delay lines with thermal wow.
+    /// Simulates a classic analog chorus effect using two modulated delay lines.
     /// </summary>
     private float Chorus(float x, float amount)
     {
@@ -429,8 +431,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Physical simulation of the IEC 60094 cassette tape recording/playback chain.
-    /// Implemented as a sequential DSP pipeline for authentic analog behavior.
+    /// Simulates the characteristic warmth and modulation of analog cassette tape.
+    /// A modulated delay line with feedback creates the tape's natural pitch instability,
+    /// while thermally modulated pink noise simulates the hiss and mechanical rumble of tape transport.
     /// </summary>
     private float LoFiTape(float x, float amount)
     {
@@ -535,63 +538,57 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Voice-driven digital glitch/buffer override.
-    /// Mid-band vowel proxy using energy ratio between 800Hz and 1200Hz bands strictly targets vowels.
-    /// Evaluates probability in fixed 10ms windows to remain Sample Rate independent.
+    /// Creates a stuttering glitch effect by rapidly repeating small segments of the audio signal.
+    /// A vowel detection algorithm triggers the stutter effect when the voice is loud and smooth,
+    /// resulting in a rhythmic, robotic chopping effect that emphasizes vocal peaks. Returns a pure wet signal when active.
     /// </summary>
-    private float VocalStutter(float x, float amount)
+    private float DigitalStutter(float x, float amount)
     {
+        // --- Capture Ring Buffer ---
         _glitchCapture[_stutter.WritePos] = x;
         _stutter.WritePos = (_stutter.WritePos + 1) & GlitchCaptureMask;
 
-        float abs = MathF.Abs(x);
+        // --- Vowel Detector ---
+        float xSq = x * x;
+        _stutter.Energy += (xSq > _stutter.Energy ? 0.9f : 0.001f) * (xSq - _stutter.Energy);
 
-        float lowBand = _stutter.ZcrFilterLow?.Transform(x) ?? x;
-        float highBand = _stutter.ZcrFilterHigh?.Transform(x) ?? x;
+        if ((x >= 0f) != (_stutter.PrevSample >= 0f)) _stutter.ZcrCount++;
+        _stutter.PrevSample = x;
 
-        float e1 = lowBand * lowBand;
-        float e2 = highBand * highBand;
-
-        _stutter.Energy += (abs - _stutter.Energy) * 0.08f;
-
-        float instantaneousRatio = e1 / (e2 + 0.0001f);
-        _stutter.Ratio = 0.9f * _stutter.Ratio + 0.1f * instantaneousRatio;
-
-        bool vowelLike = _stutter.Ratio > 1.2f && _stutter.Energy > 0.002f;
-
+        // Check the detector every window (~10ms)
         if (--_stutter.TriggerWindowTimer <= 0)
         {
+            float rawZcr = (float)_stutter.ZcrCount / (_sampleRate / 100);
+            _stutter.Zcr = 0.85f * _stutter.Zcr + 0.15f * rawZcr;
+            _stutter.ZcrCount = 0;
             _stutter.TriggerWindowTimer = _sampleRate / 100;
 
-            if (!_stutter.Frozen && _stutter.Cooldown <= 0 && vowelLike)
+            // Trigger the glitch randomly if the voice is loud and smooth (vowel).
+            if (!_stutter.Frozen && _stutter.Cooldown <= 0
+                && _stutter.Energy > 0.004f
+                && _stutter.Zcr < 0.08f
+                && _noise.NextWhite() > 0.48f)     // Rare 2% trigger chance per 10ms (detects peaks in [-0.5, 0.5] noise)
             {
-                float triggerChance = amount * 0.015f;
+                _stutter.Frozen = true;
 
-                if ((_noise.NextWhite() + 0.5f) < triggerChance)
-                {
-                    _stutter.Frozen = true;
+                // Duration scales linearly (from 50ms up to 600ms).
+                _stutter.Remain = (int)((50f + amount * 550f) * _sampleRate / 1000f);
 
-                    float durationMs = 40f + amount * 260f;
-                    _stutter.Remain = (int)(durationMs * _sampleRate * 0.001f);
+                _stutter.LoopStart = (_stutter.WritePos - _stutter.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
+                _stutter.PlayPos = 0;
 
-                    float jitterMs = 25f + (_noise.NextWhite() + 0.5f) * 20f;
-                    _stutter.LoopLen = Math.Max(1, (int)(jitterMs * _sampleRate * 0.001f));
-
-                    _stutter.LoopStart = (_stutter.WritePos - _stutter.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
-                    _stutter.PlayPos = 0;
-
-                    _stutter.Cooldown = _stutter.Remain + (_sampleRate / 2);
-                }
+                // Fixed 200ms cooldown safety time.
+                _stutter.Cooldown = _stutter.Remain + (_sampleRate / 5);
             }
         }
 
-        if (_stutter.Cooldown > 0)
-            _stutter.Cooldown--;
+        if (_stutter.Cooldown > 0) _stutter.Cooldown--;
 
-        if (!_stutter.Frozen)
-            return x;
+        // If not glitching, just return the normal live sound.
+        if (!_stutter.Frozen) return x;
 
-        int fade = _sampleRate * 2 / 1000;
+        // --- Frozen State Output ---
+        int fadeLen = _sampleRate * 2 / 1000;
 
         if (--_stutter.Remain <= 0)
         {
@@ -600,21 +597,22 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
 
         float frozen = _glitchCapture[(_stutter.LoopStart + _stutter.PlayPos) & GlitchCaptureMask];
-        frozen = Dsp.SoftClip(frozen * 1.1f);
+        frozen = Dsp.SoftClip(frozen * 1.15f); // 1.15f saturation
 
-        int left = _stutter.LoopLen - _stutter.PlayPos;
-
-        if (left < fade)
-            frozen *= Dsp.HannWindow(left, fade * 2);
-        else if (_stutter.PlayPos < fade)
-            frozen *= Dsp.HannWindow(_stutter.PlayPos, fade * 2);
+        // Smooth the start and end of the loop
+        int samplesLeftInLoop = _stutter.LoopLen - _stutter.PlayPos;
+        if (samplesLeftInLoop < fadeLen)
+            frozen *= (float)samplesLeftInLoop / fadeLen;
+        else if (_stutter.PlayPos < fadeLen)
+            frozen *= (float)_stutter.PlayPos / fadeLen;
 
         _stutter.PlayPos = (_stutter.PlayPos + 1) % _stutter.LoopLen;
 
-        if (_stutter.Remain < fade)
+        // Smoothly blend the frozen sound back into the live sound
+        if (_stutter.Remain < fadeLen)
         {
-            float t = (float)_stutter.Remain / fade;
-            frozen = Dsp.EqualPowerCrossfade(x, frozen, t);
+            float t = (float)_stutter.Remain / fadeLen;
+            frozen = frozen * t + x * (1f - t);
         }
 
         return frozen;

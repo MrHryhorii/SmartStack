@@ -28,11 +28,8 @@ public enum VoiceEffectType
     /// <summary>Simulates the characteristic warmth and coloration of analog cassette tape. </summary>
     LoFiTape,
 
-    /// <summary>
-    /// Stutters the voice by randomly repeating short segments of audio on vocals, creating a glitchy, jittery effect. 
-    /// The intensity controls the frequency and length of the stutters.
-    /// </summary>
-    VocalStutter
+    /// <summary>Creates a stuttering effect by rapidly repeating small segments of the audio signal on vocals.</summary>
+    DigitalStutter
 }
 
 /// <summary>
