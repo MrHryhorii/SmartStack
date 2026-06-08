@@ -585,8 +585,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     _glitch.Frozen = true;
                     _glitch.TriggerAccumulator = 0f;
 
-                    // Duration: Pure linear scaling from 0ms to 600ms
-                    float durationMs = amount * 600f;
+                    // Duration: Square root (Ease-Out) scaling.
+                    // Grows aggressively at low intensities for noticeable "android hangs",
+                    // then slows its growth towards the 600ms maximum.
+                    float durationMs = MathF.Sqrt(amount) * 600f;
                     _glitch.Remain = (int)(durationMs * _sampleRate / 1000f);
 
                     // Loop Size: "Knee point" macro-mapping.
@@ -608,8 +610,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     _glitch.LoopStart = (_glitch.WritePos - _glitch.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
                     _glitch.PlayPos = 0;
 
-                    // Enforce a minimum 200ms cooldown safety window post-glitch
-                    _glitch.Cooldown = _glitch.Remain + (_sampleRate / 5);
+                    // Cooldown: 
+                    // Prevent retriggering until the current glitch has fully played out.
+                    // Keeps the pause long (~400ms) at lower intensities to isolate micro-glitches,
+                    // dropping sharply to 200ms baseline at maximum intensity.
+                    float amountSq = amount * amount;
+                    float cooldownMs = 200f + (200f * (1f - amountSq));
+
+                    _glitch.Cooldown = _glitch.Remain + (int)(cooldownMs * _sampleRate / 1000f);
                 }
                 else
                 {
