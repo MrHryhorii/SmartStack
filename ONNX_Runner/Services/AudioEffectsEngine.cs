@@ -93,6 +93,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float Zcr;
         public float PrevSample;
         public int ZcrCount;
+
+        // The TriggerAccumulator is a simple counter that increments each time the glitch effect is triggered.
+        public float TriggerAccumulator;
     }
 
     // =========================================================================
@@ -303,7 +306,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             case VoiceEffectType.DecoderGlitch:
                 _glitch = default;
                 _glitch.TriggerWindowTimer = _sampleRate / 100;         // 10ms window
-                _glitch.LoopLen = Math.Max(1, _sampleRate * 30 / 1000); // 30ms loop
                 Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
                 break;
         }
@@ -566,39 +568,58 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             _glitch.ZcrCount = 0;
             _glitch.TriggerWindowTimer = _sampleRate / 100;
 
-            // Trigger the glitch randomly if the voice is loud and smooth (vowel).
+            // Content-aware vowel detector: trigger only on loud and stable voiced segments
             if (!_glitch.Frozen && _glitch.Cooldown <= 0
                 && _glitch.Energy > 0.004f
-                && _glitch.Zcr < 0.08f
-                && _noise.NextWhite() > 0.48f)     // Rare 2% trigger chance per 10ms
+                && _glitch.Zcr < 0.08f)
             {
-                _glitch.Frozen = true;
+                // Map white noise from [-0.5, 0.5] to a uniform [0.0, 1.0] range
+                float roll = _noise.NextWhite() + 0.5f;
 
-                // Duration: Linear scaling from 0ms to 600ms based on intensity.
-                float durationMs = amount * 600f;
-                _glitch.Remain = (int)(durationMs * _sampleRate / 1000f);
+                // Pseudo-Random Distribution (PRD): base 1% chance + accumulated missed steps
+                float currentChance = 0.01f + _glitch.TriggerAccumulator;
 
-                // Size: Inverse cubic scaling from 5ms to 30ms to guarantee artifact-free micro-stutters at low intensities.
-                float t = Math.Min(1f, amount * 5f);
-                float easeOutCubic = 1f - (1f - t) * (1f - t) * (1f - t);
+                if (roll < currentChance)
+                {
+                    // Glitch successfully triggered
+                    _glitch.Frozen = true;
+                    _glitch.TriggerAccumulator = 0f;
 
-                // Curve:
-                // 0.00 -> 5ms (guaranteed glitch, very tight micro-stutter)
-                // 0.20 -> ~7ms (still tight, good for subtle texture)
-                // 0.50 -> ~15ms (classic stutter effect)
-                float loopMs = 5f + 25f * easeOutCubic;
+                    // Duration: Pure linear scaling from 0ms to 600ms
+                    float durationMs = amount * 600f;
+                    _glitch.Remain = (int)(durationMs * _sampleRate / 1000f);
 
-                // Maximum loop size is strictly limited to half of the total glitch duration 
-                // to prevent excessive repetition and ensure rhythmic variation, 
-                // especially at lower intensities where the glitch may only last 10-20ms.
-                loopMs = Math.Min(loopMs, Math.Max(2f, durationMs * 0.5f));
+                    // Loop Size: "Knee point" macro-mapping.
+                    // Rapidly scales from 5ms to 33ms in the first 10% of the slider,
+                    // then stays strictly locked at 33ms (~30Hz) for classic stutter character.
+                    const float kneeAmount = 0.1f;
+                    const float loopMin = 5f;
+                    const float loopMax = 33f;
 
-                _glitch.LoopLen = Math.Max(1, (int)(loopMs * _sampleRate / 1000f));
-                _glitch.LoopStart = (_glitch.WritePos - _glitch.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
-                _glitch.PlayPos = 0;
+                    float loopMs = amount < kneeAmount
+                        ? loopMin + (loopMax - loopMin) * (amount / kneeAmount)
+                        : loopMax;
 
-                // Fixed 200ms cooldown safety time.
-                _glitch.Cooldown = _glitch.Remain + (_sampleRate / 5);
+                    // Mathematical protection: guarantee at least 2 full cycles for micro-glitches
+                    loopMs = Math.Min(loopMs, Math.Max(2f, durationMs * 0.5f));
+
+                    // Commit loop buffer coordinates
+                    _glitch.LoopLen = Math.Max(1, (int)(loopMs * _sampleRate / 1000f));
+                    _glitch.LoopStart = (_glitch.WritePos - _glitch.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
+                    _glitch.PlayPos = 0;
+
+                    // Enforce a minimum 200ms cooldown safety window post-glitch
+                    _glitch.Cooldown = _glitch.Remain + (_sampleRate / 5);
+                }
+                else
+                {
+                    // Missed roll: accumulate a small chance increase 
+                    // to guarantee eventual triggering during sustained vowels.
+                    // Uses cubic scaling so the bonus remains extremely low at <50% intensity,
+                    // but ramps up to exactly 0.001f at 100% intensity.
+                    float bonus = amount * amount * amount * 0.001f;
+                    _glitch.TriggerAccumulator += bonus;
+                }
             }
         }
 
