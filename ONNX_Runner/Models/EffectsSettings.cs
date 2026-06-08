@@ -5,31 +5,32 @@ namespace ONNX_Runner.Models;
 /// </summary>
 public enum VoiceEffectType
 {
+    /// <summary>No effect, clean voice output.</summary>
     None,
 
-    /// <summary>Lo-Fi equalization with hard transistor clipping.</summary>
+    /// <summary>Lo-fi telephone equalization with transistor-style clipping.</summary>
     Telephone,
 
-    /// <summary>Warm tube saturation and cubic waveshaping distortion.</summary>
+    /// <summary>Warm tube-style saturation and harmonic distortion.</summary>
     Overdrive,
 
-    /// <summary>Bit-depth reduction and sample rate decimation (Retro 8-bit / Arcade effect).</summary>
+    /// <summary>Bit-depth reduction and sample-rate decimation (retro 8-bit effect).</summary>
     Bitcrusher,
 
-    /// <summary>Fast sine wave multiplication (Classic Robot / Dalek effect).</summary>
+    /// <summary>Sine-wave amplitude modulation (classic robot / Dalek effect).</summary>
     RingModulator,
 
-    /// <summary>Modulated short delay with heavy feedback (Metallic space tube effect).</summary>
+    /// <summary>Short modulated delay with feedback (classic flanger effect).</summary>
     Flanger,
 
-    /// <summary>Modulated long delay (Thick, multi-voice ensemble effect).</summary>
+    /// <summary>Long modulated delay for a thick multi-voice effect.</summary>
     Chorus,
 
-    /// <summary>Simulates the characteristic warmth and coloration of analog cassette tape. </summary>
+    /// <summary>Simulates the warmth and coloration of analog cassette tape.</summary>
     LoFiTape,
 
-    /// <summary>Creates a stuttering effect by rapidly repeating small segments of the audio signal on vocals.</summary>
-    DigitalStutter
+    /// <summary>Repeats short audio fragments to simulate a digital decoder glitch.</summary>
+    DecoderGlitch
 }
 
 /// <summary>

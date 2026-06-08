@@ -77,7 +77,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float FilterState;
     }
 
-    private struct StutterState
+    private struct GlitchState
     {
         public int WritePos;
         public bool Frozen;
@@ -119,7 +119,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private BitcrusherState _bc;
     private TapeState _tape;
     private AzimuthState _azimuth;
-    private StutterState _stutter;
+    private GlitchState _glitch;
 
     // =========================================================================
     // PUBLIC API
@@ -163,8 +163,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         _azimuth = default;
 
-        _stutter = default;
-        _stutter.TriggerWindowTimer = _sampleRate / 100;
+        _glitch = default;
+        _glitch.TriggerWindowTimer = _sampleRate / 100;
         Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
     }
 
@@ -211,7 +211,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             // Algorithm runs on filtered path.
             float wet = Process(type, filtered, amount);
-            wet = type != VoiceEffectType.DigitalStutter ? _dcBlocker.Process(wet) : wet;
+            wet = type != VoiceEffectType.DecoderGlitch ? _dcBlocker.Process(wet) : wet;
 
             // Mathematical routing guarantees True Bypass when amount=0.
             switch (mode)
@@ -245,7 +245,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
         VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
         VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
-        VoiceEffectType.DigitalStutter => RoutingMode.StrictInsert,
+        VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
         _ => RoutingMode.StrictInsert
     };
 
@@ -300,10 +300,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _tape.BoomboxLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(7500f), 0.707f);
                 break;
 
-            case VoiceEffectType.DigitalStutter:
-                _stutter = default;
-                _stutter.TriggerWindowTimer = _sampleRate / 100;         // 10ms window
-                _stutter.LoopLen = Math.Max(1, _sampleRate * 30 / 1000); // 30ms loop
+            case VoiceEffectType.DecoderGlitch:
+                _glitch = default;
+                _glitch.TriggerWindowTimer = _sampleRate / 100;         // 10ms window
+                _glitch.LoopLen = Math.Max(1, _sampleRate * 30 / 1000); // 30ms loop
                 Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
                 break;
         }
@@ -319,7 +319,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Flanger => Flanger(x, amount),
         VoiceEffectType.Chorus => Chorus(x, amount),
         VoiceEffectType.LoFiTape => LoFiTape(x, amount),
-        VoiceEffectType.DigitalStutter => DigitalStutter(x, amount),
+        VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
         _ => x
     };
 
@@ -538,81 +538,107 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Creates a stuttering glitch effect by rapidly repeating small segments of the audio signal.
-    /// A vowel detection algorithm triggers the stutter effect when the voice is loud and smooth,
-    /// resulting in a rhythmic, robotic chopping effect that emphasizes vocal peaks. Returns a pure wet signal when active.
+    /// Simulates a VoIP packet loss or AI decoder failure.
+    /// Instead of stretching time (like a human stutter), this effect overwrites 
+    /// the live audio stream with a frozen buffer, simulating a stalled audio thread 
+    /// while the real-time stream continues beneath it.
+    /// Duration scales linearly from 0ms to 600ms based on intensity.
+    /// Loop length scales via inverse cubic interpolation to guarantee artifact-free micro-glitches.
     /// </summary>
-    private float DigitalStutter(float x, float amount)
+    private float DecoderGlitch(float x, float amount)
     {
         // --- Capture Ring Buffer ---
-        _glitchCapture[_stutter.WritePos] = x;
-        _stutter.WritePos = (_stutter.WritePos + 1) & GlitchCaptureMask;
+        _glitchCapture[_glitch.WritePos] = x;
+        _glitch.WritePos = (_glitch.WritePos + 1) & GlitchCaptureMask;
 
         // --- Vowel Detector ---
         float xSq = x * x;
-        _stutter.Energy += (xSq > _stutter.Energy ? 0.9f : 0.001f) * (xSq - _stutter.Energy);
+        _glitch.Energy += (xSq > _glitch.Energy ? 0.9f : 0.001f) * (xSq - _glitch.Energy);
 
-        if ((x >= 0f) != (_stutter.PrevSample >= 0f)) _stutter.ZcrCount++;
-        _stutter.PrevSample = x;
+        if ((x >= 0f) != (_glitch.PrevSample >= 0f)) _glitch.ZcrCount++;
+        _glitch.PrevSample = x;
 
         // Check the detector every window (~10ms)
-        if (--_stutter.TriggerWindowTimer <= 0)
+        if (--_glitch.TriggerWindowTimer <= 0)
         {
-            float rawZcr = (float)_stutter.ZcrCount / (_sampleRate / 100);
-            _stutter.Zcr = 0.85f * _stutter.Zcr + 0.15f * rawZcr;
-            _stutter.ZcrCount = 0;
-            _stutter.TriggerWindowTimer = _sampleRate / 100;
+            float rawZcr = (float)_glitch.ZcrCount / (_sampleRate / 100);
+            _glitch.Zcr = 0.85f * _glitch.Zcr + 0.15f * rawZcr;
+            _glitch.ZcrCount = 0;
+            _glitch.TriggerWindowTimer = _sampleRate / 100;
 
             // Trigger the glitch randomly if the voice is loud and smooth (vowel).
-            if (!_stutter.Frozen && _stutter.Cooldown <= 0
-                && _stutter.Energy > 0.004f
-                && _stutter.Zcr < 0.08f
-                && _noise.NextWhite() > 0.48f)     // Rare 2% trigger chance per 10ms (detects peaks in [-0.5, 0.5] noise)
+            if (!_glitch.Frozen && _glitch.Cooldown <= 0
+                && _glitch.Energy > 0.004f
+                && _glitch.Zcr < 0.08f
+                && _noise.NextWhite() > 0.48f)     // Rare 2% trigger chance per 10ms
             {
-                _stutter.Frozen = true;
+                _glitch.Frozen = true;
 
-                // Duration scales linearly (from 50ms up to 600ms).
-                _stutter.Remain = (int)((50f + amount * 550f) * _sampleRate / 1000f);
+                // Duration: Linear scaling from 0ms to 600ms based on intensity.
+                float durationMs = amount * 600f;
+                _glitch.Remain = (int)(durationMs * _sampleRate / 1000f);
 
-                _stutter.LoopStart = (_stutter.WritePos - _stutter.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
-                _stutter.PlayPos = 0;
+                // Size: Inverse cubic scaling from 5ms to 30ms to guarantee artifact-free micro-stutters at low intensities.
+                float t = Math.Min(1f, amount * 5f);
+                float easeOutCubic = 1f - (1f - t) * (1f - t) * (1f - t);
+
+                // Curve:
+                // 0.00 -> 5ms (guaranteed glitch, very tight micro-stutter)
+                // 0.20 -> ~7ms (still tight, good for subtle texture)
+                // 0.50 -> ~15ms (classic stutter effect)
+                float loopMs = 5f + 25f * easeOutCubic;
+
+                // Maximum loop size is strictly limited to half of the total glitch duration 
+                // to prevent excessive repetition and ensure rhythmic variation, 
+                // especially at lower intensities where the glitch may only last 10-20ms.
+                loopMs = Math.Min(loopMs, Math.Max(2f, durationMs * 0.5f));
+
+                _glitch.LoopLen = Math.Max(1, (int)(loopMs * _sampleRate / 1000f));
+                _glitch.LoopStart = (_glitch.WritePos - _glitch.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
+                _glitch.PlayPos = 0;
 
                 // Fixed 200ms cooldown safety time.
-                _stutter.Cooldown = _stutter.Remain + (_sampleRate / 5);
+                _glitch.Cooldown = _glitch.Remain + (_sampleRate / 5);
             }
         }
 
-        if (_stutter.Cooldown > 0) _stutter.Cooldown--;
+        if (_glitch.Cooldown > 0) _glitch.Cooldown--;
 
         // If not glitching, just return the normal live sound.
-        if (!_stutter.Frozen) return x;
+        if (!_glitch.Frozen) return x;
 
         // --- Frozen State Output ---
-        int fadeLen = _sampleRate * 2 / 1000;
-
-        if (--_stutter.Remain <= 0)
+        if (--_glitch.Remain <= 0)
         {
-            _stutter.Frozen = false;
+            _glitch.Frozen = false;
             return x;
         }
 
-        float frozen = _glitchCapture[(_stutter.LoopStart + _stutter.PlayPos) & GlitchCaptureMask];
+        float frozen = _glitchCapture[(_glitch.LoopStart + _glitch.PlayPos) & GlitchCaptureMask];
         frozen = Dsp.SoftClip(frozen * 1.15f); // 1.15f saturation
 
-        // Smooth the start and end of the loop
-        int samplesLeftInLoop = _stutter.LoopLen - _stutter.PlayPos;
-        if (samplesLeftInLoop < fadeLen)
-            frozen *= (float)samplesLeftInLoop / fadeLen;
-        else if (_stutter.PlayPos < fadeLen)
-            frozen *= (float)_stutter.PlayPos / fadeLen;
+        // Dynamic fade-in and fade-out at the start and end of the loop to prevent clicks.
+        int targetFade = _sampleRate * 2 / 1000;
+        int fadeLen = Math.Min(targetFade, _glitch.LoopLen / 2);
 
-        _stutter.PlayPos = (_stutter.PlayPos + 1) % _stutter.LoopLen;
-
-        // Smoothly blend the frozen sound back into the live sound
-        if (_stutter.Remain < fadeLen)
+        if (fadeLen > 0)
         {
-            float t = (float)_stutter.Remain / fadeLen;
-            frozen = frozen * t + x * (1f - t);
+            int samplesLeftInLoop = _glitch.LoopLen - _glitch.PlayPos;
+            if (samplesLeftInLoop < fadeLen)
+                frozen *= Dsp.HannWindow(samplesLeftInLoop, fadeLen * 2);
+            else if (_glitch.PlayPos < fadeLen)
+                frozen *= Dsp.HannWindow(_glitch.PlayPos, fadeLen * 2);
+        }
+
+        _glitch.PlayPos = (_glitch.PlayPos + 1) % _glitch.LoopLen;
+
+        // Additional release fade in the last 25ms of the glitch to ensure a smooth transition back to live audio, 
+        // especially for longer stutters.
+        int releaseSamples = Math.Min(_sampleRate * 25 / 1000, _glitch.LoopLen);
+        if (_glitch.Remain < releaseSamples && releaseSamples > 0)
+        {
+            float tFade = (float)_glitch.Remain / releaseSamples;
+            frozen = frozen * tFade + x * (1f - tFade);
         }
 
         return frozen;

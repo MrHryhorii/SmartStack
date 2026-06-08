@@ -90,10 +90,20 @@ public class OpenAiSpeechRequest
     public string? Effect { get; set; }
 
     /// <summary>
-    /// Controls the intensity of the chosen effect. Ranges from 0.0 (bypass) to 1.0 (maximum).
+    /// Controls the intensity of the chosen effect. 
+    /// Ranges from 0.0 (bypass) to 1.0 (maximum). 
+    /// The server may apply internal scaling based on the effect type, 
+    /// so this is a relative intensity control rather than a direct parameter for the underlying DSP algorithm.
     /// </summary>
+    private float? _effectIntensity;
     [JsonPropertyName("effect_intensity")]
-    public float? EffectIntensity { get; set; }
+    public float? EffectIntensity
+    {
+        get => _effectIntensity;
+        // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings that
+        // could break the model or cause excessive distortion.
+        set => _effectIntensity = value.HasValue ? Math.Clamp(value.Value, 0.0f, 1.0f) : null;
+    }
 
     /// <summary>
     /// Specifies an acoustic spatial environment to apply (e.g., "LivingRoom", "ConcreteHall").
@@ -104,8 +114,15 @@ public class OpenAiSpeechRequest
     /// <summary>
     /// Controls the intensity of the spatial environment. Ranges from 0.0 (bypass) to 1.0 (maximum).
     /// </summary>
+    private float? _environmentIntensity;
     [JsonPropertyName("environment_intensity")]
-    public float? EnvironmentIntensity { get; set; }
+    public float? EnvironmentIntensity
+    {
+        get => _environmentIntensity;
+        // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings 
+        // that could break the model or cause excessive reverb.
+        set => _environmentIntensity = value.HasValue ? Math.Clamp(value.Value, 0.0f, 1.0f) : null;
+    }
 
     /// <summary>
     /// Pitch shift factor. 
