@@ -30,7 +30,10 @@ public enum VoiceEffectType
     LoFiTape,
 
     /// <summary>Repeats short audio fragments to simulate a digital decoder glitch.</summary>
-    DecoderGlitch
+    DecoderGlitch,
+
+    /// <summary>Simulates a cybernetic vocal projection using clock drift, spectral dispersion, and dynamic quantization.</summary>
+    Hologram
 }
 
 /// <summary>
