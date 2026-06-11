@@ -34,6 +34,17 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private readonly EffectsSettings _config = config;
     private readonly int _sampleRate = sampleRate;
 
+    // Pre-scaled coefficients for envelope followers and modulators to avoid per-sample calculations.
+    private readonly float _envAtt = Dsp.ScaleCoeff(0.2f, sampleRate);
+    private readonly float _envRel = Dsp.ScaleCoeff(0.005f, sampleRate);
+    private readonly float _agcAtt = Dsp.ScaleCoeff(0.05f, sampleRate);
+    private readonly float _agcRel = Dsp.ScaleCoeff(0.001f, sampleRate);
+    private readonly float _glitchAtt = Dsp.ScaleCoeff(0.9f, sampleRate);
+    private readonly float _glitchRel = Dsp.ScaleCoeff(0.001f, sampleRate);
+    private readonly float _tapeSlew = Dsp.ScaleCoeff(0.002f, sampleRate);
+    private readonly float _thermalDriftCoeff = Dsp.ScaleCoeff(0.0001f, sampleRate);
+    private readonly float _cvsdRateScale = 48000f / sampleRate;
+
     private enum RoutingMode
     {
         ParallelCrossfade,
@@ -111,16 +122,26 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float TriggerAccumulator;
     }
 
-    private struct HologramState
+    private struct RadioState
     {
-        public float SpectralLow;
-        public float SpectralHigh;
-        public float Energy;
-        public float SpectralCoeffMin;
-        public float SpectralCoeffMax;
-        public float MotionPhase;
-        public float PllPhase;
-        public float ShimmerPhase;
+        public float Envelope;
+        public float SquelchEnvelope;
+        public FeedForwardCompressor Compressor;
+        public float CompAttackCoeff;
+        public float CompReleaseCoeff;
+        public float AgcState;
+        public int TxTimer;
+        public bool IsTransmitting;
+
+        public float CvsdAccumulator;
+        public float CvsdStepSize;
+        public uint CvsdHistory;
+        public float CvsdReconstructionState;
+
+        public float StepDecay;
+        public float AccumDecay;
+        public float ReconCoeff;
+        public float SquelchReleaseCoeff;
     }
 
     // =========================================================================
@@ -128,7 +149,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // =========================================================================
 
     private readonly DelayBuffer _delay = new(4096);
-    private DcBlocker _dcBlocker = new();
+    private DcBlocker _dcBlocker = new(sampleRate);
     private NoiseGenerator _noise = new();
     private ThermalDrift _thermal = new();
 
@@ -149,7 +170,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private TapeState _tape;
     private AzimuthState _azimuth;
     private GlitchState _glitch;
-    private HologramState _holo;
+    private RadioState _radio;
 
     // =========================================================================
     // PUBLIC API
@@ -197,8 +218,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _glitch.TriggerWindowTimer = _sampleRate / 100;
         Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
 
-        _holo = default;
         _auxDelay.Clear();
+
+        _radio = default;
+        _radio.Compressor.Reset();
     }
 
     /// <summary>
@@ -236,7 +259,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             // Isolate 'filtered' signal strictly for effect processing.
             float filtered = Dsp.KillDenormal(dry);
 
-            _thermal.Update(ref _noise);
+            _thermal.Update(ref _noise, _thermalDriftCoeff);
 
             if (filterCount > 0)
                 for (int f = 0; f < filterCount; f++)
@@ -283,7 +306,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
         VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
         VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
-        VoiceEffectType.Hologram => RoutingMode.StrictCrossfade,
+        VoiceEffectType.CvsdCodec => RoutingMode.ParallelCrossfade,
         _ => RoutingMode.StrictInsert
     };
 
@@ -343,27 +366,28 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _glitch.TriggerWindowTimer = _sampleRate / 100; // 10ms window
                 break;
 
-            case VoiceEffectType.Hologram:
-                // High-pass filter to remove fundamental low-frequency energy
-                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(112f), 0.707f);
+            case VoiceEffectType.CvsdCodec:
+                // Digital Tactical / Motorola Profile (320 - 3400 Hz)
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(320f), 0.707f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(1100f), 1.4f, 3.0f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(2100f), 1.8f, 5.0f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(2800f), 1.4f, 3.0f);
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 0.707f);
 
-                // Fixed peaking EQs to impose static synthetic formants
-                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(1240f), 2.35f, 1.85f);
-                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(2490f), 1.35f, 2.95f);
-                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(6020f), 0.85f, 2.65f);
+                _radio = default;
+                _radio.Compressor.Reset();
 
-                // "Glass" resonance targeted at 3.85kHz to enhance crystalline AI characteristics
-                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(3850f), 1.8f, 1.4f);
+                // Aggressive compression (Attack: 1ms, Release: 80ms)
+                _radio.CompAttackCoeff = FeedForwardCompressor.TimeToCoeff(1f, _sampleRate);
+                _radio.CompReleaseCoeff = FeedForwardCompressor.TimeToCoeff(80f, _sampleRate);
+
+                // --- CVSD Codec State Initialization ---
+                _radio.StepDecay = MathF.Exp(-1f / (0.004f * _sampleRate));
+                _radio.AccumDecay = MathF.Exp(-1f / (0.025f * _sampleRate));
+                _radio.ReconCoeff = 1f - MathF.Exp(-2f * MathF.PI * 2400f / _sampleRate);
+                _radio.SquelchReleaseCoeff = 1f - MathF.Exp(-1f / (0.1f * _sampleRate));
 
                 _delay.Clear();
-                _auxDelay.Clear();
-
-                // Initialize bounds for the 1-pole dynamic spectral smoothing
-                _holo.SpectralCoeffMin = 1f - MathF.Exp(-2f * MathF.PI * Safe(4400f) / _sampleRate);
-                _holo.SpectralCoeffMax = 1f - MathF.Exp(-2f * MathF.PI * Safe(7600f) / _sampleRate);
-                _holo.SpectralLow = 0f;
-                _holo.SpectralHigh = 0f;
-                _holo.Energy = 0f;
                 break;
         }
     }
@@ -379,7 +403,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Chorus => Chorus(x, amount),
         VoiceEffectType.LoFiTape => LoFiTape(x, amount),
         VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
-        VoiceEffectType.Hologram => Hologram(x, amount),
+        VoiceEffectType.CvsdCodec => CvsdCodec(x, amount),
         _ => x
     };
 
@@ -546,7 +570,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // Dropout
         // Physical tape wear causing smooth, stochastic volume drops (oxide shedding).
-        float dropped = _tape.DropOut.Process(pitchWarped, amount, ref _noise, _sampleRate);
+        float dropped = _tape.DropOut.Process(pitchWarped, amount, ref _noise, _sampleRate, _tapeSlew);
 
         // De-emphasis
         // Restores spectral balance after reading from the playback head.
@@ -613,7 +637,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // --- Vowel Detector ---
         float xSq = x * x;
-        _glitch.Energy += (xSq > _glitch.Energy ? 0.9f : 0.001f) * (xSq - _glitch.Energy);
+        _glitch.Energy += (xSq > _glitch.Energy ? _glitchAtt : _glitchRel) * (xSq - _glitch.Energy);
 
         if ((x >= 0f) != (_glitch.PrevSample >= 0f)) _glitch.ZcrCount++;
         _glitch.PrevSample = x;
@@ -732,111 +756,119 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Simulates a synthetic projection voice using phase instability, multi-band comb filtering, 
-    /// dynamic quantization, and envelope-gated modulations.
+    /// Simulates a tactical military radio channel using academic CVSD (Continuously Variable Slope Delta) 
+    /// modulation, dynamic slope overload, and half-duplex clipping.
     /// </summary>
-    private float Hologram(float x, float amount)
+    private float CvsdCodec(float x, float amount)
     {
-        float envelope = MathF.Abs(x);
+        float absX = MathF.Abs(x);
 
-        // --- COHERENCE GATE ---
-        // Envelope follower with asymmetrical attack/release times.
-        // Calculates a coherence multiplier to attenuate chaotic modulations during high-energy transients.
-        _holo.Energy += (envelope > _holo.Energy ? 0.13f : 0.0019f) * (envelope - _holo.Energy);
-        _holo.Energy = Dsp.KillDenormal(_holo.Energy);
+        // --- Envelope Followers ---
+        _radio.Envelope += (absX > _radio.Envelope ? _envAtt : _envRel) * (absX - _radio.Envelope);
+        _radio.Envelope = Dsp.KillDenormal(_radio.Envelope);
 
-        float coherence = MathF.Max(0.40f, 1f - (_holo.Energy * 2.4f));
+        // Squelch envelope with hysteresis: closes quickly when the signal exceeds the threshold, 
+        // but opens slowly to prevent chattering on borderline signals.
+        _radio.SquelchEnvelope += (absX > _radio.SquelchEnvelope ? 0.8f : _radio.SquelchReleaseCoeff) * (absX - _radio.SquelchEnvelope);
+        _radio.SquelchEnvelope = Dsp.KillDenormal(_radio.SquelchEnvelope);
 
-        // Upward Expander
-        // Applies envelope-dependent gain to amplify low-amplitude transients, capped at 1.30x.
-        float expanderGain = MathF.Min(1.30f, 1f + (MathF.Max(0f, 0.04f - envelope) * 9f * amount));
-        float expanded = x * expanderGain;
+        // --- Half-Duplex Clipping & Smooth Burst ("tchsh") ---
+        int maxTxTimer = (int)((0.02f + amount * 0.04f) * _sampleRate);
+        bool currentlyTransmitting = _radio.SquelchEnvelope > 0.01f;
 
-        // Routing: Write expanded clean signal to the primary delay line.
-        _delay.Write(expanded);
+        if (currentlyTransmitting && !_radio.IsTransmitting)
+        {
+            _radio.IsTransmitting = true;
+            _radio.TxTimer = maxTxTimer;
+        }
+        else if (!currentlyTransmitting && _radio.SquelchEnvelope < 0.001f)
+        {
+            _radio.IsTransmitting = false;
+        }
 
-        // PLL Clock Drift
-        // Introduces microscopic delay drift driven by a 1.85Hz oscillator to simulate clock synchronization instability.
-        _holo.PllPhase = Dsp.AdvancePhase(_holo.PllPhase, 1.85f, _sampleRate);
-        float pllJitter = Dsp.Sine(_holo.PllPhase) * 0.065f * amount;
+        float txGate = 1f;
+        float burstNoise = 0f;
 
-        // Chorus
-        // Combines the expanded signal with a modulated delay line to create phase decorrelation.
-        _mod.ChorusPhase = Dsp.AdvancePhase(_mod.ChorusPhase, 0.38f, _sampleRate);
-        float chorusDelayMs = MathF.Max(0.08f, 4.5f + Dsp.Sine(_mod.ChorusPhase) * 1.35f * amount + pllJitter);
-        float chorusVoice = _delay.Read(chorusDelayMs * _sampleRate * 0.001f);
+        if (_radio.TxTimer > 0)
+        {
+            float burstProgress = 1f - ((float)_radio.TxTimer / maxTxTimer);
 
-        float chorused = Dsp.Lerp(expanded, chorusVoice, 0.34f * amount);
+            // Smooth burst envelope using a cosine function for natural fade-in and fade-out.
+            float burstEnv = burstProgress < 0.15f
+                ? 0.5f - 0.5f * MathF.Cos(burstProgress / 0.15f * MathF.PI)
+                : 0.5f + 0.5f * MathF.Cos((burstProgress - 0.15f) / 0.85f * MathF.PI);
 
-        // Dynamic Spectral Tilt & Dispersion
-        // Splits the signal into asymmetric low-pass and high-pass 1-pole filters,
-        // subtracting the high-pass component to create dynamic phase dispersion.
-        _holo.MotionPhase = Dsp.AdvancePhase(_holo.MotionPhase, 0.092f, _sampleRate);
-        float motionLfo = 0.5f + 0.5f * Dsp.Sine(_holo.MotionPhase);
-        float spectralCoeff = Dsp.Lerp(_holo.SpectralCoeffMin, _holo.SpectralCoeffMax, motionLfo);
+            burstNoise = _noise.NextPink() * burstEnv * 0.35f * amount;
 
-        _holo.SpectralLow += spectralCoeff * (chorused - _holo.SpectralLow);
-        _holo.SpectralLow = Dsp.KillDenormal(_holo.SpectralLow);
+            _radio.TxTimer--;
+            txGate = 0f;
+        }
 
-        // The high-pass component is fed through a non-linear function of itself to create dynamic spectral tilt 
-        // that intensifies as the high-frequency content grows.
-        float hpCoeff = Math.Min(1f, spectralCoeff * 1.6f);
-        _holo.SpectralHigh += hpCoeff * (chorused - _holo.SpectralHigh);
-        _holo.SpectralHigh = Dsp.KillDenormal(_holo.SpectralHigh);
-        float baseHighpass = chorused - _holo.SpectralHigh;
-        float highpass = baseHighpass + (baseHighpass * MathF.Abs(baseHighpass) * 1.5f * amount);
+        // --- Pre-Compressor Dynamic Chain ---
+        float companderGain = _radio.Envelope < 0.1f ? 1.15f : 0.92f;
+        float companded = x * Dsp.Lerp(1f, companderGain, amount) * txGate;
 
-        float dispersion = _holo.SpectralLow - (highpass * 0.105f * amount * coherence);
-        float spectrallyMoved = Dsp.Lerp(chorused, dispersion, amount * 0.88f);
+        float preClipDrive = 1f + amount * 1.5f;
+        float clippedInput = Dsp.SoftClip(companded * preClipDrive);
 
-        // Amplitude Modulation (Ring Mod)
-        float carrierFreq = Math.Min(3200f + 4800f * amount, _sampleRate * 0.45f);
-        _mod.RingPhase = Dsp.AdvancePhase(_mod.RingPhase, carrierFreq, _sampleRate);
-        float carrier = Dsp.Sine(_mod.RingPhase);
+        // --- RF Compressor & AGC Pumping ---
+        float compressed = _radio.Compressor.Process(clippedInput, 0.25f, 5f, _radio.CompAttackCoeff, _radio.CompReleaseCoeff);
 
-        float ringDepth = 0.025f * amount * coherence * coherence;
-        float ringModded = spectrallyMoved + (spectrallyMoved * carrier * ringDepth);
+        float dynamicSignal = Dsp.Lerp(clippedInput, compressed, amount);
 
-        // Routing: Write the modulated signal to the auxiliary buffer to isolate feed-forward artifacts.
-        _auxDelay.Write(Dsp.SoftClip(ringModded));
+        float compAbs = MathF.Abs(dynamicSignal);
+        _radio.AgcState += (compAbs > _radio.AgcState ? _agcAtt : _agcRel) * (compAbs - _radio.AgcState);
+        _radio.AgcState = Dsp.KillDenormal(_radio.AgcState);
 
-        // Feed-Forward Comb Filter
-        float opticalJitter = (_thermal.State * 0.09f + _noise.NextWhite() * 0.012f) * amount * coherence;
-        float combLfo = Dsp.Sine(_mod.ChorusPhase) * 0.08f * amount;
-        float microDelayMs = MathF.Max(0.15f, 1.72f + combLfo + opticalJitter);
-        float combReflection = _auxDelay.Read(microDelayMs * _sampleRate * 0.001f);
+        float agcMultiplier = 1f - MathF.Min(0.5f, _radio.AgcState * amount);
+        float rfSignal = dynamicSignal * agcMultiplier * Dsp.Lerp(1f, 1.6f, amount);
 
-        float comb = ringModded + combReflection * (0.45f * amount * (0.52f + 0.48f * coherence));
+        // --- CVSD Encoding ---
 
-        // Multi-Tap Early Reflections
-        // Sums three short delay taps from the main buffer to simulate a tight, highly reflective enclosure.
-        float msToSamples = _sampleRate * 0.001f;
-        float early = _delay.Read(8.2f * msToSamples) * 0.55f;
-        float mid = _delay.Read(18.8f * msToSamples) * 0.29f;
-        float late = _delay.Read(36.5f * msToSamples) * 0.16f;
+        // Dynamic step size control based on the input signal and historical bit pattern.
+        float minStep = 0.002f * _cvsdRateScale;
+        float maxStep = Dsp.Lerp(0.08f, 0.4f, amount) * _cvsdRateScale;
+        float stepIncr = Dsp.Lerp(0.001f, 0.02f, amount) * _cvsdRateScale;
 
-        float syntheticRoom = (early + mid + late) * 0.36f * amount * amount;
+        bool bit = rfSignal > _radio.CvsdReconstructionState;
 
-        // Dynamic Quantization (Bitcrushing) & HF Noise
-        float noiseMask = envelope > 0.0038f ? 1f : 0.06f;
-        float bits = MathF.Max(4.0f, 5.8f - 1.8f * amount);
-        float levels = 1 << (int)bits;
+        _radio.CvsdHistory = ((_radio.CvsdHistory << 1) | (bit ? 1u : 0u)) & 0x0Fu;
 
-        _holo.ShimmerPhase = Dsp.AdvancePhase(_holo.ShimmerPhase, 32f + _thermal.State * 11f, _sampleRate);
+        if (_radio.CvsdHistory == 0x0Fu || _radio.CvsdHistory == 0x00u)
+            _radio.CvsdStepSize += stepIncr;
+        else
+            _radio.CvsdStepSize *= _radio.StepDecay;
 
-        float raw = _noise.NextWhite();
-        float bitShimmer = MathF.Round(raw * levels) / levels;
+        if (_radio.CvsdStepSize < minStep) _radio.CvsdStepSize = minStep;
+        if (_radio.CvsdStepSize > maxStep) _radio.CvsdStepSize = maxStep;
 
-        float shimmerMod = Dsp.Sine(_holo.ShimmerPhase) * 0.85f + envelope * 0.15f;
-        float shimmer = bitShimmer * shimmerMod * 0.0050f * noiseMask * amount;
+        _radio.CvsdAccumulator += bit ? _radio.CvsdStepSize : -_radio.CvsdStepSize;
+        _radio.CvsdAccumulator *= _radio.AccumDecay;
 
-        // Additional coherence-gated high-frequency noise insertion.
-        float hfNoise = _noise.NextWhite() * envelope * 0.0035f * noiseMask * amount * coherence;
+        _radio.CvsdAccumulator = Math.Clamp(_radio.CvsdAccumulator, -1.2f, 1.2f);
+        _radio.CvsdAccumulator = Dsp.KillDenormal(_radio.CvsdAccumulator);
 
-        float finalSignal = comb + syntheticRoom + hfNoise + shimmer;
+        // Update the reconstruction state using the cached coefficient for efficiency.
+        _radio.CvsdReconstructionState += _radio.ReconCoeff * (_radio.CvsdAccumulator - _radio.CvsdReconstructionState);
+        _radio.CvsdReconstructionState = Dsp.KillDenormal(_radio.CvsdReconstructionState);
 
-        // Output & Soft Clipping (Gain Staged for linear crossfade)
-        float makeupGain = 1f + (0.2f * amount);
-        return Dsp.SoftClip(finalSignal * makeupGain);
+        // Quadratic blend for the CVSD output to keep it more intelligible at lower intensities, 
+        // while allowing full degradation at maximum intensity.
+        float codecMix = amount * amount;
+        float codecSignal = Dsp.Lerp(rfSignal, _radio.CvsdReconstructionState, codecMix);
+
+        // --- Radio Hiss & Squelch Tail ---
+        float noiseGate = MathF.Min(1f, _radio.SquelchEnvelope * 10f);
+
+        float cvsdHiss = _noise.NextWhite() * _radio.CvsdStepSize * 0.08f * noiseGate * amount;
+        float backgroundHiss = _noise.NextWhite() * 0.012f * noiseGate * amount;
+
+        float wet = codecSignal + cvsdHiss + backgroundHiss + burstNoise;
+
+        // --- Final Saturation & Sidetone ---
+        float drive = 1f + (amount * 0.4f);
+        float saturated = Dsp.AsymmetricSaturation(wet * drive) / drive;
+
+        return Dsp.SoftClip(saturated + x * 0.02f);
     }
 }

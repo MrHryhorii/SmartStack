@@ -20,10 +20,15 @@ public class SpatialEffectsEngine
     private readonly AllPassFilter[] _allPasses;
 
     // --- Echo & EQ Primitives ---
-    private readonly DelayBuffer _echoDelay;
+    // Isolated delay buffers prevent acoustic bleed-over between different physical environments.
+    private readonly DelayBuffer _forestDelay;
+    private readonly DelayBuffer _underwaterDelay;
 
     // Environment-specific equalizer, instantiated only when required
     private BiQuadFilter? _environmentEq;
+
+    private BiQuadFilter? _reverbHpFilter;
+    private BiQuadFilter? _reverbLpFilter;
 
     private SpatialEnvironment _current = SpatialEnvironment.None;
 
@@ -71,7 +76,10 @@ public class SpatialEffectsEngine
         ];
 
         // 32768 samples ≈ 680ms at 48kHz — large enough for deep forest echoes
-        _echoDelay = new DelayBuffer(32768);
+        _forestDelay = new DelayBuffer(32768);
+
+        // 8192 samples ≈ 170ms at 48kHz — perfectly covers the 40ms underwater slapback
+        _underwaterDelay = new DelayBuffer(8192);
     }
 
     /// <summary>
@@ -84,13 +92,13 @@ public class SpatialEffectsEngine
     {
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
-        _echoDelay.Clear();
+        _forestDelay.Clear();
+        _underwaterDelay.Clear();
     }
 
     /// <summary>
     /// Processes the audio buffer in-place, applying the specified acoustic environment.
     /// Handles hardware stability (denormals) and dry/wet mixing automatically.
-    /// Environment parameters are configured once per environment change, not per sample.
     /// </summary>
     public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
     {
@@ -100,36 +108,54 @@ public class SpatialEffectsEngine
 
         if (_current != env)
         {
-            // Setup configures all filter parameters and caches reverb coefficients
-            // so that the sample loop below only reads values, never writes them.
             Setup(env);
             Reset();
             _current = env;
         }
 
-        for (int i = 0; i < buffer.Length; i++)
+        // Loop Unswitching (Branch Hoisting).
+        switch (env)
         {
-            float dry = Dsp.KillDenormal(buffer[i]);
+            case SpatialEnvironment.LivingRoom:
+            case SpatialEnvironment.ConcreteHall:
+                for (int i = 0; i < buffer.Length; i++)
+                {
+                    float dry = Dsp.KillDenormal(buffer[i]);
+                    float wet = AlgorithmicReverb(dry);
+                    // Equal-Power Crossfade preserves constant RMS energy, preventing clipping on dense signals.
+                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, mix);
+                }
+                break;
 
-            float wet = env switch
-            {
-                SpatialEnvironment.LivingRoom => AlgorithmicReverb(dry),
-                SpatialEnvironment.ConcreteHall => AlgorithmicReverb(dry),
-                SpatialEnvironment.Forest => ForestEcho(dry),
-                SpatialEnvironment.Underwater => Underwater(dry),
-                _ => dry
-            };
+            case SpatialEnvironment.Forest:
+                for (int i = 0; i < buffer.Length; i++)
+                {
+                    float dry = Dsp.KillDenormal(buffer[i]);
+                    float wet = ForestEcho(dry);
+                    // Equal-Power Crossfade preserves constant RMS energy, preventing clipping on dense signals.
+                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, mix);
+                }
+                break;
 
-            // Apply global environmental EQ (e.g., severe muffling for underwater)
-            if (_environmentEq != null)
-                wet = _environmentEq.Transform(wet);
+            case SpatialEnvironment.Underwater:
+                // Underwater environment requires post-reverb EQ to simulate the characteristic muffling effect of water.
+                bool hasEq = _environmentEq != null;
 
-            // Parallel mix strategy:
-            //   Reverb/Echo sums with the dry signal — the source remains present.
-            //   Underwater replaces the dry signal — the source is fully submerged.
-            buffer[i] = env == SpatialEnvironment.Underwater
-                ? dry + (wet - dry) * mix
-                : dry + wet * mix;
+                for (int i = 0; i < buffer.Length; i++)
+                {
+                    float dry = Dsp.KillDenormal(buffer[i]);
+                    float wet = Underwater(dry);
+
+                    if (hasEq)
+                        wet = _environmentEq!.Transform(wet);
+
+                    // Equal-Power Crossfade preserves constant RMS energy, preventing clipping on dense signals.
+                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, mix);
+                }
+                break;
+
+            default:
+                break;
         }
     }
 
@@ -144,6 +170,12 @@ public class SpatialEffectsEngine
     private void Setup(SpatialEnvironment env)
     {
         _environmentEq = null;
+        _reverbHpFilter = null;
+        _reverbLpFilter = null;
+
+        // Safe Nyquist margin (45% of sample rate) prevents BiQuadFilter edge instability.
+        float nyq = _sampleRate * 0.45f;
+        float Safe(float f) => Math.Min(f, nyq);
 
         // Determine acoustic coefficients for reverb-based environments.
         // Forest is excluded: it uses a delay-echo algorithm, not algorithmic reverb,
@@ -159,18 +191,23 @@ public class SpatialEffectsEngine
         if (reverbParams.HasValue)
         {
             var (feedback, damp) = reverbParams.Value;
+            // Pre-scale the damp coefficient to optimize the biquad filter calculations in the sample loop.
+            float scaledDamp = Dsp.ScaleCoeff(damp, _sampleRate);
+
             foreach (var c in _combs)
             {
                 c.Feedback = feedback;
-                c.Damp = damp;
+                c.Damp = scaledDamp;
             }
+
+            // "Abbey Road Reverb Trick": Band-pass filtering before the algorithmic reverb.
+            // HPF (160Hz) cuts subsonic and low-bass frequencies to prevent muddy resonance.
+            // LPF (6500Hz) softens sharp high-frequency transients, preventing flutter echo (metallic clicking).
+            _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(160f), 0.707f);
+            _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(6500f), 0.707f);
         }
 
         // Configure environment-specific EQ.
-        // Safe Nyquist margin (45% of sample rate) prevents BiQuadFilter edge instability.
-        float nyq = _sampleRate * 0.45f;
-        float Safe(float f) => Math.Min(f, nyq);
-
         switch (env)
         {
             case SpatialEnvironment.Underwater:
@@ -189,20 +226,29 @@ public class SpatialEffectsEngine
     /// Runs the dry signal through 8 parallel Comb filters to simulate room dimensions
     /// and frequency-dependent decay, then passes the sum through 4 series All-Pass filters
     /// to create dense, non-metallic acoustic diffusion.
-    ///
-    /// Filter parameters (Feedback, Damp) are pre-applied in Setup() — this method
-    /// only reads filter state, making it safe to call from a hot real-time sample loop.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float AlgorithmicReverb(float input)
     {
+        float filteredInput = input;
+
+        // Apply pre-reverb filtering to prevent comb filter overloading and artifacts.
+        if (_reverbHpFilter != null && _reverbLpFilter != null)
+        {
+            filteredInput = _reverbHpFilter.Transform(filteredInput);
+            filteredInput = _reverbLpFilter.Transform(filteredInput);
+        }
+
         float outCombs = 0f;
 
         for (int i = 0; i < _combs.Length; i++)
-            outCombs += _combs[i].Process(input);
+            // Each comb filter processes the same input in parallel, 
+            // creating multiple delayed and decayed copies of the signal that combine to form the characteristic reverb tail.
+            outCombs += _combs[i].Process(filteredInput);
 
-        // Normalize by comb count to preserve headroom and prevent inter-filter clipping
-        float reverbSignal = outCombs / _combs.Length;
+        // Normalize by comb count and apply output damping (0.6f) to preserve headroom 
+        // and ensure the reverb tail never overpowers the transient energy of the original signal.
+        float reverbSignal = (outCombs / _combs.Length) * 0.6f;
 
         for (int i = 0; i < _allPasses.Length; i++)
             reverbSignal = _allPasses[i].Process(reverbSignal);
@@ -219,9 +265,9 @@ public class SpatialEffectsEngine
     private float ForestEcho(float x)
     {
         // Echo delay is fixed at 250ms to simulate typical forest reflection distances.
-        float delayed = _echoDelay.Read(_forestDelaySamples);
+        float delayed = _forestDelay.Read(_forestDelaySamples);
         // Echo feedback is set to 0.4 for a few discrete repeats that decay naturally over time.
-        _echoDelay.Write(x + delayed * 0.4f);
+        _forestDelay.Write(x + delayed * 0.4f);
         // Output is a mix of the dry signal and the delayed echo, with the echo attenuated to prevent overpowering the source.
         return delayed * 0.5f;
     }
@@ -237,13 +283,15 @@ public class SpatialEffectsEngine
     {
         // Start with a dense, diffused reverb to simulate the enclosed, reflective nature of an underwater environment.
         float wet = AlgorithmicReverb(x);
+
         // Add a short slapback echo with a delay of around 40ms,
         // which simulates the characteristic "ringing" or "pinging" that occurs when sound reflects off nearby surfaces underwater.
-        float delayed = _echoDelay.Read(_underwaterDelaySamples);
-        _echoDelay.Write(x + delayed * 0.5f);
-        // Mix the reverb and echo together, with the echo attenuated to prevent it from overpowering the reverb tail,
-        // creating a cohesive underwater soundscape.
-        return (wet * 0.6f) + (delayed * 0.4f);
+        float delayed = _underwaterDelay.Read(_underwaterDelaySamples);
+        _underwaterDelay.Write(x + delayed * 0.5f);
+
+        // Linearly interpolate between the dense reverb and the distinct echo to maintain energy balance 
+        // without causing additive volume spikes.
+        return Dsp.Lerp(wet, delayed, 0.4f);
     }
 
     // =========================================================================

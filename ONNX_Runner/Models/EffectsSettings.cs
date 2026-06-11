@@ -32,8 +32,8 @@ public enum VoiceEffectType
     /// <summary>Repeats short audio fragments to simulate a digital decoder glitch.</summary>
     DecoderGlitch,
 
-    /// <summary>Simulates a cybernetic vocal projection using clock drift, spectral dispersion, and dynamic quantization.</summary>
-    Hologram
+    /// <summary>Simulates the sound of a voice transmitted through a low-bitrate CVSD codec, with characteristic warbling and distortion artifacts.</summary>
+    CvsdCodec
 }
 
 /// <summary>

@@ -128,6 +128,19 @@ public static class Dsp
         if (N <= 1) return 1f;
         return 0.5f * (1f - MathF.Cos(2f * MathF.PI * i / (N - 1)));
     }
+
+    /// <summary>
+    /// Scales a hardcoded 1-pole IIR coefficient (designed for 48kHz) to the current sample rate.
+    /// Uses exact exponential scaling to guarantee perfect stability and identical time constants.
+    /// Formula: C_new = 1 - (1 - C_48k)^(48000 / Fs)
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float ScaleCoeff(float coeffAt48k, int sampleRate)
+    {
+        if (sampleRate == 48000) return coeffAt48k;
+        float power = 48000f / sampleRate;
+        return 1f - MathF.Pow(1f - coeffAt48k, power);
+    }
 }
 
 // ==============================================================================
@@ -198,32 +211,32 @@ public struct ThermalDrift
     public void Reset() => State = 0f;
 
     /// <summary>
-    /// Advances the drift by one sample.
-    /// Pole at 0.9999 → fc ≈ 0.16 Hz at 44.1kHz — moves imperceptibly slowly.
-    /// Must be called once per sample in the processing loop.
+    /// Advances the drift state by one sample.
+    /// The driftCoeff controls the "temperature" of the simulation: higher values produce faster, 
+    /// more volatile drift, while lower values yield slower, more stable behavior.
+    /// Typical values are in the range [0.0001, 0.01] — experiment to find the sweet spot for each effect.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public void Update(ref NoiseGenerator noise)
-        => State = 0.9999f * State + 0.0001f * noise.NextWhite();
+    public void Update(ref NoiseGenerator noise, float driftCoeff)
+    {
+        State = (1f - driftCoeff) * State + driftCoeff * noise.NextWhite();
+    }
 }
 
 /// <summary>
-/// First-order IIR high-pass DC blocker (Julius O. Smith design).
-/// Transfer function: H(z) = (1 - z⁻¹) / (1 - R·z⁻¹), R = 0.995.
-/// Cutoff ≈ (1 - R) / (2π) * fs ≈ 35 Hz at 44.1kHz — removes DC offset while
-/// leaving the entire audible band intact.
-/// Essential after asymmetric distortion (ShockleyDiode, AsymmetricSaturation)
-/// which shifts the signal's mean away from zero.
+/// DC Blocker: a one-pole high-pass filter to remove DC offset and low-frequency rumble.
+/// Formula: y(n) = x(n) - x(n-1) + r * y(n-1), where r is the pole radius.
 /// </summary>
-public struct DcBlocker
+public struct DcBlocker(int sampleRate)
 {
-    private float _x1;
-    private float _y1;
+    private float _x1 = 0f;
+    private float _y1 = 0f;
+    private readonly float _r = 1f - (2f * MathF.PI * 35f / sampleRate);
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Process(float x)
     {
-        float y = x - _x1 + 0.995f * _y1;
+        float y = x - _x1 + _r * _y1;
         _x1 = x;
         _y1 = y;
         return y;
@@ -262,12 +275,13 @@ public class DelayBuffer
 
     /// <summary>
     /// Writes one sample and advances the pointer.
-    /// Input is clamped to [-1, 1] to prevent feedback runaway.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Write(float sample)
     {
-        _buf[_writePos] = Math.Clamp(sample, -1f, 1f);
+        // ФІКС: Ніякого Clamp! Буфер має бути лінійним і прозорим.
+        // Захист від перевантаження має бути на етапі мікшування, а не в пам'яті.
+        _buf[_writePos] = sample;
         _writePos = (_writePos + 1) & _mask;
     }
 
@@ -311,8 +325,9 @@ public struct TapeDropout
     /// <param name="intensity">Dropout probability and depth scale [0, 1].</param>
     /// <param name="noise">Noise source (passed by ref to avoid copy).</param>
     /// <param name="sampleRate">Sample rate in Hz.</param>
+    /// <param name="slewRate">Pre-scaled slew rate coefficient.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public float Process(float input, float intensity, ref NoiseGenerator noise, int sampleRate)
+    public float Process(float input, float intensity, ref NoiseGenerator noise, int sampleRate, float slewRate)
     {
         if (intensity <= 0.001f) return input;
 
@@ -329,8 +344,8 @@ public struct TapeDropout
                 : 0f;
         }
 
-        // Slew the current depth toward the target to create a smooth, natural-sounding dropout.
-        _currentDepth += (_targetDepth - _currentDepth) * 0.002f;
+        // Slew the current depth toward the target to create a smooth, natural-sounding dropout envelope.
+        _currentDepth += (_targetDepth - _currentDepth) * slewRate;
 
         // Safety clamp to prevent negative gain or phase inversion on extreme inputs.
         _currentDepth = Math.Clamp(_currentDepth, 0f, 0.95f);
