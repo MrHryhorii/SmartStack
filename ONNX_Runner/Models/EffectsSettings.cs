@@ -32,8 +32,17 @@ public enum VoiceEffectType
     /// <summary>Repeats short audio fragments to simulate a digital decoder glitch.</summary>
     DecoderGlitch,
 
-    /// <summary>Simulates the sound of a voice transmitted through a low-bitrate CVSD codec, with characteristic warbling and distortion artifacts.</summary>
-    CvsdCodec
+    /// <summary>Military-grade CVSD codec simulation with heavy compression and slope-overload distortion.</summary>
+    TacticalRadio,
+
+    /// <summary>Civilian handheld radio effect with an FM amplitude limiter and signal-dependent noise floor.</summary>
+    FmRadio,
+
+    /// <summary>Classic US telephony codec (μ-law) creating a gritty, retro 8-bit mainframe AI voice.</summary>
+    G711MuLaw,
+
+    /// <summary>European telephony codec (A-law) creating a sterile, clinical cyborg or droid voice with dead silences.</summary>
+    G711ALaw
 }
 
 /// <summary>

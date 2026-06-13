@@ -17,6 +17,9 @@ namespace ONNX_Runner.Services;
 ///   - Parallel Add: Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * headroom), amount) -> Safe summation.
 ///   - Strict Insert: wet -> Complete signal chain transformations. Mathematically neutral at amount=0.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the "wet" signal is not strictly additive (e.g., Hologram).
+///   - Filtered Crossfade: Blends EQ input and wet output both proportionally to amount.
+///     At amount=0: codec receives clean dry, crossfade returns dry. Fully transparent.
+///     At amount=1: codec receives fully band-limited signal, crossfade returns full wet.
 /// </summary>
 /// 
 /// /// DESIGN PHILOSOPHY:
@@ -37,20 +40,18 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // Pre-scaled coefficients for envelope followers and modulators to avoid per-sample calculations.
     private readonly float _envAtt = Dsp.ScaleCoeff(0.2f, sampleRate);
     private readonly float _envRel = Dsp.ScaleCoeff(0.005f, sampleRate);
-    private readonly float _agcAtt = Dsp.ScaleCoeff(0.05f, sampleRate);
-    private readonly float _agcRel = Dsp.ScaleCoeff(0.001f, sampleRate);
     private readonly float _glitchAtt = Dsp.ScaleCoeff(0.9f, sampleRate);
     private readonly float _glitchRel = Dsp.ScaleCoeff(0.001f, sampleRate);
     private readonly float _tapeSlew = Dsp.ScaleCoeff(0.002f, sampleRate);
     private readonly float _thermalDriftCoeff = Dsp.ScaleCoeff(0.0001f, sampleRate);
-    private readonly float _cvsdRateScale = 48000f / sampleRate;
 
     private enum RoutingMode
     {
         ParallelCrossfade,
         ParallelAdd,
         StrictInsert,
-        StrictCrossfade
+        StrictCrossfade,
+        FilteredCrossfade
     }
 
     // =========================================================================
@@ -124,24 +125,35 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     private struct RadioState
     {
+        // Discriminator: identifies which G.711 variant is active (shared struct, set in Setup).
+        public bool G711ALaw; // false = μ-law, true = A-law
+
+        // FmRadio: envelope follower for signal-dependent noise modulation.
         public float Envelope;
-        public float SquelchEnvelope;
-        public FeedForwardCompressor Compressor;
+        public float NoiseState;
+
+        // TacticalRadio: full CVSD-based signal chain.
+        public float TacticalEnvelope;
+        public FeedForwardCompressor TacticalCompressor;
         public float CompAttackCoeff;
         public float CompReleaseCoeff;
-        public float AgcState;
-        public int TxTimer;
-        public bool IsTransmitting;
 
-        public float CvsdAccumulator;
-        public float CvsdStepSize;
+        // CVSD encoder/decoder state
         public uint CvsdHistory;
-        public float CvsdReconstructionState;
+        public float CvsdStepSize;
+        public float CvsdAccumulator;
 
-        public float StepDecay;
         public float AccumDecay;
+        public float StepDecay;
         public float ReconCoeff;
-        public float SquelchReleaseCoeff;
+        public float ReconState;
+        public float CvsdRateScale;
+
+        public float MinStep;
+        public float MaxStep;
+        public float StepGrow;
+
+        public float TacticalSqrtAmount;
     }
 
     // =========================================================================
@@ -221,7 +233,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _auxDelay.Clear();
 
         _radio = default;
-        _radio.Compressor.Reset();
+        _radio.TacticalCompressor.Reset();
     }
 
     /// <summary>
@@ -252,6 +264,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
+        // Micro-optimization
+        if (type == VoiceEffectType.TacticalRadio)
+        {
+            _radio.TacticalSqrtAmount = MathF.Sqrt(amount);
+        }
+
         for (int i = 0; i < buffer.Length; i++)
         {
             float dry = buffer[i];
@@ -265,8 +283,15 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 for (int f = 0; f < filterCount; f++)
                     filtered = filters[f].Transform(filtered);
 
+            // FilteredCrossfade: blend EQ contribution proportionally to amount so that
+            // at amount=0 the codec receives a clean dry signal (EQ fully bypassed),
+            // and at amount=1 it receives the fully band-limited signal.
+            float processInput = mode == RoutingMode.FilteredCrossfade
+                ? Dsp.Lerp(dry, filtered, amount)
+                : filtered;
+
             // Algorithm runs on filtered path.
-            float wet = Process(type, filtered, amount);
+            float wet = Process(type, processInput, amount);
             wet = type != VoiceEffectType.DecoderGlitch ? _dcBlocker.Process(wet) : wet;
 
             // Mathematical routing guarantees True Bypass when amount=0.
@@ -287,6 +312,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 case RoutingMode.StrictCrossfade:
                     buffer[i] = Dsp.Lerp(dry, wet, amount);
                     break;
+
+                case RoutingMode.FilteredCrossfade:
+                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, amount);
+                    break;
             }
         }
     }
@@ -306,7 +335,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
         VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
         VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
-        VoiceEffectType.CvsdCodec => RoutingMode.ParallelCrossfade,
+        VoiceEffectType.TacticalRadio => RoutingMode.FilteredCrossfade,
+        VoiceEffectType.FmRadio => RoutingMode.FilteredCrossfade,
+        VoiceEffectType.G711MuLaw => RoutingMode.FilteredCrossfade,
+        VoiceEffectType.G711ALaw => RoutingMode.FilteredCrossfade,
         _ => RoutingMode.StrictInsert
     };
 
@@ -320,9 +352,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         switch (type)
         {
             case VoiceEffectType.Telephone:
+                // Classic POTS (Plain Old Telephone Service) equalization profile.
+                // Combines a tight 380-3400Hz bandpass with strong dual-peak cavity resonances (820/950Hz) 
+                // for handset body, and a presence peak (1800Hz) simulating carbon microphone bite.
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(380f), 1.0f);
-                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(950f), 4.5f, 7.5f);
                 _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(820f), 6.0f, 8.0f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(950f), 4.5f, 7.5f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(1800f), 2.2f, 6.0f);
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 1.0f);
                 break;
 
@@ -366,8 +402,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _glitch.TriggerWindowTimer = _sampleRate / 100; // 10ms window
                 break;
 
-            case VoiceEffectType.CvsdCodec:
-                // Digital Tactical / Motorola Profile (320 - 3400 Hz)
+            case VoiceEffectType.TacticalRadio:
+                // Tactical / military radio — author's perceptual model of SINCGARS / AN/PRC-class voice.
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(320f), 0.707f);
                 _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(1100f), 1.4f, 3.0f);
                 _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(2100f), 1.8f, 5.0f);
@@ -375,19 +411,48 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 0.707f);
 
                 _radio = default;
-                _radio.Compressor.Reset();
+                _radio.TacticalCompressor.Reset();
 
                 // Aggressive compression (Attack: 1ms, Release: 80ms)
                 _radio.CompAttackCoeff = FeedForwardCompressor.TimeToCoeff(1f, _sampleRate);
                 _radio.CompReleaseCoeff = FeedForwardCompressor.TimeToCoeff(80f, _sampleRate);
 
-                // --- CVSD Codec State Initialization ---
-                _radio.StepDecay = MathF.Exp(-1f / (0.004f * _sampleRate));
-                _radio.AccumDecay = MathF.Exp(-1f / (0.025f * _sampleRate));
                 _radio.ReconCoeff = 1f - MathF.Exp(-2f * MathF.PI * 2400f / _sampleRate);
-                _radio.SquelchReleaseCoeff = 1f - MathF.Exp(-1f / (0.1f * _sampleRate));
+                _radio.AccumDecay = MathF.Exp(-1f / (0.025f * _sampleRate));
 
-                _delay.Clear();
+                _radio.CvsdRateScale = 48000f / _sampleRate;
+
+                _radio.MinStep = 0.002f * _radio.CvsdRateScale;
+                _radio.MaxStep = 0.12f * _radio.CvsdRateScale;
+                _radio.StepGrow = 0.008f * _radio.CvsdRateScale;
+                _radio.StepDecay = MathF.Exp(-1f / (0.004f * _sampleRate));
+
+                _radio.CvsdStepSize = _radio.MinStep;
+                _radio.CvsdAccumulator = 0f;
+                _radio.ReconState = 0f;
+                break;
+
+            case VoiceEffectType.FmRadio:
+                // Civilian FM narrowband radio profile (PMR446 / FRS / Motorola consumer).
+                // Band-limit: 300 – 3000 Hz — slightly tighter than PSTN to replicate
+                // the limited RF bandwidth of a consumer handheld transceiver.
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(300f), 0.707f);
+                _filters[_filterCount++] = BiQuadFilter.PeakingEQ(_sampleRate, Safe(1800f), 1.8f, 4.5f);
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3000f), 0.707f);
+
+                _radio = default;
+                break;
+
+            case VoiceEffectType.G711MuLaw:
+            case VoiceEffectType.G711ALaw:
+                // ITU-T G.711 telephone channel: 300 – 3400 Hz (same band as PSTN).
+                // Band-limiting is blended with amount via FilteredCrossfade routing,
+                // so at amount=0 the codec receives a clean dry signal.
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(300f), 0.707f);
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 0.707f);
+
+                _radio = default;
+                _radio.G711ALaw = type == VoiceEffectType.G711ALaw;
                 break;
         }
     }
@@ -403,7 +468,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.Chorus => Chorus(x, amount),
         VoiceEffectType.LoFiTape => LoFiTape(x, amount),
         VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
-        VoiceEffectType.CvsdCodec => CvsdCodec(x, amount),
+        VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
+        VoiceEffectType.FmRadio => FmRadio(x, amount),
+        VoiceEffectType.G711MuLaw => G711Codec(x, amount),
+        VoiceEffectType.G711ALaw => G711Codec(x, amount),
         _ => x
     };
 
@@ -455,7 +523,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (_bc.Phase >= 1f)
         {
             _bc.Phase -= 1f;
-            int bits = (int)MathF.Round(16f - (amount * 12f));
+            int bits = Math.Clamp((int)MathF.Round(16f - (amount * 12f)), 2, 16);
             float levels = 1 << bits;
             _bc.Hold = MathF.Round(x * levels) / levels;
         }
@@ -726,7 +794,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
 
         float frozen = _glitchCapture[(_glitch.LoopStart + _glitch.PlayPos) & GlitchCaptureMask];
-        frozen = Dsp.SoftClip(frozen * 1.15f); // 1.15f saturation
+        frozen = Dsp.SoftClip(frozen * Dsp.Lerp(1.0f, 1.15f, amount)); // saturation scales with intensity
 
         // Dynamic fade-in and fade-out at the start and end of the loop to prevent clicks.
         int targetFade = _sampleRate * 2 / 1000;
@@ -756,119 +824,168 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// Simulates a tactical military radio channel using academic CVSD (Continuously Variable Slope Delta) 
-    /// modulation, dynamic slope overload, and half-duplex clipping.
+    /// Tactical / military radio — author's perceptual model of SINCGARS / AN/PRC-class voice.
+    /// Optimized for Zero-Allocation and O(1) CPU load: all CVSD timing constants 
+    /// are pre-calculated in Setup() to avoid MathF.Exp() in the sample loop.
     /// </summary>
-    private float CvsdCodec(float x, float amount)
+    private float TacticalRadio(float x, float amount)
     {
+        _ = amount;
+
         float absX = MathF.Abs(x);
 
-        // --- Envelope Followers ---
-        _radio.Envelope += (absX > _radio.Envelope ? _envAtt : _envRel) * (absX - _radio.Envelope);
-        _radio.Envelope = Dsp.KillDenormal(_radio.Envelope);
+        // Compander
+        _radio.TacticalEnvelope += (absX > _radio.TacticalEnvelope ? _envAtt : _envRel)
+                                   * (absX - _radio.TacticalEnvelope);
+        _radio.TacticalEnvelope = Dsp.KillDenormal(_radio.TacticalEnvelope);
 
-        // Squelch envelope with hysteresis: closes quickly when the signal exceeds the threshold, 
-        // but opens slowly to prevent chattering on borderline signals.
-        _radio.SquelchEnvelope += (absX > _radio.SquelchEnvelope ? 0.8f : _radio.SquelchReleaseCoeff) * (absX - _radio.SquelchEnvelope);
-        _radio.SquelchEnvelope = Dsp.KillDenormal(_radio.SquelchEnvelope);
+        float companderGain = _radio.TacticalEnvelope < 0.1f ? 1.15f : 0.92f;
+        float companded = x * companderGain;
 
-        // --- Half-Duplex Clipping & Smooth Burst ("tchsh") ---
-        int maxTxTimer = (int)((0.02f + amount * 0.04f) * _sampleRate);
-        bool currentlyTransmitting = _radio.SquelchEnvelope > 0.01f;
+        // Compressor (4:1, 1ms attack, 80ms release)
+        float clipped = Dsp.SoftClip(companded * 2.0f);
+        float compressed = _radio.TacticalCompressor.Process(
+            clipped, 0.25f, 4f,
+            _radio.CompAttackCoeff,
+            _radio.CompReleaseCoeff);
 
-        if (currentlyTransmitting && !_radio.IsTransmitting)
-        {
-            _radio.IsTransmitting = true;
-            _radio.TxTimer = maxTxTimer;
-        }
-        else if (!currentlyTransmitting && _radio.SquelchEnvelope < 0.001f)
-        {
-            _radio.IsTransmitting = false;
-        }
+        float rfSignal = compressed * 1.5f;
 
-        float txGate = 1f;
-        float burstNoise = 0f;
-
-        if (_radio.TxTimer > 0)
-        {
-            float burstProgress = 1f - ((float)_radio.TxTimer / maxTxTimer);
-
-            // Smooth burst envelope using a cosine function for natural fade-in and fade-out.
-            float burstEnv = burstProgress < 0.15f
-                ? 0.5f - 0.5f * MathF.Cos(burstProgress / 0.15f * MathF.PI)
-                : 0.5f + 0.5f * MathF.Cos((burstProgress - 0.15f) / 0.85f * MathF.PI);
-
-            burstNoise = _noise.NextPink() * burstEnv * 0.35f * amount;
-
-            _radio.TxTimer--;
-            txGate = 0f;
-        }
-
-        // --- Pre-Compressor Dynamic Chain ---
-        float companderGain = _radio.Envelope < 0.1f ? 1.15f : 0.92f;
-        float companded = x * Dsp.Lerp(1f, companderGain, amount) * txGate;
-
-        float preClipDrive = 1f + amount * 1.5f;
-        float clippedInput = Dsp.SoftClip(companded * preClipDrive);
-
-        // --- RF Compressor & AGC Pumping ---
-        float compressed = _radio.Compressor.Process(clippedInput, 0.25f, 5f, _radio.CompAttackCoeff, _radio.CompReleaseCoeff);
-
-        float dynamicSignal = Dsp.Lerp(clippedInput, compressed, amount);
-
-        float compAbs = MathF.Abs(dynamicSignal);
-        _radio.AgcState += (compAbs > _radio.AgcState ? _agcAtt : _agcRel) * (compAbs - _radio.AgcState);
-        _radio.AgcState = Dsp.KillDenormal(_radio.AgcState);
-
-        float agcMultiplier = 1f - MathF.Min(0.5f, _radio.AgcState * amount);
-        float rfSignal = dynamicSignal * agcMultiplier * Dsp.Lerp(1f, 1.6f, amount);
-
-        // --- CVSD Encoding ---
-
-        // Dynamic step size control based on the input signal and historical bit pattern.
-        float minStep = 0.002f * _cvsdRateScale;
-        float maxStep = Dsp.Lerp(0.08f, 0.4f, amount) * _cvsdRateScale;
-        float stepIncr = Dsp.Lerp(0.001f, 0.02f, amount) * _cvsdRateScale;
-
-        bool bit = rfSignal > _radio.CvsdReconstructionState;
+        // CVSD encoder (1-bit delta modulator)
+        bool bit = rfSignal > _radio.ReconState;
 
         _radio.CvsdHistory = ((_radio.CvsdHistory << 1) | (bit ? 1u : 0u)) & 0x0Fu;
 
         if (_radio.CvsdHistory == 0x0Fu || _radio.CvsdHistory == 0x00u)
-            _radio.CvsdStepSize += stepIncr;
+            _radio.CvsdStepSize += _radio.StepGrow;
         else
             _radio.CvsdStepSize *= _radio.StepDecay;
 
-        if (_radio.CvsdStepSize < minStep) _radio.CvsdStepSize = minStep;
-        if (_radio.CvsdStepSize > maxStep) _radio.CvsdStepSize = maxStep;
+        _radio.CvsdStepSize = Math.Clamp(_radio.CvsdStepSize, _radio.MinStep, _radio.MaxStep);
 
-        _radio.CvsdAccumulator += bit ? _radio.CvsdStepSize : -_radio.CvsdStepSize;
+        // CVSD decoder (accumulator with leak + reconstruction LP)
+        float scaledStep = _radio.CvsdStepSize * _radio.TacticalSqrtAmount;
+
+        _radio.CvsdAccumulator += bit ? scaledStep : -scaledStep;
         _radio.CvsdAccumulator *= _radio.AccumDecay;
-
         _radio.CvsdAccumulator = Math.Clamp(_radio.CvsdAccumulator, -1.2f, 1.2f);
         _radio.CvsdAccumulator = Dsp.KillDenormal(_radio.CvsdAccumulator);
 
-        // Update the reconstruction state using the cached coefficient for efficiency.
-        _radio.CvsdReconstructionState += _radio.ReconCoeff * (_radio.CvsdAccumulator - _radio.CvsdReconstructionState);
-        _radio.CvsdReconstructionState = Dsp.KillDenormal(_radio.CvsdReconstructionState);
+        _radio.ReconState += _radio.ReconCoeff * (_radio.CvsdAccumulator - _radio.ReconState);
+        _radio.ReconState = Dsp.KillDenormal(_radio.ReconState);
 
-        // Quadratic blend for the CVSD output to keep it more intelligible at lower intensities, 
-        // while allowing full degradation at maximum intensity.
-        float codecMix = amount * amount;
-        float codecSignal = Dsp.Lerp(rfSignal, _radio.CvsdReconstructionState, codecMix);
+        // Output saturation + trim
+        const float outputTrim = 0.80f;
+        float saturated = Dsp.AsymmetricSaturation(_radio.ReconState * 1.4f) / 1.4f;
 
-        // --- Radio Hiss & Squelch Tail ---
-        float noiseGate = MathF.Min(1f, _radio.SquelchEnvelope * 10f);
+        return Dsp.SoftClip(saturated * outputTrim);
+    }
 
-        float cvsdHiss = _noise.NextWhite() * _radio.CvsdStepSize * 0.08f * noiseGate * amount;
-        float backgroundHiss = _noise.NextWhite() * 0.012f * noiseGate * amount;
+    /// <summary>
+    /// Simulates a civilian FM narrowband radio (PMR446 / FRS / consumer handheld transceiver).
+    /// Employs a hard limiter to collapse dynamic range and an envelope-tracked noise floor
+    /// to replicate the FM capture effect (noise naturally rises during pauses).
+    /// Returns a pure wet signal.
+    /// </summary>
+    private float FmRadio(float x, float amount)
+    {
+        // FM limiter (dynamic range collapse)
+        float drive = Dsp.Lerp(1.0f, 2.2f, amount);
+        float limited = Dsp.SoftClip(x * drive);
 
-        float wet = codecSignal + cvsdHiss + backgroundHiss + burstNoise;
+        // Signal-dependent noise floor (FM capture effect)
+        float absX = MathF.Abs(x);
+        _radio.Envelope += (absX > _radio.Envelope ? _envAtt : _envRel) * (absX - _radio.Envelope);
+        _radio.Envelope = Dsp.KillDenormal(_radio.Envelope);
 
-        // --- Final Saturation & Sidetone ---
-        float drive = 1f + (amount * 0.4f);
-        float saturated = Dsp.AsymmetricSaturation(wet * drive) / drive;
+        float captureSupression = 1.0f - Math.Clamp(_radio.Envelope * 6.0f, 0f, 1f);
+        float noiseAmount = captureSupression * 0.018f * amount * amount;
+        float rawNoise = _noise.NextPink() * noiseAmount;
 
-        return Dsp.SoftClip(saturated + x * 0.02f);
+        float noiseCoeff = 1f - MathF.Exp(-2f * MathF.PI * 800f / _sampleRate);
+        _radio.NoiseState += noiseCoeff * (rawNoise - _radio.NoiseState);
+        _radio.NoiseState = Dsp.KillDenormal(_radio.NoiseState);
+
+        float withNoise = limited + _radio.NoiseState;
+
+        // Output saturation and trim
+        const float outputTrim = 0.88f;
+        float satDrive = Dsp.Lerp(1.0f, 1.1f, amount);
+        float saturated = Dsp.AsymmetricSaturation(withNoise * satDrive) / satDrive;
+
+        return Dsp.SoftClip(saturated * outputTrim);
+    }
+
+    /// <summary>
+    /// G.711 PCM Codec (ITU-T G.711, 1972).
+    /// Implements both μ-law (North America/Japan) and A-law (Europe/International) companding.
+    /// Faithfully reproduces the 8-bit quantization error and nonlinear distortion of vintage digital telecommunications.
+    /// </summary>
+    private float G711Codec(float x, float amount)
+    {
+        _ = amount;
+
+        // Hard clip to [-1, 1] modeling standard G.711 overload behavior
+        float input = Math.Clamp(x, -1.0f, 1.0f);
+        float decoded;
+
+        if (!_radio.G711ALaw)
+        {
+            // μ-law companding and 8-bit quantization
+            const float Mu = 255f;
+            const float LogMu = 5.5451774445f;
+
+            float sign = input >= 0f ? 1f : -1f;
+            float absIn = MathF.Abs(input);
+
+            float companded = sign * MathF.Log(1f + Mu * absIn) / LogMu;
+
+            int codeword = (int)MathF.Round(companded * 127.5f + 127.5f);
+            codeword = Math.Clamp(codeword, 0, 255);
+
+            float cNorm = (codeword - 127.5f) / 127.5f;
+            float signD = cNorm >= 0f ? 1f : -1f;
+            decoded = signD * (MathF.Pow(1f + Mu, MathF.Abs(cNorm)) - 1f) / Mu;
+        }
+        else
+        {
+            // A-law companding and 8-bit quantization
+            const float A = 87.6f;
+            const float OnePlusLnA = 5.47267f;
+            const float InvA = 0.011416f;
+
+            float sign = input >= 0f ? 1f : -1f;
+            float absIn = MathF.Abs(input);
+
+            float companded = absIn < InvA
+                ? A * absIn / OnePlusLnA
+                : (1f + MathF.Log(A * absIn)) / OnePlusLnA;
+
+            companded *= sign;
+
+            int codeword = (int)MathF.Round(companded * 127.5f + 127.5f);
+            codeword = Math.Clamp(codeword, 0, 255);
+
+            float cNorm = (codeword - 127.5f) / 127.5f;
+            float signD = cNorm >= 0f ? 1f : -1f;
+            float absC = MathF.Abs(cNorm);
+
+            decoded = absC < InvA * A / OnePlusLnA
+                ? absC * OnePlusLnA / A
+                : MathF.Exp(absC * OnePlusLnA - 1f) / A;
+
+            decoded *= signD;
+        }
+
+        // ---------------------------------------------------------------------
+        // Output makeup gain
+        // Companding and 8-bit quantization flatten micro-transients, which makes
+        // the voice feel perceptually less "punchy" or quieter in a mix.
+        // We boost the signal to restore presence, using SoftClip to safely 
+        // catch any mathematical peaks that exceed 1.0.
+        // ---------------------------------------------------------------------
+
+        const float makeupGain = 1.25f;
+        return Dsp.SoftClip(decoded * makeupGain);
     }
 }
