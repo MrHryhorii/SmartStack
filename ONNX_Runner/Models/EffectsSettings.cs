@@ -66,9 +66,27 @@ public class EffectsSettings
 /// </summary>
 public enum SpatialEnvironment
 {
-    None,           // No reverb, dry signal only.
-    LivingRoom,     // Small room with short, bright reverb.
-    ConcreteHall,   // Large hall with long, dense reverb and strong early reflections.
-    Forest,         // Open outdoor space with long, diffuse reverb and minimal early reflections.
-    Underwater      // Underwater environment with unique acoustic properties.
+    /// <summary>No reverb; dry signal only. Highest performance mode.</summary>
+    None,
+
+    /// <summary>Small, intimate room. Short decay and balanced frequency response; natural for dialogue.</summary>
+    LivingRoom,
+
+    /// <summary>Large reflective hall. Long, dense reverb tail with strong early reflections; adds scale.</summary>
+    ConcreteHall,
+
+    /// <summary>Open outdoor space. Discrete echoes rather than dense reverb tails; simulates natural canyon or forest acoustics.</summary>
+    Forest,
+
+    /// <summary>Muffled underwater space. Significant high-frequency roll-off and characteristic "slapback" echo.</summary>
+    Underwater,
+
+    /// <summary>Large enclosed stone space. High reflectivity with very long, dark decay; emphasizes deep resonance.</summary>
+    Cave,
+
+    /// <summary>Performance stage. Distinct pre-delay simulates stage-to-audience projection; clean but spacious.</summary>
+    Stage,
+
+    /// <summary>Intracranial acoustic space. Short tap delays simulate bone-conducted sound; used for internal thoughts.</summary>
+    InnerVoice
 }

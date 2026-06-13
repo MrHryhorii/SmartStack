@@ -279,8 +279,8 @@ public class DelayBuffer
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Write(float sample)
     {
-        // ФІКС: Ніякого Clamp! Буфер має бути лінійним і прозорим.
-        // Захист від перевантаження має бути на етапі мікшування, а не в пам'яті.
+        // No Clamp! Buffer should be linear and transparent.
+        // Overload protection should be at the mixing stage, not in memory.
         _buf[_writePos] = sample;
         _writePos = (_writePos + 1) & _mask;
     }
