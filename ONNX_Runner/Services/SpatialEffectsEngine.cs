@@ -12,10 +12,11 @@ namespace ONNX_Runner.Services;
 /// - LivingRoom: Short, warm reverb (~0.3s).
 /// - ConcreteHall: Long, bright reverb (~1.5s).
 /// - Forest: Discrete 250ms delay echo (no reverb).
-/// - Underwater: Dense reverb + 40ms slapback + 450Hz LP.
+/// - Underwater: Dense reverb + 40ms slapback + 750Hz LP.
 /// - Cave: Reverb + dual pre-delay (15/38ms) + 80Hz boost.
 /// - Stage: Reverb + 12ms lateral echo + 22ms pre-delay + 180Hz boost.
-/// - InnerVoice: Intracranial comb cluster (5-14ms) + skull EQ (no chest resonance).
+/// - InnerVoice: Intracranial comb cluster (5-14ms) + skull EQ (no chest resonance)
+///   + dynamic depth LP for inward focus.
 /// - Dungeon: Short reverb + 7ms flutter echo + 200Hz room resonance.
 ///
 /// Note: environments are mutually exclusive (one space at a time, no blending
@@ -70,6 +71,18 @@ public class SpatialEffectsEngine
     private BiQuadFilter? _innerVoicePresenceCut;
     private BiQuadFilter? _innerVoiceNasalBoost;
 
+    // Dynamic depth LP (2-pole, 12dB/oct). Manually cascaded to avoid BiQuad allocations.
+    private float _innerVoiceLpState1;
+    private float _innerVoiceLpState2;
+
+    // Cutoff: 5500Hz (transparent) -> 2500Hz (muffled "hands-over-ears" focus).
+    private float _innerVoiceLpCoeffMin;
+    private float _innerVoiceLpCoeffMax;
+
+    // Resonance: adds a "closed-box" presence bump near the cutoff at high mix values.
+    private float _innerVoiceResonanceMin;
+    private float _innerVoiceResonanceMax;
+
     private BiQuadFilter? _dungeonRoomTone;
     private BiQuadFilter? _dungeonHfDamp;
 
@@ -86,6 +99,7 @@ public class SpatialEffectsEngine
     private float _stagePreDelaySamples;
     private float _innerVoiceTap1Samples;
     private float _innerVoiceTap2Samples;
+    private float _innerVoiceTap3Samples;
     private float _dungeonPreDelaySamples;
     private float _dungeonFlutterDelaySamples;
 
@@ -164,6 +178,9 @@ public class SpatialEffectsEngine
         _stageEarlyDelay.Clear();
         _preDelay.Clear();
         _dungeonFlutter.Clear();
+
+        _innerVoiceLpState1 = 0f;
+        _innerVoiceLpState2 = 0f;
     }
 
     /// <summary>
@@ -239,10 +256,17 @@ public class SpatialEffectsEngine
 
             case SpatialEnvironment.InnerVoice:
                 bool hasInnerEq = _hasInnerVoiceEq;
+
+                // HOISTING: depth-filter coefficients and resonance amount are interpolated
+                // once per buffer against curvedMix, not once per sample.
+                float lpCoeff = Dsp.Lerp(_innerVoiceLpCoeffMin, _innerVoiceLpCoeffMax, curvedMix);
+                float resonance = Dsp.Lerp(_innerVoiceResonanceMin, _innerVoiceResonanceMax, curvedMix);
+                float outputGain = Dsp.Lerp(0.85f, 0.55f, curvedMix);
+
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    float wet = InnerVoice(dry, hasInnerEq);
+                    float wet = InnerVoice(dry, hasInnerEq, lpCoeff, resonance, outputGain);
                     buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, wet, curvedMix));
                 }
                 break;
@@ -311,7 +335,8 @@ public class SpatialEffectsEngine
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(160f), 0.707f);
                 _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(6500f), 0.707f);
                 _hasReverbEq = true;
-                _environmentEq = BiQuadFilter.LowPassFilter(_sampleRate, Safe(450f), 0.707f);
+                // Raised from 450Hz to 750Hz to preserve vocal articulation
+                _environmentEq = BiQuadFilter.LowPassFilter(_sampleRate, Safe(750f), 0.707f);
                 break;
 
             case SpatialEnvironment.Cave:
@@ -350,12 +375,26 @@ public class SpatialEffectsEngine
                 }
 
                 _innerVoiceHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(400f), 1.2f);
-                _innerVoicePresenceCut = BiQuadFilter.PeakingEQ(_sampleRate, Safe(1000f), 1.4f, -3.0f);
+                // Presence cut moved up to 2500Hz for a more natural "inside the head" feel
+                _innerVoicePresenceCut = BiQuadFilter.PeakingEQ(_sampleRate, Safe(2500f), 1.2f, -4.0f);
                 _innerVoiceNasalBoost = BiQuadFilter.PeakingEQ(_sampleRate, Safe(800f), 1.2f, 2.5f);
                 _hasInnerVoiceEq = true;
 
-                _innerVoiceTap1Samples = 0.005f * _sampleRate; // 5ms frontal
-                _innerVoiceTap2Samples = 0.011f * _sampleRate; // 11ms occipital
+                // Tri-tap micro-delay network for a wide but strictly internal space
+                _innerVoiceTap1Samples = 0.004f * _sampleRate; // 4ms
+                _innerVoiceTap2Samples = 0.009f * _sampleRate; // 9ms
+                _innerVoiceTap3Samples = 0.015f * _sampleRate; // 15ms
+
+                // Depth LP (5500Hz -> 2500Hz): Muffles core formants for an internal "closed-box" feel.
+                _innerVoiceLpCoeffMin = 1f - MathF.Exp(-2f * MathF.PI * Safe(5500f) / _sampleRate);
+                _innerVoiceLpCoeffMax = 1f - MathF.Exp(-2f * MathF.PI * Safe(2500f) / _sampleRate);
+
+                // Resonance (0.0 -> 0.08): Less boxiness, subtle presence bump near the cutoff.
+                _innerVoiceResonanceMin = 0.0f;
+                _innerVoiceResonanceMax = 0.08f;
+
+                _innerVoiceLpState1 = 0f;
+                _innerVoiceLpState2 = 0f;
                 break;
 
             case SpatialEnvironment.Dungeon:
@@ -463,22 +502,27 @@ public class SpatialEffectsEngine
         return wet;
     }
 
-    /// <summary>Internal thoughts: Skull tap delays (5/11ms) + nasal EQ. No chest resonance.</summary>
-    private float InnerVoice(float x, bool hasEq)
+    /// <summary>
+    /// Internal thoughts: Comb clusters and a 3-tap micro-delay network.
+    /// Phase diffusion (all-passes) is intentionally removed to avoid a "small room" acoustic,
+    /// keeping the sound dry, intimate, and cinematically locked inside the head.
+    /// </summary>
+    private float InnerVoice(float x, bool hasEq, float lpCoeff, float resonance, float outputGain)
     {
         float combOut = 0f;
         for (int i = 0; i < _innerCombs.Length; i++)
             combOut += _innerCombs[i].Process(x);
 
+        // Diffusion (all-passes) removed for InnerVoice to prevent "small room" feel.
         float diffused = combOut * 0.333f;
-        for (int i = 0; i < _allPasses.Length; i++)
-            diffused = _allPasses[i].Process(diffused);
 
         _preDelay.Write(x);
         float tap1 = _preDelay.Read(_innerVoiceTap1Samples);
         float tap2 = _preDelay.Read(_innerVoiceTap2Samples);
+        float tap3 = _preDelay.Read(_innerVoiceTap3Samples);
 
-        float wet = diffused + tap1 * 0.28f + tap2 * 0.18f;
+        // 3-tap mix. Brain perceives this as width inside the head without physical distance.
+        float wet = diffused + tap1 * 0.22f + tap2 * 0.15f + tap3 * 0.08f;
 
         if (hasEq)
         {
@@ -487,7 +531,14 @@ public class SpatialEffectsEngine
             if (_innerVoiceNasalBoost != null) wet = _innerVoiceNasalBoost.Transform(wet);
         }
 
-        return Dsp.SoftClip(wet * 0.85f);
+        // Two-stage 1-pole LP with resonance feedback for a steeper, "closed-box" rolloff.
+        _innerVoiceLpState1 += lpCoeff * ((wet - _innerVoiceLpState2 * resonance) - _innerVoiceLpState1);
+        _innerVoiceLpState1 = Dsp.KillDenormal(_innerVoiceLpState1);
+
+        _innerVoiceLpState2 += lpCoeff * (_innerVoiceLpState1 - _innerVoiceLpState2);
+        _innerVoiceLpState2 = Dsp.KillDenormal(_innerVoiceLpState2);
+
+        return Dsp.SoftClip(_innerVoiceLpState2 * outputGain);
     }
 
     /// <summary>Stone cellar with 200Hz modal resonance and 7ms parallel flutter echo.</summary>
