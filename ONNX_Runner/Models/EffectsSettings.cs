@@ -88,5 +88,8 @@ public enum SpatialEnvironment
     Stage,
 
     /// <summary>Intracranial acoustic space. Short tap delays simulate bone-conducted sound; used for internal thoughts.</summary>
-    InnerVoice
+    InnerVoice,
+
+    /// <summary>Tight stone space. Short, dark reverb characterized by distinct flutter echoes between parallel walls.</summary>
+    Dungeon
 }
