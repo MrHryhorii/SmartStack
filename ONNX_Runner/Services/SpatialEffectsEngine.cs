@@ -25,9 +25,9 @@ namespace ONNX_Runner.Services;
 /// - Forest:       Outdoor, sparse. Two discrete decaying taps, no reverb at all.
 ///                 Absence of a tail IS the recognizable trait.
 /// - Underwater:   Drowned. Steep LP muffling + slapback. Inverse-square mix.
-/// - InnerVoice:   Boundless. "Plate reverb" approach: very high feedback, near-zero
-///                 damp — infinite diffuse tail with no room echoes or wall boundaries.
-///                 Depth LP softens the voice itself. Inverse-square mix.
+/// - InnerVoice:   Cinematic telepathy. Dry voice remains 100% clean and upfront.
+///                 A massive (3.5s) but extremely dark, wall-less shadow reverb
+///                 is mixed beneath it to imply boundless mental space.
 /// </summary>
 public class SpatialEffectsEngine
 {
@@ -54,6 +54,8 @@ public class SpatialEffectsEngine
     private readonly DelayBuffer _forestNearDelay;
     private readonly DelayBuffer _forestFarDelay;
     private readonly DelayBuffer _underwaterDelay;
+    private readonly DelayBuffer _innerVoiceMicroDelay;
+    private float _innerVoiceLpState;
 
     // Shared pre-delay for Stage (ITDG) and Dungeon (wall gap) — mutually exclusive.
     private readonly DelayBuffer _preDelay;
@@ -80,12 +82,7 @@ public class SpatialEffectsEngine
     private BiQuadFilter? _forestHfDamp;
 
     private BiQuadFilter? _environmentEq;
-
-    // InnerVoice: depth LP softens the voice at high mix. No EQ on the reverb
-    // tail — plate reverb is spectrally neutral by design.
-    private float _innerVoiceLpState;
-    private float _innerVoiceLpCoeffMin;
-    private float _innerVoiceLpCoeffMax;
+    private BiQuadFilter? _environmentEq2;
 
     // =========================================================================
     // LFO STATE
@@ -116,6 +113,7 @@ public class SpatialEffectsEngine
     private float _forestNearSamples;
     private float _forestFarSamples;
     private float _underwaterDelaySamples;
+    private float _innerVoiceMicroDelaySamples;
 
     // =========================================================================
     // BRANCH-HOISTING FLAGS
@@ -170,6 +168,7 @@ public class SpatialEffectsEngine
         _forestFarDelay = new DelayBuffer(SamplesFor(550f));
         _underwaterDelay = new DelayBuffer(SamplesFor(170f));
         _preDelay = new DelayBuffer(SamplesFor(42f));
+        _innerVoiceMicroDelay = new DelayBuffer(SamplesFor(15f));
     }
 
     // =========================================================================
@@ -209,10 +208,12 @@ public class SpatialEffectsEngine
         _underwaterDelay.Clear();
         _preDelay.Clear();
 
-        _innerVoiceLpState = 0f;
         _modPhaseA = 0f;
         _modPhaseB = 0f;
         _hallFlutterPhase = 0f;
+
+        _innerVoiceMicroDelay.Clear();
+        _innerVoiceLpState = 0f;
     }
 
     /// <summary>
@@ -300,20 +301,39 @@ public class SpatialEffectsEngine
                     if (hasUwEq)
                     {
                         wet = _environmentEq!.Transform(wet);
-                        wet = _environmentEq!.Transform(wet);
+                        wet = _environmentEq2!.Transform(wet);
                     }
                     buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, wet, inverseSquareMix));
                 }
                 break;
 
             case SpatialEnvironment.InnerVoice:
-                // Hoist per-buffer constants out of the sample loop.
-                float lpCoeff = Dsp.Lerp(_innerVoiceLpCoeffMin, _innerVoiceLpCoeffMax, inverseSquareMix);
-                float outputGain = Dsp.Lerp(0.90f, 0.60f, inverseSquareMix);
+                // Динамічний зріз від 8000 Hz (прозоро) до 1800 Hz (відрив від реальності)
+                // Чим вищий mix, тим більше голос замикається "всередині".
+                float currentFreq = Dsp.Lerp(8000f, 1800f, inverseSquareMix);
+                float safeFreq = Math.Min(currentFreq, _sampleRate * 0.45f);
+                float lpCoeff = 1f - MathF.Exp(-2f * MathF.PI * safeFreq / _sampleRate);
+
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, InnerVoice(dry, lpCoeff, outputGain), inverseSquareMix));
+
+                    // 1. Haas Effect (Голос переміщується всередину голови)
+                    _innerVoiceMicroDelay.Write(dry);
+                    float microDelayed = _innerVoiceMicroDelay.Read(_innerVoiceMicroDelaySamples);
+                    float presenceVoice = dry + microDelayed * 0.15f;
+
+                    // 2. "Згасання зовнішнього світу" (м'який 1-pole LP-фільтр на голос)
+                    _innerVoiceLpState += lpCoeff * (presenceVoice - _innerVoiceLpState);
+                    _innerVoiceLpState = Dsp.KillDenormal(_innerVoiceLpState);
+
+                    // 3. Реверберація генерується з повного гіперблизького голосу
+                    float wet = AlgorithmicReverb(presenceVoice);
+
+                    // 4. Фінальний мікс: приглушена присутність + темна тінь простору
+                    float mixed = _innerVoiceLpState + wet * inverseSquareMix * 0.45f;
+
+                    buffer[i] = Dsp.SoftClip(Dsp.Lerp(dry, mixed, inverseSquareMix));
                 }
                 break;
         }
@@ -337,6 +357,7 @@ public class SpatialEffectsEngine
         _hallShimmer = null;
         _forestHfDamp = null;
         _environmentEq = null;
+        _environmentEq2 = null;
 
         _hasReverbEq = false;
         _hasStageEq = false;
@@ -479,38 +500,26 @@ public class SpatialEffectsEngine
                 _hasReverbEq = true;
 
                 _environmentEq = BiQuadFilter.LowPassFilter(_sampleRate, Safe(420f), 0.707f);
+                _environmentEq2 = BiQuadFilter.LowPassFilter(_sampleRate, Safe(420f), 0.9f);
                 _underwaterDelaySamples = DistanceToRoundTripSamples(7.0f); // ~40ms
                 break;
 
-            // Boundless inner space — "plate reverb" approach.
-            //
-            // Industry technique for "infinite / no-walls" space:
-            // feedback=0.97 + damp=0.015 on all combs = the tail decays almost
-            // infinitely slowly and has no localized echoes to imply a wall
-            // distance. This is how plate reverb algorithms produce an "endless"
-            // space: plates have no geometry, so their impulse response is pure
-            // diffuse energy with no discrete early reflections.
-            //
-            // No EQ on the reverb tail — a plate is spectrally neutral.
-            // The only spectral effect is a depth LP on the dry voice itself:
-            // at high mix the voice softens, as if its edges dissolve into the
-            // surrounding darkness. This is distinct from Underwater (harsh LP
-            // on the full signal) — here only the voice softens, not the space.
-            // Inverse-square mix: the dissolution character ramps in fast.
+            // Boundless inner space.
+            // Dry voice remains untouched and crystal clear.
+            // Reverb tail is massive (3.5s) but extremely dark (1800Hz LP, heavy HF damp)
+            // to imply a boundless mental space without reflecting real physical walls.
             case SpatialEnvironment.InnerVoice:
-                // Plate-style: very high feedback, near-zero HF damping.
-                // damp=0.015 means the tail barely darkens — it stays present.
-                foreach (var c in _combs)
-                {
-                    c.Feedback = 0.97f;
-                    c.Damp = Dsp.ScaleCoeff(0.015f, _sampleRate);
-                }
+                // Бездонна порожнеча: довгий хвіст (3.5с), але з екстремальним 
+                // поглинанням високих частот (0.85), щоб уникнути металевого дзвону.
+                ConfigureCombsByRt60(3.5f, 0.85f);
 
-                // Depth LP: softens the voice itself from 8000Hz (transparent)
-                // to 2200Hz (soft, dissolving) as mix increases.
-                _innerVoiceLpCoeffMin = 1f - MathF.Exp(-2f * MathF.PI * Safe(8000f) / _sampleRate);
-                _innerVoiceLpCoeffMax = 1f - MathF.Exp(-2f * MathF.PI * Safe(2200f) / _sampleRate);
-                _innerVoiceLpState = 0f;
+                // Відлуння — це лише темний гул. Жодних високих частот, 
+                // які б натякали на наявність твердих стін.
+                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(150f), 0.707f);
+                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(1800f), 0.707f);
+                _hasReverbEq = true;
+
+                _innerVoiceMicroDelaySamples = 0.008f * _sampleRate;
                 break;
         }
     }
@@ -690,34 +699,6 @@ public class SpatialEffectsEngine
         float delayed = _underwaterDelay.Read(_underwaterDelaySamples);
         _underwaterDelay.Write(x + delayed * 0.5f);
         return Dsp.Lerp(reverb, delayed, 0.4f);
-    }
-
-    // InnerVoice: plate-style infinite tail + depth LP on the voice itself.
-    // No early reflections, no room echoes — the combs run at feedback=0.97
-    // with near-zero damp, producing a dense, boundless, unlocalized tail.
-    // The depth LP softens the voice (not the space) at high mix — edges dissolve
-    // into the surrounding darkness rather than being muffled by water or walls.
-    private float InnerVoice(float x, float lpCoeff, float outputGain)
-    {
-        // Plate tail: same Freeverb topology but with near-infinite feedback.
-        // No pre-EQ — a plate is spectrally neutral, space has no "color".
-        float outCombs = 0f;
-        for (int i = 0; i < _combs.Length; i++)
-            outCombs += _combs[i].Process(x);
-
-        float plate = outCombs * 0.075f;
-        for (int i = 0; i < _allPasses.Length; i++)
-            plate = _allPasses[i].Process(plate);
-
-        // Depth LP: softens the dry voice from transparent (8000Hz) to soft
-        // (2200Hz) as mix increases — the voice itself dissolves, not the space.
-        _innerVoiceLpState += lpCoeff * (x - _innerVoiceLpState);
-        _innerVoiceLpState = Dsp.KillDenormal(_innerVoiceLpState);
-
-        // Mix: LP-softened voice + plate tail at 0.40 weight.
-        // The tail is intentionally quieter than the voice — it should feel like
-        // the space around the voice, not compete with it.
-        return Dsp.SoftClip((_innerVoiceLpState + plate * 0.55f) * outputGain);
     }
 
     // =========================================================================
