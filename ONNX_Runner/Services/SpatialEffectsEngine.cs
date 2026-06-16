@@ -10,8 +10,7 @@ namespace ONNX_Runner.Services;
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
-/// parameter tweaks. Every effect is structurally distinct — not a preset
-/// variation of the same template.
+/// parameter tweaks. Every effect is structurally distinct.
 ///
 /// - LivingRoom:   Short, soft, warm. Heavy HF damping. Recognizable at any mix.
 /// - Stage:        Warm, dense, live. Bass shelf + audible lateral reflection
@@ -24,10 +23,10 @@ namespace ONNX_Runner.Services;
 ///                 echo pair + the longest, darkest tail of any environment.
 /// - Forest:       Outdoor, sparse. Two discrete decaying taps, no reverb at all.
 ///                 Absence of a tail IS the recognizable trait.
-/// - Underwater:   Drowned. Steep LP muffling + slapback. Inverse-square mix.
-/// - InnerVoice:   Cinematic telepathy. Dry voice remains 100% clean and upfront.
-///                 A massive (3.5s) but extremely dark, wall-less shadow reverb
-///                 is mixed beneath it to imply boundless mental space.
+/// - Underwater:   Drowned. Steep 24dB/oct cascaded LP muffling + slapback pressure ring.
+/// - InnerVoice:   Cinematic telepathy. Uses the Haas effect (micro-delay) and a dynamic
+///                 low-pass filter to pull the voice inside the listener's head, supported 
+///                 by a dark, wall-less shadow reverb.
 /// </summary>
 public class SpatialEffectsEngine
 {
@@ -55,7 +54,6 @@ public class SpatialEffectsEngine
     private readonly DelayBuffer _forestFarDelay;
     private readonly DelayBuffer _underwaterDelay;
     private readonly DelayBuffer _innerVoiceMicroDelay;
-    private float _innerVoiceLpState;
 
     // Shared pre-delay for Stage (ITDG) and Dungeon (wall gap) — mutually exclusive.
     private readonly DelayBuffer _preDelay;
@@ -68,8 +66,8 @@ public class SpatialEffectsEngine
     private BiQuadFilter? _reverbLpFilter;
 
     private BiQuadFilter? _stageBassShelf;
-    private BiQuadFilter? _stageLateralHp;   // band-pass the lateral reflection
-    private BiQuadFilter? _stageLateralLp;   // so it sounds like a wall, not a full signal
+    private BiQuadFilter? _stageLateralHp;
+    private BiQuadFilter? _stageLateralLp;
 
     private BiQuadFilter? _dungeonResonator;
     private BiQuadFilter? _dungeonHfDamp;
@@ -81,11 +79,12 @@ public class SpatialEffectsEngine
 
     private BiQuadFilter? _forestHfDamp;
 
+    // Underwater cascaded filters for 24dB/oct steep rolloff
     private BiQuadFilter? _environmentEq;
     private BiQuadFilter? _environmentEq2;
 
     // =========================================================================
-    // LFO STATE
+    // STATE VARIABLES
     // =========================================================================
 
     // Stage: two detuned LFOs for "live room" amplitude shimmer.
@@ -97,6 +96,9 @@ public class SpatialEffectsEngine
     // ConcreteHall: LFO-modulated flutter delay.
     private float _hallFlutterPhase;
     private float _hallFlutterPhaseInc;
+
+    // InnerVoice: Dynamic 1-pole LP state
+    private float _innerVoiceLpState;
 
     // =========================================================================
     // PRE-COMPUTED DELAY SIZES
@@ -207,19 +209,18 @@ public class SpatialEffectsEngine
         _forestFarDelay.Clear();
         _underwaterDelay.Clear();
         _preDelay.Clear();
+        _innerVoiceMicroDelay.Clear();
 
         _modPhaseA = 0f;
         _modPhaseB = 0f;
         _hallFlutterPhase = 0f;
-
-        _innerVoiceMicroDelay.Clear();
         _innerVoiceLpState = 0f;
     }
 
     /// <summary>
-    /// Quadratic mix (mix²) for additive/spatial environments — finer control at low mix.
+    /// Quadratic mix (mix²) for additive/spatial environments gives finer control at low mix levels.
     /// Inverse-square mix (1-(1-mix)²) for attenuation environments (Underwater, InnerVoice)
-    /// — ramps in fast, fine control near mix=1 where the muffling/dissolution lives.
+    /// ramps in fast, providing fine control near mix=1 where the muffling/dissolution lives.
     /// </summary>
     public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
     {
@@ -298,8 +299,10 @@ public class SpatialEffectsEngine
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
                     float wet = Underwater(dry);
+
                     if (hasUwEq)
                     {
+                        // Cascade two filters for a steeper 24dB/oct slope
                         wet = _environmentEq!.Transform(wet);
                         wet = _environmentEq2!.Transform(wet);
                     }
@@ -308,8 +311,8 @@ public class SpatialEffectsEngine
                 break;
 
             case SpatialEnvironment.InnerVoice:
-                // Динамічний зріз від 8000 Hz (прозоро) до 1800 Hz (відрив від реальності)
-                // Чим вищий mix, тим більше голос замикається "всередині".
+                // Dynamic cutoff from 8000Hz (transparent) to 1800Hz (disconnected from reality).
+                // A higher mix increasingly isolates the voice from the physical world.
                 float currentFreq = Dsp.Lerp(8000f, 1800f, inverseSquareMix);
                 float safeFreq = Math.Min(currentFreq, _sampleRate * 0.45f);
                 float lpCoeff = 1f - MathF.Exp(-2f * MathF.PI * safeFreq / _sampleRate);
@@ -318,21 +321,24 @@ public class SpatialEffectsEngine
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
 
-                    // 1. Haas Effect (Голос переміщується всередину голови)
+                    // Haas Effect: Blend dry signal with an 8ms micro-delay to collapse external 
+                    // spatialization and pull the voice directly "inside" the listener's head.
                     _innerVoiceMicroDelay.Write(dry);
                     float microDelayed = _innerVoiceMicroDelay.Read(_innerVoiceMicroDelaySamples);
                     float presenceVoice = dry + microDelayed * 0.15f;
 
-                    // 2. "Згасання зовнішнього світу" (м'який 1-pole LP-фільтр на голос)
+                    // Apply gentle 1-pole LP to darken the presence voice without ruining TTS articulation.
                     _innerVoiceLpState += lpCoeff * (presenceVoice - _innerVoiceLpState);
                     _innerVoiceLpState = Dsp.KillDenormal(_innerVoiceLpState);
 
-                    // 3. Реверберація генерується з повного гіперблизького голосу
+                    // Reverb is generated from the close-up voice, giving it a massive spatial shadow.
                     float wet = AlgorithmicReverb(presenceVoice);
 
-                    // 4. Фінальний мікс: приглушена присутність + темна тінь простору
                     float mixed = _innerVoiceLpState + wet * inverseSquareMix * 0.45f;
 
+                    // Use Equal-Gain (Lerp) crossfade instead of Equal-Power. 
+                    // Since 'mixed' contains the correlated 'dry' signal, Equal-Power would cause 
+                    // an unnatural +3dB volume bump at the center of the mix.
                     buffer[i] = Dsp.SoftClip(Dsp.Lerp(dry, mixed, inverseSquareMix));
                 }
                 break;
@@ -345,6 +351,7 @@ public class SpatialEffectsEngine
 
     private void Setup(SpatialEnvironment env)
     {
+        // Nullify all specific EQ filters to prevent state leakage between environments.
         _reverbHpFilter = null;
         _reverbLpFilter = null;
         _stageBassShelf = null;
@@ -372,10 +379,9 @@ public class SpatialEffectsEngine
 
         switch (env)
         {
-            // Short soft warm room. RT60=0.35s, heavy HF damping (damp=0.78).
-            // LP at 4200Hz darkens the tail — the fastest and darkest decay of
-            // any environment. No early reflections: small rooms fuse them into
-            // the reverb onset immediately.
+            // Short, soft, warm room. RT60=0.35s, heavy HF damping (damp=0.78).
+            // LP at 4200Hz darkens the tail — the fastest and darkest decay.
+            // No early reflections: small rooms fuse them into the reverb onset immediately.
             case SpatialEnvironment.LivingRoom:
                 ConfigureCombsByRt60(0.35f, 0.78f);
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(200f), 0.707f);
@@ -383,15 +389,10 @@ public class SpatialEffectsEngine
                 _hasReverbEq = true;
                 break;
 
-            // Concert hall / theater. THREE defining traits:
-            //   1. Bass shelf +4.5dB at 200Hz (low-end warmth, "bass ratio > 1").
-            //   2. Lateral early reflection at ~12ms, band-passed 350Hz–5kHz so
-            //      it sounds like sound bouncing off a side wall, not a full copy
-            //      of the voice. This is the main thing that makes it sound like
-            //      a HALL rather than just a warm room.
-            //   3. Dual-LFO amplitude shimmer (±2%) on the reverb tail — breaks
-            //      up the static, frozen quality of pure Freeverb and gives the
-            //      "occupied room" sense of air movement.
+            // Concert hall / theater. Defining traits:
+            // 1. Bass shelf +4.5dB at 200Hz (low-end warmth).
+            // 2. Lateral reflection at ~12ms, band-passed (350Hz–5kHz) to sound like a wall bounce.
+            // 3. Dual-LFO amplitude shimmer (±2%) breaks up static Freeverb decay.
             case SpatialEnvironment.Stage:
                 ConfigureCombsByRt60(1.7f, 0.28f);
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(90f), 0.707f);
@@ -399,14 +400,14 @@ public class SpatialEffectsEngine
                 _hasReverbEq = true;
 
                 _stageBassShelf = BiQuadFilter.LowShelf(_sampleRate, Safe(200f), 0.707f, 4.5f);
-                // Band-pass the lateral reflection: HP strips bass (walls don't
-                // reflect sub-bass in a hall), LP strips air (distance absorbs
-                // highs). What remains sounds like a room reflection, not a copy.
+
+                // Band-pass the lateral reflection: HP strips bass (walls don't reflect sub-bass), 
+                // LP strips air (distance absorbs highs).
                 _stageLateralHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(350f), 0.9f);
                 _stageLateralLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(5000f), 0.9f);
                 _hasStageEq = true;
 
-                _stageLateralSamples = DistanceToRoundTripSamples(2.0f); // ~12ms (2m side wall)
+                _stageLateralSamples = DistanceToRoundTripSamples(2.0f); // ~12ms
                 _stagePreDelaySamples = 0.020f * _sampleRate;             // 20ms ITDG
 
                 _modPhaseIncA = 2f * MathF.PI * 0.13f / _sampleRate;
@@ -414,11 +415,9 @@ public class SpatialEffectsEngine
                 _hasModulation = true;
                 break;
 
-            // Bright, crystalline, long. RT60=2.2s with near-zero HF damping
-            // (damp=0.05) — the tail barely darkens over time. HighShelf +2.5dB
-            // at 7kHz keeps the decay sparkling. LFO-modulated flutter (4ms ±1.5ms
-            // at 3.7Hz) creates the "parking garage chirp" without a fixed comb
-            // resonance that would whistle on voiced sounds.
+            // Bright, crystalline, long. RT60=2.2s with near-zero HF damping.
+            // HighShelf +2.5dB at 7kHz keeps the decay sparkling. 
+            // LFO-modulated flutter (±1.0ms at 2.8Hz) creates a gentle chorus/chirp effect.
             case SpatialEnvironment.ConcreteHall:
                 ConfigureCombsByRt60(2.2f, 0.05f);
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(70f), 0.707f);
@@ -433,14 +432,9 @@ public class SpatialEffectsEngine
                 _hallFlutterPhase = 0f;
                 break;
 
-            // Tight confinement chamber. TWO defining traits:
-            //   1. Sharp modal resonance: PeakingEQ 190Hz / Q=5.5 / +9dB — the
-            //      first room mode of a small (~3m) sealed stone space. Instantly
-            //      recognizable on any voiced sound.
-            //   2. Saturated flutter: AsymmetricSaturation on the 7ms feedback
-            //      loop gives a gritty, "scraping stone" character that no other
-            //      environment has. SoftClip before Write prevents accumulation
-            //      since the resonator already boosts by +9dB.
+            // Tight confinement chamber. Defining traits:
+            // 1. Sharp modal resonance: 190Hz / Q=5.5 / +9dB.
+            // 2. Saturated flutter: AsymmetricSaturation on the 7ms feedback loop gives a gritty character.
             case SpatialEnvironment.Dungeon:
                 ConfigureCombs(Rt60ToFeedback(0.40f, 0.007f), Dsp.ScaleCoeff(0.40f, _sampleRate));
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(140f), 0.707f);
@@ -452,19 +446,13 @@ public class SpatialEffectsEngine
                 _hasDungeonEq = true;
 
                 _dungeonPreDelaySamples = DistanceToRoundTripSamples(1.0f); // ~6ms
-                _dungeonFlutterSamples = 0.007f * _sampleRate;             // 7ms
+                _dungeonFlutterSamples = 0.007f * _sampleRate;              // 7ms
                 break;
 
-            // Dark massive cavern. THREE defining traits:
-            //   1. 100Hz body boost (+7dB, Q=0.6) — sits in the fundamental
-            //      frequency of TTS voice, makes the space feel physically large.
-            //   2. Cross-feedback echo pair (15ms/38ms, crossfeedback=0.40):
-            //      energy scatters between near and far walls, producing the
-            //      smeared, "bouncing in the dark" echo pattern of an irregular
-            //      cavern — structurally different from ConcreteHall's clean flutter.
-            //   3. Longest RT60 (3.5s) + steepest HF rolloff (2600Hz) of any
-            //      reverb environment: the tail is massive AND dark.
-            // SoftClip before both delay writes stabilizes the cross-feedback loop.
+            // Dark massive cavern. Defining traits:
+            // 1. 100Hz body boost (+5dB, Q=0.6) sits in the fundamental frequency of TTS voices.
+            // 2. Cross-feedback echo pair (15ms/38ms, feedback=0.30) scatters energy irregularly.
+            // 3. Longest RT60 (3.5s) + steepest HF rolloff (2600Hz) ensures the tail is massive and dark.
             case SpatialEnvironment.Cave:
                 ConfigureCombsByRt60(3.5f, 0.03f);
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(40f), 0.707f);
@@ -476,49 +464,44 @@ public class SpatialEffectsEngine
                 _hasCaveEq = true;
 
                 _caveNearSamples = DistanceToRoundTripSamples(2.5f); // ~15ms
-                _caveFarSamples = DistanceToRoundTripSamples(6.5f); // ~38ms
+                _caveFarSamples = DistanceToRoundTripSamples(6.5f);  // ~38ms
                 _caveCrossFeedback = 0.30f;
                 break;
 
-            // Outdoor. Two discrete taps at ~250ms and ~500ms with progressive
-            // HF loss (foliage absorbs highs on the longer path). No reverb — the
-            // absence of a dense tail is the defining perceptual marker.
+            // Outdoor. Two discrete taps at ~250ms and ~500ms with progressive HF loss.
+            // No reverb tail is generated.
             case SpatialEnvironment.Forest:
-                _forestNearSamples = DistanceToRoundTripSamples(43f);  // ~250ms
+                _forestNearSamples = DistanceToRoundTripSamples(43f); // ~250ms
                 _forestFarSamples = DistanceToRoundTripSamples(86f);  // ~500ms
 
                 _forestHfDamp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(2200f), 0.707f);
                 _hasForestEq = true;
                 break;
 
-            // Dense medium. LP at 420Hz + 40ms slapback pressure ring.
-            // Inverse-square mix: the drowning character ramps in fast.
+            // Dense medium. Uses two cascaded LPs at 420Hz for a sharp 24dB/oct cutoff, 
+            // plus a 40ms slapback delay for pressure emulation.
             case SpatialEnvironment.Underwater:
                 ConfigureCombsByRt60(1.2f, 0.92f);
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(120f), 0.707f);
                 _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(1800f), 0.707f);
                 _hasReverbEq = true;
 
+                // Cascade achieves steep physical muffling; Q=0.9 on the second stage adds resonant pressure.
                 _environmentEq = BiQuadFilter.LowPassFilter(_sampleRate, Safe(420f), 0.707f);
                 _environmentEq2 = BiQuadFilter.LowPassFilter(_sampleRate, Safe(420f), 0.9f);
                 _underwaterDelaySamples = DistanceToRoundTripSamples(7.0f); // ~40ms
                 break;
 
-            // Boundless inner space.
-            // Dry voice remains untouched and crystal clear.
-            // Reverb tail is massive (3.5s) but extremely dark (1800Hz LP, heavy HF damp)
-            // to imply a boundless mental space without reflecting real physical walls.
+            // Cinematic Telepathy. 
+            // Massive (3.5s RT60) but extremely dark reverb to imply boundless mental space 
+            // without reflecting real physical walls (150Hz HP / 1800Hz LP).
             case SpatialEnvironment.InnerVoice:
-                // Бездонна порожнеча: довгий хвіст (3.5с), але з екстремальним 
-                // поглинанням високих частот (0.85), щоб уникнути металевого дзвону.
                 ConfigureCombsByRt60(3.5f, 0.85f);
-
-                // Відлуння — це лише темний гул. Жодних високих частот, 
-                // які б натякали на наявність твердих стін.
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(150f), 0.707f);
                 _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(1800f), 0.707f);
                 _hasReverbEq = true;
 
+                // 8ms is the optimal Haas effect delay to bring the source "inside" the head.
                 _innerVoiceMicroDelaySamples = 0.008f * _sampleRate;
                 break;
         }
@@ -581,8 +564,6 @@ public class SpatialEffectsEngine
     }
 
     // Stage: bass shelf → reverb with shimmer → mix lateral reflection.
-    // The lateral reflection is band-passed (350Hz–5kHz) so it reads as
-    // "side-wall bounce" rather than a full copy of the voice.
     private float StageReverb(float x, bool hasStageEq, bool hasModulation)
     {
         float warmed = hasStageEq && _stageBassShelf != null ? _stageBassShelf.Transform(x) : x;
@@ -590,8 +571,6 @@ public class SpatialEffectsEngine
         _stageLateralDelay.Write(warmed);
         float lateral = _stageLateralDelay.Read(_stageLateralSamples);
 
-        // Band-pass the lateral: strips bass (walls don't reflect sub) and
-        // air (distance absorbs highs), leaving the "mid-band wall bounce".
         if (hasStageEq && _stageLateralHp != null) lateral = _stageLateralHp.Transform(lateral);
         if (hasStageEq && _stageLateralLp != null) lateral = _stageLateralLp.Transform(lateral);
 
@@ -602,8 +581,7 @@ public class SpatialEffectsEngine
             ? AlgorithmicReverbModulated(preDelayed)
             : AlgorithmicReverb(preDelayed);
 
-        // Lateral at 0.45: must be clearly audible above the reverb tail —
-        // the early reflection is the main "this is a hall" cue.
+        // Lateral mixed at 0.45: Must be audible above the reverb tail as the main "hall" cue.
         return reverb + lateral * 0.45f;
     }
 
@@ -630,7 +608,6 @@ public class SpatialEffectsEngine
     }
 
     // Dungeon: modal resonance → pre-delay → dense reverb + saturated flutter.
-    // SoftClip before Write: resonator adds +9dB so sum can exceed 1.0.
     private float DungeonReverb(float x, bool hasDungeonEq)
     {
         float resonated = hasDungeonEq && _dungeonResonator != null
@@ -644,6 +621,8 @@ public class SpatialEffectsEngine
 
         float flutterDelayed = _dungeonFlutter.Read(_dungeonFlutterSamples);
         float flutterFeedback = Dsp.AsymmetricSaturation(flutterDelayed * 0.6f);
+
+        // SoftClip before Write: resonator adds +9dB so sum can exceed 1.0.
         _dungeonFlutter.Write(Dsp.SoftClip(resonated + flutterFeedback));
 
         float wet = reverb + flutterDelayed * 0.50f;
@@ -655,9 +634,6 @@ public class SpatialEffectsEngine
     }
 
     // Cave: sub-boost → cross-feedback echoes → long dark reverb.
-    // SoftClip before both delay writes: stabilizes the cross-feedback loop
-    // (0.40 cross-feedback is safe algebraically, but combined with the +7dB
-    // sub-boost the input can be hot enough to push the loop toward instability).
     private float CaveReverb(float x, bool hasCaveEq)
     {
         float boosted = hasCaveEq && _caveSubBoost != null ? _caveSubBoost.Transform(x) : x;
@@ -665,6 +641,7 @@ public class SpatialEffectsEngine
         float prevNear = _caveNearDelay.Read(_caveNearSamples);
         float prevFar = _caveFarDelay.Read(_caveFarSamples);
 
+        // SoftClip before both delay writes: stabilizes the cross-feedback loop.
         _caveNearDelay.Write(Dsp.SoftClip(boosted + prevFar * _caveCrossFeedback));
         _caveFarDelay.Write(Dsp.SoftClip(boosted + prevNear * _caveCrossFeedback));
 
