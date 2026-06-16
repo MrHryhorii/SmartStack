@@ -23,6 +23,8 @@ namespace ONNX_Runner.Services;
 ///                 echo pair + the longest, darkest tail of any environment.
 /// - Forest:       Outdoor, sparse. Two discrete decaying taps, no reverb at all.
 ///                 Absence of a tail IS the recognizable trait.
+/// - Muffled:      Occlusion. Simple 800Hz low-pass filter with no spatial reflections.
+///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
 /// - Underwater:   Drowned. Steep 24dB/oct cascaded LP muffling + slapback pressure ring.
 /// - InnerVoice:   Cinematic telepathy. Uses the Haas effect (micro-delay) and a dynamic
 ///                 low-pass filter to pull the voice inside the listener's head, supported 
@@ -79,7 +81,7 @@ public class SpatialEffectsEngine
 
     private BiQuadFilter? _forestHfDamp;
 
-    // Underwater cascaded filters for 24dB/oct steep rolloff
+    // Attenuation/Obstacle filters
     private BiQuadFilter? _environmentEq;
     private BiQuadFilter? _environmentEq2;
 
@@ -219,7 +221,7 @@ public class SpatialEffectsEngine
 
     /// <summary>
     /// Quadratic mix (mix²) for additive/spatial environments gives finer control at low mix levels.
-    /// Inverse-square mix (1-(1-mix)²) for attenuation environments (Underwater, InnerVoice)
+    /// Inverse-square mix (1-(1-mix)²) for attenuation environments (Muffled, Underwater, InnerVoice)
     /// ramps in fast, providing fine control near mix=1 where the muffling/dissolution lives.
     /// </summary>
     public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
@@ -290,6 +292,34 @@ public class SpatialEffectsEngine
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
                     buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, ForestEcho(dry, hasForestEq), curvedMix));
+                }
+                break;
+
+            case SpatialEnvironment.Muffled:
+                bool hasMuffledEq = _environmentEq != null;
+
+                // Physical obstacle simulation: thicker walls (higher mix) absorb more kinetic energy.
+                // At maximum mix, the overall volume is reduced by an additional 60% (leaving 0.4f).
+                float energyRetention = Dsp.Lerp(1.0f, 0.4f, inverseSquareMix);
+
+                for (int i = 0; i < buffer.Length; i++)
+                {
+                    float dry = Dsp.KillDenormal(buffer[i]);
+                    float wet = dry;
+
+                    if (hasMuffledEq)
+                    {
+                        // Double pass through the "concrete wall" (-24 dB/oct)
+                        wet = _environmentEq!.Transform(wet);
+                        wet = _environmentEq2!.Transform(wet);
+                    }
+
+                    // Linear crossfade (Lerp) instead of Equal-Power to prevent unnatural volume bumps
+                    // when blending heavily correlated signals.
+                    float mixed = Dsp.Lerp(dry, wet, inverseSquareMix);
+
+                    // Apply kinetic energy loss against the obstacle.
+                    buffer[i] = Dsp.SoftClip(mixed * energyRetention);
                 }
                 break;
 
@@ -476,6 +506,14 @@ public class SpatialEffectsEngine
 
                 _forestHfDamp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(2200f), 0.707f);
                 _hasForestEq = true;
+                break;
+
+            // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).
+            // Uses a cascaded 24dB/oct low-pass at 450Hz to aggressively destroy 
+            // speech intelligibility, but keeps Q=0.707 to avoid underwater resonance.
+            case SpatialEnvironment.Muffled:
+                _environmentEq = BiQuadFilter.LowPassFilter(_sampleRate, Safe(450f), 0.707f);
+                _environmentEq2 = BiQuadFilter.LowPassFilter(_sampleRate, Safe(450f), 0.707f);
                 break;
 
             // Dense medium. Uses two cascaded LPs at 420Hz for a sharp 24dB/oct cutoff, 

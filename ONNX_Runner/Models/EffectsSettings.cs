@@ -95,6 +95,9 @@ public enum SpatialEnvironment
 
     // --- Extreme & Narrative ---
 
+    /// <summary>Occlusion effect. Pure low-pass filter with no spatial reflections. Simulates hearing sound through walls, earplugs, or UI pause menus.</summary>
+    Muffled,
+
     /// <summary>Muffled underwater space. Significant high-frequency roll-off and characteristic "slapback" echo.</summary>
     Underwater,
 
