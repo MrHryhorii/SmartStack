@@ -297,7 +297,11 @@ public class SpatialEffectsEngine
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
                     float wet = Underwater(dry);
-                    if (hasUwEq) wet = _environmentEq!.Transform(wet);
+                    if (hasUwEq)
+                    {
+                        wet = _environmentEq!.Transform(wet);
+                        wet = _environmentEq!.Transform(wet);
+                    }
                     buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, wet, inverseSquareMix));
                 }
                 break;
