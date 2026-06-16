@@ -404,7 +404,7 @@ public class SpatialEffectsEngine
                 _hasHallEq = true;
 
                 _hallFlutterSamples = 0.004f * _sampleRate;
-                _hallFlutterPhaseInc = 2f * MathF.PI * 3.7f / _sampleRate;
+                _hallFlutterPhaseInc = 2f * MathF.PI * 2.8f / _sampleRate;
                 _hallFlutterPhase = 0f;
                 break;
 
@@ -446,13 +446,13 @@ public class SpatialEffectsEngine
                 _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(6000f), 0.707f);
                 _hasReverbEq = true;
 
-                _caveSubBoost = BiQuadFilter.PeakingEQ(_sampleRate, Safe(100f), 0.6f, 7.0f);
+                _caveSubBoost = BiQuadFilter.PeakingEQ(_sampleRate, Safe(100f), 0.6f, 5.0f);
                 _caveHfRolloff = BiQuadFilter.LowPassFilter(_sampleRate, Safe(2600f), 0.707f);
                 _hasCaveEq = true;
 
                 _caveNearSamples = DistanceToRoundTripSamples(2.5f); // ~15ms
                 _caveFarSamples = DistanceToRoundTripSamples(6.5f); // ~38ms
-                _caveCrossFeedback = 0.40f;
+                _caveCrossFeedback = 0.30f;
                 break;
 
             // Outdoor. Two discrete taps at ~250ms and ~500ms with progressive
@@ -589,9 +589,9 @@ public class SpatialEffectsEngine
             ? AlgorithmicReverbModulated(preDelayed)
             : AlgorithmicReverb(preDelayed);
 
-        // Lateral at 0.55: must be clearly audible above the reverb tail —
+        // Lateral at 0.45: must be clearly audible above the reverb tail —
         // the early reflection is the main "this is a hall" cue.
-        return reverb + lateral * 0.55f;
+        return reverb + lateral * 0.45f;
     }
 
     // ConcreteHall: long bright reverb + LFO-modulated flutter + HF shimmer.
@@ -602,7 +602,7 @@ public class SpatialEffectsEngine
         _hallFlutterPhase += _hallFlutterPhaseInc;
         if (_hallFlutterPhase >= 2f * MathF.PI) _hallFlutterPhase -= 2f * MathF.PI;
 
-        float modDepth = 0.0015f * _sampleRate; // ±1.5ms
+        float modDepth = 0.0010f * _sampleRate; // ±1.0ms
         float modulatedDelay = _hallFlutterSamples + Dsp.Sine(_hallFlutterPhase) * modDepth;
 
         float flutter = _hallFlutter.Read(modulatedDelay);
@@ -713,7 +713,7 @@ public class SpatialEffectsEngine
         // Mix: LP-softened voice + plate tail at 0.40 weight.
         // The tail is intentionally quieter than the voice — it should feel like
         // the space around the voice, not compete with it.
-        return Dsp.SoftClip((_innerVoiceLpState + plate * 0.40f) * outputGain);
+        return Dsp.SoftClip((_innerVoiceLpState + plate * 0.55f) * outputGain);
     }
 
     // =========================================================================
