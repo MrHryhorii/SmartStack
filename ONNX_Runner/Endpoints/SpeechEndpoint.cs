@@ -5,16 +5,6 @@ using System.Buffers;
 
 namespace ONNX_Runner.Endpoints;
 
-// Typed response format, parsed once at the top of the request instead of
-// repeated string comparisons ("mp3", "wav", ...) scattered through the method.
-public enum AudioFormat
-{
-    Wav,
-    Mp3,
-    Opus,
-    Pcm
-}
-
 public static class SpeechEndpoint
 {
     public static async Task<IResult> HandleSpeechRequest(
@@ -74,8 +64,8 @@ public static class SpeechEndpoint
 
                 if (ctx.UseStreaming)
                 {
-                    httpContext.Response.ContentType = AudioStreamManager.GetMimeType(request);
-                    httpContext.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{AudioStreamManager.GetFileName(request)}\"");
+                    httpContext.Response.ContentType = AudioStreamManager.GetMimeType(format);
+                    httpContext.Response.Headers.Append("Content-Disposition", $"attachment; filename=\"{AudioStreamManager.GetFileName(format)}\"");
                     httpContext.Response.Headers.Append("X-Audio-Sample-Rate", ctx.DisplaySampleRate.ToString());
                     await httpContext.Response.StartAsync(cancellationToken);
 
@@ -141,7 +131,7 @@ public static class SpeechEndpoint
                 }
 
                 httpContext.Response.Headers.Append("X-Audio-Sample-Rate", ctx.DisplaySampleRate.ToString());
-                return Results.File(finalAudioBytes ?? [], AudioStreamManager.GetMimeType(request), AudioStreamManager.GetFileName(request));
+                return Results.File(finalAudioBytes ?? [], AudioStreamManager.GetMimeType(format), AudioStreamManager.GetFileName(format));
             }
             finally
             {
@@ -185,6 +175,7 @@ public static class SpeechEndpoint
     private sealed class RequestContext
     {
         public required OpenAiSpeechRequest Request;
+        public required AudioFormat Format;
         public required PiperConfig PiperConfig;
         public required StreamSettings StreamConfig;
         public required ClonerSettings ClonerConfig;
@@ -241,6 +232,7 @@ public static class SpeechEndpoint
         return new RequestContext
         {
             Request = request,
+            Format = format,
             PiperConfig = piperConfig,
             StreamConfig = streamConfig,
             ClonerConfig = clonerConfig,
@@ -325,7 +317,7 @@ public static class SpeechEndpoint
 
         byte[]? finalAudioBytes = null;
 
-        using (var streamManager = new AudioStreamManager(request, ctx.FinalSampleRate, ctx.TargetStream!))
+        using (var streamManager = new AudioStreamManager(ctx.Format, ctx.FinalSampleRate, ctx.TargetStream!))
         {
             // =================================================================
             // PRE-CALCULATE VOICE BLEND (Zero-Allocation Optimization)

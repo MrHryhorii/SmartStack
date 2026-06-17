@@ -929,7 +929,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _radio.Envelope = Dsp.KillDenormal(_radio.Envelope);
 
         float captureSupression = 1.0f - Math.Clamp(_radio.Envelope * 6.0f, 0f, 1f);
-        float noiseAmount = captureSupression * 0.018f * amount * amount;
+        float noiseAmount = captureSupression * 0.025f * amount * amount;
         float rawNoise = _noise.NextPink() * noiseAmount;
 
         // Noise smoothing via pre-computed 1-pole LP (~800 Hz): no MathF.Exp per sample.

@@ -18,7 +18,7 @@ public class AudioStreamManager : IDisposable
     private readonly Stream _baseStream;
     private readonly Stream? _audioWriter;
     private readonly OpusOggWriteStream? _opusWriter;
-    private readonly string _format;
+    private readonly AudioFormat _format;
     private readonly bool _isMemoryStream;
 
     // Guards Finalize() so the underlying writers are torn down exactly once,
@@ -35,24 +35,24 @@ public class AudioStreamManager : IDisposable
     private readonly int _opusFrameSize;
     private int _opusBufferCount = 0;
 
-    public AudioStreamManager(OpenAiSpeechRequest request, int sampleRate, Stream targetStream)
+    public AudioStreamManager(AudioFormat format, int sampleRate, Stream targetStream)
     {
-        _format = request.ResponseFormat.ToLower();
+        _format = format;
         _baseStream = targetStream;
         _isMemoryStream = targetStream is MemoryStream;
 
-        if (_format == "mp3")
+        if (_format == AudioFormat.Mp3)
         {
             var waveFormat = new WaveFormat(sampleRate, 16, 1);
             // 128 kbps is a standard, high-quality bitrate for voice audio
             _audioWriter = new LameMP3FileWriter(_baseStream, waveFormat, 128);
         }
-        else if (_format == "wav")
+        else if (_format == AudioFormat.Wav)
         {
             var waveFormat = new WaveFormat(sampleRate, 16, 1);
             _audioWriter = new WaveFileWriter(_baseStream, waveFormat);
         }
-        else if (_format == "opus")
+        else if (_format == AudioFormat.Opus)
         {
             // VoIP application profile is highly optimized for human speech encoding
             var encoder = OpusCodecFactory.CreateEncoder(sampleRate, 1, OpusApplication.OPUS_APPLICATION_VOIP);
@@ -63,7 +63,7 @@ public class AudioStreamManager : IDisposable
             _opusFrameSize = sampleRate / 50;
             _opusFrameBuffer = new short[_opusFrameSize];
         }
-        else // "pcm" (Raw uncompressed 16-bit audio)
+        else // AudioFormat.Pcm (Raw uncompressed 16-bit audio)
         {
             _audioWriter = _baseStream;
         }
@@ -113,7 +113,7 @@ public class AudioStreamManager : IDisposable
             }
 
             // --- FORMAT SPECIFIC WRITING ---
-            if (_format == "opus" && _opusWriter != null && _opusFrameBuffer != null)
+            if (_format == AudioFormat.Opus && _opusWriter != null && _opusFrameBuffer != null)
             {
                 // Slice the raw arbitrary-sized audio chunk into perfect Opus-sized frames
                 int sourceIndex = 0;
@@ -166,7 +166,7 @@ public class AudioStreamManager : IDisposable
     /// </summary>
     private void FlushOpusLeftovers()
     {
-        if (_format == "opus" && _opusWriter != null && _opusFrameBuffer != null)
+        if (_format == AudioFormat.Opus && _opusWriter != null && _opusFrameBuffer != null)
         {
             if (_opusBufferCount > 0)
             {
@@ -197,7 +197,7 @@ public class AudioStreamManager : IDisposable
         _finalized = true;
 
         FlushOpusLeftovers();
-        if (_format != "pcm") _audioWriter?.Dispose();
+        if (_format != AudioFormat.Pcm) _audioWriter?.Dispose();
     }
 
     /// <summary>
@@ -216,25 +216,25 @@ public class AudioStreamManager : IDisposable
         return ((MemoryStream)_baseStream).ToArray();
     }
 
-    public static string GetMimeType(OpenAiSpeechRequest request)
+    public static string GetMimeType(AudioFormat format)
     {
-        return request.ResponseFormat.ToLower() switch
+        return format switch
         {
-            "mp3" => "audio/mpeg",
-            "opus" => "audio/ogg",
-            "pcm" => "audio/pcm",
-            _ => "audio/wav"
+            AudioFormat.Mp3 => "audio/mpeg",
+            AudioFormat.Opus => "audio/ogg",
+            AudioFormat.Pcm => "audio/pcm",
+            _ => "audio/wav" // Fallback (AudioFormat.Wav)
         };
     }
 
-    public static string GetFileName(OpenAiSpeechRequest request)
+    public static string GetFileName(AudioFormat format)
     {
-        return request.ResponseFormat.ToLower() switch
+        return format switch
         {
-            "mp3" => "speech.mp3",
-            "opus" => "speech.ogg",
-            "pcm" => "speech.pcm",
-            _ => "speech.wav"
+            AudioFormat.Mp3 => "speech.mp3",
+            AudioFormat.Opus => "speech.ogg",
+            AudioFormat.Pcm => "speech.pcm",
+            _ => "speech.wav" // Fallback (AudioFormat.Wav)
         };
     }
 
