@@ -10,6 +10,13 @@ namespace ONNX_Runner.Services;
 /// <summary>
 /// A lightweight wrapper that bridges raw float[] arrays directly to NAudio's IWaveProvider.
 /// This prevents the heavy allocation overhead of converting float[] to byte[] arrays before resampling.
+///
+/// PUBLIC API NOTE: This top-level class is the unbounded variant (reads the entire array).
+/// AudioProcessor internally uses its own nested FloatArrayWaveProvider (with a validLength
+/// boundary) because pooled arrays from ArrayPool often contain trailing garbage data from
+/// previous rentals — reading samples.Length instead of the actual valid length would leak
+/// stale data into the resampled output. This top-level version is kept as public API for
+/// callers elsewhere in the project that already have a tightly-sized, non-pooled array.
 /// </summary>
 public class FloatArrayWaveProvider(float[] samples, int sampleRate) : IWaveProvider
 {
@@ -163,6 +170,15 @@ public class AudioProcessor
     /// <summary>
     /// Resamples an audio buffer in memory. Strictly adheres to the rule: 
     /// "Resample ALWAYS returns a freshly rented array from the ArrayPool".
+    ///
+    /// SAFETY NOTES:
+    ///   - The output buffer is sized via expectedLength, which scales its safety margin
+    ///     relative to targetRate (rather than a fixed sample count) so the margin stays
+    ///     proportionally correct whether resampling down to 8kHz or up to 96kHz+.
+    ///   - The resampling loop is wrapped in try/finally: if WdlResamplingSampleProvider
+    ///     throws mid-read (e.g. malformed source audio), the rented buffer is still
+    ///     returned to the pool instead of leaking, preserving the Zero-Allocation contract
+    ///     even on the error path.
     /// </summary>
     public (float[] Buffer, int Length) Resample(float[] samples, int length, int sourceRate, int targetRate)
     {
@@ -178,22 +194,39 @@ public class AudioProcessor
         var provider = new FloatArrayWaveProvider(samples, length, sourceRate);
         var resampler = new WdlResamplingSampleProvider(provider.ToSampleProvider(), targetRate);
 
-        int expectedLength = (int)Math.Ceiling((double)length * targetRate / sourceRate) + 2000;
+        // Safety margin scales with targetRate: a fixed sample-count margin (e.g. +2000)
+        // would be a generous ~250ms at 8kHz but a thin ~21ms at 96kHz. Using a relative
+        // margin (5% of the expected length, floored at 256 samples) keeps the buffer
+        // adequately sized across the full range of TTS sample rates.
+        int rawExpectedLength = (int)Math.Ceiling((double)length * targetRate / sourceRate);
+        int safetyMargin = Math.Max(256, rawExpectedLength / 20); // 5% margin, 256-sample floor
+        int expectedLength = rawExpectedLength + safetyMargin;
 
         // Rent memory for the output
         float[] buffer = ArrayPool<float>.Shared.Rent(expectedLength);
 
-        int totalRead = 0;
-        int read;
-
-        // Read resampled audio directly into the rented output buffer
-        while ((read = resampler.Read(buffer, totalRead, buffer.Length - totalRead)) > 0)
+        try
         {
-            totalRead += read;
-            if (totalRead >= buffer.Length) break;
-        }
+            int totalRead = 0;
+            int read;
 
-        return (buffer, totalRead);
+            // Read resampled audio directly into the rented output buffer
+            while ((read = resampler.Read(buffer, totalRead, buffer.Length - totalRead)) > 0)
+            {
+                totalRead += read;
+                if (totalRead >= buffer.Length) break;
+            }
+
+            return (buffer, totalRead);
+        }
+        catch
+        {
+            // Preserve the Zero-Allocation contract on the error path: return the
+            // rented buffer before propagating, so a malformed source file or an
+            // internal resampler fault never leaks pooled memory.
+            ArrayPool<float>.Shared.Return(buffer);
+            throw;
+        }
     }
 
     /// <summary>

@@ -21,6 +21,14 @@ public class AudioStreamManager : IDisposable
     private readonly string _format;
     private readonly bool _isMemoryStream;
 
+    // Guards Finalize() so the underlying writers are torn down exactly once,
+    // regardless of whether the caller reaches it via GetFinalAudioBytes(),
+    // Dispose(), or both (e.g. GetFinalAudioBytes() followed by the using-block's
+    // implicit Dispose()). NAudio.Lame's and Concentus' own Dispose/Finish methods
+    // are not guaranteed to be safely re-entrant, so this flag is the single
+    // source of truth rather than relying on their internal state.
+    private bool _finalized;
+
     // --- OPUS MICRO-BUFFER VARIABLES ---
     // Opus encoding requires strictly sized frames (e.g., 20ms) to work correctly.
     private readonly short[]? _opusFrameBuffer;
@@ -172,16 +180,38 @@ public class AudioStreamManager : IDisposable
     }
 
     /// <summary>
+    /// Finalizes the underlying writer/encoder exactly once: flushes any pending Opus
+    /// frame, disposes the format-specific writer (MP3/WAV — required to finalize
+    /// compression headers and footers; skipped for PCM, which has no header to close).
+    ///
+    /// This is the single finalization path shared by both GetFinalAudioBytes() and
+    /// Dispose(). Previously each had its own copy of this logic, and Dispose() skipped
+    /// it entirely for memory-stream requests — meaning a memory-stream caller who hit
+    /// an exception before explicitly calling GetFinalAudioBytes() would leave the MP3/WAV
+    /// writer never finalized. Routing both call sites through one idempotent method closes
+    /// that gap without changing behavior for any caller that already finalizes correctly.
+    /// </summary>
+    private void EnsureFinalized()
+    {
+        if (_finalized) return;
+        _finalized = true;
+
+        FlushOpusLeftovers();
+        if (_format != "pcm") _audioWriter?.Dispose();
+    }
+
+    /// <summary>
     /// Finalizes encoding and returns the complete audio file as a byte array.
     /// Only valid for non-streaming (in-memory) requests.
+    /// Safe to call at most meaningfully once; a second call returns the same bytes
+    /// without re-finalizing (EnsureFinalized is idempotent).
     /// </summary>
     public byte[] GetFinalAudioBytes()
     {
         if (!_isMemoryStream)
             throw new InvalidOperationException("Cannot get byte array in streaming mode.");
 
-        FlushOpusLeftovers();
-        if (_format != "pcm") _audioWriter?.Dispose();
+        EnsureFinalized();
 
         return ((MemoryStream)_baseStream).ToArray();
     }
@@ -210,15 +240,17 @@ public class AudioStreamManager : IDisposable
 
     /// <summary>
     /// Disposes the underlying writers to ensure all file headers and footers are finalized properly.
+    ///
+    /// Unconditionally routes through EnsureFinalized() for BOTH streaming and in-memory requests.
+    /// Previously this returned immediately for memory streams (relying entirely on an
+    /// explicit GetFinalAudioBytes() call elsewhere) — if that call was skipped due to an
+    /// exception thrown earlier in the request, the MP3/WAV writer was never finalized.
+    /// EnsureFinalized()'s _finalized guard makes this safe to call after GetFinalAudioBytes()
+    /// has already run: it becomes a no-op rather than a double-dispose.
     /// </summary>
     public void Dispose()
     {
-        // Memory streams are handled by the ASP.NET Core framework, we only dispose writers for network streams
-        if (_isMemoryStream) return;
-
-        FlushOpusLeftovers();
-        if (_format != "pcm") _audioWriter?.Dispose();
-
+        EnsureFinalized();
         GC.SuppressFinalize(this);
     }
 }
