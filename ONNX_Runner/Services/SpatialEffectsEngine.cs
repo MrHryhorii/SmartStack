@@ -298,10 +298,6 @@ public class SpatialEffectsEngine
             case SpatialEnvironment.Muffled:
                 bool hasMuffledEq = _environmentEq != null;
 
-                // Physical obstacle simulation: thicker walls (higher mix) absorb more kinetic energy.
-                // At maximum mix, the overall volume is reduced by an additional 60% (leaving 0.4f).
-                float energyRetention = Dsp.Lerp(1.0f, 0.4f, inverseSquareMix);
-
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
@@ -310,16 +306,16 @@ public class SpatialEffectsEngine
                     if (hasMuffledEq)
                     {
                         // Double pass through the "concrete wall" (-24 dB/oct)
+                        // Destroys articulation but keeps the fundamental bass energy intact.
                         wet = _environmentEq!.Transform(wet);
                         wet = _environmentEq2!.Transform(wet);
                     }
 
-                    // Linear crossfade (Lerp) instead of Equal-Power to prevent unnatural volume bumps
+                    // Linear crossfade (Lerp) prevents unnatural volume bumps 
                     // when blending heavily correlated signals.
                     float mixed = Dsp.Lerp(dry, wet, inverseSquareMix);
 
-                    // Apply kinetic energy loss against the obstacle.
-                    buffer[i] = Dsp.SoftClip(mixed * energyRetention);
+                    buffer[i] = Dsp.SoftClip(mixed);
                 }
                 break;
 
