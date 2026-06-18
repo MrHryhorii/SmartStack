@@ -13,7 +13,7 @@ public interface IPhonemizer
 /// Responsible for converting IPA phoneme strings into numeric ID arrays (tensors) that the Piper ONNX model can process.
 /// This module implements the specific "Interspersing" logic required by VITS-based models.
 /// </summary>
-public class PiperPhonemizer(PiperConfig config) : IPhonemizer
+public partial class PiperPhonemizer(PiperConfig config, ILogger<PiperPhonemizer> logger) : IPhonemizer
 {
     private readonly PiperConfig _config = config;
 
@@ -44,10 +44,13 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
         }
 
         // =====================================================================
-        // UNICODE PARSING (Zero-Allocation via Spans)
+        // UNICODE PARSING (Zero-Allocation via Spans & AlternateLookup)
         // =====================================================================
         ReadOnlySpan<char> phonemeSpan = phonemes.AsSpan();
         int index = 0;
+
+        // ALTERNATE LOOKUP
+        var dictLookup = _config.PhonemeIdMap.GetAlternateLookup<ReadOnlySpan<char>>();
 
         while (index < phonemeSpan.Length)
         {
@@ -65,11 +68,8 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
             }
             else
             {
-                // The dictionary lookup requires a string, so we convert the span here.
-                string symbol = symbolSpan.ToString();
-
-                // If the model's dictionary knows this symbol (phoneme, comma, space), append its ID.
-                if (_config.PhonemeIdMap.TryGetValue(symbol, out var ids))
+                // We query the dictionary directly using the ReadOnlySpan<char>
+                if (dictLookup.TryGetValue(symbolSpan, out var ids))
                 {
                     corePhonemes.Add(ids[0]);
                 }
@@ -112,10 +112,19 @@ public class PiperPhonemizer(PiperConfig config) : IPhonemizer
             }
         }
 
-        // Debug logging to verify the exact data being sent to the ONNX Runtime
-        Console.WriteLine($"\n[DEBUG] Input Phonemes: {phonemes}");
-        Console.WriteLine($"[DEBUG] Target Tensor Size: {resultArray.Length}\n");
+        LogInputPhonemes(logger, phonemes);
+        LogTensorSize(logger, resultArray.Length);
 
         return resultArray;
     }
+
+    // =========================================================================
+    // HIGH-PERFORMANCE SOURCE GENERATED LOGGERS (Zero-Allocation)
+    // =========================================================================
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Input Phonemes: {Phonemes}")]
+    private static partial void LogInputPhonemes(ILogger logger, string phonemes);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Target Tensor Size: {TensorSize}")]
+    private static partial void LogTensorSize(ILogger logger, int tensorSize);
 }

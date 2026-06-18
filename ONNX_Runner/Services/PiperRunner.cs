@@ -13,20 +13,22 @@ namespace ONNX_Runner.Services;
 /// It handles hardware acceleration, tensor preparation, and the high-performance 
 /// conversion of raw neural network output into playable audio formats.
 /// </summary>
-public class PiperRunner : IDisposable
+public partial class PiperRunner : IDisposable
 {
     private readonly InferenceSession _session;
     private readonly IPhonemizer _phonemizer;
     private readonly PiperConfig _config;
+    private readonly ILogger<PiperRunner> _logger;
 
     public bool IsUsingGPU { get; private set; }
 
-    public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, OnnxSettings onnxSettings)
+    public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, OnnxSettings onnxSettings, ILogger<PiperRunner> logger)
     {
         _phonemizer = phonemizer;
         _config = config;
+        _logger = logger;
 
-        var (session, isGpu) = InitializeSession(modelPath, onnxSettings);
+        var (session, isGpu) = InitializeSession(modelPath, onnxSettings, logger);
         _session = session;
         IsUsingGPU = isGpu;
     }
@@ -35,7 +37,7 @@ public class PiperRunner : IDisposable
     /// Dynamically selects the best available hardware based on compile-time flags.
     /// Falls back to CPU if no compatible GPU is detected or if built as CPU-only.
     /// </summary>
-    private static (InferenceSession, bool) InitializeSession(string modelPath, OnnxSettings onnxSettings)
+    private static (InferenceSession, bool) InitializeSession(string modelPath, OnnxSettings onnxSettings, ILogger<PiperRunner> logger)
     {
         // ====================================================================
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
@@ -46,49 +48,53 @@ public class PiperRunner : IDisposable
         {
             try
             {
-                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+                {
+                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+                };
                 onnxSettings.ApplyTo(gpuOptions); // Apply performance tuning from appsettings.json
 
 #if USE_CUDA
                 // CUDA (Linux / Docker with Nvidia Runtime)
                 gpuOptions.AppendExecutionProvider_CUDA(deviceId);
                 var session = new InferenceSession(modelPath, gpuOptions);
-                Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {deviceId})");
-                Console.ResetColor();
+                
+                LogCudaLoaded(logger, deviceId); 
+                
                 return (session, true);
 #elif USE_DML
                 // DirectML (Windows)
                 gpuOptions.AppendExecutionProvider_DML(deviceId);
                 var session = new InferenceSession(modelPath, gpuOptions);
-                Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine($"[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {deviceId})");
-                Console.ResetColor();
+
+                LogDmlLoaded(logger, deviceId);
+
                 return (session, true);
 #endif
             }
             catch (Exception ex)
             {
-                Console.ForegroundColor = ConsoleColor.DarkYellow;
-                Console.WriteLine($"[WARNING] Piper failed to load on GPU {deviceId}. Reason: {ex.Message}");
-                Console.ResetColor();
+                logger.LogWarning(ex, "[WARNING] Piper failed to load on GPU {DeviceId}", deviceId);
             }
         }
-        Console.WriteLine("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
+        logger.LogInformation("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
 
         // ====================================================================
         // CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)
         // ====================================================================
 #else
-        Console.WriteLine("[HARDWARE] Lightweight CPU-only build detected. Skipping GPU checks.");
+        logger.LogInformation("[HARDWARE] Lightweight CPU-only build detected. Skipping GPU checks.");
 #endif
 
         // FALLBACK / CPU EXECUTION
-        var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+        var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+        {
+            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+        };
         onnxSettings.ApplyTo(cpuOptions);
 
         var fallbackSession = new InferenceSession(modelPath, cpuOptions);
-        Console.WriteLine("[HARDWARE] Piper Model loaded successfully on CPU.");
+        logger.LogInformation("[HARDWARE] Piper Model loaded successfully on CPU.");
         return (fallbackSession, false);
     }
 
@@ -292,4 +298,10 @@ public class PiperRunner : IDisposable
         _session?.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {DeviceId})")]
+    private static partial void LogCudaLoaded(ILogger logger, int deviceId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {DeviceId})")]
+    private static partial void LogDmlLoaded(ILogger logger, int deviceId);
 }

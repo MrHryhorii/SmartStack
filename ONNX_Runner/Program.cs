@@ -2,12 +2,27 @@ using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 using ONNX_Runner.Endpoints;
 using System.Threading.RateLimiting;
+using Microsoft.Extensions.Logging.Console;
 
 // Set console output encoding to UTF-8 to properly display international characters and phonemes in logs and diagnostics.
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole(options => options.FormatterName = "clean");
+builder.Logging.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
 
+// PiperRunner, OpenVoiceRunner, and PiperPhonemizer are constructed directly with 'new'
+// below, before the DI container exists, so they can't resolve ILogger<T> the normal
+// way yet. This factory is a small bootstrap bridge: same console provider the rest of
+// the app gets by default, just available a few lines earlier than DI normally allows.
+using var bootstrapLoggerFactory = LoggerFactory.Create(lb =>
+{
+    lb.AddConfiguration(builder.Configuration.GetSection("Logging"));
+
+    lb.AddConsole(options => options.FormatterName = "clean");
+    lb.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
+});
 
 /// =================================================================
 // LINUX SELF-HEALING
@@ -149,13 +164,13 @@ if (piperConfig != null && piperModelPath != null)
 {
     builder.Services.AddSingleton(piperConfig); // Make Piper config globally available
 
-    var phonemizer = new PiperPhonemizer(piperConfig);
+    var phonemizer = new PiperPhonemizer(piperConfig, bootstrapLoggerFactory.CreateLogger<PiperPhonemizer>());
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
     var textChunker = new TextChunker(chunkerConfig);
     builder.Services.AddSingleton(textChunker);
 
-    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, onnxConfig);
+    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, onnxConfig, bootstrapLoggerFactory.CreateLogger<PiperRunner>());
     builder.Services.AddSingleton(runner);
 
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig);
@@ -192,13 +207,13 @@ if (piperConfig != null && piperModelPath != null)
         string desc = "Voice Cloner";
 
         if (!File.Exists(extractPath))
-            HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_extract.onnx", extractPath, "tone_extract.onnx", desc).Wait();
+            await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_extract.onnx", extractPath, "tone_extract.onnx", desc);
 
         if (!File.Exists(colorPath))
-            HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_color.onnx", colorPath, "tone_color.onnx", desc).Wait();
+            await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_color.onnx", colorPath, "tone_color.onnx", desc);
 
         if (!File.Exists(toneJsonPath))
-            HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_config.json", toneJsonPath, "tone_config.json", desc).Wait();
+            await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_config.json", toneJsonPath, "tone_config.json", desc);
     }
 
     // If models are present, load them into memory and process cached voices
@@ -211,7 +226,7 @@ if (piperConfig != null && piperModelPath != null)
 
             if (toneConfig != null)
             {
-                var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig);
+                var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig, bootstrapLoggerFactory.CreateLogger<OpenVoiceRunner>());
                 var audioProc = new AudioProcessor(toneConfig);
 
                 if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
@@ -524,4 +539,4 @@ app.Lifetime.ApplicationStarted.Register(() =>
     }
 });
 
-app.Run();
+app.Run();      // Launch the server

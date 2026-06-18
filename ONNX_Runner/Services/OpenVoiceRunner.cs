@@ -11,13 +11,14 @@ namespace ONNX_Runner.Services;
 /// 1. Tone Extractor: Extracts unique vocal characteristics (embeddings) from audio.
 /// 2. Tone Color Converter: Applies a source tone color to a target voice using Latent Space Blending.
 /// </summary>
-public class OpenVoiceRunner : IDisposable
+public partial class OpenVoiceRunner : IDisposable
 {
     // The Extractor session is nullable because it can be unloaded from memory after 
     // the initial startup processing to save precious VRAM/RAM.
     private InferenceSession? _extractSession;
     private readonly InferenceSession _colorSession;
     private readonly ToneConfig _config;
+    private readonly ILogger<OpenVoiceRunner> _logger;
 
     // A dictionary acting as a 'Voice Library': 
     // Key - Voice name (e.g., "MorganFreeman"), Value - Tonal fingerprint (256-float embedding).
@@ -25,10 +26,11 @@ public class OpenVoiceRunner : IDisposable
 
     public int GetTargetSamplingRate() => _config.Data.SamplingRate;
 
-    public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config, OnnxSettings onnxSettings)
+    public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config, OnnxSettings onnxSettings, ILogger<OpenVoiceRunner> logger)
     {
         _config = config;
-        (_extractSession, _colorSession) = InitializeSessions(extractPath, colorPath, onnxSettings);
+        _logger = logger;
+        (_extractSession, _colorSession) = InitializeSessions(extractPath, colorPath, onnxSettings, logger);
         PrintModelMetadata();
     }
 
@@ -36,7 +38,7 @@ public class OpenVoiceRunner : IDisposable
     /// Dynamically selects the best available hardware based on compile-time flags.
     /// Falls back to CPU if no compatible GPU is detected or if built as CPU-only.
     /// </summary>
-    private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings)
+    private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings, ILogger<OpenVoiceRunner> logger)
     {
         // ====================================================================
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
@@ -47,7 +49,10 @@ public class OpenVoiceRunner : IDisposable
         {
             try
             {
-                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+                {
+                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+                };
                 onnxSettings.ApplyTo(gpuOptions); // Apply performance tuning settings
 
 #if USE_CUDA
@@ -56,9 +61,7 @@ public class OpenVoiceRunner : IDisposable
                 var extract = new InferenceSession(extractPath, gpuOptions);
                 var color = new InferenceSession(colorPath, gpuOptions);
 
-                Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (CUDA, Device ID: {deviceId})");
-                Console.ResetColor();
+                LogCudaLoaded(logger, deviceId);
                 return (extract, color);
 #elif USE_DML
                 // DirectML (Windows)
@@ -66,34 +69,35 @@ public class OpenVoiceRunner : IDisposable
                 var extract = new InferenceSession(extractPath, gpuOptions);
                 var color = new InferenceSession(colorPath, gpuOptions);
 
-                Console.ForegroundColor = ConsoleColor.Magenta;
-                Console.WriteLine($"[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {deviceId})");
-                Console.ResetColor();
+                LogDmlLoaded(logger, deviceId);
                 return (extract, color);
 #endif
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DEBUG] OpenVoice failed on GPU {deviceId}: {ex.Message}");
+                LogGpuInitFailed(logger, ex, deviceId);
             }
         }
-        Console.WriteLine("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
+        logger.LogInformation("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
 
         // ====================================================================
         // CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)
         // ====================================================================
 #else
-        Console.WriteLine("[HARDWARE] Lightweight CPU-only build detected. Skipping GPU checks.");
+        logger.LogInformation("[HARDWARE] Lightweight CPU-only build detected. Skipping GPU checks.");
 #endif
 
         // FALLBACK / CPU EXECUTION
-        var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions();
+        var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+        {
+            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+        };
         onnxSettings.ApplyTo(cpuOptions);
 
         var cpuExtract = new InferenceSession(extractPath, cpuOptions);
         var cpuColor = new InferenceSession(colorPath, cpuOptions);
 
-        Console.WriteLine("[HARDWARE] OpenVoice Models loaded on CPU.");
+        logger.LogInformation("[HARDWARE] OpenVoice Models loaded on CPU.");
         return (cpuExtract, cpuColor);
     }
 
@@ -166,46 +170,45 @@ public class OpenVoiceRunner : IDisposable
     {
         _extractSession?.Dispose();
         _extractSession = null;
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("[INFO] OpenVoice Tone Extractor has been unloaded to free up system resources.");
-        Console.ResetColor();
+        _logger.LogInformation("[INFO] OpenVoice Tone Extractor has been unloaded to free up system resources.");
     }
 
     // --- MODEL INSPECTION & DSP ---
 
     private void PrintModelMetadata()
     {
-        Console.ForegroundColor = ConsoleColor.Magenta;
-        Console.WriteLine("\n=========================================");
-        Console.WriteLine("       OPENVOICE MODELS INSPECTION       ");
-        Console.WriteLine("=========================================");
-        Console.ResetColor();
+        _logger.LogInformation("=========================================");
+        _logger.LogInformation("       OPENVOICE MODELS INSPECTION       ");
+        _logger.LogInformation("=========================================");
 
-        Console.WriteLine($">>> CONFIG SETTINGS:");
-        Console.WriteLine($"  Target Sample Rate: {_config.Data.SamplingRate} Hz");
-        Console.WriteLine($"  Filter Length:      {_config.Data.FilterLength}");
-        Console.WriteLine($"  Hop Length:         {_config.Data.HopLength}");
-        Console.WriteLine($"  Gin Channels:       {_config.Model.GinChannels}");
+        _logger.LogInformation(">>> CONFIG SETTINGS:");
+        LogSampleRate(_config.Data.SamplingRate);
+        LogFilterLength(_config.Data.FilterLength);
+        LogHopLength(_config.Data.HopLength);
+        LogGinChannels(_config.Model.GinChannels);
 
         if (_extractSession != null) InspectSession("TONE EXTRACTOR", _extractSession);
         InspectSession("TONE COLOR CONVERTER", _colorSession);
     }
 
-    private static void InspectSession(string name, InferenceSession session)
+    private void InspectSession(string name, InferenceSession session)
     {
-        Console.WriteLine($"\n>>> {name}:");
-        Console.WriteLine("  Inputs:");
+        if (!_logger.IsEnabled(LogLevel.Information)) return;
+
+        LogSessionName(name);
+
+        _logger.LogInformation("  Inputs:");
         foreach (var input in session.InputMetadata)
         {
             var shape = string.Join(" x ", input.Value.Dimensions.Select(d => d == -1 ? "Batch" : d.ToString()));
-            Console.WriteLine($"    - {input.Key}: [{shape}] ({input.Value.ElementType})");
+            LogTensorMetadata(input.Key, shape, input.Value.ElementType);
         }
 
-        Console.WriteLine("  Outputs:");
+        _logger.LogInformation("  Outputs:");
         foreach (var output in session.OutputMetadata)
         {
             var shape = string.Join(" x ", output.Value.Dimensions.Select(d => d == -1 ? "Batch" : d.ToString()));
-            Console.WriteLine($"    - {output.Key}: [{shape}] ({output.Value.ElementType})");
+            LogTensorMetadata(output.Key, shape, output.Value.ElementType);
         }
     }
 
@@ -284,9 +287,7 @@ public class OpenVoiceRunner : IDisposable
     {
         try
         {
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("[AUTO-BASE] Warming up OpenVoice Color Converter (Cold Start Prevention)...");
-            Console.ResetColor();
+            _logger.LogInformation("[AUTO-BASE] Warming up OpenVoice Color Converter (Cold Start Prevention)...");
             // Create dummy inputs that match the expected dimensions of the model to trigger JIT compilation and graph optimization.
             int frames = 300;
             int bins = (_config.Data.FilterLength / 2) + 1;
@@ -315,13 +316,11 @@ public class OpenVoiceRunner : IDisposable
                 ArrayPool<float>.Shared.Return(result.Buffer);
             }
             // If we reach this point without exceptions, the warmup is successful.
-            Console.WriteLine("[AUTO-BASE] OpenVoice warmup complete. System is fully ready.");
+            _logger.LogInformation("[AUTO-BASE] OpenVoice warmup complete. System is fully ready.");
         }
         catch (Exception ex)
         {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[WARNING] OpenVoice warmup failed, first request may be slower: {ex.Message}");
-            Console.ResetColor();
+            _logger.LogWarning(ex, "[WARNING] OpenVoice warmup failed, first request may be slower");
         }
     }
 
@@ -331,4 +330,36 @@ public class OpenVoiceRunner : IDisposable
         _colorSession?.Dispose();
         GC.SuppressFinalize(this);
     }
+
+    // =========================================================================
+    // HIGH-PERFORMANCE SOURCE GENERATED LOGGERS (Zero-Allocation)
+    // =========================================================================
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (CUDA, Device ID: {DeviceId})")]
+    private static partial void LogCudaLoaded(ILogger logger, int deviceId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {DeviceId})")]
+    private static partial void LogDmlLoaded(ILogger logger, int deviceId);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "[DEBUG] OpenVoice failed on GPU {DeviceId}")]
+    private static partial void LogGpuInitFailed(ILogger logger, Exception ex, int deviceId);
+
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "  Target Sample Rate: {SampleRate} Hz")]
+    private partial void LogSampleRate(int sampleRate);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "  Filter Length:      {FilterLength}")]
+    private partial void LogFilterLength(int filterLength);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "  Hop Length:         {HopLength}")]
+    private partial void LogHopLength(int hopLength);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "  Gin Channels:       {GinChannels}")]
+    private partial void LogGinChannels(int ginChannels);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "    - {Name}: [{Shape}] ({ElementType})")]
+    private partial void LogTensorMetadata(string name, string shape, Type elementType);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = ">>> {SessionName}:")]
+    private partial void LogSessionName(string sessionName);
 }
