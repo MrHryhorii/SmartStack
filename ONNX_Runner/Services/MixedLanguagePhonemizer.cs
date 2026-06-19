@@ -17,6 +17,10 @@ public record TextChunk
     public bool IsPunctuationOrSpace { get; init; }
     public string Script { get; init; } = "None";
     public List<string> RawTop5 { get; init; } = [];
+
+    // True if the text is a pre-formatted IPA transcription (e.g., [hɛˈloʊ]).
+    // Skips language detection and eSpeak, going straight to fallback validation.
+    public bool IsRawPhonemes { get; init; }
 }
 
 /// <summary>
