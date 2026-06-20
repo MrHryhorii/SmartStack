@@ -84,13 +84,15 @@ public class TextChunker(ChunkerSettings settings)
 
     // Symbol used to glue chunks together when an emergency split is necessary
     // (e.g., splitting in the middle of a long sentence without good break points).
-    private const string EmergencyGlue = ",";
+    // A hyphen signals a soft, continuous break to the TTS engine rather than a hard pause.
+    private const string EmergencyGlue = "-";
 
     // Additional pause marks that often indicate natural break points in sentences, even if they aren't full terminators.
     // These are NOT sentence terminators — they signal a softer pause used by SplitLongSentence for emergency splitting.
     private static readonly char[] PauseMarks =
     [
         ',', // U+002C  COMMA
+        // NOTE: ';' is also listed here as a secondary soft break for emergency splits.
         ';', // U+003B  SEMICOLON
         ':', // U+003A  COLON
         '-', // U+002D  HYPHEN-MINUS
@@ -115,6 +117,15 @@ public class TextChunker(ChunkerSettings settings)
         // Mongolian pause punctuation
         '᠂', // U+1802  MONGOLIAN COMMA
         '᠄', // U+1804  MONGOLIAN COLON
+    ];
+
+    // Closing quotes and brackets that can follow a sentence terminator (e.g., "Hello." or (Ready.)).
+    // Used to look ahead and prevent periods inside quotes/brackets from being misidentified as abbreviations.
+    private static readonly char[] ClosingPunctuation =
+    [
+        '"', '\'', '’', '”', '»', '›', // straight/curly quotes, guillemets, angle quote
+        ')', ']', '}',                 // brackets
+        '」', '』', '〕', '】',          // CJK closing brackets/quotes
     ];
 
     /// <summary>
@@ -220,10 +231,28 @@ public class TextChunker(ChunkerSettings settings)
                 // If the terminator is a standard period ('.'), apply smart abbreviation logic.
                 char nextChar = textSpan[nextTerminator + 1];
 
-                // A valid period must be followed by whitespace or another punctuation mark (e.g., "End. Next").
-                if (char.IsWhiteSpace(nextChar) || SentenceTerminators.AsSpan().Contains(nextChar) || PauseMarks.AsSpan().Contains(nextChar))
+                // ====================================================================
+                // CLOSING PUNCTUATION SKIP
+                // Skip past any closing quotes or brackets (e.g., ".)" or ".”") to find the true 
+                // next character, ensuring periods inside quotes aren't treated as abbreviations.
+                // ====================================================================
+                int afterClosingIdx = nextTerminator + 1;
+                while (afterClosingIdx < textSpan.Length && ClosingPunctuation.AsSpan().Contains(textSpan[afterClosingIdx]))
                 {
-                    int nextVisibleCharIdx = nextTerminator + 1;
+                    afterClosingIdx++;
+                }
+                char charAfterClosing = afterClosingIdx < textSpan.Length ? textSpan[afterClosingIdx] : ' ';
+
+                // Check if the character after the closing punctuation is a valid sentence boundary.
+                bool boundaryAfterClosing = afterClosingIdx >= textSpan.Length
+                    || char.IsWhiteSpace(charAfterClosing)
+                    || SentenceTerminators.AsSpan().Contains(charAfterClosing)
+                    || PauseMarks.AsSpan().Contains(charAfterClosing);
+
+                if (char.IsWhiteSpace(nextChar) || SentenceTerminators.AsSpan().Contains(nextChar) || PauseMarks.AsSpan().Contains(nextChar)
+                    || (afterClosingIdx > nextTerminator + 1 && boundaryAfterClosing))
+                {
+                    int nextVisibleCharIdx = afterClosingIdx;
                     while (nextVisibleCharIdx < textSpan.Length && char.IsWhiteSpace(textSpan[nextVisibleCharIdx]))
                     {
                         nextVisibleCharIdx++;
@@ -311,6 +340,10 @@ public class TextChunker(ChunkerSettings settings)
             else
             {
                 endIndex = nextTerminator + 1;
+
+                // Capture any closing quotes/brackets immediately after the terminator.
+                while (endIndex < textSpan.Length && ClosingPunctuation.AsSpan().Contains(textSpan[endIndex])) endIndex++;
+
                 // Capture trailing terminators (e.g., "Wait!!!" -> captures all three exclamation marks).
                 while (endIndex < textSpan.Length && SentenceTerminators.AsSpan().Contains(textSpan[endIndex])) endIndex++;
             }
