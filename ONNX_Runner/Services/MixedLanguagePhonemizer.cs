@@ -35,7 +35,7 @@ public partial class MixedLanguagePhonemizer
     // 1. Punctuation/Spaces
     // 2. Words (including letters, numbers, marks, and internal apostrophes)
     // 3. Unrecognized garbage/symbols
-    [GeneratedRegex(@"([.,\-:!?;""«»()\[\]{}⟨⟩。！？]+)|([\p{L}\p{Nd}\p{M}]+(?:['’][\p{L}\p{Nd}\p{M}]+)*)|([^.,\-:!?;""«»()\[\]{}⟨⟩。！？\p{L}\p{Nd}\p{M}]+)")]
+    [GeneratedRegex(@"([.,\-:!?;""«»()\[\]{}⟨⟩。！？]+)|([\p{L}\p{Nd}\p{M}]+(?:['’\.][\p{L}\p{Nd}\p{M}]+)*)|([^.,\-:!?;""«»()\[\]{}⟨⟩。！？\p{L}\p{Nd}\p{M}]+)")]
     private static partial Regex TokenizerRegex();
 
     public enum ScriptType { None, Latin, Cyrillic, Greek, Han, Hiragana, Katakana, Hangul, Arabic, Hebrew, Other }

@@ -132,7 +132,7 @@ public class TextChunker(ChunkerSettings settings)
     /// A comprehensive list of global abbreviations and titles that should NOT trigger a sentence split.
     /// Includes titles from English, Spanish, French, German, and Slavic languages.
     /// </summary>
-    private static readonly HashSet<string> CommonTitles = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly HashSet<string> CommonTitles = new(StringComparer.OrdinalIgnoreCase)
     {
         // ================= ENGLISH =================
         "mr", "mrs", "ms", "mx", "messrs", "mmes", "msgr", "esq", "hon", "rev", "fr", "prof", "dr", "sr", "jr",
