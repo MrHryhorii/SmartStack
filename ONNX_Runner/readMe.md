@@ -31,7 +31,7 @@ Dashboard features:
 
 # Download
 
-**[Tsubaki TTS Engine v1.0.4 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.4)**
+**[Tsubaki TTS Engine v1.0.4 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.5)**
 
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
@@ -260,27 +260,36 @@ curl http://localhost:5045/v1/audio/speech \
 
 ### Available Effects
 
-| Value           | Description                                                                                              |
-| --------------- | -------------------------------------------------------------------------------------------------------- |
-| `None`          | Bypass — clean audio                                                                                     |
-| `Telephone`     | Lo-Fi equalization with hard transistor clipping                                                         |
-| `Overdrive`     | Warm tube saturation and cubic waveshaping distortion                                                    |
-| `Bitcrusher`    | Retro 8-bit / Arcade style sample rate decimation                                                        |
-| `RingModulator` | Classic Robot / Dalek metallic effect                                                                    |
-| `Flanger`       | Modulated short delay with heavy feedback                                                                |
-| `Chorus`        | Thick, multi-voice ensemble effect                                                                       |
-| `LoFiTape`      | Simulates the warmth and coloration of an analog cassette tape                                           |
-| `NeuralStutter` | Simulates a cognitive malfunction in the AI's neural core by intelligently looping tonal voice fragments |
+| Value           | Description                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `None`          | Bypass — clean audio                                                                         |
+| `Telephone`     | Lo-Fi equalization with hard transistor clipping                                             |
+| `Overdrive`     | Warm tube saturation and cubic waveshaping distortion                                        |
+| `Bitcrusher`    | Retro 8-bit / Arcade style sample rate decimation                                            |
+| `RingModulator` | Classic Robot / Dalek metallic effect                                                        |
+| `Flanger`       | Modulated short delay with heavy feedback                                                    |
+| `Chorus`        | Thick, multi-voice ensemble effect                                                           |
+| `LoFiTape`      | Simulates the warmth and coloration of an analog cassette tape                               |
+| `DecoderGlitch` | Repeats short audio fragments to simulate a digital decoder glitch                           |
+| `TacticalRadio` | CVSD codec simulation with heavy compression and slope-overload distortion                   |
+| `FmRadio`       | Handheld FM radio effect with an amplitude limiter and signal-dependent noise floor          |
+| `G711MuLaw`     | Classic North American digital telephony codec (μ-law) with 8-bit companding distortion      |
+| `G711ALaw`      | European standard digital telephony codec (A-law) with characteristic quantization artifacts |
 
 ### Available Environments
 
-| Value          | Description                                                     |
-| -------------- | --------------------------------------------------------------- |
-| `None`         | Dry signal only                                                 |
-| `LivingRoom`   | Small room with short, bright reverb                            |
-| `ConcreteHall` | Large hall with long, dense reverb and strong early reflections |
-| `Forest`       | Open outdoor space with long, diffuse reverb                    |
-| `Underwater`   | Muffled underwater acoustic properties                          |
+| Value          | Description                                                                   |
+| -------------- | ----------------------------------------------------------------------------- |
+| `None`         | Dry signal only                                                               |
+| `LivingRoom`   | Small room with short decay and balanced frequency response                   |
+| `Stage`        | Performance stage with distinct pre-delay and slow shimmer                    |
+| `ConcreteHall` | Large hall with long, dense reverb and strong early reflections               |
+| `Dungeon`      | Tight stone space with short, dark, resonant flutter echoes                   |
+| `Cave`         | Large enclosed space with deep resonance and very long, dark decay            |
+| `Forest`       | Open outdoor space with discrete echoes rather than dense reverb tails        |
+| `Muffled`      | Pure low-pass filter occlusion (simulates hearing through walls/earplugs)     |
+| `Underwater`   | Muffled acoustics with high-frequency roll-off and slapback echo              |
+| `InnerVoice`   | Micro-delay and dynamic low-pass to pull the voice inside the listener's head |
 
 ## Synthesis Parameters
 
