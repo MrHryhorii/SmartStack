@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <PackageReference Include="Concentus.OggFile" Version="1.0.7" />
+    <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Lame" Version="2.1.0" />
