@@ -50,9 +50,14 @@ public partial class PiperRunner : IDisposable
             {
                 var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
-                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+                    GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
+                        ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                        : GraphOptimizationLevel.ORT_DISABLE_ALL
                 };
-                onnxSettings.ApplyTo(gpuOptions); // Apply performance tuning from appsettings.json
+                
+                // We apply a profile specifically for the GPU
+                onnxSettings.Gpu.ApplyTo(gpuOptions); 
 
 #if USE_CUDA
                 // CUDA (Linux / Docker with Nvidia Runtime)
@@ -89,9 +94,14 @@ public partial class PiperRunner : IDisposable
         // FALLBACK / CPU EXECUTION
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
         {
-            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+            GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
+                ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                : GraphOptimizationLevel.ORT_DISABLE_ALL
         };
-        onnxSettings.ApplyTo(cpuOptions);
+        
+        // We apply a profile specifically for the CPU
+        onnxSettings.Cpu.ApplyTo(cpuOptions);
 
         var fallbackSession = new InferenceSession(modelPath, cpuOptions);
         logger.LogInformation("[HARDWARE] Piper Model loaded successfully on CPU.");

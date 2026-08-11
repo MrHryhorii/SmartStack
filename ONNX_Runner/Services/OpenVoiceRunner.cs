@@ -51,9 +51,14 @@ public partial class OpenVoiceRunner : IDisposable
             {
                 var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
-                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+                    GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
+                        ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                        : GraphOptimizationLevel.ORT_DISABLE_ALL
                 };
-                onnxSettings.ApplyTo(gpuOptions); // Apply performance tuning settings
+                
+                // We apply a profile specifically for the GPU
+                onnxSettings.Gpu.ApplyTo(gpuOptions);
 
 #if USE_CUDA
                 // CUDA (Linux / Docker with Nvidia Runtime)
@@ -90,9 +95,14 @@ public partial class OpenVoiceRunner : IDisposable
         // FALLBACK / CPU EXECUTION
         var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
         {
-            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR
+            LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+            GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
+                ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                : GraphOptimizationLevel.ORT_DISABLE_ALL
         };
-        onnxSettings.ApplyTo(cpuOptions);
+        
+        // We apply a profile specifically for the CPU
+        onnxSettings.Cpu.ApplyTo(cpuOptions);
 
         var cpuExtract = new InferenceSession(extractPath, cpuOptions);
         var cpuColor = new InferenceSession(colorPath, cpuOptions);

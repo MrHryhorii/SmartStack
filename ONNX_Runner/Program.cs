@@ -396,10 +396,22 @@ builder.Services.AddSingleton(sp =>
         }
         else
         {
+            // CPU
             int totalCores = Environment.ProcessorCount;
-            double cpuMultiplier = Math.Clamp(hwConfig.CpuCoresUsageMultiplier, 0.1, 1.0);
-            cr = Math.Max(1, (int)(totalCores * cpuMultiplier));
-            Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Limit: {cr} concurrent tasks.");
+            int requestedCpuLimit = hwConfig.MaxConcurrentCpuRequests;
+
+            if (requestedCpuLimit <= 0)
+            {
+                // Negative value protection and default behavior for 0
+                cr = totalCores;
+                Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Auto-Limit applied: {cr} concurrent tasks.");
+            }
+            else
+            {
+                // Protection against entering a number greater than the number of physical cores
+                cr = Math.Clamp(requestedCpuLimit, 1, totalCores);
+                Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Custom Limit applied: {cr} concurrent tasks.");
+            }
         }
     }
     return new SemaphoreSlim(cr, cr);

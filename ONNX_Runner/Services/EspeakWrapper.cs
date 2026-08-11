@@ -14,9 +14,14 @@ public partial class EspeakWrapper : IDisposable
     // .NET will automatically append .dll on Windows, .so on Linux, and .dylib on macOS.
     private const string DllPath = "espeak-ng";
 
+    // Thread-safety lock object. Since the underlying espeak-ng C++ library is not thread-safe 
+    // and uses global states, this lock prevents race conditions and segmentation faults (segfaults) 
+    // under parallel requests from AI agents or multi-threaded pipelines.
+    private static readonly Lock _espeakLock = new();
+
     // Windows-specific API to convert long paths to short 8.3 format, ensuring compatibility with older C++ libraries that may not handle long paths well.
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetShortPathName(string lpszLongPath, System.Text.StringBuilder lpszShortPath, int cchBuffer);
 
     /// <summary>
@@ -92,14 +97,18 @@ public partial class EspeakWrapper : IDisposable
     /// </summary>
     public void SetVoice(string voice)
     {
-        int voiceResult = espeak_SetVoiceByName(voice);
-        if (voiceResult != 0)
+        // Note: Voice switching also touches native states, so we protect it with the lock as well.
+        lock (_espeakLock)
         {
-            Console.WriteLine($"[WARNING] Failed to set espeak voice to '{voice}'.");
+            int voiceResult = espeak_SetVoiceByName(voice);
+            if (voiceResult != 0)
+            {
+                Console.WriteLine($"[WARNING] Failed to set espeak voice to '{voice}'.");
 
-            // Throw an exception so the higher-level fallback mechanism 
-            // (e.g., PhonemeFallbackMapper) can intercept it and take over.
-            throw new Exception("Voice not found");
+                // Throw an exception so the higher-level fallback mechanism 
+                // (e.g., PhonemeFallbackMapper) can intercept it and take over.
+                throw new Exception("Voice not found");
+            }
         }
     }
 
@@ -116,15 +125,19 @@ public partial class EspeakWrapper : IDisposable
 
         try
         {
-            while (currentPtr != IntPtr.Zero)
+            // Thread synchronization guard for non-thread-safe native C++ execution
+            lock (_espeakLock)
             {
-                // 1 = textmode (UTF8), 2 = phonememode (IPA)
-                IntPtr resultPtr = espeak_TextToPhonemes(ref currentPtr, 1, 2);
-
-                if (resultPtr != IntPtr.Zero)
+                while (currentPtr != IntPtr.Zero)
                 {
-                    string part = Marshal.PtrToStringUTF8(resultPtr) ?? string.Empty;
-                    sb.Append(part);
+                    // 1 = textmode (UTF8), 2 = phonememode (IPA)
+                    IntPtr resultPtr = espeak_TextToPhonemes(ref currentPtr, 1, 2);
+
+                    if (resultPtr != IntPtr.Zero)
+                    {
+                        string part = Marshal.PtrToStringUTF8(resultPtr) ?? string.Empty;
+                        sb.Append(part);
+                    }
                 }
             }
 

@@ -1,16 +1,10 @@
-using Microsoft.ML.OnnxRuntime;
-using System;
-
 namespace ONNX_Runner.Models;
 
 /// <summary>
-/// Configuration for the ONNX Runtime execution engine.
-/// Allows fine-tuning performance based on specific CPU/GPU architectures.
+/// Execution profile containing thread and memory settings for a specific hardware target (CPU or GPU).
 /// </summary>
-public class OnnxSettings
+public class OnnxProfile
 {
-    public bool EnableGraphOptimization { get; set; } = true;
-
     /// <summary>
     /// Execution mode: "Sequential" (nodes executed one by one) or "Parallel" (simultaneous node execution).
     /// Sequential is generally safer and faster for most TTS models unless the graph is explicitly designed for parallel execution.
@@ -20,7 +14,9 @@ public class OnnxSettings
     /// <summary>
     /// The number of threads used to parallelize the execution within nodes. 
     /// 0 means the ONNX runtime will automatically select the optimal thread count based on hardware.
-    /// For CPU execution, setting this to the number of physical cores often yields the best performance.
+    /// For CPU execution, setting this to 2 or the number of physical cores often yields the best performance.
+    /// For GPU execution, it is highly recommended to set this to 1 to reduce synchronization overhead, 
+    /// as the CPU is only preparing data for the GPU.
     /// </summary>
     public int IntraOpNumThreads { get; set; } = 0;
 
@@ -46,10 +42,6 @@ public class OnnxSettings
     /// </summary>
     public void ApplyTo(Microsoft.ML.OnnxRuntime.SessionOptions options)
     {
-        options.GraphOptimizationLevel = EnableGraphOptimization
-            ? GraphOptimizationLevel.ORT_ENABLE_ALL
-            : GraphOptimizationLevel.ORT_DISABLE_ALL;
-
         options.ExecutionMode = ExecutionMode.Equals("Parallel", StringComparison.OrdinalIgnoreCase)
             ? Microsoft.ML.OnnxRuntime.ExecutionMode.ORT_PARALLEL
             : Microsoft.ML.OnnxRuntime.ExecutionMode.ORT_SEQUENTIAL;
@@ -76,4 +68,34 @@ public class OnnxSettings
         options.EnableMemoryPattern = EnableMemoryPattern;
         options.EnableCpuMemArena = EnableCpuMemArena;
     }
+}
+
+/// <summary>
+/// Configuration for the ONNX Runtime execution engine.
+/// Allows fine-tuning performance based on specific CPU/GPU architectures.
+/// </summary>
+public class OnnxSettings
+{
+    /// <summary>
+    /// Enables ONNX Runtime graph optimizations (constant folding, node fusion, etc.).
+    /// </summary>
+    public bool EnableGraphOptimization { get; set; } = true;
+
+    /// <summary>
+    /// Settings specifically applied when the engine is running on the CPU.
+    /// </summary>
+    public OnnxProfile Cpu { get; set; } = new OnnxProfile 
+    { 
+        IntraOpNumThreads = 2,
+        EnableCpuMemArena = true 
+    };
+
+    /// <summary>
+    /// Settings specifically applied when the engine is running on the GPU (DirectML/CUDA).
+    /// </summary>
+    public OnnxProfile Gpu { get; set; } = new OnnxProfile 
+    { 
+        IntraOpNumThreads = 1,
+        EnableCpuMemArena = false // Often disabled for GPU to avoid memory conflicts
+    };
 }
