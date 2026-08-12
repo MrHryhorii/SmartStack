@@ -170,7 +170,7 @@ if (piperConfig != null && piperModelPath != null)
     var textChunker = new TextChunker(chunkerConfig);
     builder.Services.AddSingleton(textChunker);
 
-    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, onnxConfig, bootstrapLoggerFactory.CreateLogger<PiperRunner>());
+    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, onnxConfig, hardwareConfig, bootstrapLoggerFactory.CreateLogger<PiperRunner>());
     builder.Services.AddSingleton(runner);
 
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig);
@@ -226,7 +226,7 @@ if (piperConfig != null && piperModelPath != null)
 
             if (toneConfig != null)
             {
-                var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig, bootstrapLoggerFactory.CreateLogger<OpenVoiceRunner>());
+                var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig, hardwareConfig, bootstrapLoggerFactory.CreateLogger<OpenVoiceRunner>());
                 var audioProc = new AudioProcessor(toneConfig);
 
                 if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
@@ -389,10 +389,10 @@ builder.Services.AddSingleton(sp =>
     {
         if (piperSvc.IsUsingGPU)
         {
-            double totalVramGb = hwConfig.TotalVramGb;
-            double vramPerRequest = hwConfig.VramPerRequestGb;
-            cr = Math.Max(1, (int)(totalVramGb / vramPerRequest));
-            Console.WriteLine($"[SYSTEM] Running on GPU ({totalVramGb}GB VRAM). Limit: {cr} concurrent tasks.");
+            // GPU: Combines the engine's technical concurrency limit (Capacity) 
+            // with the user-defined concurrency limit from config (Policy) to prevent OOM.
+            cr = Math.Min(piperSvc.ConcurrencyCapacity, Math.Max(1, hwConfig.MaxConcurrentGpuRequests));
+            Console.WriteLine($"[SYSTEM] Running on GPU. Explicit Limit applied: {cr} concurrent tasks.");
         }
         else
         {
@@ -403,13 +403,13 @@ builder.Services.AddSingleton(sp =>
             if (requestedCpuLimit <= 0)
             {
                 // Negative value protection and default behavior for 0
-                cr = totalCores;
+                cr = Math.Min(piperSvc.ConcurrencyCapacity, totalCores);
                 Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Auto-Limit applied: {cr} concurrent tasks.");
             }
             else
             {
                 // Protection against entering a number greater than the number of physical cores
-                cr = Math.Clamp(requestedCpuLimit, 1, totalCores);
+                cr = Math.Min(piperSvc.ConcurrencyCapacity, Math.Clamp(requestedCpuLimit, 1, totalCores));
                 Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Custom Limit applied: {cr} concurrent tasks.");
             }
         }

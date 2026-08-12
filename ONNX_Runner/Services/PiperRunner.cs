@@ -5,6 +5,7 @@ using NAudio.Lame;
 using ONNX_Runner.Models;
 using System.Buffers;
 using System.Numerics;
+using System.Collections.Concurrent;
 
 namespace ONNX_Runner.Services;
 
@@ -12,32 +13,49 @@ namespace ONNX_Runner.Services;
 /// The core engine responsible for executing the Piper ONNX model.
 /// It handles hardware acceleration, tensor preparation, and the high-performance 
 /// conversion of raw neural network output into playable audio formats.
+/// Supports both monolithic execution (CPU/CUDA) and Object Pooling (DirectML).
 /// </summary>
 public partial class PiperRunner : IDisposable
 {
-    private readonly InferenceSession _session;
+    // --- SESSION STATE MANAGEMENT ---
+    // Used for thread-safe execution providers (CPU, CUDA)
+    private readonly InferenceSession? _sharedSession;
+    
+    // Used for execution providers that do not support concurrent execution (DirectML)
+    private readonly ConcurrentQueue<InferenceSession>? _isolatedSessionPool;
+    
+    // Fast path routing flag for the hot loop
+    private readonly bool _isUsingPool;
+
     private readonly IPhonemizer _phonemizer;
     private readonly PiperConfig _config;
     private readonly ILogger<PiperRunner> _logger;
 
     public bool IsUsingGPU { get; private set; }
+    
+    // Represents the engine's technical concurrency limit (pool size for DML, int.MaxValue for CUDA/CPU)
+    public int ConcurrencyCapacity { get; private set; }
 
-    public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, OnnxSettings onnxSettings, ILogger<PiperRunner> logger)
+    public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<PiperRunner> logger)
     {
         _phonemizer = phonemizer;
         _config = config;
         _logger = logger;
 
-        var (session, isGpu) = InitializeSession(modelPath, onnxSettings, logger);
-        _session = session;
-        IsUsingGPU = isGpu;
+        var initResult = InitializeSession(modelPath, onnxSettings, hwSettings, logger);
+        
+        _sharedSession = initResult.SharedSession;
+        _isolatedSessionPool = initResult.SessionPool;
+        IsUsingGPU = initResult.IsUsingGPU;
+        _isUsingPool = initResult.IsUsingPool;
+        ConcurrencyCapacity = initResult.Capacity;
     }
 
     /// <summary>
     /// Dynamically selects the best available hardware based on compile-time flags.
-    /// Falls back to CPU if no compatible GPU is detected or if built as CPU-only.
+    /// Returns a routing configuration determining if the engine should use a Shared Session or an Object Pool.
     /// </summary>
-    private static (InferenceSession, bool) InitializeSession(string modelPath, OnnxSettings onnxSettings, ILogger<PiperRunner> logger)
+    private static (InferenceSession? SharedSession, ConcurrentQueue<InferenceSession>? SessionPool, bool IsUsingGPU, bool IsUsingPool, int Capacity) InitializeSession(string modelPath, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<PiperRunner> logger)
     {
         // ====================================================================
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
@@ -48,7 +66,8 @@ public partial class PiperRunner : IDisposable
         {
             try
             {
-                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+                // 'using' ensures the native SessionOptions handle is disposed immediately after session creation
+                using var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
                     LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
                     GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
@@ -60,21 +79,39 @@ public partial class PiperRunner : IDisposable
                 onnxSettings.Gpu.ApplyTo(gpuOptions); 
 
 #if USE_CUDA
-                // CUDA (Linux / Docker with Nvidia Runtime)
+                // CUDA supports concurrent execution on a single session.
                 gpuOptions.AppendExecutionProvider_CUDA(deviceId);
                 var session = new InferenceSession(modelPath, gpuOptions);
                 
                 LogCudaLoaded(logger, deviceId); 
                 
-                return (session, true);
+                return (session, null, true, false, int.MaxValue);
 #elif USE_DML
-                // DirectML (Windows)
+                // DirectML crashes on concurrent execution. We create a fixed-size Object Pool.
                 gpuOptions.AppendExecutionProvider_DML(deviceId);
-                var session = new InferenceSession(modelPath, gpuOptions);
+                
+                int poolSize = Math.Max(1, hwSettings.MaxConcurrentGpuRequests);
+                var pool = new ConcurrentQueue<InferenceSession>();
+                
+                try
+                {
+                    for (int i = 0; i < poolSize; i++)
+                    {
+                        pool.Enqueue(new InferenceSession(modelPath, gpuOptions));
+                    }
+                }
+                catch
+                {
+                    // Memory Leak Protection: Dispose successfully created sessions if a subsequent one fails (e.g. OOM)
+                    while (pool.TryDequeue(out var leakedSession))
+                    {
+                        leakedSession.Dispose();
+                    }
+                    throw;
+                }
 
                 LogDmlLoaded(logger, deviceId);
-
-                return (session, true);
+                return (null, pool, true, true, poolSize);
 #endif
             }
             catch (Exception ex)
@@ -92,7 +129,7 @@ public partial class PiperRunner : IDisposable
 #endif
 
         // FALLBACK / CPU EXECUTION
-        var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+        using var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
         {
             LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
             GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
@@ -105,15 +142,14 @@ public partial class PiperRunner : IDisposable
 
         var fallbackSession = new InferenceSession(modelPath, cpuOptions);
         logger.LogInformation("[HARDWARE] Piper Model loaded successfully on CPU.");
-        return (fallbackSession, false);
+        
+        // CPU supports concurrent execution on a single session.
+        return (fallbackSession, null, false, false, int.MaxValue);
     }
 
     /// <summary>
     /// Performs raw inference. Converts phonemes into a float array of audio samples.
-    /// Logic:
-    /// 1. Maps speed to 'Length Scale' (Neural networks don't have a "speed" slider, they have a "duration" multiplier).
-    /// 2. Prepares three input tensors: input (phonemes), input_lengths, and scales (noise parameters).
-    /// 3. Executes the model and rents a buffer from ArrayPool to store the result.
+    /// Handles zero-allocation tensor extraction and safe Object Pool routing.
     /// </summary>
     public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, bool isContinuation = false, bool isFinished = true, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
@@ -129,7 +165,7 @@ public partial class PiperRunner : IDisposable
         // The 'scales' tensor controls the 'robotic vs natural' variance and the speed.
         var scalesTensor = new DenseTensor<float>(new float[] { safeNoiseScale, targetLengthScale, safeNoiseW }, [3]);
 
-        // Передаємо прапорці стрімінгу до фонемізатора
+        // Passing streaming flags to the phonemizer
         long[] phonemeIds = _phonemizer.PhonemesToIds(phonemes, isContinuation, isFinished);
         var inputTensor = new DenseTensor<long>(phonemeIds, [1, phonemeIds.Length]);
         var inputLengthsTensor = new DenseTensor<long>(new[] { (long)phonemeIds.Length }, [1]);
@@ -141,28 +177,56 @@ public partial class PiperRunner : IDisposable
             NamedOnnxValue.CreateFromTensor("scales", scalesTensor)
         };
 
-        using var results = _session.Run(inputs);
-        var outputNode = results.First(r => r.Name == "output");
-        var outputTensor = outputNode.AsTensor<float>();
+        // --- SESSION ROUTING ---
+        InferenceSession activeSession;
+        bool returnToPool = false;
 
-        int length = (int)outputTensor.Length;
-
-        // ZERO-ALLOCATION: Rent a buffer instead of creating a new array to save GC cycles.
-        float[] buffer = ArrayPool<float>.Shared.Rent(length);
-
-        // Directly copy the memory block from the ONNX tensor to our rented array.
-        if (outputTensor is DenseTensor<float> denseTensor)
+        if (_isUsingPool)
         {
-            denseTensor.Buffer.Span.CopyTo(buffer);
+            // DirectML Object Pool
+            if (!_isolatedSessionPool!.TryDequeue(out activeSession!))
+                throw new InvalidOperationException("DirectML Session Pool is exhausted. Check your global Semaphore limits.");
+            
+            returnToPool = true;
         }
         else
         {
-            // Legacy fallback for non-dense tensors
-            int index = 0;
-            foreach (var val in outputTensor) buffer[index++] = val;
+            // Shared Execution (CUDA/CPU)
+            activeSession = _sharedSession!;
         }
 
-        return (buffer, length);
+        try
+        {
+            using var results = activeSession.Run(inputs);
+            var outputNode = results.First(r => r.Name == "output");
+            var outputTensor = outputNode.AsTensor<float>();
+
+            int length = (int)outputTensor.Length;
+
+            // ZERO-ALLOCATION: Rent a buffer instead of creating a new array to save GC cycles.
+            float[] buffer = ArrayPool<float>.Shared.Rent(length);
+
+            if (outputTensor is DenseTensor<float> denseTensor)
+            {
+                denseTensor.Buffer.Span.CopyTo(buffer);
+            }
+            else
+            {
+                // Legacy fallback for non-dense tensors
+                int index = 0;
+                foreach (var val in outputTensor) buffer[index++] = val;
+            }
+
+            return (buffer, length);
+        }
+        finally
+        {
+            // Ensure the locked session is returned to the queue even if inference fails
+            if (returnToPool)
+            {
+                _isolatedSessionPool!.Enqueue(activeSession);
+            }
+        }
     }
 
     /// <summary>
@@ -305,7 +369,16 @@ public partial class PiperRunner : IDisposable
 
     public void Dispose()
     {
-        _session?.Dispose();
+        _sharedSession?.Dispose();
+
+        if (_isolatedSessionPool != null)
+        {
+            while (_isolatedSessionPool.TryDequeue(out var session))
+            {
+                session.Dispose();
+            }
+        }
+
         GC.SuppressFinalize(this);
     }
 

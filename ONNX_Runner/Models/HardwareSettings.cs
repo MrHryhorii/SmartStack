@@ -2,14 +2,22 @@ namespace ONNX_Runner.Models;
 
 /// <summary>
 /// Configuration for hardware resource management.
-/// Determines how many parallel audio generation tasks can run concurrently 
-/// based on available GPU VRAM or CPU cores to prevent Out-Of-Memory (OOM) crashes.
+/// Determines the maximum number of parallel audio generation tasks 
+/// to prevent Out-Of-Memory (OOM) crashes and CPU bottlenecking.
 /// </summary>
 public class HardwareSettings
 {
-    public double TotalVramGb { get; set; } = 8.0;
-    public double VramPerRequestGb { get; set; } = 0.6;
+    /// <summary>
+    /// Limits parallel requests for the GPU. 
+    /// IMPORTANT FOR DirectML: This exact number dictates how many isolated InferenceSession 
+    /// objects are simultaneously kept alive in the Object Pool within the video memory (VRAM) 
+    /// to serve concurrent requests. Higher numbers require significantly more VRAM.
+    /// </summary>
+    public int MaxConcurrentGpuRequests { get; set; } = 2;
 
-    // CPU (0 = use all cores)
+    /// <summary>
+    /// Limits parallel requests for the CPU (0 = auto-calculate based on physical cores).
+    /// CPU execution uses a single shared session, so this limits thread contention, not memory.
+    /// </summary>
     public int MaxConcurrentCpuRequests { get; set; } = 0;
 }

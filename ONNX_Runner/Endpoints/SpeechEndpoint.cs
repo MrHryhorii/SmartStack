@@ -416,41 +416,70 @@ public static class SpeechEndpoint
                             int estimatedSize = (int)(rawResult.Length * 1.5);
                             float[] accumulatedBuffer = ArrayPool<float>.Shared.Rent(estimatedSize);
                             int accumulatedLength = 0;
-                            // Process the main audio
-                            foreach (var segment in pitchShifter.ProcessChunk(rawResult.Buffer.AsSpan(0, rawResult.Length)))
+                            bool handedOff = false;
+                            
+                            try
                             {
-                                if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
+                                // Process the main audio
+                                foreach (var segment in pitchShifter.ProcessChunk(rawResult.Buffer.AsSpan(0, rawResult.Length)))
                                 {
-                                    float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
-                                    Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
-                                    ArrayPool<float>.Shared.Return(accumulatedBuffer);
-                                    accumulatedBuffer = newBuffer;
+                                    if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
+                                    {
+                                        float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
+                                        Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
+                                        ArrayPool<float>.Shared.Return(accumulatedBuffer);
+                                        accumulatedBuffer = newBuffer;
+                                    }
+                                    segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
+                                    accumulatedLength += segment.Count;
                                 }
-                                segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
-                                accumulatedLength += segment.Count;
+                                // Flush internal WSOLA buffers immediately for THIS sentence
+                                foreach (var segment in pitchShifter.Flush())
+                                {
+                                    if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
+                                    {
+                                        float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
+                                        Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
+                                        ArrayPool<float>.Shared.Return(accumulatedBuffer);
+                                        accumulatedBuffer = newBuffer;
+                                    }
+                                    segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
+                                    accumulatedLength += segment.Count;
+                                }
+                                
+                                // Send the fully reassembled sentence to the Consumer
+                                await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength), cancellationToken);
+                                handedOff = true; // Ownership successfully transferred to the Consumer
                             }
-                            // Flush internal WSOLA buffers immediately for THIS sentence
-                            foreach (var segment in pitchShifter.Flush())
+                            finally
                             {
-                                if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
+                                // Only return accumulatedBuffer ourselves if the handoff never happened
+                                if (!handedOff)
                                 {
-                                    float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
-                                    Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
                                     ArrayPool<float>.Shared.Return(accumulatedBuffer);
-                                    accumulatedBuffer = newBuffer;
                                 }
-                                segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
-                                accumulatedLength += segment.Count;
+                                
+                                // rawResult.Buffer is NEVER handed off in this branch — it's always ours to return
+                                ArrayPool<float>.Shared.Return(rawResult.Buffer);
                             }
-                            // Send the fully reassembled sentence to the Consumer
-                            await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength), cancellationToken);
-                            // Return the original buffer from Piper back to the pool
-                            ArrayPool<float>.Shared.Return(rawResult.Buffer);
                         }
                         else
                         {
-                            // If Pitch is exactly 1.0, bypass DSP and send the original raw audio chunk directly
-                            await channel.Writer.WriteAsync(rawResult, cancellationToken);
+                            bool handedOff = false;
+                            try
+                            {
+                                // If Pitch is exactly 1.0, bypass DSP and send the original raw audio chunk directly
+                                await channel.Writer.WriteAsync(rawResult, cancellationToken);
+                                handedOff = true;
+                            }
+                            finally
+                            {
+                                // If the handoff failed (e.g. cancellation thrown during WriteAsync), we must return it
+                                if (!handedOff)
+                                {
+                                    ArrayPool<float>.Shared.Return(rawResult.Buffer);
+                                }
+                            }
                         }
                     }
                 }

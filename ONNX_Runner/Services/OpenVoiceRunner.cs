@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using ONNX_Runner.Models;
@@ -9,14 +10,37 @@ namespace ONNX_Runner.Services;
 /// Handles the execution of OpenVoice AI models for Voice Cloning.
 /// It manages two distinct ONNX sessions:
 /// 1. Tone Extractor: Extracts unique vocal characteristics (embeddings) from audio.
+///    Used sequentially at startup only, so it stays a single shared session.
 /// 2. Tone Color Converter: Applies a source tone color to a target voice using Latent Space Blending.
+///    Called concurrently for every cloning request, so it follows the same
+///    Shared Session (CPU/CUDA) vs Object Pool (DirectML) routing as PiperRunner.
 /// </summary>
 public partial class OpenVoiceRunner : IDisposable
 {
+    // --- EXTRACTOR SESSION STATE ---
     // The Extractor session is nullable because it can be unloaded from memory after 
-    // the initial startup processing to save precious VRAM/RAM.
+    // the initial startup processing to save precious VRAM/RAM. It is only ever called
+    // sequentially at startup (before app.Run() begins accepting requests), so it never
+    // needs pooling under the current architecture.
     private InferenceSession? _extractSession;
-    private readonly InferenceSession _colorSession;
+
+    // --- COLOR CONVERTER SESSION STATE ---
+    // Used for thread-safe execution providers (CPU, CUDA)
+    private readonly InferenceSession? _sharedColorSession;
+
+    // Used for execution providers that do not support concurrent execution (DirectML)
+    private readonly ConcurrentQueue<InferenceSession>? _colorSessionPool;
+
+    // Fast path routing flag for the hot loop
+    private readonly bool _isUsingColorPool;
+
+    // Blocking gate sized to match the color pool. Under normal operation this should
+    // never actually block, since the caller (SpeechEndpoint) already limits overall
+    // concurrency via its own gpuSemaphore before cloning is even known to be needed.
+    // It exists as a cheap safety net in case that external limit ever drifts out of
+    // sync with this pool's size.
+    private readonly SemaphoreSlim? _colorGate;
+
     private readonly ToneConfig _config;
     private readonly ILogger<OpenVoiceRunner> _logger;
 
@@ -26,19 +50,38 @@ public partial class OpenVoiceRunner : IDisposable
 
     public int GetTargetSamplingRate() => _config.Data.SamplingRate;
 
-    public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config, OnnxSettings onnxSettings, ILogger<OpenVoiceRunner> logger)
+    // Represents the Color Converter's technical concurrency limit (pool size for DML,
+    // int.MaxValue for CUDA/CPU). Single source of truth, mirroring PiperRunner.ConcurrencyCapacity.
+    public int ColorConcurrencyCapacity { get; private set; }
+
+    public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<OpenVoiceRunner> logger)
     {
         _config = config;
         _logger = logger;
-        (_extractSession, _colorSession) = InitializeSessions(extractPath, colorPath, onnxSettings, logger);
+
+        var (ExtractSession, SharedColorSession, ColorSessionPool, IsUsingColorPool, Capacity) = InitializeSessions(extractPath, colorPath, onnxSettings, hwSettings, logger);
+
+        _extractSession = ExtractSession;
+        _sharedColorSession = SharedColorSession;
+        _colorSessionPool = ColorSessionPool;
+        _isUsingColorPool = IsUsingColorPool;
+        ColorConcurrencyCapacity = Capacity;
+
+        if (_isUsingColorPool)
+        {
+            _colorGate = new SemaphoreSlim(ColorConcurrencyCapacity, ColorConcurrencyCapacity);
+        }
+
         PrintModelMetadata();
     }
 
     /// <summary>
     /// Dynamically selects the best available hardware based on compile-time flags.
-    /// Falls back to CPU if no compatible GPU is detected or if built as CPU-only.
+    /// The Extractor always gets a single session (sequential startup use only).
+    /// The Color Converter gets a Shared Session on CPU/CUDA, or an Object Pool on
+    /// DirectML, since DirectML crashes on concurrent execution of a single session.
     /// </summary>
-    private static (InferenceSession, InferenceSession) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings, ILogger<OpenVoiceRunner> logger)
+    private static (InferenceSession? ExtractSession, InferenceSession? SharedColorSession, ConcurrentQueue<InferenceSession>? ColorSessionPool, bool IsUsingColorPool, int Capacity) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<OpenVoiceRunner> logger)
     {
         // ====================================================================
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
@@ -49,7 +92,8 @@ public partial class OpenVoiceRunner : IDisposable
         {
             try
             {
-                var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+                // 'using' ensures the native SessionOptions handle is disposed immediately after session creation
+                using var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
                     LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
                     GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
@@ -61,21 +105,49 @@ public partial class OpenVoiceRunner : IDisposable
                 onnxSettings.Gpu.ApplyTo(gpuOptions);
 
 #if USE_CUDA
-                // CUDA (Linux / Docker with Nvidia Runtime)
+                // CUDA supports concurrent execution on a single session, so both models
+                // stay as simple shared sessions.
                 gpuOptions.AppendExecutionProvider_CUDA(deviceId);
+
                 var extract = new InferenceSession(extractPath, gpuOptions);
                 var color = new InferenceSession(colorPath, gpuOptions);
 
                 LogCudaLoaded(logger, deviceId);
-                return (extract, color);
+                return (extract, color, null, false, int.MaxValue);
 #elif USE_DML
-                // DirectML (Windows)
+                // DirectML crashes on concurrent execution.
                 gpuOptions.AppendExecutionProvider_DML(deviceId);
+
+                // Extractor: always called sequentially at startup, before the server
+                // accepts requests. No pooling needed — a single session is sufficient.
                 var extract = new InferenceSession(extractPath, gpuOptions);
-                var color = new InferenceSession(colorPath, gpuOptions);
+
+                // Color Converter: called concurrently for every cloning request during
+                // normal operation, so it needs the same fixed-size Object Pool as Piper.
+                int poolSize = Math.Max(1, hwSettings.MaxConcurrentGpuRequests);
+                var colorPool = new ConcurrentQueue<InferenceSession>();
+
+                try
+                {
+                    for (int i = 0; i < poolSize; i++)
+                    {
+                        colorPool.Enqueue(new InferenceSession(colorPath, gpuOptions));
+                    }
+                }
+                catch
+                {
+                    // Memory Leak Protection: dispose the already-loaded Extractor and any
+                    // successfully created Color sessions if a subsequent one fails (e.g. OOM)
+                    extract.Dispose();
+                    while (colorPool.TryDequeue(out var leakedSession))
+                    {
+                        leakedSession.Dispose();
+                    }
+                    throw;
+                }
 
                 LogDmlLoaded(logger, deviceId);
-                return (extract, color);
+                return (extract, null, colorPool, true, poolSize);
 #endif
             }
             catch (Exception ex)
@@ -93,7 +165,7 @@ public partial class OpenVoiceRunner : IDisposable
 #endif
 
         // FALLBACK / CPU EXECUTION
-        var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+        using var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
         {
             LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
             GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
@@ -108,7 +180,9 @@ public partial class OpenVoiceRunner : IDisposable
         var cpuColor = new InferenceSession(colorPath, cpuOptions);
 
         logger.LogInformation("[HARDWARE] OpenVoice Models loaded on CPU.");
-        return (cpuExtract, cpuColor);
+
+        // CPU supports concurrent execution on a single session.
+        return (cpuExtract, cpuColor, null, false, int.MaxValue);
     }
 
     // --- EMBEDDING EXTRACTION & FINGERPRINT MANAGEMENT ---
@@ -116,6 +190,8 @@ public partial class OpenVoiceRunner : IDisposable
     /// <summary>
     /// Extracts a 256-dimensional tone embedding (fingerprint) from a provided audio spectrogram.
     /// This acts as the mathematical 'DNA' of a specific voice.
+    /// NOTE: Only ever called sequentially at startup under the current architecture,
+    /// so it talks directly to the single _extractSession without any pool routing.
     /// </summary>
     public float[] ExtractToneColor(float[,] spectrogram)
     {
@@ -198,7 +274,22 @@ public partial class OpenVoiceRunner : IDisposable
         LogGinChannels(_config.Model.GinChannels);
 
         if (_extractSession != null) InspectSession("TONE EXTRACTOR", _extractSession);
-        InspectSession("TONE COLOR CONVERTER", _colorSession);
+
+        // Inspecting a pooled session is safe here: this runs from the constructor,
+        // strictly before app.Run() starts accepting requests, so no concurrent
+        // caller can be mid-dequeue while we peek at one session and hand it back.
+        if (_isUsingColorPool)
+        {
+            if (_colorSessionPool!.TryDequeue(out var sampleSession))
+            {
+                InspectSession("TONE COLOR CONVERTER", sampleSession);
+                _colorSessionPool.Enqueue(sampleSession);
+            }
+        }
+        else if (_sharedColorSession != null)
+        {
+            InspectSession("TONE COLOR CONVERTER", _sharedColorSession);
+        }
     }
 
     private void InspectSession(string name, InferenceSession session)
@@ -224,7 +315,8 @@ public partial class OpenVoiceRunner : IDisposable
 
     /// <summary>
     /// Applies the destination tone color to a source audio spectrogram.
-    /// This is the core logic of Voice Cloning.
+    /// This is the core logic of Voice Cloning. Handles safe Object Pool routing,
+    /// identical in spirit to PiperRunner.SynthesizeAudioRaw.
     /// </summary>
     public (float[] Buffer, int Length) ApplyToneColor(float[,] spectrogram, float[] srcFingerprint, float[] destFingerprint, float tau = 1.0f)
     {
@@ -235,6 +327,26 @@ public partial class OpenVoiceRunner : IDisposable
 
         // Rent memory for input audio tensor
         float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
+
+        // --- SESSION ROUTING ---
+        InferenceSession activeSession;
+        bool releaseGate = false;
+
+        if (_isUsingColorPool)
+        {
+            // DirectML Object Pool. In practice this should never actually wait, since
+            // the pool is sized to match the caller's own gpuSemaphore capacity — but it
+            // blocks (rather than throwing) if those two limits were ever to drift apart.
+            _colorGate!.Wait();
+            releaseGate = true;
+            _colorSessionPool!.TryDequeue(out activeSession!);
+        }
+        else
+        {
+            // Shared Execution (CUDA/CPU)
+            activeSession = _sharedColorSession!;
+        }
+
         try
         {
             var memory = new Memory<float>(rentedInput, 0, tensorSize);
@@ -263,7 +375,7 @@ public partial class OpenVoiceRunner : IDisposable
                 NamedOnnxValue.CreateFromTensor("tau", tauTensor)
             };
 
-            using var results = _colorSession.Run(inputs);
+            using var results = activeSession.Run(inputs);
 
             // Extract the converted audio result into a rented buffer
             var outputNode = results.First(r => r.Name == "converted_audio");
@@ -286,6 +398,12 @@ public partial class OpenVoiceRunner : IDisposable
         }
         finally
         {
+            // Ensure the locked session is returned to the queue even if inference fails
+            if (releaseGate)
+            {
+                _colorSessionPool!.Enqueue(activeSession);
+                _colorGate!.Release();
+            }
             ArrayPool<float>.Shared.Return(rentedInput);
         }
     }
@@ -337,7 +455,17 @@ public partial class OpenVoiceRunner : IDisposable
     public void Dispose()
     {
         _extractSession?.Dispose();
-        _colorSession?.Dispose();
+        _sharedColorSession?.Dispose();
+
+        if (_colorSessionPool != null)
+        {
+            while (_colorSessionPool.TryDequeue(out var session))
+            {
+                session.Dispose();
+            }
+        }
+
+        _colorGate?.Dispose();
         GC.SuppressFinalize(this);
     }
 
