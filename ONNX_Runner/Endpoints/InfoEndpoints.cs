@@ -132,7 +132,7 @@ public static class InfoEndpoints
         {
             status = "ok",
             service = "Tsubaki TTS Engine",
-            version = "1.0.5",
+            version = "1.0.6",
             timestamp = DateTimeOffset.UtcNow
         });
     }

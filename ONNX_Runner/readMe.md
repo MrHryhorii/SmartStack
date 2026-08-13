@@ -47,7 +47,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 - **Portable (Self-Contained):** Can be compiled into a single executable. Just download and run.
 - **Dynamic Hardware Acceleration:** Automatically detects and utilizes your GPU (DirectML for Windows, CUDA for Linux) and gracefully falls back to CPU without crashing.
 - **Memory Protection (OOM Guard):** Built-in queueing and semaphore system that calculates available VRAM/RAM to prevent server crashes under heavy load.
-- **True Concurrency (Shared Memory):** Python servers often duplicate massive 2GB+ neural networks in RAM for every parallel worker just to bypass the GIL. Tsubaki loads the model exactly once. Multiple API requests are processed concurrently using a shared memory space, keeping RAM usage flat regardless of how many AI agents are talking at the same time.
+- **True Concurrency (Shared Memory):** Python servers often duplicate massive 2GB+ neural networks in RAM for every parallel worker just to bypass the GIL. On CPU and NVIDIA (CUDA) GPUs, Tsubaki loads the model exactly once and processes multiple API requests concurrently through a shared memory space, keeping RAM usage flat regardless of how many AI agents are talking at the same time. On DirectML — Windows' unified GPU backend covering NVIDIA, AMD, and Intel alike, since Tsubaki intentionally doesn't ship a separate Windows CUDA build — a small, fixed-size pool of sessions is used instead. This is a hardware limitation of DirectML itself, not a Tsubaki design choice; see `HardwareSettings` for details.
 
 | Tsubaki                               | Typical Python TTS                   |
 | ------------------------------------- | ------------------------------------ |
@@ -671,7 +671,21 @@ The `PhonemizerSettings` block controls how the server handles foreign words enc
 
 ## Resource Management
 
-- **`HardwareSettings`** — Note that this is **not** a strict hardware cap. It simply tells the server's internal queueing system how much free resources you generally have versus how much a single request consumes. Actual memory usage depends entirely on your chosen Piper model. **For home use, you can completely ignore this section.**
+- **`HardwareSettings`** — Tells the server's internal queueing system how many generation requests are allowed to run at the same time. **For home use, you can completely ignore this section and leave the defaults.**
+
+```json
+"HardwareSettings": {
+  "MaxConcurrentGpuRequests": 2,
+  "MaxConcurrentCpuRequests": 4
+}
+```
+
+| Parameter                 | Description                                                                                                                                                                                                                                                                                                                                                                                                            |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is a pure throttle** — a queueing limit with no extra memory cost, since all concurrent requests share a single loaded model. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled. |
+| `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value auto-detects and uses all available physical cores.                                                                                                                                                                                                                                                                                |
+
+> **DirectML users:** think of this setting as a direct trade — each unit of `MaxConcurrentGpuRequests` buys one more simultaneous request, at the cost of one more full copy of the relevant model(s) sitting in VRAM. CUDA and CPU users don't pay this cost, since they share one session across all concurrent requests.
 
 - **`RateLimitSettings`** — Provides basic anti-spam and anti-DDoS protection by restricting the number of requests allowed from a single IP address within a specific time window. Useful for public-facing deployments.
 
@@ -752,35 +766,51 @@ This applies a clean gain stage with soft-knee limiting **before** the audio is 
 
 # ONNX Runtime Optimization
 
-This section provides low-level control over the internal MLAS (Microsoft Linear Algebra Subprograms) math engine, heavily optimizing CPU execution. The defaults are already configured as the "golden standard" for cross-platform hardware acceleration. Change these only if you understand the consequences.
+This section provides low-level control over the internal MLAS (Microsoft Linear Algebra Subprograms) math engine, heavily optimizing execution. Since the CPU and GPU execution paths have fundamentally different concurrency needs, `Cpu` and `Gpu` use independent threading and memory profiles rather than a single shared configuration. The defaults are already configured as a balanced "golden standard" for home use. Change these only if you understand the consequences.
 
 ```json
 "OnnxSettings": {
   "EnableGraphOptimization": true,
-  "ExecutionMode": "Sequential",
-  "IntraOpNumThreads": 0,
-  "InterOpNumThreads": 1,
-  "EnableMemoryPattern": true,
-  "EnableCpuMemArena": true
+  "Cpu": {
+    "ExecutionMode": "Sequential",
+    "IntraOpNumThreads": 2,
+    "InterOpNumThreads": 1,
+    "EnableMemoryPattern": true,
+    "EnableCpuMemArena": true
+  },
+  "Gpu": {
+    "ExecutionMode": "Sequential",
+    "IntraOpNumThreads": 1,
+    "InterOpNumThreads": 1,
+    "EnableMemoryPattern": true,
+    "EnableCpuMemArena": false
+  }
 }
 ```
 
-| Parameter             | Description                                                                                                                                                                                                                           |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IntraOpNumThreads`   | Threads used for matrix math within a single neural network node. `0` enables smart auto-detection of all available physical cores (Highly Recommended). To manually constrain CPU usage, set this to your exact physical core count. |
-| `InterOpNumThreads`   | Parallelization across different graph nodes. For TTS (which is strictly sequential), this must **always be `1`**. Higher values cause thread thrashing and micro-stutters.                                                           |
-| `EnableMemoryPattern` | Pre-allocates memory blocks during model load rather than dynamically during inference. Decreases latency per request by 5–10%.                                                                                                       |
-| `EnableCpuMemArena`   | Utilizes an isolated memory arena for ONNX tensors. **Critical for .NET:** Bypasses the C# Garbage Collector entirely during audio generation, eliminating GC-induced freezes on long texts.                                          |
-| `ExecutionMode`       | `"Sequential"` is the safest and fastest mode for Piper and OpenVoice architectures, as they do not benefit from parallel graph execution.                                                                                            |
+| Parameter             | Description                                                                                                                                                                                                                                                                                                                        |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IntraOpNumThreads`   | Threads used for matrix math within a single neural network node. `0` enables smart auto-detection of all available physical cores. The `Cpu` profile defaults to a fixed, moderate value (`2`) to leave room for multiple concurrent requests without thread thrashing; the `Gpu` profile defaults to `1`, since the heavy lifting already happens on the GPU itself. |
+| `InterOpNumThreads`   | Parallelization across different graph nodes. For TTS (which is strictly sequential), this must **always be `1`**. Higher values cause thread thrashing and micro-stutters.                                                                                                                                                       |
+| `EnableMemoryPattern` | Pre-allocates memory blocks during model load rather than dynamically during inference. Decreases latency per request by 5–10%.                                                                                                                                                                                                    |
+| `EnableCpuMemArena`   | Utilizes an isolated memory arena for ONNX tensors. **Critical for .NET:** Bypasses the C# Garbage Collector entirely during audio generation, eliminating GC-induced freezes on long texts. Disabled by default in the `Gpu` profile, since this optimization targets CPU-resident memory and doesn't apply to tensors that live in VRAM. |
+| `ExecutionMode`       | `"Sequential"` is the safest and fastest mode for Piper and OpenVoice architectures, as they do not benefit from parallel graph execution.                                                                                                                                                                                         |
 
 ## Concurrency & CPU Bottlenecks
 
-The TTS engine and API are fully thread-safe and natively support concurrent HTTP requests. However, by default, the engine is optimized for maximum single-request speed (utilizing all cores via `IntraOpNumThreads: 0`). Hitting the CPU with multiple simultaneous requests in this mode will cause severe CPU context-switching, scaling down generation speed linearly.
+The TTS engine and API are fully thread-safe and natively support concurrent HTTP requests. Two independent settings control how the CPU handles load, and they pull in opposite directions if left uncoordinated:
+
+- `OnnxSettings.Cpu.IntraOpNumThreads` controls how many cores **a single request** can use. `0` lets one request spread across every physical core — fastest for that one request, but leaves nothing for anyone else. A fixed value like `2` caps each request to a slice of the CPU on purpose, so it doesn't crowd out others.
+- `HardwareSettings.MaxConcurrentCpuRequests` controls how many requests are allowed to run **in parallel** at all. `0` (or a negative value) auto-detects and allows up to one request per physical core; a fixed value caps it directly.
+
+If both are left at `0` under real concurrent load, every incoming request tries to claim every core at once — severe CPU context-switching, and generation speed scales down linearly per simultaneous user. The shipped defaults (`IntraOpNumThreads: 2`, `MaxConcurrentCpuRequests: 4`) are a middle-ground compromise for home use, tuned to handle a few simultaneous requests without either setting fighting the other for the whole CPU.
 
 **Handling High-Load Environments:**
 
-- **Option A (Lowest Latency):** Keep defaults and process requests sequentially using the built-in `RateLimitSettings` or a message queue (e.g., RabbitMQ, Redis).
-- **Option B (Maximum Concurrency):** To optimize for parallel processing, lower `IntraOpNumThreads` to `1` or `2`. This restricts each request to fewer cores, allowing the CPU to smoothly handle multiple simultaneous users without thread thrashing.
+- **Option A (Lowest Latency, single user):** Set `IntraOpNumThreads: 0` so each request can use every core, and keep `MaxConcurrentCpuRequests: 1` so requests queue one at a time via `RateLimitSettings` or a message queue (e.g., RabbitMQ, Redis) instead of competing for cores.
+- **Option B (Maximum Concurrency, many simultaneous users):** Lower `IntraOpNumThreads` to `1` or `2` so each request claims only a slice of the CPU, and raise `MaxConcurrentCpuRequests` — or set it to `0` to auto-match your physical core count — so many smaller-footprint requests can run side by side without thread thrashing.
+
+Both settings only affect the CPU execution path — GPU threading and concurrency are controlled independently via `OnnxSettings.Gpu` and `HardwareSettings.MaxConcurrentGpuRequests`.
 
 ---
 
