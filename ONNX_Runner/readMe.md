@@ -854,6 +854,31 @@ Tsubaki TTS Engine stands on the shoulders of giants. A massive thank you to the
 - [**SoundTouch.Net**](https://github.com/owoudenberg/soundtouch.net) — High-quality pitch and tempo shifting (WSOLA algorithm).
 - [**SearchPioneer.Lingua**](https://github.com/searchpioneer/lingua-dotnet) — Fast, offline language detection for foreign word pronunciation.
 
+## Voice Sources & Attribution
+
+The example voice fingerprints bundled with Tsubaki are derived from the
+**LibriTTS-R** corpus:
+
+> Yuma Koizumi, Heiga Zen, Shigeki Karita, Yifan Ding, Kohei Yatabe,
+> Nobuyuki Morioka, Michiel Bacchiani, Yu Zhang, Wei Han, Ankur Bapna.
+> *"LibriTTS-R: A Restored Multi-Speaker Text-to-Speech Corpus"*, Interspeech 2023.
+> Source: http://www.openslr.org/141/
+> License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+
+No audio, model output, or vocal characteristics from any commercial TTS
+provider (OpenAI or otherwise) were used to create these fingerprints.
+
+### A note on voice naming
+
+Some bundled voice names (e.g. `alloy`, `echo`, `nova`) intentionally match
+names used by OpenAI's text-to-speech API. This is purely a **compatibility
+convenience** for clients that only accept a fixed voice list and don't
+allow a custom voice name to be entered — not a claim that these are
+OpenAI's voices, or that Tsubaki is affiliated with, endorsed by, or
+sponsored by OpenAI. The actual vocal characteristics behind each of these
+names come entirely from LibriTTS-R speakers (see Attribution above) and
+will sound different from OpenAI's official voices.
+
 ---
 
 # License & Usage
