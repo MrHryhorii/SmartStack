@@ -512,7 +512,7 @@ app.Lifetime.ApplicationStarted.Register(() =>
 {
     try
     {
-        // Find the first HTTP URL the application is listening on (e.g., http://localhost:5000)
+        // Find the first HTTP URL the application is listening on (e.g., http://localhost:5045)
         string? url = app.Urls.FirstOrDefault(u => u.StartsWith("http://"));
         // If the application is running in a headless environment (e.g., Docker without DISPLAY), this may fail, so we catch exceptions to prevent crashes.
         if (!string.IsNullOrEmpty(url))
@@ -523,9 +523,17 @@ app.Lifetime.ApplicationStarted.Register(() =>
                 .Replace("0.0.0.0", "localhost")
                 .Replace("+", "localhost");
 
+            Console.WriteLine();
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"\n[SYSTEM] Launching Tsubaki Dashboard in default browser: {browserUrl}");
+            Console.WriteLine("  ╔═════════════════════════════════════════════════════╗");
+            Console.WriteLine("  ║             TSUBAKI TTS ENGINE IS READY             ║");
+            Console.WriteLine("  ╚═════════════════════════════════════════════════════╝");
             Console.ResetColor();
+            
+            Console.WriteLine($"    [Web Dashboard]       {browserUrl}");
+            Console.WriteLine($"    [OpenAI Base URL]     {browserUrl}/v1");
+            Console.WriteLine($"    [Speech Endpoint]     {browserUrl}/v1/audio/speech");
+            Console.WriteLine();
             // Cross-platform way to open the default browser
             if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
             {
