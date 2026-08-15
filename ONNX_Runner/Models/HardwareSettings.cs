@@ -13,11 +13,11 @@ public class HardwareSettings
     /// objects are simultaneously kept alive in the Object Pool within the video memory (VRAM) 
     /// to serve concurrent requests. Higher numbers require significantly more VRAM.
     /// </summary>
-    public int MaxConcurrentGpuRequests { get; set; } = 2;
+    public int MaxConcurrentGpuRequests { get; set; } = 3;
 
     /// <summary>
     /// Limits parallel requests for the CPU (0 = auto-calculate based on physical cores).
     /// CPU execution uses a single shared session, so this limits thread contention, not memory.
     /// </summary>
-    public int MaxConcurrentCpuRequests { get; set; } = 0;
+    public int MaxConcurrentCpuRequests { get; set; } = 2;
 }

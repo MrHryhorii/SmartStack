@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices; // REQUIRED FOR MemoryMarshal (fast flat access to rectangular arrays)
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using ONNX_Runner.Models;
@@ -206,17 +207,26 @@ public partial class OpenVoiceRunner : IDisposable
         float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
         try
         {
+            if (tensorSize > 0)
+            {
+                // TRUST BOUNDARY: CreateSpan takes tensorSize on faith — it never verifies that
+                // many elements actually follow spectrogram[0,0] in memory. Safe here only because
+                // 'spectrogram' is never reassigned between the GetLength() calls above and here.
+                // The assert below (Release no-op) catches any future edit that breaks that order.
+                System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
+                    "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
+
+                // A rectangular float[,] is stored as one contiguous row-major block, and the
+                // tensor's [1, frames, bins] layout matches it exactly — no transpose needed —
+                // so the whole thing is a single fast copy instead of a per-element loop through
+                // the much slower float[,] and DenseTensor indexers.
+                ReadOnlySpan<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
+                flatSpectrogram.CopyTo(rentedInput.AsSpan(0, tensorSize));
+            }
+
             // Map the rented array to a Tensor without copying data
             var memory = new Memory<float>(rentedInput, 0, tensorSize);
             var inputTensor = new DenseTensor<float>(memory, [1, frames, bins]);
-
-            for (int i = 0; i < frames; i++)
-            {
-                for (int j = 0; j < bins; j++)
-                {
-                    inputTensor[0, i, j] = spectrogram[i, j];
-                }
-            }
 
             var inputs = new List<NamedOnnxValue>
             {
@@ -349,16 +359,36 @@ public partial class OpenVoiceRunner : IDisposable
 
         try
         {
-            var memory = new Memory<float>(rentedInput, 0, tensorSize);
-            var audioTensor = new DenseTensor<float>(memory, [1, bins, frames]);
-
-            for (int i = 0; i < frames; i++)
+            if (tensorSize > 0)
             {
-                for (int j = 0; j < bins; j++)
+                // TRUST BOUNDARY: CreateSpan takes tensorSize on faith — it never verifies that
+                // many elements actually follow spectrogram[0,0] in memory. Safe here only because
+                // 'spectrogram' is never reassigned between the GetLength() calls above and here.
+                // The assert below (Release no-op) catches any future edit that breaks that order.
+                System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
+                    "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
+
+                // A rectangular float[,] is stored as one contiguous row-major block, so this
+                // flat span is a zero-copy view over the same memory — reading through it is
+                // far faster than the float[,] indexer. The tensor's [1, bins, frames] layout
+                // is transposed relative to the source spectrogram's [frames, bins], so element
+                // (0, j, i) lands at flat offset j*frames + i; writing straight into the rented
+                // Span bypasses the much slower DenseTensor indexer for the write side too.
+                ReadOnlySpan<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
+                Span<float> dst = rentedInput.AsSpan(0, tensorSize);
+
+                for (int i = 0; i < frames; i++)
                 {
-                    audioTensor[0, j, i] = spectrogram[i, j];
+                    int rowOffset = i * bins;
+                    for (int j = 0; j < bins; j++)
+                    {
+                        dst[j * frames + i] = flatSpectrogram[rowOffset + j];
+                    }
                 }
             }
+
+            var memory = new Memory<float>(rentedInput, 0, tensorSize);
+            var audioTensor = new DenseTensor<float>(memory, [1, bins, frames]);
 
             // Prepare voice fingerprints and parameters for ONNX inference
             var srcTensor = new DenseTensor<float>(srcFingerprint, [1, channels, 1]);

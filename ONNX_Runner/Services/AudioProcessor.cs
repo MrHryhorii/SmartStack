@@ -4,6 +4,7 @@ using NAudio.Dsp;
 using ONNX_Runner.Models;
 using System.Buffers;
 using System.Numerics; // REQUIRED FOR SIMD (Hardware Acceleration)
+using System.Runtime.InteropServices; // REQUIRED FOR MemoryMarshal (fast flat access to rectangular arrays)
 
 namespace ONNX_Runner.Services;
 
@@ -238,8 +239,23 @@ public class AudioProcessor
         int numFrames = (samples.Length - _fftSize) / _hopSize + 1;
         if (numFrames <= 0) return new float[0, 0];
 
-        var spectrogram = new float[numFrames, (_fftSize / 2) + 1];
+        int bins = (_fftSize / 2) + 1;
+        var spectrogram = new float[numFrames, bins];
         int m = (int)Math.Log2(_fftSize);
+
+        // TRUST BOUNDARY: MemoryMarshal.CreateSpan below takes numFrames * bins on faith — it
+        // does not itself verify that many elements actually follow spectrogram[0,0] in memory.
+        // This is safe here only because 'spectrogram' is a fresh, local array that is never
+        // reassigned before the span is created. If this method is ever changed to reassign
+        // 'spectrogram' (e.g. to a trimmed/filtered copy) between here and CreateSpan, the debug
+        // assert below will catch the mismatch before it silently corrupts memory in Release.
+        System.Diagnostics.Debug.Assert(numFrames * bins == spectrogram.Length,
+            "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
+
+        // A rectangular float[,] is stored as one contiguous row-major block, so this flat
+        // span is a zero-copy view over the same memory — writes below bypass the much
+        // slower float[,] indexer while the method's public signature stays unchanged.
+        Span<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], numFrames * bins);
 
         // Pre-allocate the Complex array ONCE per spectrogram generation, rather than per frame
         var complex = new NAudio.Dsp.Complex[_fftSize];
@@ -282,10 +298,11 @@ public class AudioProcessor
             FastFourierTransform.FFT(true, m, complex);
 
             // Calculate the magnitude for each frequency bin
-            for (int k = 0; k <= _fftSize / 2; k++)
+            int rowOffset = i * bins;
+            for (int k = 0; k < bins; k++)
             {
                 // MathF.Sqrt executes directly on 32-bit floats, avoiding double conversion overhead
-                spectrogram[i, k] = MathF.Sqrt(complex[k].X * complex[k].X + complex[k].Y * complex[k].Y) * _fftSize;
+                flatSpectrogram[rowOffset + k] = MathF.Sqrt(complex[k].X * complex[k].X + complex[k].Y * complex[k].Y) * _fftSize;
             }
         }
 
