@@ -121,10 +121,16 @@ public class TextChunker(ChunkerSettings settings)
 
     // Closing quotes and brackets that can follow a sentence terminator (e.g., "Hello." or (Ready.)).
     // Used to look ahead and prevent periods inside quotes/brackets from being misidentified as abbreviations.
-    private static readonly char[] ClosingPunctuation =
+    // Made PUBLIC so SpeechEndpoint can peel back trailing quotes/brackets when checking whether a chunk
+    // truly ends on a sentence terminator, mirroring SentenceTerminators above.
+    public static readonly char[] ClosingPunctuation =
     [
-        '"', '\'', '’', '”', '»', '›', // straight/curly quotes, guillemets, angle quote
-        ')', ']', '}',                 // brackets
+        '"', '\'', '’', '”', '»', '›',  // straight/curly quotes, guillemets, angle quote
+        '“', '‘',                       // German-style closing quotes: the same glyphs that OPEN a
+                                        // quote in English typography CLOSE one in German — „Hallo“, ‚Hallo‘
+        '«', '‹',                       // German/Austrian/Swiss inward-pointing guillemets: »Hallo«
+                                        // closes with «, the opposite direction from French/Ukrainian «Привіт»
+        ')', ']', '}',                  // brackets
         '」', '』', '〕', '】',          // CJK closing brackets/quotes
     ];
 

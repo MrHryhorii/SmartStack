@@ -268,6 +268,8 @@ public partial class MixedLanguagePhonemizer
             Script = script.ToString(),
             RawTop5 = rawTop5
         });
+
+        //Console.WriteLine($"[LANG-DEBUG] \"{text}\" ({letterCount} letters, ×{currentMultiplier:0.000}) → {finalEspeakCode} | raw: {string.Join(", ", rawTop5)}");
     }
 
     // --- Script Detection Regexes ---

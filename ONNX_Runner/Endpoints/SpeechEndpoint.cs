@@ -369,9 +369,14 @@ public static class SpeechEndpoint
                         bool isContinuation = false;
                         bool isFinished;
 
-                        // Ignore leading punctuation (e.g., quotes, dashes) to find the first actual letter
+                        // Ignore leading punctuation (e.g., quotes, dashes) to find the first actual
+                        // content character (letter OR digit). Stopping at a digit rather than skipping
+                        // past it matters: a sentence like "2024 was a good year." would otherwise have
+                        // its case check applied to "was" instead of "2024", wrongly reading a fresh
+                        // sentence as a continuation just because the word after the leading number
+                        // happens to be lowercase.
                         int firstLetterIdx = 0;
-                        while (firstLetterIdx < cleanChunk.Length && !char.IsLetter(cleanChunk[firstLetterIdx]))
+                        while (firstLetterIdx < cleanChunk.Length && !char.IsLetterOrDigit(cleanChunk[firstLetterIdx]))
                         {
                             firstLetterIdx++;
                         }
@@ -383,16 +388,29 @@ public static class SpeechEndpoint
                         {
                             isContinuation = true;
                         }
-                        // Otherwise, rely on the lowercase heuristic for cased languages.
-                        // For uncased languages (Asian, Arabic), this safely returns false, preserving pitch attack.
+                        // Otherwise, rely on the lowercase heuristic for bicameral scripts (Latin,
+                        // Cyrillic, Greek...). For unicameral scripts with no case distinction at all
+                        // (Chinese, Japanese, Thai, Arabic, Hebrew, Devanagari...), IsLower always
+                        // returns false, which safely defaults to "fresh thought" — there is no
+                        // orthographic signal available there either way, so this is the correct
+                        // fallback, not a workaround.
                         else if (firstLetterIdx < cleanChunk.Length)
                         {
                             isContinuation = char.IsLower(cleanChunk[firstLetterIdx]);
                         }
 
-                        // Check if the chunk ends with a known sentence terminator
-                        // Using the single source of truth from TextChunker.
-                        isFinished = TextChunker.SentenceTerminators.AsSpan().Contains(cleanChunk[^1]);
+                        // Check if the chunk ends with a known sentence terminator. TextChunker.Split()
+                        // deliberately folds trailing closing quotes/brackets into the chunk (e.g. a
+                        // sentence ending in `."` for quoted dialogue), so checking cleanChunk[^1] alone
+                        // would wrongly call a complete sentence "unfinished" just because it ends in a
+                        // quote mark. Walk back past any such closing punctuation to find the real
+                        // terminator underneath, mirroring how TextChunker itself looks past it.
+                        int lastRealCharIdx = cleanChunk.Length - 1;
+                        while (lastRealCharIdx > 0 && TextChunker.ClosingPunctuation.AsSpan().Contains(cleanChunk[lastRealCharIdx]))
+                        {
+                            lastRealCharIdx--;
+                        }
+                        isFinished = TextChunker.SentenceTerminators.AsSpan().Contains(cleanChunk[lastRealCharIdx]);
 
                         // Update local state for the next iteration safely
                         previousChunkWasFinished = isFinished;
