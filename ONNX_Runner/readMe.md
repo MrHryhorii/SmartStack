@@ -622,7 +622,7 @@ The `appsettings.json` file is completely pre-configured and ready to use out-of
 
 ## Phonemizer & Language Settings
 
-The `PhonemizerSettings` block controls how the server handles foreign words encountered in text. **In most cases, you should manually configure the `"SupportedLanguages"` list** — this is the single most impactful setting to configure after your model path.
+The `PhonemizerSettings` block controls how the server handles text outside your base model's own language, using offline language detection via Lingua (see Credits below). **In most cases, you should manually configure the `"SupportedLanguages"` list** — this is the single most impactful setting to configure after your model path.
 
 ```json
 "PhonemizerSettings": {
@@ -630,19 +630,31 @@ The `PhonemizerSettings` block controls how the server handles foreign words enc
   "UseLanguageDetector": true,
   "MaxBonusMultiplier": 0.50,
   "BonusMinLetterCount": 8,
-  "BonusMaxLetterCount": 32
+  "BonusMaxLetterCount": 32,
+  "MixedLanguageOverrideThreshold": 0.85,
+  "MinSentenceLengthForOverride": 20
 }
 ```
 
-- **How it works:** Add languages that your base Piper model doesn't speak natively, but might encounter in your texts — for example, an English model reading a French name or a Ukrainian phrase. The engine uses offline language detection via [Lingua](https://github.com/searchpioneer/lingua-dotnet) to identify the foreign words and approximate their pronunciation using the base model's available phonemes, producing a natural "accented" result rather than skipping or mangling the word.
+A different *script* (Cyrillic hitting an English model, for example) is detected with certainty and mapped to the closest phoneme approximation — without this, the model would produce random noise instead of an accented approximation. The harder case is words in the *same* script as your model (French vs. English vs. Spanish, all Latin) — here the engine statistically guesses, and the parameters below exist to steer that guess, not eliminate it.
 
-- **Format:** Use short espeak language codes — `"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc.
+Detection runs on **chunks** — one script run between two punctuation marks (comma, quote, colon, sentence end) — not single words, since more surrounding context gives the statistical detector a far more reliable answer. A foreign word with no punctuation around it gets evaluated together with its neighbors, which can pull the result either way.
 
-- **Performance Warning:** Every language added to this list increases memory consumption and slows down the overall voice synthesis. It is highly recommended to limit this list to **2–3 languages** that are most likely to appear in your texts.
+| Parameters | What they do |
+| ----------- | -------------- |
+| `MaxBonusMultiplier`, `BonusMinLetterCount`, `BonusMaxLetterCount` | Boosts the model's own language for short, statistically ambiguous chunks — full bonus at or below `BonusMinLetterCount` letters, none at or above `BonusMaxLetterCount`, interpolated between. *Example: "Hi" (2 letters) got the full ×1.5 bonus and read English; "I am Alejandro" (12 letters) got a smaller ×1.417 bonus — not enough to beat a strongly Spanish-leaning raw score, so it read with Spanish pronunciation (arguably correct for a Spanish name).* |
+| `MixedLanguageOverrideThreshold`, `MinSentenceLengthForOverride` | The bonus above has a hard ceiling it sometimes can't overcome. This override instead checks the model language's confidence across the **whole sentence** once, and applies it to any chunk under `BonusMaxLetterCount` letters if that confidence clears `MixedLanguageOverrideThreshold` — but only if the sentence itself has at least `MinSentenceLengthForOverride` letters to begin with. *Example: "Yes, I am Hermes, an AI model created by Anthropic." — "Hermes" alone reads as French (`ɛʁmˈɛs`); with the override, the confidently-English sentence around it corrects this to `hˈɜːmiːz`.* |
 
-- **Context & Punctuation:** If foreign words are phonetically similar to the model's native language and appear in a "wall of text" without proper punctuation, the detector might misidentify them and pronounce them incorrectly. Proper punctuation (commas, quotes, separate sentences) drastically improves accuracy. Languages with completely different alphabets (e.g., Cyrillic vs. Latin) are detected far more reliably than similar-looking Latin languages.
+> **Known trade-off:** the override can't tell an accidental misread apart from an intentional foreign phrase, and punctuation isolation doesn't exempt a chunk from it — *"...and whispered: c'est la vie."* still got read in English despite being comma/colon-separated, because the sentence around it was confidently English. For language-learning content or quoted foreign phrases, raise `MixedLanguageOverrideThreshold` toward `1.0`, or above `1.0` to disable it outright (confidence never exceeds `1.0`).
 
-- **Priority Tweaks:** Other parameters in this block (like `"MaxBonusMultiplier"`) shift the detection priority back towards the model's native language for short, ambiguous, or borrowed words. The defaults are well-tuned and rarely need adjustment.
+> **Tuning walkthrough:** the override needs two independent gates to open, and both are tunable. First, the whole sentence must have at least `MinSentenceLengthForOverride` letters — below that, the sentence itself isn't a reliable enough sample, so its confidence is never even computed, and the chunk is judged purely on the bonus above. Second, once that confidence *is* computed, it must clear `MixedLanguageOverrideThreshold` before it's allowed to override anything below it. In the *"c'est la vie"* example, the full sentence measured `0.9666` confidence in English — comfortably above the default `0.85`, which is why the override fired for "c'est la vie". Raising `MixedLanguageOverrideThreshold` above `0.9666` (or writing a shorter sentence that falls under `MinSentenceLengthForOverride`) would have skipped the override for that exact case, leaving "c'est la vie" to the bonus table above on its own — which, being a 9-letter phrase with no strong pull toward English, would most likely have read in French.
+
+This is a lightweight offline N-gram detector, not a neural model — fast and memory-light by design, but it will occasionally misjudge short words between closely related languages. This isn't unique to the approach: even commercial neural language-ID models misjudge short or ambiguous text, since identifying a language from a handful of characters is a hard problem generally. The settings above shift that uncertainty toward whichever outcome fits your use case, not remove it.
+
+> **Not a Tsubaki-specific limitation.** Short-text language ID is a hard problem industry-wide — these settings bias the outcome, they don't eliminate the ambiguity. Two practical levers: keep `SupportedLanguages` to only the languages you actually expect (a narrower candidate pool means fewer rivals for an ambiguous word to lose against), and raise the bonus/override values if you want a stable, unbroken accent, or lower them if foreign words should switch pronunciation more readily. The base detector only reacts to a foreign word once punctuation gives it its own chunk to be judged on — the sentence-context override above is the one exception to that.
+
+- **Format:** Short espeak codes — `"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc.
+- **Performance Warning:** Each added language increases memory consumption and slows down detection. Keep this to **2–3 languages** most likely to appear in your texts.
 
 ---
 

@@ -25,4 +25,15 @@ public class PhonemizerSettings
 
     /// <summary>Words longer than this receive 0% bonus, trusting the ML detector completely.</summary>
     public int BonusMaxLetterCount { get; set; } = 32;
+
+    // --- Sentence-Context Override Parameters ---
+    // A short/ambiguous word (e.g. a name like "Hermes") can still lose to a rival language 
+    // even with the max bonus above. If the whole sentence is confidently the model's language, 
+    // that verdict overrides the word-level bonus instead of fighting it.
+
+    /// <summary>Sentence-level confidence in the model's language needed to override a risky sub-phrase.</summary>
+    public double MixedLanguageOverrideThreshold { get; set; } = 0.85;
+
+    /// <summary>Minimum letters the whole sentence needs before its context is trusted for the override.</summary>
+    public int MinSentenceLengthForOverride { get; set; } = 20;
 }

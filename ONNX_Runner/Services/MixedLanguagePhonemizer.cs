@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Lingua;
 using ONNX_Runner.Models;
+using Microsoft.Extensions.Logging;
 
 namespace ONNX_Runner.Services;
 
@@ -50,8 +51,17 @@ public partial class MixedLanguagePhonemizer
     private readonly int _minLimit;
     private readonly int _maxLimit;
 
-    public MixedLanguagePhonemizer(PhonemizerSettings settings, string modelEspeakCode)
+    // Cache for sentence-context override settings
+    private readonly double _overrideThreshold;
+    private readonly int _minSentenceLength;
+
+    // logger
+    private readonly ILogger<MixedLanguagePhonemizer> _logger;
+
+    public MixedLanguagePhonemizer(PhonemizerSettings settings, string modelEspeakCode, ILogger<MixedLanguagePhonemizer> logger)
     {
+        _logger = logger;
+
         _mapper = new EspeakLinguaMapper();
 
         // Store the full eSpeak dialect code (e.g., "en-gb-x-rp", "pt-br")
@@ -67,6 +77,8 @@ public partial class MixedLanguagePhonemizer
         _maxBonus = settings?.MaxBonusMultiplier ?? 0.50;
         _minLimit = settings?.BonusMinLetterCount ?? 8;
         _maxLimit = settings?.BonusMaxLetterCount ?? 32;
+        _overrideThreshold = settings?.MixedLanguageOverrideThreshold ?? 0.85;
+        _minSentenceLength = settings?.MinSentenceLengthForOverride ?? 20;
 
         var codesToSupport = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -132,6 +144,15 @@ public partial class MixedLanguagePhonemizer
         var result = new List<TextChunk>();
         if (string.IsNullOrWhiteSpace(text)) return result;
 
+        // One detector call for the whole sentence, reused below to override risky short
+        // sub-phrases instead of running a separate call per word.
+        double? sentenceConfidence = null;
+        if (_modelLinguaLang.HasValue && text.Count(char.IsLetter) >= _minSentenceLength)
+        {
+            _detector.ComputeLanguageConfidenceValues(text).TryGetValue(_modelLinguaLang.Value, out double conf);
+            sentenceConfidence = conf;
+        }
+
         var matches = TokenizerRegex().Matches(text);
         var currentSubPhrase = new StringBuilder();
         ScriptType currentScript = ScriptType.None;
@@ -143,7 +164,7 @@ public partial class MixedLanguagePhonemizer
             {
                 if (hasWords)
                 {
-                    ProcessSubPhrase(currentSubPhrase.ToString(), currentScript, result);
+                    ProcessSubPhrase(currentSubPhrase.ToString(), currentScript, result, sentenceConfidence);
                 }
                 else
                 {
@@ -192,17 +213,43 @@ public partial class MixedLanguagePhonemizer
     /// Analyzes a chunk of text to determine its language, applying statistical confidence 
     /// weighting to prevent random language switching on short, ambiguous words.
     /// </summary>
-    private void ProcessSubPhrase(string text, ScriptType script, List<TextChunk> result)
+    private void ProcessSubPhrase(string text, ScriptType script, List<TextChunk> result, double? sentenceConfidence)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
 
         string cleanText = text.Trim();
+        int letterCount = cleanText.Count(char.IsLetter);
+
+        // SENTENCE-CONTEXT OVERRIDE: a confidently single-language sentence wins over the
+        // word-level bonus below instead of fighting a rival language it structurally can't beat.
+        if (letterCount < _maxLimit && sentenceConfidence >= _overrideThreshold && _modelLinguaLang.HasValue)
+        {
+            string overrideCode = _mapper.MapBackToEspeak(_modelLinguaLang.Value, _modelEspeakCode);
+
+            result.Add(new TextChunk
+            {
+                Text = text,
+                DetectedLanguage = overrideCode,
+                Probability = sentenceConfidence.Value,
+                IsReliable = true,
+                IsPunctuationOrSpace = false,
+                Script = script.ToString(),
+                RawTop5 = []
+            });
+
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug("[LANG-DEBUG] \"{Text}\" ({LetterCount} letters) → {Code} [SENTENCE OVERRIDE, conf={Conf:0.0000}]", 
+                    text, letterCount, overrideCode, sentenceConfidence.Value);
+            }
+
+            return;
+        }
 
         // --- DYNAMIC CONFIDENCE MULTIPLIER ---
         // Problem: Short words (e.g., "no", "да", "hi") are statistically ambiguous and often misidentified by Lingua.
         // Solution: We apply an artificial confidence bonus to the base TTS model's language depending on the word length.
         // Short text gets max bonus. Long text gets zero bonus (trusting the detector completely).
-        int letterCount = cleanText.Count(char.IsLetter);
         double currentMultiplier = 1.0;
 
         if (letterCount <= _minLimit)
@@ -269,7 +316,11 @@ public partial class MixedLanguagePhonemizer
             RawTop5 = rawTop5
         });
 
-        //Console.WriteLine($"[LANG-DEBUG] \"{text}\" ({letterCount} letters, ×{currentMultiplier:0.000}) → {finalEspeakCode} | raw: {string.Join(", ", rawTop5)}");
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug("[LANG-DEBUG] \"{Text}\" ({LetterCount} letters, x{Multiplier:0.000}) → {Code} | raw: {Raw}", 
+                text, letterCount, currentMultiplier, finalEspeakCode, string.Join(", ", rawTop5));
+        }
     }
 
     // --- Script Detection Regexes ---

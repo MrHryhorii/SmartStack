@@ -329,7 +329,11 @@ if (piperConfig != null && piperModelPath != null)
         fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
         builder.Services.AddSingleton(fallbackMapper);
 
-        mixedPhonemizer = new MixedLanguagePhonemizer(phonemizerConfig, piperConfig.Espeak.Voice ?? "en");
+        mixedPhonemizer = new MixedLanguagePhonemizer(
+            phonemizerConfig, 
+            piperConfig.Espeak.Voice ?? "en", 
+            bootstrapLoggerFactory.CreateLogger<MixedLanguagePhonemizer>()
+        );
         builder.Services.AddSingleton(mixedPhonemizer);
     }
 
