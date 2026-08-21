@@ -402,6 +402,8 @@ The server automatically:
 - caches the embedding as a `.voice` file next to the sample
 - loads the cached fingerprint instantly on every subsequent run
 
+> **Performance Note:** Zero-shot voice cloning is a mathematically intensive operation. While the base `piper_base` voice synthesizes almost instantly, applying a custom cloned voice takes significantly more processing time. If you are running the engine on a CPU and want faster voice cloning, consider significantly increasing `IntraOpNumThreads` in `appsettings.json` (e.g., to match your physical core count). The default value is kept intentionally low so the engine doesn't monopolize your CPU, leaving enough resources for other applications (like games, LLMs, or AI agents) running in the background.
+
 ## Recommended Sample Quality
 
 - 5–15 seconds of clean speech
