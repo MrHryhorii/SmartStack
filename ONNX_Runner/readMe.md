@@ -31,7 +31,7 @@ Dashboard features:
 
 # Download
 
-**[Tsubaki TTS Engine v1.0.6 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.6)**
+**[Tsubaki TTS Engine v1.0.7 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.7)**
 
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
