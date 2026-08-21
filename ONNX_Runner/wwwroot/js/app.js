@@ -35,7 +35,7 @@ async function bootEngine() {
     // Fetch available voices, effects, and environments from backend
     const [voicesData, effectsData, envData] = await Promise.all([getVoices(), getEffects(), getEnvironments()]);
     
-    document.getElementById('voiceSelect').innerHTML = voicesData.voices.map(v => `<option value="${v}">${v}</option>`).join('');
+    document.getElementById('voiceSelect').innerHTML = voicesData.voices.map(v => `<option value="${v}" ${v === 'piper_base' ? 'selected' : ''}>${v}</option>`).join('');
     document.getElementById('effectSelect').innerHTML = effectsData.effects.map(e => `<option value="${e}">${e}</option>`).join('');
     document.getElementById('environmentSelect').innerHTML = envData.environments.map(e => `<option value="${e}">${e}</option>`).join('');
     log('Resources synchronized successfully.');
