@@ -421,6 +421,13 @@ builder.Services.AddSingleton(sp =>
     return new SemaphoreSlim(cr, cr);
 });
 
+// SpeechSynthesisService is the single shared entry point for every TTS-producing endpoint
+// (OpenAI-compatible, Tsubaki's extended one, and any future ones). It's safe to register
+// unconditionally here, even if the model failed to load above: it only resolves PiperRunner
+// and friends lazily, inside SynthesizeAsync, at request time — the same graceful "model not
+// loaded" 500 response that already existed continues to work exactly as before.
+builder.Services.AddSingleton<SpeechSynthesisService>();
+
 var app = builder.Build();
 
 // =================================================================
@@ -476,25 +483,32 @@ using (var scope = app.Services.CreateScope())
 // API ENDPOINTS
 // =================================================================
 
-app.MapPost("/v1/audio/speech", SpeechEndpoint.HandleSpeechRequest)
+app.MapPost("/v1/audio/speech", SpeechEndpoint.HandleOpenAiRequest)
    .WithName("GetSpeech")
    .RequireRateLimiting("ip_limit");
 
-app.MapPost("/v1/audio/phonemize", PhonemizeEndpoint.HandlePhonemizeRequest)
+app.MapPost("/tsbk/audio/speech", SpeechEndpoint.HandleTsubakiRequest)
+   .WithName("GetSpeechExtended")
+   .RequireRateLimiting("ip_limit");
+
+app.MapPost("/tsbk/audio/phonemize", PhonemizeEndpoint.HandlePhonemizeRequest)
    .WithName("GetPhonemes")
    .RequireRateLimiting("ip_limit");
 
+app.MapGet("/health", InfoEndpoints.GetHealth)
+   .WithName("GetHealth");
+
 // With limited access for security,
 // these endpoints are designed for local dashboard integration and should not be exposed publicly.
-app.MapGet("/v1/audio/voices", InfoEndpoints.GetVoices)
+app.MapGet("/tsbk/audio/voices", InfoEndpoints.GetVoices)
    .WithName("GetVoices");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
-app.MapGet("/v1/audio/effects", InfoEndpoints.GetEffects)
+app.MapGet("/tsbk/audio/effects", InfoEndpoints.GetEffects)
    .WithName("GetEffects");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
-app.MapGet("/v1/audio/environments", InfoEndpoints.GetEnvironments)
+app.MapGet("/tsbk/audio/environments", InfoEndpoints.GetEnvironments)
    .WithName("GetEnvironments");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
@@ -503,8 +517,6 @@ app.MapGet("/v1/models", InfoEndpoints.GetModels)
    .WithName("GetModels");
 app.MapGet("/v1/models/{id}", InfoEndpoints.GetModelById)
    .WithName("GetModelById");
-app.MapGet("/health", InfoEndpoints.GetHealth)
-   .WithName("GetHealth");
 app.MapGet("/v1/health", InfoEndpoints.GetHealth)
    .WithName("GetV1Health");
 

@@ -1,5 +1,5 @@
 // Using relative path. The browser will automatically resolve the host and port.
-const BASE_URL = '/v1/audio';
+const BASE_URL = '/tsbk/audio';
 
 export async function getVoices() {
     try {
