@@ -26,18 +26,25 @@
     <IsLinux Condition="$(RuntimeIdentifier.StartsWith('linux')) Or ('$(RuntimeIdentifier)' == '' And '$(OS)' != 'Windows_NT')">true</IsLinux>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true'">
+  <PropertyGroup Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true' And '$(UseWebGpu)' != 'true'">
     <DefineConstants>$(DefineConstants);USE_CUDA</DefineConstants>
   </PropertyGroup>
 
-  <PropertyGroup Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true'">
+  <PropertyGroup Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true' And '$(UseWebGpu)' != 'true'">
     <DefineConstants>$(DefineConstants);USE_DML</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(UseWebGpu)' == 'true' And '$(CpuOnly)' != 'true'">
+    <DefineConstants>$(DefineConstants);USE_WEBGPU</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" Condition="'$(CpuOnly)' == 'true'" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true'" />
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.24.4" Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.29.0" Condition="'$(CpuOnly)' == 'true' Or '$(UseWebGpu)' == 'true'" />
+    
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true' And '$(UseWebGpu)' != 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.29.0" Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true' And '$(UseWebGpu)' != 'true'" />
+    
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.EP.WebGpu" Version="0.3.0" Condition="'$(UseWebGpu)' == 'true' And '$(CpuOnly)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>

@@ -7,6 +7,10 @@ using System.Buffers;
 using System.Numerics;
 using System.Collections.Concurrent;
 
+#if USE_WEBGPU
+using Microsoft.ML.OnnxRuntime.EP.WebGpu;
+#endif
+
 namespace ONNX_Runner.Services;
 
 /// <summary>
@@ -60,7 +64,7 @@ public partial class PiperRunner : IDisposable
         // ====================================================================
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
         // ====================================================================
-#if USE_CUDA || USE_DML
+#if USE_CUDA || USE_DML || USE_WEBGPU
         int maxGpusToTry = 4;
         for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
         {
@@ -112,6 +116,30 @@ public partial class PiperRunner : IDisposable
 
                 LogDmlLoaded(logger, deviceId);
                 return (null, pool, true, true, poolSize);
+#elif USE_WEBGPU
+                // [HYBRID ARCHITECTURE] 
+                // WebGPU is currently not thread-safe for concurrent executions.
+                // To maintain high throughput, we use a Hybrid approach:
+                // Piper (lightweight) runs on CPU using CPU settings and CPU concurrency limits.
+                // OpenVoice (heavy) runs exclusively on WebGPU with a fixed pool size of 1.
+                logger.LogInformation("[HARDWARE] WebGPU HYBRID mode: Piper routed to CPU for optimal parallel performance.");
+
+                // The name is "hybridCpuOptions" to avoid conflict with the global fallback
+                using var hybridCpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+                {
+                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+                    GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
+                        ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                        : GraphOptimizationLevel.ORT_DISABLE_ALL
+                };
+                
+                // Honestly apply CPU threading settings (e.g., 4 threads) to maximize CPU speed
+                onnxSettings.Cpu.ApplyTo(hybridCpuOptions);
+                var session = new InferenceSession(modelPath, hybridCpuOptions);
+
+                // IsUsingGPU = false ensures Program.cs strictly applies MaxConcurrentCpuRequests 
+                // for the global pipeline semaphore.
+                return (session, null, false, false, int.MaxValue);
 #endif
             }
             catch (Exception ex)
@@ -387,4 +415,7 @@ public partial class PiperRunner : IDisposable
 
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {DeviceId})")]
     private static partial void LogDmlLoaded(ILogger logger, int deviceId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (WebGPU, Device ID: {DeviceId})")]
+    private static partial void LogWebGpuLoaded(ILogger logger, int deviceId);
 }

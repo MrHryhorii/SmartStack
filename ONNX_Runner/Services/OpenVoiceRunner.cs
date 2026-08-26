@@ -5,6 +5,10 @@ using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using ONNX_Runner.Models;
 
+#if USE_WEBGPU
+using Microsoft.ML.OnnxRuntime.EP.WebGpu;
+#endif
+
 namespace ONNX_Runner.Services;
 
 /// <summary>
@@ -87,7 +91,7 @@ public partial class OpenVoiceRunner : IDisposable
         // ====================================================================
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
         // ====================================================================
-#if USE_CUDA || USE_DML
+#if USE_CUDA || USE_DML || USE_WEBGPU
         int maxGpusToTry = 4;
         for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
         {
@@ -148,6 +152,72 @@ public partial class OpenVoiceRunner : IDisposable
                 }
 
                 LogDmlLoaded(logger, deviceId);
+                return (extract, null, colorPool, true, poolSize);
+#elif USE_WEBGPU
+                // WebGPU is provided as a plugin Execution Provider.
+                var env = OrtEnv.Instance();
+                const string registrationName = "webgpu_ep";
+
+                // OrtEnv is a singleton. Ensure the plugin is registered only once.
+                bool isRegistered = false;
+                foreach (var device in env.GetEpDevices())
+                {
+                    if (string.Equals(device.EpName, WebGpuEp.GetEpName(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        isRegistered = true;
+                        break;
+                    }
+                }
+
+                if (!isRegistered)
+                {
+                    try
+                    {
+                        env.RegisterExecutionProviderLibrary(registrationName, WebGpuEp.GetLibraryPath());
+                    }
+                    catch (Exception ex) when (ex.Message.Contains("already registered")) { }
+                }
+
+                OrtEpDevice? webGpuDevice = null;
+                foreach (var device in env.GetEpDevices())
+                {
+                    if (string.Equals(device.EpName, WebGpuEp.GetEpName(), StringComparison.OrdinalIgnoreCase))
+                    {
+                        webGpuDevice = device;
+                        break;
+                    }
+                }
+
+                if (webGpuDevice == null) throw new InvalidOperationException("No WebGPU device found.");
+
+                // Apply GPU-specific thread settings (typically 1 thread for IntraOp)
+                gpuOptions.AppendExecutionProvider(env, new[] { webGpuDevice! }, new Dictionary<string, string>());
+
+                // Extractor: Executed sequentially at startup only. No pooling required.
+                var extract = new InferenceSession(extractPath, gpuOptions);
+
+                // Color Converter:
+                // [HYBRID ARCHITECTURE]
+                // Since WebGPU's current EP is not thread-safe, we hardcode the pool size to exactly 1.
+                // The global pipeline allows parallel CPU generation, which forms a queue here, 
+                // naturally preventing driver crashes while utilizing the GPU for heavy matrix math.
+                int poolSize = 1;
+                var colorPool = new ConcurrentQueue<InferenceSession>();
+
+                try
+                {
+                    colorPool.Enqueue(new InferenceSession(colorPath, gpuOptions));
+                }
+                catch
+                {
+                    extract.Dispose();
+                    while (colorPool.TryDequeue(out var leakedSession)) leakedSession.Dispose();
+                    throw;
+                }
+
+                LogWebGpuLoaded(logger, 0);
+
+                // Returns: (ExtractSession, SharedColorSession, ColorSessionPool, IsUsingColorPool, Capacity)
                 return (extract, null, colorPool, true, poolSize);
 #endif
             }
@@ -508,6 +578,9 @@ public partial class OpenVoiceRunner : IDisposable
 
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {DeviceId})")]
     private static partial void LogDmlLoaded(ILogger logger, int deviceId);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (WebGPU, Device ID: {DeviceId})")]
+    private static partial void LogWebGpuLoaded(ILogger logger, int deviceId);
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "[DEBUG] OpenVoice failed on GPU {DeviceId}")]
     private static partial void LogGpuInitFailed(ILogger logger, Exception ex, int deviceId);
