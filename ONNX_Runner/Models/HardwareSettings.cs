@@ -20,4 +20,16 @@ public class HardwareSettings
     /// CPU execution uses a single shared session, so this limits thread contention, not memory.
     /// </summary>
     public int MaxConcurrentCpuRequests { get; set; } = 2;
+
+    /// <summary>
+    /// Specifies the preferred GPU device ID (0, 1, 2, etc.) for the Piper model.
+    /// The engine will start hardware initialization from this ID.
+    /// </summary>
+    public int PiperGpuDeviceId { get; set; } = 0;
+
+    /// <summary>
+    /// Specifies the preferred GPU device ID (0, 1, 2, etc.) for the OpenVoice models.
+    /// The engine will start hardware initialization from this ID.
+    /// </summary>
+    public int OpenVoiceGpuDeviceId { get; set; } = 0;
 }

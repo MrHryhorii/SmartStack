@@ -549,6 +549,8 @@ app.Lifetime.ApplicationStarted.Register(() =>
             Console.WriteLine($"    [Web Dashboard]       {browserUrl}");
             Console.WriteLine($"    [OpenAI Base URL]     {browserUrl}/v1");
             Console.WriteLine($"    [Speech Endpoint]     {browserUrl}/v1/audio/speech");
+            Console.WriteLine($"    [Tsubaki Base URL]    {browserUrl}/tsbk");
+            Console.WriteLine($"    [Extended Endpoint]   {browserUrl}/tsbk/audio/speech");
             Console.WriteLine();
             // Cross-platform way to open the default browser
             if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))

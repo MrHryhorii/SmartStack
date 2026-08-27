@@ -65,8 +65,12 @@ public partial class PiperRunner : IDisposable
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
         // ====================================================================
 #if USE_CUDA || USE_DML || USE_WEBGPU
-        int maxGpusToTry = 4;
-        for (int deviceId = 0; deviceId < maxGpusToTry; deviceId++)
+        // Protection against negative numbers in config
+        int startingDeviceId = Math.Max(0, hwSettings.PiperGpuDeviceId);
+        // Try the desired device + the next 3 as a fallback
+        int maxGpusToTry = startingDeviceId + 4; 
+        
+        for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
         {
             try
             {
