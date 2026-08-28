@@ -311,7 +311,20 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         // Optional anti-aliasing low-pass filter to clean up cloning artifacts
         NAudio.Dsp.BiQuadFilter? filter = null;
         if (ctx.CanClone && ctx.DspConfig.EnableLowPassFilter)
-            filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(ctx.FinalSampleRate, ctx.DspConfig.LowPassCutoffFrequency, ctx.DspConfig.LowPassQFactor);
+        {
+            // Find the Nyquist frequency (half of the Sample Rate)
+            float nyquistFrequency = ctx.FinalSampleRate / 2.0f;
+            
+            // Limit the cutoff frequency, leaving a small margin of safety (e.g. 10 Hz),
+            // so that the BiQuad filter math never approaches a critical limit.
+            float safeCutoff = Math.Min(ctx.DspConfig.LowPassCutoffFrequency, nyquistFrequency - 10f);
+
+            filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
+                ctx.FinalSampleRate, 
+                safeCutoff, 
+                ctx.DspConfig.LowPassQFactor
+            );
+        }
 
         byte[]? finalAudioBytes = null;
 

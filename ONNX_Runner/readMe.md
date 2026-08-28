@@ -355,6 +355,13 @@ Set `"DefaultEffect": "None"` to bypass effects entirely.
 }
 ```
 
+### LowPassQFactor
+
+Controls the resonance and roll-off curve of the anti-aliasing filter. This is primarily used to clean up high-frequency artifacts (metallic "sand") generated during OpenVoice cloning.
+
+- **`0.577` (Bessel curve):** Provides a smooth, analog-like roll-off without any resonant peaks. Highly recommended for voice cloning, as it naturally masks neural network artifacts and makes the voice sound warmer and less fatiguing.
+- **`0.707` (Butterworth curve):** A classic digital filter curve. It remains perfectly flat until the cutoff point, making the voice sound brighter and preserving the crispness of consonants ("s", "t"). However, it may let more digital artifacts through and can sound slightly harsher on cloned voices.
+
 ### DefaultPitch
 
 Sets the server-wide pitch shift applied to all generated audio.
