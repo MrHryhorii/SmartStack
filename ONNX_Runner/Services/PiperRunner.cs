@@ -65,94 +65,100 @@ public partial class PiperRunner : IDisposable
         // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
         // ====================================================================
 #if USE_CUDA || USE_DML || USE_WEBGPU
-        // Protection against negative numbers in config
-        int startingDeviceId = Math.Max(0, hwSettings.PiperGpuDeviceId);
-        // Try the desired device + the next 3 as a fallback
-        int maxGpusToTry = startingDeviceId + 4; 
-        
-        for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
+        if (hwSettings.ForcePiperToCpu)
         {
-            try
+            logger.LogWarning("[HARDWARE] Config override: ForcePiperToCpu is TRUE. Piper model execution is forcefully redirected to the CPU.");
+        }
+        else
+        {
+            // Protection against negative numbers in config
+            int startingDeviceId = Math.Max(0, hwSettings.PiperGpuDeviceId);
+            // Try the desired device + the next 3 as a fallback
+            int maxGpusToTry = startingDeviceId + 4; 
+            
+            for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
             {
-                // 'using' ensures the native SessionOptions handle is disposed immediately after session creation
-                using var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
-                {
-                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-                    GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
-                        ? GraphOptimizationLevel.ORT_ENABLE_ALL 
-                        : GraphOptimizationLevel.ORT_DISABLE_ALL
-                };
-                
-                // We apply a profile specifically for the GPU
-                onnxSettings.Gpu.ApplyTo(gpuOptions); 
-
-#if USE_CUDA
-                // CUDA supports concurrent execution on a single session.
-                gpuOptions.AppendExecutionProvider_CUDA(deviceId);
-                var session = new InferenceSession(modelPath, gpuOptions);
-                
-                LogCudaLoaded(logger, deviceId); 
-                
-                return (session, null, true, false, int.MaxValue);
-#elif USE_DML
-                // DirectML crashes on concurrent execution. We create a fixed-size Object Pool.
-                gpuOptions.AppendExecutionProvider_DML(deviceId);
-                
-                int poolSize = Math.Max(1, hwSettings.MaxConcurrentGpuRequests);
-                var pool = new ConcurrentQueue<InferenceSession>();
-                
                 try
                 {
-                    for (int i = 0; i < poolSize; i++)
+                    // 'using' ensures the native SessionOptions handle is disposed immediately after session creation
+                    using var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                     {
-                        pool.Enqueue(new InferenceSession(modelPath, gpuOptions));
-                    }
-                }
-                catch
-                {
-                    // Memory Leak Protection: Dispose successfully created sessions if a subsequent one fails (e.g. OOM)
-                    while (pool.TryDequeue(out var leakedSession))
-                    {
-                        leakedSession.Dispose();
-                    }
-                    throw;
-                }
+                        LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+                        GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
+                            ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                            : GraphOptimizationLevel.ORT_DISABLE_ALL
+                    };
+                    
+                    // We apply a profile specifically for the GPU
+                    onnxSettings.Gpu.ApplyTo(gpuOptions); 
 
-                LogDmlLoaded(logger, deviceId);
-                return (null, pool, true, true, poolSize);
+#if USE_CUDA
+                    // CUDA supports concurrent execution on a single session.
+                    gpuOptions.AppendExecutionProvider_CUDA(deviceId);
+                    var session = new InferenceSession(modelPath, gpuOptions);
+                    
+                    LogCudaLoaded(logger, deviceId); 
+                    
+                    return (session, null, true, false, int.MaxValue);
+#elif USE_DML
+                    // DirectML crashes on concurrent execution. We create a fixed-size Object Pool.
+                    gpuOptions.AppendExecutionProvider_DML(deviceId);
+                    
+                    int poolSize = Math.Max(1, hwSettings.MaxConcurrentGpuRequests);
+                    var pool = new ConcurrentQueue<InferenceSession>();
+                    
+                    try
+                    {
+                        for (int i = 0; i < poolSize; i++)
+                        {
+                            pool.Enqueue(new InferenceSession(modelPath, gpuOptions));
+                        }
+                    }
+                    catch
+                    {
+                        // Memory Leak Protection: Dispose successfully created sessions if a subsequent one fails (e.g. OOM)
+                        while (pool.TryDequeue(out var leakedSession))
+                        {
+                            leakedSession.Dispose();
+                        }
+                        throw;
+                    }
+
+                    LogDmlLoaded(logger, deviceId);
+                    return (null, pool, true, true, poolSize);
 #elif USE_WEBGPU
-                // [HYBRID ARCHITECTURE] 
-                // WebGPU is currently not thread-safe for concurrent executions.
-                // To maintain high throughput, we use a Hybrid approach:
-                // Piper (lightweight) runs on CPU using CPU settings and CPU concurrency limits.
-                // OpenVoice (heavy) runs exclusively on WebGPU with a fixed pool size of 1.
-                logger.LogInformation("[HARDWARE] WebGPU HYBRID mode: Piper routed to CPU for optimal parallel performance.");
+                    // [HYBRID ARCHITECTURE] 
+                    // WebGPU is currently not thread-safe for concurrent executions.
+                    // To maintain high throughput, we use a Hybrid approach:
+                    // Piper (lightweight) runs on CPU using CPU settings and CPU concurrency limits.
+                    // OpenVoice (heavy) runs exclusively on WebGPU with a fixed pool size of 1.
+                    logger.LogInformation("[HARDWARE] WebGPU HYBRID mode: Piper routed to CPU for optimal parallel performance.");
 
-                // The name is "hybridCpuOptions" to avoid conflict with the global fallback
-                using var hybridCpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
-                {
-                    LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-                    GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
-                        ? GraphOptimizationLevel.ORT_ENABLE_ALL 
-                        : GraphOptimizationLevel.ORT_DISABLE_ALL
-                };
-                
-                // Honestly apply CPU threading settings (e.g., 4 threads) to maximize CPU speed
-                onnxSettings.Cpu.ApplyTo(hybridCpuOptions);
-                var session = new InferenceSession(modelPath, hybridCpuOptions);
+                    // The name is "hybridCpuOptions" to avoid conflict with the global fallback
+                    using var hybridCpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
+                    {
+                        LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
+                        GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
+                            ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                            : GraphOptimizationLevel.ORT_DISABLE_ALL
+                    };
+                    
+                    // Honestly apply CPU threading settings (e.g., 4 threads) to maximize CPU speed
+                    onnxSettings.Cpu.ApplyTo(hybridCpuOptions);
+                    var session = new InferenceSession(modelPath, hybridCpuOptions);
 
-                // IsUsingGPU = false ensures Program.cs strictly applies MaxConcurrentCpuRequests 
-                // for the global pipeline semaphore.
-                return (session, null, false, false, int.MaxValue);
+                    // IsUsingGPU = false ensures Program.cs strictly applies MaxConcurrentCpuRequests 
+                    // for the global pipeline semaphore.
+                    return (session, null, false, false, int.MaxValue);
 #endif
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "[WARNING] Piper failed to load on GPU {DeviceId}", deviceId);
+                }
             }
-            catch (Exception ex)
-            {
-                logger.LogWarning(ex, "[WARNING] Piper failed to load on GPU {DeviceId}", deviceId);
-            }
+            logger.LogInformation("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
         }
-        logger.LogInformation("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
-
         // ====================================================================
         // CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)
         // ====================================================================

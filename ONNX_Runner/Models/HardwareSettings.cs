@@ -32,4 +32,10 @@ public class HardwareSettings
     /// The engine will start hardware initialization from this ID.
     /// </summary>
     public int OpenVoiceGpuDeviceId { get; set; } = 0;
+
+    /// <summary>
+    /// Forces the Piper TTS model to run on the CPU, completely bypassing GPU initialization
+    /// regardless of the active build (CUDA, DirectML, or WebGPU).
+    /// </summary>
+    public bool ForcePiperToCpu { get; set; } = false;
 }
