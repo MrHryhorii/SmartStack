@@ -1,4 +1,4 @@
-# Tsubaki TTS Engine
+# Tsubaki TTS Engine v1.0.8
 
 Production-grade local Text-to-Speech server for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
@@ -66,7 +66,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 
 | Feature                    | Description                                                                                                                                                        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| OpenAI API Compatible      | Exposes a `/v1/audio/speech` endpoint that perfectly mimics the official OpenAI API. Drop-in replacement for SillyTavern, LangChain, AutoGen, and other AI agents. |
+| OpenAI API Compatible      | Exposes a `/v1/audio/speech` endpoint compatible with the official OpenAI API. Drop-in replacement for SillyTavern, LangChain, AutoGen, and other AI agents. |
 | Zero-Shot Voice Cloning    | Integrated with the OpenVoice V2 architecture. Clone any voice instantly by dropping a clean 10-second `.wav` file into the `Voices` folder.                       |
 | Foreign Word Pronunciation | Offline language detection via Lingua. Detects foreign words and applies phoneme approximation for natural accented pronunciation.                                 |
 | Studio-Grade DSP Effects   | Real-time audio effects (Telephone, Overdrive, Reverb, etc.), pitch and volume shifting.                                                                           |
@@ -174,12 +174,15 @@ curl http://localhost:5045/v1/audio/speech \
 ## Standard Parameters
 
 | Field             | Type   | Description                                                                   |
-| ----------------- | ------ | ----------------------------------------------------------------------------- |
+| ----------------- | ------ | ------------------------------------------------------------------------------- |
 | `model`           | string | Any value (e.g. `"tts-1"`) — ignored, present for compatibility               |
 | `input`           | string | Text to synthesize                                                            |
 | `voice`           | string | `piper_base` for the base Piper voice, or a cloned voice name (e.g. `"John"`) |
 | `response_format` | string | `mp3`, `wav`, `opus`, `pcm`                                                   |
 | `speed`           | float  | Speech speed multiplier. `1.0` is default.                                    |
+| `stream`          | bool   | Enable chunked streaming. Not part of the official OpenAI schema, but widely accepted as a de facto standard by AI agents and frontends — see Real-Time Streaming below. |
+
+This endpoint follows the official OpenAI request schema with `stream` additionally supported for Tsubaki streaming. For DSP effects, voice cloning tuning, and detailed audio control, use the dedicated Tsubaki Endpoint below.
 
 ---
 
@@ -211,18 +214,23 @@ Recommended server-side streaming configuration in `appsettings.json`:
 
 ---
 
-# Advanced API Parameters
+# Tsubaki Endpoint
 
-Tsubaki supports additional parameters beyond the standard OpenAI API. These are especially useful for **AI agents** that can mechanically convey emotional state, acoustic context, or synthesis style per request — without any changes to the server configuration.
+Alongside the OpenAI-compatible endpoint above, Tsubaki exposes its own dedicated endpoint at `/tsbk/audio/speech` — a separate, independent API, not an extension bolted onto the OpenAI one. It shares the same core fields (`model`, `input`, `voice`, `response_format`, `speed`, `stream`) and follows the same philosophy: only `input` is required, every other field is optional and falls back to a sensible engine or server-config default if omitted. That makes it just as easy to point a minimal client at as the OpenAI endpoint — you only gain access to more, never lose the simplicity.
 
-Standard OpenAI clients (SillyTavern, AutoGen, LangChain) simply ignore these extra fields, so backward compatibility is always preserved.
+The simplest way to think about the two APIs:
 
-A detailed **Swagger UI** with all extended parameters is available at `http://localhost:5045/swagger` when the server is running.
+- `/v1/...` — use this when your client expects the OpenAI API. It provides the OpenAI-compatible request surface.
+- `/tsbk/...` — use this when you want Tsubaki's full audio controls. It accepts the same basic request fields plus Tsubaki-specific parameters.
 
-## Full Extended Request Example
+What it adds: real-time DSP effects, spatial environments, pitch/volume control, voice cloning tuning, and pronunciation variance — a much larger surface for **mechanically** controlling how something sounds, per request, without touching server config. This is especially useful for AI agents that want to express emotional state or acoustic context on the fly. Supported audio formats: `wav`, `mp3`, `opus`, `pcm`.
+
+A detailed **Swagger UI** with every parameter is available at `http://localhost:5045/swagger` when the server is running.
+
+## Full Request Example
 
 ```bash
-curl http://localhost:5045/v1/audio/speech \
+curl http://localhost:5045/tsbk/audio/speech \
   -H "Content-Type: application/json" \
   -d '{
     "model": "tts-1",
@@ -299,16 +307,17 @@ curl http://localhost:5045/v1/audio/speech \
 | `volume`      | float | Output volume multiplier with soft-knee limiter. `1.0` is original.     |
 | `noise_scale` | float | Controls pronunciation variance (intonation noise). Default: `0.667`.   |
 | `noise_w`     | float | Phoneme duration variance (rhythm). Default: `0.8`.                     |
-| `stream`      | bool  | Enable or disable streaming for this specific request.                  |
 
 ## Cloning Parameters
 
 | Parameter          | Type  | Description                                                                                           |
 | ------------------ | ----- | ----------------------------------------------------------------------------------------------------- |
-| `clone_intensity`  | float | Latent space blend ratio between Piper base fingerprint and target voice. `0.85–0.9` recommended.     |
-| `tone_temperature` | float | Variance during timbre transfer (tau). `0.7` is stable. `1.0` is more expressive but noise-sensitive. |
+| `clone_intensity`  | float | Latent space blend ratio between Piper base fingerprint and target voice. Per-request override of `ClonerSettings.CloneIntensity`. |
+| `tone_temperature` | float | Variance during timbre transfer (tau). Per-request override of `ClonerSettings.ToneTemperature`.      |
 
-> **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or tweaking `tone_temperature` to stabilize voice artifacts on the fly. Standard OpenAI clients ignore these fields silently, so backward compatibility is always preserved.
+See Fine-Tuning Cloning Behavior in the Voice Cloning section below for recommended ranges and what each one actually sounds like.
+
+> **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or tweaking `tone_temperature` to stabilize voice artifacts on the fly.
 
 ---
 
@@ -317,6 +326,8 @@ curl http://localhost:5045/v1/audio/speech \
 Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect parameters, Tsubaki allows you to set a **Default Effect** in `appsettings.json`. This effect will be automatically applied to all incoming API requests unless explicitly overridden by a custom client (like the built-in web dashboard).
 
 ## Default Effects & Environments
+
+The following is an example configuration that enables LoFiTape and LivingRoom as server-wide defaults. The shipped defaults keep both the effect and environment disabled (`None`).
 
 ```json
 "EffectsSettings": {
@@ -386,7 +397,10 @@ Sets the server-wide volume multiplier applied to all generated audio. The engin
 
 1. Place a clean voice sample (`.wav`, 5–15 seconds) into the `Voices/` folder.
 2. The filename becomes the voice ID: `John.wav` → `"voice": "John"`.
-3. Use it in any API request:
+3. Start or restart the server. On startup, Tsubaki extracts the voice fingerprint and creates a `.voice` file next to the sample.
+4. The new voice is then automatically available by that name in API requests and appears in the Web Dashboard voice list.
+
+Use it in any API request:
 
 ```json
 {
@@ -395,12 +409,6 @@ Sets the server-wide volume multiplier applied to all generated audio. The engin
 ```
 
 For the base Piper voice without cloning: `"voice": "piper_base"`.
-
-The server automatically:
-
-- extracts the voice fingerprint on first run using the Tone Extractor model
-- caches the embedding as a `.voice` file next to the sample
-- loads the cached fingerprint instantly on every subsequent run
 
 ## Recommended Sample Quality
 
@@ -428,7 +436,49 @@ Place all three files into the `Cloner/` folder:
 
 > These models are released under the **MIT License** and are free for commercial use.
 
-> **Performance Note:** Zero-shot voice cloning is a mathematically intensive operation. While the base `piper_base` voice synthesizes almost instantly, applying a custom cloned voice takes significantly more processing time. If you are running the engine on a CPU and want faster voice cloning, consider significantly increasing `IntraOpNumThreads` in `appsettings.json` (e.g., to match your physical core count). The default value is kept intentionally low so the engine doesn't monopolize your CPU, leaving enough resources for other applications (like games, LLMs, or AI agents) running in the background.
+> **Performance Note:** Zero-shot voice cloning is a mathematically intensive operation. While the base `piper_base` voice synthesizes almost instantly, applying a custom cloned voice takes significantly more processing time. If you are running the engine on a CPU and want faster voice cloning, consider significantly increasing `IntraOpNumThreads` in `appsettings.json` (e.g., to match your physical core count). The default value is kept intentionally moderate so the engine balances cloning throughput with other applications (like games, LLMs, or AI agents) running in the background.
+
+## Fine-Tuning Cloning Behavior
+
+Both settings below can be tuned server-wide via `ClonerSettings` in `appsettings.json`, or overridden per request via `clone_intensity`/`tone_temperature` on the Tsubaki Endpoint (see Cloning Parameters above) — a per-request value takes priority for that request only, otherwise the server default applies.
+
+```json
+"ClonerSettings": {
+  "CloneIntensity": 1.0,
+  "ToneTemperature": 0.7
+}
+```
+
+**Tone Temperature** controls the variance in the latent space during voice color transfer. The shipped default is `0.7`, chosen as a stability-oriented setting.
+
+- **High temperature (1.0 and above):** Makes the voice more emotional and lively, but significantly increases sensitivity to base model noise. On low-frequency models (16 kHz) or `medium` quality, this often causes micro-vibrations perceived as trembling or sobbing.
+- **Low temperature (0.5 – 0.7):** Stabilizes the sound wave, making the voice feel "firmer" and more confident. This is the recommended range for eliminating the trembling effect on models with a limited frequency range.
+
+**Clone Intensity** defines the blending coefficient (Latent Space Blending) between the base Piper fingerprint and the target voice.
+
+- **Value 1.0:** Full timbre transfer, which can amplify digital artifacts.
+- **Value 0.8 – 0.9 (Recommended):** Preserves some of the original Piper model's articulatory stability while overlaying the character of the chosen voice. This provides the best balance between voice similarity and audio cleanliness.
+
+## Cloned Voice Volume
+
+The perceived loudness of a cloned voice is **not** controlled by `ClonerSettings` — it is shaped by two factors: the **recording level of the reference sample** and the **natural pitch of the cloned voice**.
+
+- **Recording level:** OpenVoice extracts a voice fingerprint from the magnitude spectrogram of your `.wav` file and transfers its energy envelope onto the generated audio. A quietly recorded sample produces a quietly cloned voice, regardless of the base Piper model's output level. If the sample is too loud or peaks above 0 dBFS (clipping), the cloned audio will also clip and distort.
+
+- **Voice pitch:** Lower-pitched voices — deep male voices, bass characters — naturally concentrate their spectral energy in the low-frequency range, which results in a lower overall magnitude in the spectrogram. Because OpenVoice transfers this energy profile directly, deep voices will consistently sound quieter than brighter, higher-pitched ones, even from identically recorded samples. This is an inherent property of the cloning architecture, not a bug.
+
+**Recommended recording level:** aim for peaks around **−6 to −3 dBFS** — loud enough to fully capture the voice character, with just enough headroom to avoid distortion.
+
+If the cloned voice is too quiet, compensate using `DefaultVolume` in `DspSettings`, or send `"volume"` per request:
+
+```json
+{
+  "voice": "John",
+  "volume": 2.0
+}
+```
+
+This applies a clean gain stage with soft-knee limiting **before** the audio is encoded, so the result stays clean without harsh digital clipping.
 
 ---
 
@@ -630,7 +680,7 @@ The `PhonemizerSettings` block controls how the server handles text outside your
 "PhonemizerSettings": {
   "SupportedLanguages": ["en", "uk", "fr"],
   "UseLanguageDetector": true,
-  "MaxBonusMultiplier": 0.50,
+  "MaxBonusMultiplier": 0.60,
   "BonusMinLetterCount": 8,
   "BonusMaxLetterCount": 32,
   "MixedLanguageOverrideThreshold": 0.85,
@@ -642,7 +692,7 @@ A different *script* (Cyrillic hitting an English model, for example) is a hard,
 
 | Parameters | What they do |
 | ----------- | -------------- |
-| `MaxBonusMultiplier`, `BonusMinLetterCount`, `BonusMaxLetterCount` | Boosts the model's own language for short, statistically ambiguous chunks — full bonus at or below `BonusMinLetterCount` letters, none at or above `BonusMaxLetterCount`, interpolated between. *Example: "Hi" (2 letters) got the full ×1.5 bonus and read English; "I am Alejandro" (12 letters) got a smaller ×1.417 bonus — not enough to beat a strongly Spanish-leaning raw score, so it read with Spanish pronunciation (arguably correct for a Spanish name).* |
+| `MaxBonusMultiplier`, `BonusMinLetterCount`, `BonusMaxLetterCount` | Boosts the model's own language for short, statistically ambiguous chunks — full bonus at or below `BonusMinLetterCount` letters, none at or above `BonusMaxLetterCount`, interpolated between. *Example: "Hi" (2 letters) got the full ×1.6 bonus and read English; "I am Alejandro" (12 letters) got a smaller ×1.5 bonus — not enough to beat a strongly Spanish-leaning raw score, so it read with Spanish pronunciation (arguably correct for a Spanish name).* |
 | `MixedLanguageOverrideThreshold`, `MinSentenceLengthForOverride` | The bonus above has a hard ceiling it sometimes can't overcome. This override instead checks the model language's confidence across the **whole sentence** once, and applies it to any chunk under `BonusMaxLetterCount` letters — but only if the sentence has at least `MinSentenceLengthForOverride` letters, and its confidence clears `MixedLanguageOverrideThreshold`. *Example: "Yes, I am Hermes, an AI model created by Anthropic." — "Hermes" alone reads as French (`ɛʁmˈɛs`); with the override, the confidently-English sentence around it corrects this to `hˈɜːmiːz`.* |
 
 > **Trade-off:** the override can't tell an accidental misread apart from a deliberate foreign phrase, and punctuation isolation doesn't exempt a chunk from it — *"...and whispered: c'est la vie."* still read in English despite being comma/colon-separated, because the surrounding sentence measured `0.9666` confidence in English, comfortably above the default `0.85` threshold. Raising `MixedLanguageOverrideThreshold` above that (or writing a shorter sentence that falls under `MinSentenceLengthForOverride`) would have left "c'est la vie" to the bonus table above instead — which, being a 9-letter phrase with no strong pull toward English, would most likely have read in French. For language-learning content or quoted foreign phrases, raise the threshold toward `1.0`, or above `1.0` to disable the override entirely (confidence never exceeds `1.0`).
@@ -683,8 +733,8 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 ```json
 "HardwareSettings": {
-  "MaxConcurrentGpuRequests": 2,
-  "MaxConcurrentCpuRequests": 4
+  "MaxConcurrentGpuRequests": 3,
+  "MaxConcurrentCpuRequests": 2
 }
 ```
 
@@ -714,74 +764,20 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 - **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter) to remove high-frequency noise, and allows setting **server-wide default pitch and volume** applied to every request. This is especially useful when Tsubaki is used as a personal AI assistant backend — you can tune the voice character once in the config and every client, including standard OpenAI-compatible ones that cannot send custom parameters, will automatically receive the adjusted audio.
 
 - **`ClonerSettings`** — Controls the OpenVoice cloning behavior. It is best not to touch these. Increasing the intensity often yields a caricature-like exaggeration of the voice characteristics, while decreasing it simply reverts the audio back to the default base model's voice.
-
----
-
-# Fine-Tuning Voice Cloning
-
-## Tone Temperature
-
-```json
-"ClonerSettings": {
-  "ToneTemperature": 1.0
-}
-```
-
-This parameter controls the variance in the latent space during voice color transfer.
-
-- **High temperature (1.0 and above):** Makes the voice more emotional and lively, but significantly increases sensitivity to base model noise. On low-frequency models (16 kHz) or `medium` quality, this often causes micro-vibrations perceived as trembling or sobbing.
-
-- **Low temperature (0.5 – 0.7):** Stabilizes the sound wave, making the voice feel "firmer" and more confident. This is the recommended setting for eliminating the trembling effect on models with a limited frequency range.
-
-## Clone Intensity
-
-```json
-"ClonerSettings": {
-  "CloneIntensity": 1.0
-}
-```
-
-Defines the blending coefficient (Latent Space Blending) between the base Piper fingerprint and the target voice.
-
-- **Value 1.0:** Full timbre transfer, which can amplify digital artifacts.
-
-- **Value 0.8 – 0.9 (Recommended):** Preserves some of the original Piper model's articulatory stability while overlaying the character of the chosen voice. This provides the best balance between voice similarity and audio cleanliness.
-
-## Cloned Voice Volume
-
-The perceived loudness of a cloned voice is **not** controlled by `ClonerSettings` — it is shaped by two factors: the **recording level of the reference sample** and the **natural pitch of the cloned voice**.
-
-- **Recording level:** OpenVoice extracts a voice fingerprint from the magnitude spectrogram of your `.wav` file and transfers its energy envelope onto the generated audio. A quietly recorded sample produces a quietly cloned voice, regardless of the base Piper model's output level. If the sample is too loud or peaks above 0 dBFS (clipping), the cloned audio will also clip and distort.
-
-- **Voice pitch:** Lower-pitched voices — deep male voices, bass characters — naturally concentrate their spectral energy in the low-frequency range, which results in a lower overall magnitude in the spectrogram. Because OpenVoice transfers this energy profile directly, deep voices will consistently sound quieter than brighter, higher-pitched ones, even from identically recorded samples. This is an inherent property of the cloning architecture, not a bug.
-
-**Recommended recording level:** aim for peaks around **−6 to −3 dBFS** — loud enough to fully capture the voice character, with just enough headroom to avoid distortion.
-
-If the cloned voice is too quiet, compensate using `DefaultVolume` in `DspSettings`, or send `"volume"` per request:
-
-```json
-{
-  "voice": "John",
-  "volume": 2.0
-}
-```
-
-This applies a clean gain stage with soft-knee limiting **before** the audio is encoded, so the result stays clean without harsh digital clipping.
-
-> **Quality Tip:** To achieve crystal-clear cloning without temperature adjustments, use Piper models at the **High (22050 Hz)** quality tier. Their fuller frequency spectrum allows the OpenVoice neural network to operate without producing instability artifacts.
+- **`EnableCloning`** — Enables or disables OpenVoice voice cloning. Leave it `true` to use voices stored in the `Voices/` folder; when enabled, those voices are discovered automatically at server startup and appear in the Web Dashboard voice list.
 
 ---
 
 # ONNX Runtime Optimization
 
-This section provides low-level control over the internal MLAS (Microsoft Linear Algebra Subprograms) math engine, heavily optimizing execution. Since the CPU and GPU execution paths have fundamentally different concurrency needs, `Cpu` and `Gpu` use independent threading and memory profiles rather than a single shared configuration. The defaults are already configured as a balanced "golden standard" for home use. Change these only if you understand the consequences.
+This section provides low-level control over the internal MLAS (Microsoft Linear Algebra Subprograms) math engine, heavily optimizing execution. Since the CPU and GPU execution paths have fundamentally different concurrency needs, `Cpu` and `Gpu` use independent threading and memory profiles rather than a single shared configuration. The defaults are already configured as a balanced "golden standard" for home use. **If you are not tuning performance, leave this entire section unchanged.** Change these only if you understand the consequences.
 
 ```json
 "OnnxSettings": {
   "EnableGraphOptimization": true,
   "Cpu": {
     "ExecutionMode": "Sequential",
-    "IntraOpNumThreads": 2,
+    "IntraOpNumThreads": 4,
     "InterOpNumThreads": 1,
     "EnableMemoryPattern": true,
     "EnableCpuMemArena": true
@@ -798,7 +794,7 @@ This section provides low-level control over the internal MLAS (Microsoft Linear
 
 | Parameter             | Description                                                                                                                                                                                                                                                                                                                        |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IntraOpNumThreads`   | Threads used for matrix math within a single neural network node. `0` enables smart auto-detection of all available physical cores. The `Cpu` profile defaults to a fixed, moderate value (`2`) to leave room for multiple concurrent requests without thread thrashing; the `Gpu` profile defaults to `1`, since the heavy lifting already happens on the GPU itself. |
+| `IntraOpNumThreads`   | Threads used for matrix math within a single neural network node. `0` enables smart auto-detection of all available physical cores. The `Cpu` profile defaults to a fixed, moderate value (`4`) to balance per-request throughput with concurrent requests; the `Gpu` profile defaults to `1`, since the heavy lifting already happens on the GPU itself. |
 | `InterOpNumThreads`   | Parallelization across different graph nodes. For TTS (which is strictly sequential), this must **always be `1`**. Higher values cause thread thrashing and micro-stutters.                                                                                                                                                       |
 | `EnableMemoryPattern` | Pre-allocates memory blocks during model load rather than dynamically during inference. Decreases latency per request by 5–10%.                                                                                                                                                                                                    |
 | `EnableCpuMemArena`   | Utilizes an isolated memory arena for ONNX tensors. **Critical for .NET:** Bypasses the C# Garbage Collector entirely during audio generation, eliminating GC-induced freezes on long texts. Disabled by default in the `Gpu` profile, since this optimization targets CPU-resident memory and doesn't apply to tensors that live in VRAM. |
@@ -808,10 +804,10 @@ This section provides low-level control over the internal MLAS (Microsoft Linear
 
 The TTS engine and API are fully thread-safe and natively support concurrent HTTP requests. Two independent settings control how the CPU handles load, and they pull in opposite directions if left uncoordinated:
 
-- `OnnxSettings.Cpu.IntraOpNumThreads` controls how many cores **a single request** can use. `0` lets one request spread across every physical core — fastest for that one request, but leaves nothing for anyone else. A fixed value like `2` caps each request to a slice of the CPU on purpose, so it doesn't crowd out others.
+- `OnnxSettings.Cpu.IntraOpNumThreads` controls how many cores **a single request** can use. `0` lets one request spread across every physical core — fastest for that one request, but leaves nothing for anyone else. A fixed value like `4` caps each request to a controlled portion of the CPU on purpose, so it doesn't crowd out other concurrent requests.
 - `HardwareSettings.MaxConcurrentCpuRequests` controls how many requests are allowed to run **in parallel** at all. `0` (or a negative value) auto-detects and allows up to one request per physical core; a fixed value caps it directly.
 
-If both are left at `0` under real concurrent load, every incoming request tries to claim every core at once — severe CPU context-switching, and generation speed scales down linearly per simultaneous user. The shipped defaults (`IntraOpNumThreads: 2`, `MaxConcurrentCpuRequests: 4`) are a middle-ground compromise for home use, tuned to handle a few simultaneous requests without either setting fighting the other for the whole CPU.
+If both are left at `0` under real concurrent load, every incoming request tries to claim every core at once — severe CPU context-switching, and generation speed scales down linearly per simultaneous user. The shipped defaults (`IntraOpNumThreads: 4`, `MaxConcurrentCpuRequests: 2`) are a middle-ground compromise for home use, tuned to give each active request a reasonable amount of CPU while preventing too many requests from competing for the same cores.
 
 **Handling High-Load Environments:**
 
@@ -824,20 +820,34 @@ Both settings only affect the CPU execution path — GPU threading and concurren
 
 # API Endpoints
 
-| Method | Endpoint                 | Description                          |
-| ------ | ------------------------ | ------------------------------------ |
-| `POST` | `/v1/audio/speech`       | Main TTS endpoint                    |
-| `POST` | `/v1/audio/phonemize`    | Text phonemization (for diagnostics) |
-| `GET`  | `/v1/audio/voices`       | List available voices                |
-| `GET`  | `/v1/audio/effects`      | List available DSP effects           |
-| `GET`  | `/v1/audio/environments` | List available acoustic environments |
-| `GET`  | `/v1/models`             | OpenAI-compatible model listing      |
-| `GET`  | `/v1/models/{id}`        | OpenAI-compatible model by ID        |
-| `GET`  | `/health`                | Server health check                  |
+**OpenAI-compatible:**
+
+| Method | Endpoint          | Description                     |
+| ------ | ----------------- | -------------------------------- |
+| `POST` | `/v1/audio/speech` | Main TTS endpoint                |
+| `GET`  | `/v1/models`       | OpenAI-compatible model listing  |
+| `GET`  | `/v1/models/{id}`  | OpenAI-compatible model by ID    |
+| `GET`  | `/v1/health`       | Server health check              |
+
+**Tsubaki Endpoint:**
+
+| Method | Endpoint                   | Description                          |
+| ------ | -------------------------- | ------------------------------------- |
+| `POST` | `/tsbk/audio/speech`       | Main TTS endpoint, full parameter set |
+| `POST` | `/tsbk/audio/phonemize`    | Text phonemization (for diagnostics)  |
+| `GET`  | `/tsbk/audio/voices`       | List available voices                 |
+| `GET`  | `/tsbk/audio/effects`      | List available DSP effects            |
+| `GET`  | `/tsbk/audio/environments` | List available acoustic environments  |
+
+**Universal:**
+
+| Method | Endpoint  | Description         |
+| ------ | --------- | -------------------- |
+| `GET`  | `/health` | Server health check  |
 
 ## Swagger UI
 
-A detailed Swagger UI with all extended parameters (Pitch, Volume, NoiseScale, CloneIntensity, etc.) is available at:
+A detailed Swagger UI with every parameter (Pitch, Volume, NoiseScale, CloneIntensity, etc.) is available at:
 
 ```
 http://localhost:5045/swagger
