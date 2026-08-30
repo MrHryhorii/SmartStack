@@ -764,19 +764,25 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 ## Resource Management
 
-- **`HardwareSettings`** — Tells the server's internal queueing system how many generation requests are allowed to run at the same time. **For home use, you can completely ignore this section and leave the defaults.**
+- **`HardwareSettings`** — Tells the server's internal queueing system how many generation requests are allowed to run at the same time, and handles hardware routing. **For home use, you can completely ignore this section and leave the defaults.**[cite: 8]
 
 ```json
 "HardwareSettings": {
   "MaxConcurrentGpuRequests": 3,
-  "MaxConcurrentCpuRequests": 2
+  "MaxConcurrentCpuRequests": 2,
+  "PiperGpuDeviceId": 0,
+  "OpenVoiceGpuDeviceId": 0,
+  "ForcePiperToCpu": true
 }
 ```
 
 | Parameter                 | Description                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is a pure throttle** — a queueing limit with no extra memory cost, since all concurrent requests share a single loaded model. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled. |
+| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is a pure throttle** — a queueing limit with no extra memory cost, since all concurrent requests share a single loaded model. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled.[cite: 8] |
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value auto-detects and uses all available physical cores.                                                                                                                                                                                                                                                                                |
+| `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
+| `OpenVoiceGpuDeviceId`     | Hardware index of the GPU used to execute the OpenVoice Tone Color Converter. Can be assigned a different ID in multi-GPU setups to split the computational load. |
+| `ForcePiperToCpu`          | Forces the base Piper model to execute on the CPU regardless of GPU presence. When `true` (Hybrid Routing), the CPU handles parallel Piper text-to-speech generation while the GPU is reserved exclusively for the computationally heavy OpenVoice cloning passes, preventing bottlenecks and maximizing concurrent throughput. |
 
 > **DirectML users:** think of this setting as a direct trade — each unit of `MaxConcurrentGpuRequests` buys one more simultaneous request, at the cost of one more full copy of the relevant model(s) sitting in VRAM. CUDA and CPU users don't pay this cost, since they share one session across all concurrent requests.
 
