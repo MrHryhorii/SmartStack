@@ -1,11 +1,18 @@
 # Tsubaki TTS Engine v1.0.8
 
-Production-grade local Text-to-Speech server for AI agents, companions, VTubers, and OpenAI-compatible applications.
+Production-grade local Text-to-Speech engine for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
-Built with **C# (.NET 10)**, powered by **Piper (VITS)** neural networks and **OpenVoice V2**. Generates high-fidelity audio with support for instant voice cloning and real-time DSP effects.
+Piper is fast, lightweight, and easy to run, but its voices are tied to the model you choose. Tsubaki is a standalone engine built around **Piper (VITS) voice models** that keeps the efficiency of Piper while adding the missing layer: **voice freedom and audio control**.
 
-- OpenAI-compatible API — drop-in replacement for existing tools
+Use standard Piper models locally, then add zero-shot voice cloning, interchangeable voices, pitch and volume control, DSP effects, spatial environments, streaming, and per-request audio control.
+
+Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Windows and Linux with CPU or GPU acceleration.
+
+- Piper model engine — run standard Piper models locally
+- Voice Freedom — use different voices without replacing the underlying Piper model
 - Zero-shot voice cloning via OpenVoice V2
+- OpenAI-compatible API — drop-in replacement for existing tools
+- Dedicated Tsubaki API for detailed audio control
 - Real-time streaming (Chunked Transfer Encoding)
 - Studio-grade DSP effects and spatial environments
 - No Python, no CUDA dependency hell
@@ -45,7 +52,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 
 - **No Python Required:** Runs purely on compiled C# and `Microsoft.ML.OnnxRuntime`.
 - **Portable (Self-Contained):** Can be compiled into a single executable. Just download and run.
-- **Dynamic Hardware Acceleration:** Automatically detects and utilizes your GPU (DirectML for Windows, CUDA for Linux) and gracefully falls back to CPU without crashing.
+- **Hardware Acceleration:** Runs on CPU by default, with optional WebGPU, DirectML, or CUDA acceleration for voice cloning.
 - **Memory Protection (OOM Guard):** Built-in queueing and semaphore system that calculates available VRAM/RAM to prevent server crashes under heavy load.
 - **True Concurrency (Shared Memory):** The common way Python TTS servers scale concurrency is by spinning up a separate worker process per request — each one duplicating the full model (often 2GB+) along with its own PyTorch/CUDA runtime in RAM, since getting true in-process parallelism right around the GIL is hard. On CPU and NVIDIA (CUDA) GPUs, Tsubaki loads the model exactly once and processes multiple API requests concurrently through a shared memory space, keeping RAM usage flat regardless of how many AI agents are talking at the same time. On DirectML — Windows' unified GPU backend covering NVIDIA, AMD, and Intel alike, since Tsubaki intentionally doesn't ship a separate Windows CUDA build — a small, fixed-size pool of sessions is used instead. This is a hardware limitation of DirectML itself, not a Tsubaki design choice; see `HardwareSettings` for details.
 
@@ -355,13 +362,6 @@ Set `"DefaultEffect": "None"` to bypass effects entirely.
 }
 ```
 
-### LowPassQFactor
-
-Controls the resonance and roll-off curve of the anti-aliasing filter. This is primarily used to clean up high-frequency artifacts (metallic "sand") generated during OpenVoice cloning.
-
-- **`0.577` (Bessel curve):** Provides a smooth, analog-like roll-off without any resonant peaks. Highly recommended for voice cloning, as it naturally masks neural network artifacts and makes the voice sound warmer and less fatiguing.
-- **`0.707` (Butterworth curve):** A classic digital filter curve. It remains perfectly flat until the cutoff point, making the voice sound brighter and preserving the crispness of consonants ("s", "t"). However, it may let more digital artifacts through and can sound slightly harsher on cloned voices.
-
 ### DefaultPitch
 
 Sets the server-wide pitch shift applied to all generated audio.
@@ -589,39 +589,60 @@ cd SmartStack/ONNX_Runner
 
 ## Compiling the Server
 
-Tsubaki uses a smart build system. You can build a **Full** version (includes GPU libraries, very large) or a **Lightweight CPU-only** version.
+Tsubaki provides several build variants for different hardware configurations. You can build a **Lightweight CPU-only** version for standard TTS, or enable **WebGPU, DirectML, or CUDA** for GPU-accelerated voice cloning.
 
-> For 90% of users and home servers, the **CPU-only version is highly recommended**. It is significantly smaller, completely hardware-agnostic, and the performance difference on modern CPUs is negligible.
+> **Which version should I choose?**
+> For standard TTS generation, the **CPU-only version** is highly recommended. Piper models are designed to be fast and efficient on modern CPUs, making this the simplest option for most users.
+>
+> If you plan to use **Voice Cloning (OpenVoice V2)**, GPU acceleration is strongly recommended. WebGPU is the preferred choice for personal and local use because it provides broad GPU compatibility without requiring a vendor-specific runtime. DirectML is available as an alternative on Windows, while CUDA is available for NVIDIA GPUs on Linux.
+>
+> **WebGPU and concurrency:** The current WebGPU implementation is optimized for local and personal use. Piper base synthesis remains on the CPU, while OpenVoice voice conversion can use the GPU. GPU cloning requests are currently processed one at a time for stability. This is usually not a limitation for a personal TTS setup, where requests are generated sequentially. If WebGPU is unavailable, the cloning stage automatically falls back to the CPU. Parallel GPU execution is planned for a future release.
 
-### 1. Windows (Full: DirectML + CPU)
+### 1. Windows (WebGPU + CPU) — Recommended for Voice Cloning
 
-Automatically uses your GPU via DirectX 12 — works with NVIDIA, AMD, and Intel GPUs:
+Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
 
 ```bash
-dotnet publish -c Release -r win-x64 --self-contained true -o ./Publish/Tsubaki-Windows-Full
+dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./Publish/Tsubaki-Windows-WebGPU
 ```
 
-### 2. Windows (Lightweight: CPU Only)
+### 2. Windows (DirectML + CPU)
+
+Alternative Windows GPU acceleration with support for NVIDIA, AMD, and Intel GPUs.
+
+```bash
+dotnet publish -c Release -r win-x64 --self-contained true -o ./Publish/Tsubaki-Windows-DML
+```
+
+### 3. Windows (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
 dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./Publish/Tsubaki-Windows-CPU
 ```
 
-### 3. Linux (Lightweight: CPU Only) — Recommended
+### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
+
+Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
+
+```bash
+dotnet publish -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./Publish/Tsubaki-Linux-WebGPU
+```
+
+### 5. Linux (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
 dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./Publish/Tsubaki-Linux-CPU
 ```
 
-### 4. Linux (Full: CUDA + CPU) — Advanced Users Only
+### 6. Linux (CUDA + CPU) — Advanced Users Only
 
 Builds the NVIDIA CUDA version. See the Linux Deployment section for strict hardware and software requirements:
 
 ```bash
-dotnet publish -c Release -r linux-x64 --self-contained true -o ./Publish/Tsubaki-Linux-Full
+dotnet publish -c Release -r linux-x64 --self-contained true -o ./Publish/Tsubaki-Linux-CUDA
 ```
 
-### 5. Docker (Lightweight CPU)
+### 7. Docker (Lightweight CPU)
 
 The provided `Dockerfile` is pre-configured to build the lightweight CPU version to keep your container small and stable:
 
