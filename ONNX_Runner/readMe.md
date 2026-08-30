@@ -764,7 +764,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 ## Resource Management
 
-- **`HardwareSettings`** — Tells the server's internal queueing system how many generation requests are allowed to run at the same time, and handles hardware routing. **For home use, you can completely ignore this section and leave the defaults.**[cite: 8]
+- **`HardwareSettings`** — Tells the server's internal queueing system how many generation requests are allowed to run at the same time, and handles hardware routing. **For home use, you can completely ignore this section and leave the defaults.**
 
 ```json
 "HardwareSettings": {
