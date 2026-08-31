@@ -429,7 +429,7 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                         previousChunkWasFinished = isFinished;
 
                         // Generate the base voice using neural network
-                        string phonemes = ctx.Phonemizer.GetPhonemes(chunk);
+                        string phonemes = ctx.Phonemizer.GetPhonemes(chunk, request.Language);
 
                         // Pass the streaming flags to the generator
                         var rawResult = ctx.PiperRunner.SynthesizeAudioRaw(phonemes, isContinuation, isFinished, request.Speed, request.NoiseScale, request.NoiseW);

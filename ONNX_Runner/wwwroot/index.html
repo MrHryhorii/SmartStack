@@ -36,11 +36,20 @@
                     <button id="generateBtn" class="btn-primary">Generate</button>
                     <button id="downloadBtn" class="btn-secondary" disabled>Download</button>
                 </div>
-                <!-- Toggle for enabling/disabling streaming audio response -->
-                <div class="toggle">
-                    <input type="checkbox" id="streamToggle" checked>
-                    <label for="streamToggle">Real-time Playback</label>
+                
+                <!-- OPTIONS SECTION: Pronunciation Selection and Single Line Streaming -->
+                <div class="generation-options">
+                    <div class="toggle">
+                        <input type="checkbox" id="streamToggle" checked>
+                        <label for="streamToggle">Real-time Playback</label>
+                    </div>
+                    
+                    <div class="language-selector">
+                        <label for="languageSelect">Pronunciation:</label>
+                        <select id="languageSelect"></select>
+                    </div>
                 </div>
+
                 <!-- Audio element for playing back the synthesized speech -->
                 <audio id="audioPlayer" class="audio" controls></audio>
             </section>

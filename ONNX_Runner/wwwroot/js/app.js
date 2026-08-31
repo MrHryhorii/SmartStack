@@ -1,6 +1,7 @@
 import { initTheme } from './theme.js';
 import { getVoices, getEffects, getEnvironments, synthesizeSpeech } from './api.js';
 import { AudioEngine } from './audio.js';
+import { SUPPORTED_LANGUAGES } from './languages.js';
 
 let currentDownloadUrl = null;
 let currentExtension = 'mp3';
@@ -38,6 +39,12 @@ async function bootEngine() {
     document.getElementById('voiceSelect').innerHTML = voicesData.voices.map(v => `<option value="${v}" ${v === 'piper_base' ? 'selected' : ''}>${v}</option>`).join('');
     document.getElementById('effectSelect').innerHTML = effectsData.effects.map(e => `<option value="${e}">${e}</option>`).join('');
     document.getElementById('environmentSelect').innerHTML = envData.environments.map(e => `<option value="${e}">${e}</option>`).join('');
+
+    // --- DYNAMICLY FILL THE LANGUAGE LIST ---
+    document.getElementById('languageSelect').innerHTML = SUPPORTED_LANGUAGES.map(
+        lang => `<option value="${lang.code}">${lang.name}</option>`
+    ).join('');
+
     log('Resources synchronized successfully.');
 
     // Set up UI bindings for sliders and toggles
@@ -97,7 +104,8 @@ async function bootEngine() {
             voice: document.getElementById('voiceSelect').value,
             response_format: document.getElementById('formatSelect').value,
             speed: parseFloat(document.getElementById('speedNum').value),
-            stream: document.getElementById('streamToggle').checked
+            stream: document.getElementById('streamToggle').checked,
+            language: document.getElementById('languageSelect').value
         };
 
         if (document.getElementById('useEffect').checked) {

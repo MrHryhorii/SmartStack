@@ -155,6 +155,13 @@ public class TsubakiSpeechRequest
     }
 
     /// <summary>
+    /// Forces the engine to use a specific language code, bypassing automatic language detection.
+    /// If the requested base language matches the loaded model's base language, the full model dialect is used.
+    /// </summary>
+    [JsonPropertyName("language")]
+    public string? Language { get; set; }
+
+    /// <summary>
     /// Intensity of voice cloning. 
     /// 1.0 = Exact copy of the target voice (Standard).
     /// </summary>

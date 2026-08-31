@@ -2,7 +2,6 @@ using System.Text;
 using System.Text.RegularExpressions;
 using Lingua;
 using ONNX_Runner.Models;
-using Microsoft.Extensions.Logging;
 
 namespace ONNX_Runner.Services;
 
@@ -44,6 +43,12 @@ public partial class MixedLanguagePhonemizer
     private readonly LanguageDetector _detector;
     private readonly EspeakLinguaMapper _mapper;
     private readonly string _modelEspeakCode;
+    
+    /// <summary>
+    /// Pre-split segments of the loaded model's eSpeak code (cached at startup to prevent allocations in hot loops).
+    /// </summary>
+    private readonly string[] _modelEspeakParts;
+    
     private readonly Language? _modelLinguaLang;
 
     // Cache for dynamic bonus multiplier settings
@@ -67,6 +72,9 @@ public partial class MixedLanguagePhonemizer
         // Store the full eSpeak dialect code (e.g., "en-gb-x-rp", "pt-br")
         _modelEspeakCode = modelEspeakCode.Trim().ToLower();
 
+        // Pre-cache model code segments once to optimize performance in hot execution paths
+        _modelEspeakParts = _modelEspeakCode.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries);
+
         // SPLIT: Extract the base language family (e.g., "en", "pt") to use with the Lingua library
         string baseFamily = _modelEspeakCode.Split('-', '_')[0];
 
@@ -74,7 +82,7 @@ public partial class MixedLanguagePhonemizer
         _modelLinguaLang = _mapper.GetLinguaLanguage(baseFamily);
 
         // Load bonus configuration (or fallback to safe defaults)
-        _maxBonus = settings?.MaxBonusMultiplier ?? 0.50;
+        _maxBonus = settings?.MaxBonusMultiplier ?? 0.60;
         _minLimit = settings?.BonusMinLetterCount ?? 8;
         _maxLimit = settings?.BonusMaxLetterCount ?? 32;
         _overrideThreshold = settings?.MixedLanguageOverrideThreshold ?? 0.85;
@@ -149,60 +157,130 @@ public partial class MixedLanguagePhonemizer
     }
 
     /// <summary>
+    /// Resolves a client-supplied forced language code against a model's eSpeak dialect code,
+    /// applying "Smart Inheritance": a generic/broader code (e.g. "en") that is a prefix of the
+    /// model's dialect (e.g. "en-us") inherits the model's full specific dialect string.
+    /// </summary>
+    internal static string ResolveForcedLanguageCode(string forcedLanguage, string modelEspeakCode, string[] modelEspeakParts)
+    {
+        string cleanForced = forcedLanguage.Trim().ToLowerInvariant();
+        string[] forcedParts = cleanForced.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries);
+        
+        bool isGenericPrefix = forcedParts.Length <= modelEspeakParts.Length;
+        if (isGenericPrefix)
+        {
+            for (int i = 0; i < forcedParts.Length; i++)
+            {
+                if (forcedParts[i] != modelEspeakParts[i])
+                {
+                    isGenericPrefix = false;
+                    break;
+                }
+            }
+        }
+
+        // If the request is a broader version of the model's language, inherit model specifics.
+        // Otherwise, respect the client's explicit dialect choice.
+        return isGenericPrefix ? modelEspeakCode : cleanForced;
+    }
+
+    /// <summary>
     /// Chunks the text into segments based on punctuation and script changes, 
     /// returning a sequence of tokens ready for language prediction.
+    /// 
+    /// If a forced language is provided:
+    /// - Bypasses the heavy Lingua statistical detector entirely to save CPU resources.
+    /// - Applies "Smart Inheritance": if the requested language is a broader prefix of the loaded 
+    ///   model's dialect (e.g. requesting "en" on an "en-us" model), it inherits the model's specific 
+    ///   details. If a completely different dialect or language is requested, it trusts the API request directly.
+    /// - Preserves full Regex tokenization so punctuation boundaries and spacing remain intact for downstream phonemization.
     /// </summary>
-    public List<TextChunk> ProcessTextToLanguageTokens(string text)
+    public List<TextChunk> ProcessTextToLanguageTokens(string text, string? forcedLanguage = null)
     {
         var result = new List<TextChunk>();
         if (string.IsNullOrWhiteSpace(text)) return result;
 
-        // One detector call for the whole sentence, reused below to override risky short
-        // sub-phrases instead of running a separate call per word.
+        // FORCED LANGUAGE RESOLUTION WITH SMART INHERITANCE
+        string? resolvedForcedCode = null;
+        if (!string.IsNullOrWhiteSpace(forcedLanguage))
+        {
+            resolvedForcedCode = ResolveForcedLanguageCode(forcedLanguage, _modelEspeakCode, _modelEspeakParts);
+        }
+
+        // SENTENCE-LEVEL CONTEXT DETECTOR
+        // We only run the heavy Lingua statistical analysis if we ARE NOT forcing a language.
         double? sentenceConfidence = null;
-        if (_modelLinguaLang.HasValue && text.Count(char.IsLetter) >= _minSentenceLength)
+        if (resolvedForcedCode == null && _modelLinguaLang.HasValue && text.Count(char.IsLetter) >= _minSentenceLength)
         {
             _detector.ComputeLanguageConfidenceValues(text).TryGetValue(_modelLinguaLang.Value, out double conf);
             sentenceConfidence = conf;
         }
 
+        // TEXT TOKENIZATION
+        // The Regex splits the text into words and punctuation. 
+        // We MUST do this even if a language is forced, so downstream processes (UnifiedPhonemizer) 
+        // can detect pauses, acronyms, and titles properly.
         var matches = TokenizerRegex().Matches(text);
         var currentSubPhrase = new StringBuilder();
         ScriptType currentScript = ScriptType.None;
         bool hasWords = false;
 
+        // Helper function to process accumulated words before moving to punctuation or script changes
         void FlushPhrase()
         {
             if (currentSubPhrase.Length > 0)
             {
                 if (hasWords)
                 {
-                    ProcessSubPhrase(currentSubPhrase.ToString(), currentScript, result, sentenceConfidence);
+                    // LANGUAGE ASSIGNMENT
+                    if (resolvedForcedCode != null)
+                    {
+                        // FAST PATH: Language is forced. Bypass Lingua and assign the resolved code directly.
+                        result.Add(new TextChunk 
+                        { 
+                            Text = currentSubPhrase.ToString(), 
+                            DetectedLanguage = resolvedForcedCode, 
+                            Probability = 1.0, 
+                            IsReliable = true, 
+                            IsPunctuationOrSpace = false, 
+                            Script = currentScript.ToString(),
+                            RawTop5 = ["Forced by API"] 
+                        });
+                    }
+                    else
+                    {
+                        // SLOW PATH: Use ML detector and fallback algorithms to guess the language.
+                        ProcessSubPhrase(currentSubPhrase.ToString(), currentScript, result, sentenceConfidence);
+                    }
                 }
                 else
                 {
-                    // Punctuation and spaces are universal, they don't have a specific language
+                    // Punctuation and spaces are universal, they don't have a specific language.
                     result.Add(new TextChunk { Text = currentSubPhrase.ToString(), DetectedLanguage = "universal", Probability = 1.0, IsReliable = true, IsPunctuationOrSpace = true, Script = "None" });
                 }
+                
+                // Reset for the next chunk
                 currentSubPhrase.Clear();
                 currentScript = ScriptType.None;
                 hasWords = false;
             }
         }
 
+        // Iterate through all found tokens (Words, Punctuation, Garbage)
         foreach (Match match in matches)
         {
             string val = match.Value;
 
-            if (match.Groups[1].Success)
+            if (match.Groups[1].Success) // It's Punctuation/Space
             {
-                FlushPhrase();
+                FlushPhrase(); // Flush any accumulated words first
                 result.Add(new TextChunk { Text = val, DetectedLanguage = "universal", Probability = 1.0, IsReliable = true, IsPunctuationOrSpace = true, Script = "None" });
             }
-            else if (match.Groups[2].Success)
+            else if (match.Groups[2].Success) // It's a Word
             {
                 ScriptType wordScript = DetectScript(val);
-                // Hard boundary: flush if the writing system changes
+                
+                // Hard boundary: flush if the writing system changes (e.g., from Latin to Cyrillic)
                 if (currentScript != ScriptType.None && currentScript != wordScript)
                 {
                     FlushPhrase();
@@ -212,12 +290,13 @@ public partial class MixedLanguagePhonemizer
                 hasWords = true;
                 currentSubPhrase.Append(val);
             }
-            else if (match.Groups[3].Success)
+            else if (match.Groups[3].Success) // Unrecognized symbols
             {
                 currentSubPhrase.Append(val);
             }
         }
 
+        // Flush anything left at the end of the text
         FlushPhrase();
         return result;
     }

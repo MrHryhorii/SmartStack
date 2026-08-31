@@ -23,9 +23,9 @@ public partial class UnifiedPhonemizer(
     private readonly MixedLanguagePhonemizer? _mixedPhonemizer = mixedPhonemizer;
     private readonly PhonemeFallbackMapper? _fallbackMapper = fallbackMapper;
 
-    // Matches standard IPA blocks delimited by /.../ or [...]. 
-    // Acts as a candidate filter before checking for actual IPA symbols.
-    [GeneratedRegex(@"/(?!\d+/)([^/]+?)/|\[(?!\d+\])([^\]]+?)\]", RegexOptions.Compiled)]
+    // Matches standard IPA blocks delimited by /.../, [...], or the eSpeak-style
+    // double-bracket [[...]] convention for raw phoneme input.
+    [GeneratedRegex(@"/(?!\d+/)([^/]+?)/|\[\[([^\]]+?)\]\]|\[(?!\d+\])([^\]]+?)\]", RegexOptions.Compiled)]
     private static partial Regex RawPhonemeBlockRegex();
 
     // Explicit allowlist of IPA symbols to distinguish actual phonetic transcription 
@@ -33,6 +33,18 @@ public partial class UnifiedPhonemizer(
     private static readonly SearchValues<char> IpaSearchValues = SearchValues.Create("ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʐʑʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʲʷˠʲˤ");
 
     private static bool ContainsIpaSymbol(ReadOnlySpan<char> text) => text.IndexOfAny(IpaSearchValues) >= 0;
+
+    // Mirrors MixedLanguagePhonemizer's own forced-language resolution (smart inheritance +
+    // trim/lowercase normalization) for the no-detector fallback, so the "language" parameter
+    // behaves the same regardless of whether the statistical detector is registered.
+    private string ResolveFallbackLanguage(string? forcedLanguage)
+    {
+        string modelCode = (_piperConfig.Espeak.Voice ?? "en").Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(forcedLanguage)) return modelCode;
+        
+        string[] modelParts = modelCode.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries);
+        return MixedLanguagePhonemizer.ResolveForcedLanguageCode(forcedLanguage, modelCode, modelParts);
+    }
 
     // Extracts raw IPA blocks to prevent the language detector and eSpeak 
     // from treating hand-written phonemes as ordinary orthographic text.
@@ -44,9 +56,17 @@ public partial class UnifiedPhonemizer(
 
         foreach (ValueMatch match in RawPhonemeBlockRegex().EnumerateMatches(textSpan))
         {
-            // Regex matches delimiters at the boundaries. We slice them out manually 
-            // since EnumerateMatches avoids allocating Group objects on the heap.
-            ReadOnlySpan<char> phonemeContent = textSpan.Slice(match.Index + 1, match.Length - 2);
+            // Determine delimiter width: "/" and "[" are single-char delimiters,
+            // while "[[...]]" (eSpeak raw-phoneme convention) uses two chars on each side.
+            int delimLen = 1;
+            if (match.Length >= 4 &&
+                textSpan[match.Index] == '[' && textSpan[match.Index + 1] == '[' &&
+                textSpan[match.Index + match.Length - 1] == ']' && textSpan[match.Index + match.Length - 2] == ']')
+            {
+                delimLen = 2;
+            }
+
+            ReadOnlySpan<char> phonemeContent = textSpan.Slice(match.Index + delimLen, match.Length - 2 * delimLen);
 
             if (!ContainsIpaSymbol(phonemeContent)) continue;
 
@@ -66,7 +86,7 @@ public partial class UnifiedPhonemizer(
     /// <summary>
     /// Converts a raw input string into a continuous stream of validated IPA phonemes.
     /// </summary>
-    public string GetPhonemes(string text)
+    public string GetPhonemes(string text, string? forcedLanguage = null)
     {
         if (string.IsNullOrWhiteSpace(text)) return string.Empty;
 
@@ -82,8 +102,12 @@ public partial class UnifiedPhonemizer(
             }
             else if (!string.IsNullOrEmpty(segmentText))
             {
-                tokens.AddRange(_mixedPhonemizer?.ProcessTextToLanguageTokens(segmentText)
-                    ?? [new TextChunk { Text = segmentText, DetectedLanguage = _piperConfig.Espeak.Voice ?? "en", IsPunctuationOrSpace = false }]);
+                // Pass forcedLanguage to the detector.
+                // If the detector is disabled (null), resolve forcedLanguage ourselves using the same
+                // smart-inheritance rule the detector applies, so a forced language behaves identically
+                // whether or not MixedLanguagePhonemizer is registered.
+                tokens.AddRange(_mixedPhonemizer?.ProcessTextToLanguageTokens(segmentText, forcedLanguage)
+                    ?? [new TextChunk { Text = segmentText, DetectedLanguage = ResolveFallbackLanguage(forcedLanguage), IsPunctuationOrSpace = false }]);
             }
         }
 

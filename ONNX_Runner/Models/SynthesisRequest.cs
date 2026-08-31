@@ -80,6 +80,15 @@ public class SynthesisRequest
     public float? Volume { get; set; }
 
     /// <summary>
+    /// Forces the engine to apply specific phonetic rules, bypassing the automatic Lingua language detector.
+    /// Accepts standard base language codes (e.g., "en", "fr") or extended eSpeak dialect tags (e.g., "en-us", "fr-ca").
+    /// If the base family of the provided code matches the base family of the currently loaded Piper model 
+    /// (e.g., passing "en" when the model is "en-gb-x-rp"), the engine automatically upgrades the request to use 
+    /// the model's full native dialect string to prevent phonetic dictionary conflicts.
+    /// </summary>
+    public string? Language { get; set; }
+
+    /// <summary>
     /// Intensity of voice cloning. 1.0 = Exact copy of the target voice (Standard).
     /// If provided, this value overrides the server's default CloneIntensity from the configuration 
     /// for this specific request.

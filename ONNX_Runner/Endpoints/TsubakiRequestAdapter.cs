@@ -16,6 +16,14 @@ public static class TsubakiRequestAdapter
             return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, pcm.");
         }
 
+        string? cleanLanguage = dto.Language?.Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(cleanLanguage) || cleanLanguage == "auto")
+        {
+            // If the client passed "auto", " AUTO " or just spaces - we reset to null.
+            // Then the backend will understand that it is necessary to enable Lingua detection or the default model.
+            cleanLanguage = null;
+        }
+
         return (new SynthesisRequest
         {
             Input = dto.Input,
@@ -31,6 +39,7 @@ public static class TsubakiRequestAdapter
             EnvironmentIntensity = dto.EnvironmentIntensity,
             Pitch = dto.Pitch,
             Volume = dto.Volume,
+            Language = cleanLanguage,
             CloneIntensity = dto.CloneIntensity,
             ToneTemperature = dto.ToneTemperature
         }, null);
