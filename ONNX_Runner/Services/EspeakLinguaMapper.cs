@@ -22,8 +22,8 @@ public class EspeakLinguaMapper
         { "sq", Language.Albanian },
         // Arabic
         { "ar", Language.Arabic },
-        // Armenian (including Western Armenian fallback)
-        { "hy", Language.Armenian }, { "hy-arevmda", Language.Armenian }, { "hyw", Language.Armenian },
+        // Armenian
+        { "hy", Language.Armenian },
         // Azerbaijani
         { "az", Language.Azerbaijani },
         // Basque
@@ -38,36 +38,33 @@ public class EspeakLinguaMapper
         { "bg", Language.Bulgarian },
         // Catalan
         { "ca", Language.Catalan },
-        // Chinese (including Mandarin, Cantonese, Hakka and regional codes)
-        { "zh", Language.Chinese }, { "zh-cn", Language.Chinese }, { "zh-tw", Language.Chinese },
-        { "zh-hk", Language.Chinese }, { "cmn", Language.Chinese }, { "yue", Language.Chinese }, { "hak", Language.Chinese },
+        // Chinese (cmn = Mandarin, yue = Cantonese, hak = Hakka are macro-language base codes without hyphens)
+        { "zh", Language.Chinese }, { "cmn", Language.Chinese }, { "yue", Language.Chinese }, { "hak", Language.Chinese },
         // Croatian
         { "hr", Language.Croatian },
         // Czech
         { "cs", Language.Czech },
         // Danish
         { "da", Language.Danish },
-        // Dutch (including Flemish/Belgium variant)
-        { "nl", Language.Dutch }, { "nl-be", Language.Dutch },
-        // English (covering major global accents)
-        { "en", Language.English }, { "en-us", Language.English }, { "en-gb", Language.English },
-        { "en-au", Language.English }, { "en-ca", Language.English }, { "en-nz", Language.English },
-        { "en-ie", Language.English }, { "en-za", Language.English }, { "en-in", Language.English },
+        // Dutch
+        { "nl", Language.Dutch },
+        // English
+        { "en", Language.English },
         // Esperanto
         { "eo", Language.Esperanto },
         // Estonian
         { "et", Language.Estonian },
         // Finnish
         { "fi", Language.Finnish },
-        // French (including Canadian, Belgian, Swiss variants)
-        { "fr", Language.French }, { "fr-ca", Language.French }, { "fr-be", Language.French }, { "fr-ch", Language.French },
+        // French
+        { "fr", Language.French },
         // Ganda (Luganda)
         { "lg", Language.Ganda },
         // Georgian
         { "ka", Language.Georgian },
-        // German (including Austrian and Swiss variants)
-        { "de", Language.German }, { "de-at", Language.German }, { "de-ch", Language.German },
-        // Greek (including Ancient Greek fallback)
+        // German
+        { "de", Language.German },
+        // Greek (grc is Ancient Greek base code)
         { "el", Language.Greek }, { "grc", Language.Greek },
         // Gujarati
         { "gu", Language.Gujarati },
@@ -83,8 +80,8 @@ public class EspeakLinguaMapper
         { "id", Language.Indonesian },
         // Irish
         { "ga", Language.Irish },
-        // Italian (including Swiss Italian)
-        { "it", Language.Italian }, { "it-ch", Language.Italian },
+        // Italian
+        { "it", Language.Italian },
         // Japanese
         { "ja", Language.Japanese },
         // Kazakh
@@ -107,22 +104,22 @@ public class EspeakLinguaMapper
         { "mr", Language.Marathi },
         // Mongolian
         { "mn", Language.Mongolian },
-        // Norwegian (Nynorsk & Bokmal + generic "no" fallback to Bokmal)
+        // Norwegian (nn = Nynorsk, nb = Bokmal, no = Generic/Bokmal - all are distinct base codes)
         { "nn", Language.Nynorsk }, { "nb", Language.Bokmal }, { "no", Language.Bokmal },
         // Persian (Farsi)
         { "fa", Language.Persian },
         // Polish
         { "pl", Language.Polish },
-        // Portuguese (including Brazilian variant)
-        { "pt", Language.Portuguese }, { "pt-br", Language.Portuguese }, { "pt-pt", Language.Portuguese },
+        // Portuguese
+        { "pt", Language.Portuguese },
         // Punjabi
         { "pa", Language.Punjabi },
         // Romanian
         { "ro", Language.Romanian },
         // Russian
         { "ru", Language.Russian },
-        // Serbian (covering both scripts if defined by eSpeak)
-        { "sr", Language.Serbian }, { "sr-cyrl", Language.Serbian }, { "sr-latn", Language.Serbian },
+        // Serbian
+        { "sr", Language.Serbian },
         // Shona
         { "sn", Language.Shona },
         // Slovak
@@ -133,8 +130,8 @@ public class EspeakLinguaMapper
         { "so", Language.Somali },
         // Sotho (Sesotho)
         { "st", Language.Sotho },
-        // Spanish (covering Latin America, Mexico, Spain variants)
-        { "es", Language.Spanish }, { "es-419", Language.Spanish }, { "es-mx", Language.Spanish }, { "es-es", Language.Spanish }, { "es-ar", Language.Spanish },
+        // Spanish
+        { "es", Language.Spanish },
         // Swahili
         { "sw", Language.Swahili },
         // Swedish
@@ -171,7 +168,7 @@ public class EspeakLinguaMapper
 
     /// <summary>
     /// Builds a unique collection of Lingua Enum languages based on the provided eSpeak codes.
-    /// Also caches the mapping to allow reverse lookups later.
+    /// Also caches the mapping to allow reverse lookups later (e.g., mapping Lingua.English back to "en-us").
     /// </summary>
     public Language[] BuildLinguaList(IEnumerable<string> espeakCodes)
     {
@@ -181,6 +178,7 @@ public class EspeakLinguaMapper
         {
             string cleanCode = code.Trim().ToLower();
 
+            // Attempt to find an exact match for base codes like "en", "cmn", or "nb"
             if (EspeakToLinguaBase.TryGetValue(cleanCode, out var linguaLang))
             {
                 linguaLangs.Add(linguaLang);
@@ -190,7 +188,21 @@ public class EspeakLinguaMapper
             }
             else
             {
-                Console.WriteLine($"[WARNING] EspeakLinguaMapper encountered an unknown code: {cleanCode}");
+                // If no exact match is found, strip the dialect part (everything after the hyphen or underscore)
+                string baseFamily = cleanCode.Split('-', '_')[0];
+                
+                if (EspeakToLinguaBase.TryGetValue(baseFamily, out var fallbackLang))
+                {
+                    linguaLangs.Add(fallbackLang);
+                    
+                    // CRITICAL: Cache the original cleanCode (e.g., "en-us"), not the baseFamily.
+                    // Lingua will search using the base language enum, but espeak-ng will receive the exact dialect string.
+                    _linguaToEspeak.TryAdd(fallbackLang, cleanCode);
+                }
+                else
+                {
+                    Console.WriteLine($"[WARNING] EspeakLinguaMapper encountered an unknown code: {cleanCode}");
+                }
             }
         }
         return [.. linguaLangs];

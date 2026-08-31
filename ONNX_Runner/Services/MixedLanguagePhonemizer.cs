@@ -80,23 +80,36 @@ public partial class MixedLanguagePhonemizer
         _overrideThreshold = settings?.MixedLanguageOverrideThreshold ?? 0.85;
         _minSentenceLength = settings?.MinSentenceLengthForOverride ?? 20;
 
-        var codesToSupport = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Load user-defined supported languages to optimize memory 
-        // (Lingua takes a lot of RAM if loading all 75 languages)
+        var finalCodesToSupport = new List<string>();
+        var seenBaseFamilies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Guarantee that the base language of the loaded TTS model is ALWAYS supported.
+        // It occupies the slot for its base family first, blocking any user-defined dialect duplicates.
+        finalCodesToSupport.Add(_modelEspeakCode);
+        seenBaseFamilies.Add(baseFamily);
+
+        // Load user-defined supported languages to optimize memory.
+        // Lingua takes a lot of RAM if loading all 75 languages.
         if (settings?.SupportedLanguages != null)
         {
             foreach (var code in settings.SupportedLanguages)
             {
-                if (!string.IsNullOrWhiteSpace(code))
-                    codesToSupport.Add(code.Trim());
+                if (string.IsNullOrWhiteSpace(code)) continue;
+
+                string cleanCode = code.Trim();
+                string currentBaseFamily = cleanCode.Split('-', '_')[0];
+
+                // Add the dialect only if its base language hasn't been claimed yet
+                if (seenBaseFamilies.Add(currentBaseFamily))
+                {
+                    finalCodesToSupport.Add(cleanCode);
+                }
             }
         }
 
-        // Guarantee that the base language of the loaded TTS model is ALWAYS supported
-        codesToSupport.Add(baseFamily);
+        var linguaLangs = _mapper.BuildLinguaList(finalCodesToSupport);
 
-        var linguaLangs = _mapper.BuildLinguaList(codesToSupport);
 
         // FALLBACK: If the mapper failed to recognize any languages, default to the model's base or English
         if (linguaLangs.Length == 0)
