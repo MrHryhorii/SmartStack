@@ -324,9 +324,9 @@ curl http://localhost:5045/tsbk/audio/speech \
 | --------------------- | ----- | ----------------------------------------------------------------------------------------------------- |
 | `clone_intensity`     | float | Latent space blend ratio between Piper base fingerprint and target voice. Per-request override of `ClonerSettings.CloneIntensity`. |
 | `tone_temperature`    | float | Variance during timbre transfer (tau). Per-request override of `ClonerSettings.ToneTemperature`.      |
-| `low_pass_q_factor`   | float | Controls the shape (`0.1` - `1.0`) of the server-side low-pass filter for cloned voices. It fine-tunes how frequencies around the cutoff are attenuated and slightly changes the character of high-frequency artifact reduction. The effect is subtle and generally barely perceptible, so this is mainly an advanced fine-tuning control. |
+| `low_pass_q_factor`   | float | Resonance curve (`0.1` - `1.0`) for the server-side low-pass filter on cloned voices. Mathematically fine-tunes high-frequency artifact reduction, though the acoustic difference is practically imperceptible to the human ear. |
 
-> **Note:** For recommended values and their effect on high-frequency artifact reduction, see *Fine-Tuning Cloning Behavior* in the Voice Cloning section below.
+> **Note:** For recommended values and their effect on high-frequency artifact reduction, see *LowPassQFactor* in the Server-Side DSP Defaults section below.
 
 > **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or tweaking `tone_temperature` to stabilize voice artifacts on the fly.
 
@@ -372,6 +372,8 @@ Controls the resonance and roll-off curve of the low-pass filter used for cloned
 
 - **`0.577` (Bessel curve, server default):** Uses a smoother, more gradual roll-off around the cutoff, with no resonant peak. This produces gentler attenuation of high-frequency artifacts and is the default choice for cloned voices.
 - **`0.707` (Butterworth curve):** Keeps the response flatter below the cutoff and transitions more sharply into attenuation at the cutoff. This preserves slightly more energy close to the cutoff, but may also leave more of the high-frequency character of neural artifacts exposed.
+
+> In practice, both curves target the same few dB of artifact energy near the cutoff — the difference is measurable, not something most listeners will notice by ear. Treat this as a fine-tuning knob for controlled A/B comparisons, not a dramatic quality switch.
 
 ### DefaultPitch
 
@@ -458,7 +460,7 @@ Place all three files into the `Cloner/` folder:
 
 ## Fine-Tuning Cloning Behavior
 
-Both settings below can be tuned server-wide via `ClonerSettings` in `appsettings.json`, or overridden per request via `clone_intensity`/`tone_temperature` on the Tsubaki Endpoint (see Cloning Parameters above) — a per-request value takes priority for that request only, otherwise the server default applies.
+Both settings below can be tuned server-wide via `ClonerSettings` in `appsettings.json`, or overridden per request via `clone_intensity`/`tone_temperature` on the Tsubaki Endpoint — a per-request value takes priority for that request only, otherwise the server default applies.
 
 ```json
 "ClonerSettings": {
