@@ -261,7 +261,8 @@ curl http://localhost:5045/tsbk/audio/speech \
     "noise_w": 0.8,
 
     "clone_intensity": 0.85,
-    "tone_temperature": 0.7
+    "tone_temperature": 0.7,
+    "low_pass_q_factor": 0.707
   }'
 ```
 
@@ -319,12 +320,13 @@ curl http://localhost:5045/tsbk/audio/speech \
 
 ## Cloning Parameters
 
-| Parameter          | Type  | Description                                                                                           |
-| ------------------ | ----- | ----------------------------------------------------------------------------------------------------- |
-| `clone_intensity`  | float | Latent space blend ratio between Piper base fingerprint and target voice. Per-request override of `ClonerSettings.CloneIntensity`. |
-| `tone_temperature` | float | Variance during timbre transfer (tau). Per-request override of `ClonerSettings.ToneTemperature`.      |
+| Parameter             | Type  | Description                                                                                           |
+| --------------------- | ----- | ----------------------------------------------------------------------------------------------------- |
+| `clone_intensity`     | float | Latent space blend ratio between Piper base fingerprint and target voice. Per-request override of `ClonerSettings.CloneIntensity`. |
+| `tone_temperature`    | float | Variance during timbre transfer (tau). Per-request override of `ClonerSettings.ToneTemperature`.      |
+| `low_pass_q_factor`   | float | Controls the shape (`0.1` - `1.0`) of the server-side low-pass filter for cloned voices. It fine-tunes how frequencies around the cutoff are attenuated and slightly changes the character of high-frequency artifact reduction. The effect is subtle and generally barely perceptible, so this is mainly an advanced fine-tuning control. |
 
-See Fine-Tuning Cloning Behavior in the Voice Cloning section below for recommended ranges and what each one actually sounds like.
+> **Note:** For recommended values and their effect on high-frequency artifact reduction, see *Fine-Tuning Cloning Behavior* in the Voice Cloning section below.
 
 > **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or tweaking `tone_temperature` to stabilize voice artifacts on the fly.
 
@@ -368,8 +370,8 @@ Set `"DefaultEffect": "None"` to bypass effects entirely.
 
 Controls the resonance and roll-off curve of the low-pass filter used for cloned voices. It is primarily used to clean up high-frequency artifacts (metallic "sand") generated during OpenVoice cloning.
 
-- **`0.577` (Bessel curve):** Provides a smooth, analog-like roll-off without any resonant peaks. Highly recommended for voice cloning, as it naturally masks neural network artifacts and makes the voice sound warmer and less fatiguing.
-- **`0.707` (Butterworth curve):** A classic digital filter curve. It remains perfectly flat until the cutoff point, making the voice sound brighter and preserving the crispness of consonants ("s", "t"). However, it may let more digital artifacts through and can sound slightly harsher on cloned voices.
+- **`0.577` (Bessel curve, server default):** Uses a smoother, more gradual roll-off around the cutoff, with no resonant peak. This produces gentler attenuation of high-frequency artifacts and is the default choice for cloned voices.
+- **`0.707` (Butterworth curve):** Keeps the response flatter below the cutoff and transitions more sharply into attenuation at the cutoff. This preserves slightly more energy close to the cutoff, but may also leave more of the high-frequency character of neural artifacts exposed.
 
 ### DefaultPitch
 

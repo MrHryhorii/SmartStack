@@ -221,7 +221,7 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                         && useOpenVoice 
                         && openVoice != null 
                         && audioProc != null
-                        && requestedIntensity > 0.001f;
+                        && Math.Abs(requestedIntensity) > 0.001f;
 
         int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
         int finalSampleRate = outSampleRate;
@@ -352,10 +352,9 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                 // Clone Intensity Priority: explicit request value → server default from config,
                 // same ?? pattern already used for Pitch/Volume above.
                 float intensity = request.CloneIntensity ?? ctx.ClonerConfig.CloneIntensity;
-                for (int j = 0; j < blendedTarget.Length; j++)
-                {
-                    blendedTarget[j] = sourceFingerprint[j] + (targetFingerprint[j] - sourceFingerprint[j]) * intensity;
-                }
+
+                // We use SLERP for natural mixing of latent vectors
+                blendedTarget = Slerp(sourceFingerprint, targetFingerprint, intensity);
             }
 
             // Internal channel for passing raw audio chunks between the Generator and the DSP Processor
@@ -628,5 +627,61 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         }
 
         return finalAudioBytes;
+    }
+
+    // Auxiliary interpolation method
+    private static float[] Slerp(float[] source, float[] target, float t)
+    {
+        float[] result = new float[source.Length];
+
+        // Calculate the Dot Product (cosine of the angle between vectors)
+        // and the squared magnitudes of both vectors.
+        float dot = 0f;
+        float sourceMagSq = 0f;
+        float targetMagSq = 0f;
+        
+        for (int i = 0; i < source.Length; i++)
+        {
+            dot += source[i] * target[i];
+            sourceMagSq += source[i] * source[i];
+            targetMagSq += target[i] * target[i];
+        }
+
+        // Normalize the dot product to the range [-1, 1]
+        float magnitude = MathF.Sqrt(sourceMagSq * targetMagSq);
+        if (magnitude > 0.0001f)
+        {
+            dot /= magnitude;
+        }
+        
+        dot = Math.Clamp(dot, -1.0f, 1.0f);
+
+        // Fallback to LERP if vectors are almost parallel (DotThreshold)
+        // or if t is outside [0, 1] (Extrapolation / "Overdrive" mode).
+        // SLERP is mathematically unstable/cyclic outside the 0..1 range.
+        const float DotThreshold = 0.9995f;
+        if (Math.Abs(dot) > DotThreshold || t < 0.0f || t > 1.0f)
+        {
+            for (int i = 0; i < result.Length; i++)
+            {
+                result[i] = source[i] + (target[i] - source[i]) * t;
+            }
+            return result;
+        }
+
+        // Calculate the angles for Spherical Linear Interpolation
+        float theta = MathF.Acos(dot);          // The angle between the vectors
+        float sinTheta = MathF.Sin(theta);      // The sine of the angle
+
+        float weightSource = MathF.Sin((1.0f - t) * theta) / sinTheta;
+        float weightTarget = MathF.Sin(t * theta) / sinTheta;
+
+        // Apply the computed weights to construct the final interpolated vector
+        for (int i = 0; i < result.Length; i++)
+        {
+            result[i] = (source[i] * weightSource) + (target[i] * weightTarget);
+        }
+
+        return result;
     }
 }
