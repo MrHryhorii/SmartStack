@@ -101,4 +101,12 @@ public class SynthesisRequest
     /// for this specific request.
     /// </summary>
     public float? ToneTemperature { get; set; }
+
+    /// <summary>
+    /// Anti-aliasing low-pass filter to clean up cloning artifacts
+    /// Only applies if Voice Cloning is active and the low-pass filter is enabled on the server.
+    /// 0.577 = Bessel curve (smooth analog warmth, recommended).
+    /// 0.707 = Butterworth curve (brighter, sharper cutoff).
+    /// </summary>
+    public float? LowPassQFactor { get; set; }
 }

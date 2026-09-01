@@ -55,6 +55,10 @@ async function bootEngine() {
     syncInputs('nwSlider', 'nwNum');
     syncInputs('pitchSlider', 'pitchNum');
     syncInputs('volumeSlider', 'volumeNum');
+    syncInputs('cloneIntSlider', 'cloneIntNum');
+    syncInputs('toneTempSlider', 'toneTempNum');
+    syncInputs('lpqfSlider', 'lpqfNum');
+
     // Bind toggles to enable/disable related controls
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum']); 
@@ -62,6 +66,9 @@ async function bootEngine() {
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
     bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
     bindToggle('useVolume', ['volumeSlider', 'volumeNum']);
+    bindToggle('useCloneInt', ['cloneIntSlider', 'cloneIntNum']);
+    bindToggle('useToneTemp', ['toneTempSlider', 'toneTempNum']);
+    bindToggle('useLpqf', ['lpqfSlider', 'lpqfNum']);
 
     const btn = document.getElementById('generateBtn');
     const downloadBtn = document.getElementById('downloadBtn');
@@ -129,6 +136,17 @@ async function bootEngine() {
         // Include volume adjustment if enabled
         if (document.getElementById('useVolume').checked) {
             payload.volume = parseFloat(document.getElementById('volumeNum').value);
+        }
+
+        // Include voice cloning parameters if enabled
+        if (document.getElementById('useCloneInt').checked) {
+            payload.clone_intensity = parseFloat(document.getElementById('cloneIntNum').value);
+        }
+        if (document.getElementById('useToneTemp').checked) {
+            payload.tone_temperature = parseFloat(document.getElementById('toneTempNum').value);
+        }
+        if (document.getElementById('useLpqf').checked) {
+            payload.low_pass_q_factor = parseFloat(document.getElementById('lpqfNum').value);
         }
 
         log(`Transmitting payload to backend...`);

@@ -186,4 +186,20 @@ public class TsubakiSpeechRequest
         // Clamp the value to a reasonable range (0.1 to 2.0) to prevent extreme settings that could break the model.
         set => _toneTemperature = value.HasValue ? Math.Clamp(value.Value, 0.1f, 2.0f) : null;
     }
+
+    /// <summary>
+    /// Per-request override of the Low-Pass Filter Q-Factor (resonance/roll-off curve).
+    /// Only applies if Voice Cloning is active and the low-pass filter is enabled on the server.
+    /// 0.577 = Bessel curve (smooth analog warmth, recommended).
+    /// 0.707 = Butterworth curve (brighter, sharper cutoff).
+    /// </summary>
+    private float? _lowPassQFactor;
+    [JsonPropertyName("low_pass_q_factor")]
+    public float? LowPassQFactor
+    {
+        get => _lowPassQFactor;
+        // Clamp to a safe and physically meaningful range for this specific anti-aliasing application.
+        // Values above 1.0 start introducing resonant peaks (ringing), which defeats the purpose of smoothing.
+        set => _lowPassQFactor = value.HasValue ? Math.Clamp(value.Value, 0.1f, 1.0f) : null;
+    }
 }

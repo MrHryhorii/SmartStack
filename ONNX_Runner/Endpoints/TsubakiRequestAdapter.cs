@@ -41,7 +41,8 @@ public static class TsubakiRequestAdapter
             Volume = dto.Volume,
             Language = cleanLanguage,
             CloneIntensity = dto.CloneIntensity,
-            ToneTemperature = dto.ToneTemperature
+            ToneTemperature = dto.ToneTemperature,
+            LowPassQFactor = dto.LowPassQFactor
         }, null);
     }
 }

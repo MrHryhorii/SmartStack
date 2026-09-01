@@ -212,9 +212,16 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         var openVoice = services.GetService<OpenVoiceRunner>();
         var audioProc = services.GetService<AudioProcessor>();
 
+        // We get the intensity in advance
+        float requestedIntensity = request.CloneIntensity ?? clonerConfig.CloneIntensity;
+
         // Global toggle for Voice Cloning. Ensures all prerequisites (config enabled, 
         // target voice requested, and models loaded) are met before activating the heavy cloner.
-        bool canClone = clonerConfig.EnableCloning && useOpenVoice && openVoice != null && audioProc != null;
+        bool canClone = clonerConfig.EnableCloning 
+                        && useOpenVoice 
+                        && openVoice != null 
+                        && audioProc != null
+                        && requestedIntensity > 0.001f;
 
         int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
         int finalSampleRate = outSampleRate;
@@ -319,10 +326,13 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
             // so that the BiQuad filter math never approaches a critical limit.
             float safeCutoff = Math.Min(ctx.DspConfig.LowPassCutoffFrequency, nyquistFrequency - 10f);
 
+            // Q-Factor Priority: explicit request value → server default from config
+            float targetQFactor = request.LowPassQFactor ?? ctx.DspConfig.LowPassQFactor;
+
             filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
                 ctx.FinalSampleRate, 
                 safeCutoff, 
-                ctx.DspConfig.LowPassQFactor
+                targetQFactor
             );
         }
 
