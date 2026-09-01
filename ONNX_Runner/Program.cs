@@ -521,60 +521,116 @@ app.MapGet("/v1/health", InfoEndpoints.GetHealth)
    .WithName("GetV1Health");
 
 // =================================================================
-// AUTO-OPEN BROWSER (LOCAL DASHBOARD)
+// PIPELINE WARM-UP & AUTO-OPEN BROWSER
 // =================================================================
-// This block attempts to open the default web browser to the dashboard URL when the application starts.
-app.Lifetime.ApplicationStarted.Register(() =>
+
+// Start the server in the background so Kestrel begins listening for requests
+await app.StartAsync();
+
+string? url = app.Urls.FirstOrDefault(u => u.StartsWith("http://"));
+if (!string.IsNullOrEmpty(url))
 {
+    string baseUrl = url
+        .Replace("[::]", "localhost")
+        .Replace("0.0.0.0", "localhost")
+        .Replace("+", "localhost");
+
+    // Silent warm-up request to pre-compile JIT, ONNX shaders, serializers, and DSP
     try
     {
-        // Find the first HTTP URL the application is listening on (e.g., http://localhost:5045)
-        string? url = app.Urls.FirstOrDefault(u => u.StartsWith("http://"));
-        // If the application is running in a headless environment (e.g., Docker without DISPLAY), this may fail, so we catch exceptions to prevent crashes.
-        if (!string.IsNullOrEmpty(url))
-        {
-            // Replace wildcard hostnames with localhost for better compatibility across different environments (Docker, WSL, native)
-            string browserUrl = url
-                .Replace("[::]", "localhost")
-                .Replace("0.0.0.0", "localhost")
-                .Replace("+", "localhost");
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("\n[SYSTEM] Initiating pipeline warm-up sequence...");
+        Console.ResetColor();
 
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("  ╔═════════════════════════════════════════════════════╗");
-            Console.WriteLine("  ║             TSUBAKI TTS ENGINE IS READY             ║");
-            Console.WriteLine("  ╚═════════════════════════════════════════════════════╝");
-            Console.ResetColor();
+        using var client = new HttpClient();
+        
+        // Hit the Tsubaki endpoint with a maximized parameter payload to trigger 
+        // the full middleware, JSON deserializers, DSP effects, and routing pipeline.
+        var warmupRequest = new
+        {
+            model = "tts-1",
+            input = "System warm-up sequence complete.",
+            voice = "female", // Triggers OpenVoice if present, falls back safely if not
+            response_format = "mp3",
+            speed = 1.0f,
+            stream = false,
+            noise_scale = 0.667f,
+            noise_w = 0.8f,
+            effect = "None",
+            effect_intensity = 1.0f,
+            environment = "None",
+            environment_intensity = 1.0f,
+            pitch = 1.0f,
+            volume = 1.0f,
+            language = "en", // Forces the language router to initialize
+            clone_intensity = 1.0f,
+            tone_temperature = 0.7f
+        };
+
+        var content = new StringContent(
+            System.Text.Json.JsonSerializer.Serialize(warmupRequest), 
+            System.Text.Encoding.UTF8, 
+            "application/json"
+        );
+
+        // Dispatch the request to the local instance
+        var response = await client.PostAsync($"{baseUrl}/tsbk/audio/speech", content);
+
+        if (response.IsSuccessStatusCode)
+        {
+            // Read the byte array to ensure the server streams the response, then immediately discard it for GC
+            _ = await response.Content.ReadAsByteArrayAsync();
             
-            Console.WriteLine($"    [Web Dashboard]       {browserUrl}");
-            Console.WriteLine($"    [OpenAI Base URL]     {browserUrl}/v1");
-            Console.WriteLine($"    [Speech Endpoint]     {browserUrl}/v1/audio/speech");
-            Console.WriteLine($"    [Tsubaki Base URL]    {browserUrl}/tsbk");
-            Console.WriteLine($"    [Extended Endpoint]   {browserUrl}/tsbk/audio/speech");
-            Console.WriteLine();
-            // Cross-platform way to open the default browser
-            if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
-            {
-                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(browserUrl) { UseShellExecute = true });
-            }
-            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
-            {
-                System.Diagnostics.Process.Start("xdg-open", browserUrl);
-            }
-            else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
-            {
-                System.Diagnostics.Process.Start("open", browserUrl);
-            }
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("[SYSTEM] Pipeline is fully operational. JIT and Shaders cached.");
+            Console.ResetColor();
         }
     }
     catch (Exception ex)
     {
-        // If auto-opening the browser fails (common in headless environments), 
-        // we log a warning but do not crash the application.
+        // The warm-up sequence should never crash the server if network loopback fails
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"[WARNING] Warm-up sequence skipped: {ex.Message}");
+        Console.ResetColor();
+    }
+
+    // Draw the ready banner and open the browser only after the pipeline is primed
+    Console.WriteLine();
+    Console.ForegroundColor = ConsoleColor.Cyan;
+    Console.WriteLine("  ╔═════════════════════════════════════════════════════╗");
+    Console.WriteLine("  ║             TSUBAKI TTS ENGINE IS READY             ║");
+    Console.WriteLine("  ╚═════════════════════════════════════════════════════╝");
+    Console.ResetColor();
+    
+    Console.WriteLine($"    [Web Dashboard]       {baseUrl}");
+    Console.WriteLine($"    [OpenAI Base URL]     {baseUrl}/v1");
+    Console.WriteLine($"    [Speech Endpoint]     {baseUrl}/v1/audio/speech");
+    Console.WriteLine($"    [Tsubaki Base URL]    {baseUrl}/tsbk");
+    Console.WriteLine($"    [Extended Endpoint]   {baseUrl}/tsbk/audio/speech");
+    Console.WriteLine();
+
+    try
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(baseUrl) { UseShellExecute = true });
+        }
+        else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
+        {
+            System.Diagnostics.Process.Start("xdg-open", baseUrl);
+        }
+        else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
+        {
+            System.Diagnostics.Process.Start("open", baseUrl);
+        }
+    }
+    catch (Exception ex)
+    {
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine($"[WARNING] Could not auto-open browser (headless environment?): {ex.Message}");
         Console.ResetColor();
     }
-});
+}
 
-app.Run();      // Launch the server
+// Block the main thread so the server continues running until interrupted
+await app.WaitForShutdownAsync();
