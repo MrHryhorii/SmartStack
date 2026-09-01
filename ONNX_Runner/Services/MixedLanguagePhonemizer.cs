@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using System.Text.RegularExpressions;
 using Lingua;
@@ -39,6 +40,70 @@ public partial class MixedLanguagePhonemizer
     private static partial Regex TokenizerRegex();
 
     public enum ScriptType { None, Latin, Cyrillic, Greek, Han, Hiragana, Katakana, Hangul, Arabic, Hebrew, Other }
+
+    // Ultimate script-level emergency fallback for when both Lingua and unique letter checks 
+    // find ZERO signal (e.g. Cyrillic text on a server with only Latin models loaded). 
+    // Direct eSpeak codes, not Lingua enums, so this works even if the fallback language 
+    // isn't in SupportedLanguages. None/Other stay unmapped.
+    private static readonly Dictionary<ScriptType, string> ScriptFallbackLanguage = new()
+    {
+        { ScriptType.Latin, "en" },
+        { ScriptType.Cyrillic, "uk" },
+        { ScriptType.Greek, "el" },
+        { ScriptType.Han, "zh" },
+        { ScriptType.Hiragana, "ja" },
+        { ScriptType.Katakana, "ja" },
+        { ScriptType.Hangul, "ko" },
+        { ScriptType.Arabic, "ar" },
+        { ScriptType.Hebrew, "he" },
+    };
+
+    // Diagnostic-letter fallback, grouped by script so each subphrase (whose ScriptType is
+    // already known before we get here) only ever searches its own alphabet's set. Not
+    // exhaustive or linguistically airtight — some letters are exclusive to one language
+    // (narrows all the way down), others are shared by a small cluster (narrows to "one of
+    // these", then falls back to the most populous member — see the Cyrillic sr/mk note).
+    //
+    // Turkish: dotless "ı" uppercases to plain "I", which would misfire on virtually every
+    // capitalized Latin word — deliberately NOT mapped. Its dotted capital "İ" (U+0130) is a
+    // distinct, genuinely unique codepoint used instead. Arabic-script letters have no case.
+    private static readonly Dictionary<ScriptType, (SearchValues<char> Chars, Dictionary<char, string> Map)> UniqueLettersByScript = new()
+    {
+        [ScriptType.Cyrillic] = (
+            SearchValues.Create("їЇєЄґҐ" + "ўЎ" + "ъЪэЭ" + "ѓЃѕЅќЌ" + "ђЂћЋ" + "јЈљЉњЊџЏ"),
+            new Dictionary<char, string>
+            {
+                ['ї'] = "uk", ['Ї'] = "uk", ['є'] = "uk", ['Є'] = "uk", ['ґ'] = "uk", ['Ґ'] = "uk",
+                ['ў'] = "be", ['Ў'] = "be",
+                ['ъ'] = "ru", ['Ъ'] = "ru", ['э'] = "ru", ['Э'] = "ru",
+                // Exclusive to Macedonian (not in Serbian):
+                ['ѓ'] = "mk", ['Ѓ'] = "mk", ['ѕ'] = "mk", ['Ѕ'] = "mk", ['ќ'] = "mk", ['Ќ'] = "mk",
+                // Exclusive to Serbian (not in Macedonian):
+                ['ђ'] = "sr", ['Ђ'] = "sr", ['ћ'] = "sr", ['Ћ'] = "sr",
+                // Shared by Serbian AND Macedonian (not in ru/uk/be) — no single-language
+                // signal, so default to "sr" (larger population) absent one of the exclusive
+                // letters above also being present in the same word.
+                ['ј'] = "sr", ['Ј'] = "sr", ['љ'] = "sr", ['Љ'] = "sr", ['њ'] = "sr", ['Њ'] = "sr", ['џ'] = "sr", ['Џ'] = "sr",
+            }
+        ),
+        [ScriptType.Latin] = (
+            SearchValues.Create("øØåÅ" + "ßẞ" + "łŁąĄęĘśŚźŹżŻ" + "řŘěĚůŮ" + "ığİĞ" + "þÞðÐ" + "œŒ"),
+            new Dictionary<char, string>
+            {
+                ['ø'] = "nb", ['Ø'] = "nb", ['å'] = "nb", ['Å'] = "nb",
+                ['ß'] = "de", ['ẞ'] = "de",
+                ['ł'] = "pl", ['Ł'] = "pl", ['ą'] = "pl", ['Ą'] = "pl", ['ę'] = "pl", ['Ę'] = "pl", ['ś'] = "pl", ['Ś'] = "pl", ['ź'] = "pl", ['Ź'] = "pl", ['ż'] = "pl", ['Ż'] = "pl",
+                ['ř'] = "cs", ['Ř'] = "cs", ['ě'] = "cs", ['Ě'] = "cs", ['ů'] = "cs", ['Ů'] = "cs",
+                ['ı'] = "tr", ['İ'] = "tr", ['ğ'] = "tr", ['Ğ'] = "tr",
+                ['þ'] = "is", ['Þ'] = "is", ['ð'] = "is", ['Ð'] = "is",
+                ['œ'] = "fr", ['Œ'] = "fr",
+            }
+        ),
+        [ScriptType.Arabic] = (
+            SearchValues.Create("پچژگ"),
+            new Dictionary<char, string> { ['پ'] = "fa", ['چ'] = "fa", ['ژ'] = "fa", ['گ'] = "fa" }
+        ),
+    };
 
     private readonly LanguageDetector _detector;
     private readonly EspeakLinguaMapper _mapper;
@@ -387,6 +452,49 @@ public partial class MixedLanguagePhonemizer
                 bestAdjustedScore = score;
                 bestLinguaLang = lang;
                 originalProbabilityOfBest = kvp.Value;
+            }
+        }
+
+        // EMERGENCY FALLBACK: every candidate scored zero, so "the winner" above is arbitrary
+        // dictionary order, not a real detection. Try a diagnostic letter within this script's
+        // own set first (narrower, e.g. Ukrainian over generic Cyrillic), then the script default.
+        if (bestAdjustedScore <= 0)
+        {
+            string? fallbackCode = null;
+            string tier = "script";
+
+            if (UniqueLettersByScript.TryGetValue(script, out var letters))
+            {
+                int hitIndex = cleanText.AsSpan().IndexOfAny(letters.Chars);
+                if (hitIndex >= 0 && letters.Map.TryGetValue(cleanText[hitIndex], out var byChar))
+                {
+                    fallbackCode = byChar;
+                    tier = "letter";
+                }
+            }
+
+            fallbackCode ??= ScriptFallbackLanguage.TryGetValue(script, out var byScript) ? byScript : null;
+
+            if (fallbackCode != null)
+            {
+                result.Add(new TextChunk
+                {
+                    Text = text,
+                    DetectedLanguage = fallbackCode,
+                    Probability = 0,
+                    IsReliable = false,
+                    IsPunctuationOrSpace = false,
+                    Script = script.ToString(),
+                    RawTop5 = [$"{tier} fallback"]
+                });
+
+                if (_logger.IsEnabled(LogLevel.Debug))
+                {
+                    _logger.LogDebug("[LANG-DEBUG] \"{Text}\" — no language matched, using {Tier} fallback → {Code}",
+                        text, tier, fallbackCode);
+                }
+
+                return;
             }
         }
 

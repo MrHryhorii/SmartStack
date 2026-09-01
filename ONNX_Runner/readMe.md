@@ -246,6 +246,7 @@ curl http://localhost:5045/tsbk/audio/speech \
     "response_format": "mp3",
     "speed": 1.0,
     "stream": true,
+    "language": "auto",
 
     "effect": "Telephone",
     "effect_intensity": 0.8,
@@ -308,8 +309,9 @@ curl http://localhost:5045/tsbk/audio/speech \
 
 ## Synthesis Parameters
 
-| Parameter     | Type  | Description                                                             |
-| ------------- | ----- | ----------------------------------------------------------------------- |
+| Parameter     | Type   | Description                                                             |
+| ------------- | ------ | ----------------------------------------------------------------------- |
+| `language`    | string | Forces a specific eSpeak language or dialect code (e.g., `"uk"`, `"fr-ca"`), bypassing automatic language detection. Pass `"auto"` (or omit) to use Tsubaki's automatic language detection and fallback routing. |
 | `pitch`       | float | Pitch shift multiplier. `1.0` is original. `0.85` is noticeably deeper. |
 | `volume`      | float | Output volume multiplier with soft-knee limiter. `1.0` is original.     |
 | `noise_scale` | float | Controls pronunciation variance (intonation noise). Default: `0.667`.   |
@@ -603,7 +605,7 @@ Tsubaki provides several build variants for different hardware configurations. Y
 >
 > If you plan to use **Voice Cloning (OpenVoice V2)**, GPU acceleration is strongly recommended. WebGPU is the preferred choice for personal and local use because it provides broad GPU compatibility without requiring a vendor-specific runtime. DirectML is available as an alternative on Windows, while CUDA is available for NVIDIA GPUs on Linux.
 >
-> **WebGPU and concurrency:** The current WebGPU implementation is optimized for local and personal use. Piper base synthesis always runs on the CPU, while OpenVoice voice conversion uses the GPU. Multiple synthesis requests can be prepared concurrently on the CPU, while GPU voice conversion is processed one request at a time. This allows the next synthesized voice to be ready and begin GPU conversion as soon as the GPU becomes available. If WebGPU is unavailable, the voice conversion stage automatically falls back to the CPU. Parallel GPU execution is planned for a future release.
+> **WebGPU and concurrency:** The current WebGPU implementation is optimized for local and personal use. Piper base synthesis remains on the CPU, while OpenVoice voice conversion can use the GPU. GPU cloning requests are currently processed one at a time for stability. This is usually not a limitation for a personal TTS setup, where requests are generated sequentially. If WebGPU is unavailable, the cloning stage automatically falls back to the CPU. Parallel GPU execution is planned for a future release.
 
 ### 1. Windows (WebGPU + CPU) — Recommended for Voice Cloning
 
@@ -723,7 +725,9 @@ The `PhonemizerSettings` block controls how the server handles text outside your
 }
 ```
 
-A different *script* (Cyrillic hitting an English model, for example) is a hard, unambiguous boundary — detected with certainty and mapped to the closest phoneme approximation. Words in the *same* script as your model (French vs. English vs. Spanish, all Latin) are the hard case: the engine has to statistically guess, evaluating **chunks** — one script run between two punctuation marks — rather than single words, since more context gives a far more reliable answer. A foreign word with no punctuation around it gets evaluated together with its neighbors, which can pull the result either way.
+A different *script* (Cyrillic hitting an English model, for example) is a hard boundary: Tsubaki can identify the writing system reliably and use a script-specific fallback when language detection cannot determine a language.
+
+> **Recommendation:** To completely disable statistical detection and save RAM, you can set `UseLanguageDetector: false`. **However, we strongly recommend keeping it `true` even if you empty the `SupportedLanguages` list.** Tsubaki includes a lightweight, zero-allocation script router with negligible CPU overhead. Keeping the detector enabled allows this router to catch entirely different alphabets (e.g., Cyrillic text hitting a Latin model) and use diagnostic letters and script-level fallbacks to give foreign text a closer phonetic approximation, reducing the chance that it will be pronounced letter-by-letter. Words in the *same* script as your model (French vs. English vs. Spanish, all Latin) are the hard case: the engine has to statistically guess, evaluating **chunks** — one script run between two punctuation marks — rather than single words, since more context gives a far more reliable answer. A foreign word with no punctuation around it gets evaluated together with its neighbors, which can pull the result either way.
 
 | Parameters | What they do |
 | ----------- | -------------- |
@@ -734,7 +738,7 @@ A different *script* (Cyrillic hitting an English model, for example) is a hard,
 
 None of this is unique to Tsubaki — identifying a language from a handful of characters is a hard problem for any detector, including the much heavier neural models commercial systems use. The parameters above bias that inherent uncertainty toward whichever outcome fits your case, they don't remove it: keep `SupportedLanguages` narrow (fewer rival candidates means fewer ways for an ambiguous word to lose), and raise the bonus/override values for a stable, unbroken accent, or lower them if foreign words should switch pronunciation more readily.
 
-- **Format:** Supports standard base language codes (`"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc) as well as extended eSpeak dialect and pronunciation tags (`"en-us"`, `"fr-ca"`, `"en-gb-x-rp"`). While eSpeak applies the exact dialect rules requested, synthesis remains physically constrained by the active Piper model's phonetic inventory — missing foreign phonemes are dynamically approximated by the fallback mapper, producing an accented delivery rather than a native acoustic profile.
+- **Format:** Supports standard base language codes (`"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc.) as well as extended eSpeak dialect and pronunciation tags (`"en-us"`, `"fr-ca"`, `"en-gb-x-rp"`). While eSpeak applies the requested dialect rules, the result is still constrained by the active Piper model's phonetic inventory — missing foreign phonemes are approximated by the fallback mapper, producing an accented delivery rather than a native acoustic profile.
 - **Performance Warning:** Each added language increases memory consumption and slows down detection. Keep this to **2–3 languages** most likely to appear in your texts.
 
 ---
@@ -782,9 +786,9 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value auto-detects and uses all available physical cores.                                                                                                                                                                                                                                                                                |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
 | `OpenVoiceGpuDeviceId`     | Hardware index of the GPU used to execute the OpenVoice Tone Color Converter. Can be assigned a different ID in multi-GPU setups to split the computational load. |
-| `ForcePiperToCpu`          | Forces the base Piper model to execute on the CPU regardless of GPU presence. When `true` (Hybrid Routing), the CPU handles parallel Piper text-to-speech generation while the GPU is reserved for the computationally heavy OpenVoice cloning passes. This keeps CPU synthesis independent from the GPU voice-conversion stage, allowing the CPU to prepare additional requests while the GPU processes a cloned voice. |
+| `ForcePiperToCpu`          | Forces the base Piper model to execute on the CPU regardless of GPU presence. When `true` (Hybrid Routing), the CPU handles parallel Piper text-to-speech generation while the GPU is reserved exclusively for the computationally heavy OpenVoice cloning passes. This keeps CPU synthesis independent from the GPU voice-conversion stage, allowing the CPU to prepare additional requests while the GPU processes a cloned voice. |
 
-> **DirectML users:** think of this setting as a direct trade — each unit of `MaxConcurrentGpuRequests` buys one more simultaneous request, at the cost of one more full copy of the relevant model(s) sitting in VRAM. CUDA and CPU users don't pay this cost, since they share one session across all concurrent requests.
+> **DirectML users:** think of this setting as a direct trade — each unit of `MaxConcurrentGpuRequests` buys one more simultaneous request, at the cost of one more full copy of the relevant model(s) sitting in VRAM. CUDA and CPU users don't pay this cost, since they share one session across all concurrent requests. **On WebGPU, GPU voice conversion is currently processed one request at a time for stability, while multiple CPU synthesis requests can still be prepared in parallel.**
 
 - **`RateLimitSettings`** — Provides basic anti-spam and anti-DDoS protection by restricting the number of requests allowed from a single IP address within a specific time window. Useful for public-facing deployments.
 
