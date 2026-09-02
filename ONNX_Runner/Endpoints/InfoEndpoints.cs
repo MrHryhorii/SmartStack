@@ -34,30 +34,39 @@ public static class InfoEndpoints
     /// </summary>
     public static IResult GetVoices()
     {
-        var voices = new List<string> { "piper_base" };
-        // The 'Voices' directory is expected to be in the same location as the server executable.
-        string voicesDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Voices");
-
         try
         {
-            if (Directory.Exists(voicesDirectory))
-            {
-                // Read all files with the .voice extension directly from the disk
-                var voiceFiles = Directory.GetFiles(voicesDirectory, "*.voice");
-                foreach (var file in voiceFiles)
-                {
-                    voices.Add(Path.GetFileNameWithoutExtension(file));
-                }
-            }
+            return Results.Ok(new { voices = GetAvailableVoiceNames() });
         }
         catch (Exception ex)
         {
             // Protect against file system access permission issues
             return Results.Problem($"Failed to read voices directory: {ex.Message}", statusCode: 500);
         }
+    }
+
+    /// <summary>
+    /// Shared by GetVoices and GetServerStatus so both report the exact same voice list from
+    /// a single source of truth instead of two independent directory scans drifting apart.
+    /// </summary>
+    private static IEnumerable<string> GetAvailableVoiceNames()
+    {
+        var voices = new List<string> { "piper_base" };
+        // The 'Voices' directory is expected to be in the same location as the server executable.
+        string voicesDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Voices");
+
+        if (Directory.Exists(voicesDirectory))
+        {
+            // Read all files with the .voice extension directly from the disk
+            var voiceFiles = Directory.GetFiles(voicesDirectory, "*.voice");
+            foreach (var file in voiceFiles)
+            {
+                voices.Add(Path.GetFileNameWithoutExtension(file));
+            }
+        }
 
         // Distinct() removes potential duplicates, OrderBy() sorts alphabetically
-        return Results.Ok(new { voices = voices.Distinct().OrderBy(v => v) });
+        return voices.Distinct().OrderBy(v => v);
     }
 
     /// <summary>
@@ -120,6 +129,89 @@ public static class InfoEndpoints
             @object = "model",
             created = 1699043956,
             owned_by = "system"
+        });
+    }
+
+    /// <summary>
+    /// Reports what's enabled server-side and its configured defaults, so a frontend can
+    /// tailor its own UI (e.g. hide cloning controls entirely when ClonerSettings.EnableCloning
+    /// is false) instead of showing menus with no effect on the actual synthesis result.
+    /// Curated from appsettings.json — internal-only fields (hardware/ONNX/CORS tuning, exact
+    /// model file paths) are intentionally left out as not relevant to a synthesis UI.
+    /// </summary>
+    public static IResult GetServerStatus(
+        ApiSettings api,
+        EffectsSettings effects,
+        ClonerSettings cloner,
+        DspSettings dsp,
+        StreamSettings stream,
+        PhonemizerSettings phonemizer,
+        RateLimitSettings rateLimit,
+        IServiceProvider services)
+    {
+        // PiperConfig is only registered if a base model loaded successfully at startup —
+        // resolved manually so a missing model reports null here instead of throwing.
+        var piperConfig = services.GetService<PiperConfig>();
+
+        return Results.Ok(new
+        {
+            model = piperConfig == null ? null : new
+            {
+                baseVoiceDialect = piperConfig.Espeak.Voice,
+                sampleRateHz = piperConfig.Audio.SampleRate
+            },
+            voiceCloning = new
+            {
+                enabled = cloner.EnableCloning,
+                defaults = new
+                {
+                    cloneIntensity = cloner.CloneIntensity,
+                    toneTemperature = cloner.ToneTemperature
+                }
+            },
+            dsp = new
+            {
+                lowPassFilterEnabled = dsp.EnableLowPassFilter,
+                lowPassCutoffHz = dsp.LowPassCutoffFrequency,
+                lowPassQFactor = dsp.LowPassQFactor,
+                defaultPitch = dsp.DefaultPitch,
+                defaultVolume = dsp.DefaultVolume
+            },
+            effects = new
+            {
+                enabled = effects.EnableGlobalEffects,
+                defaultEffect = effects.DefaultEffect,
+                defaultIntensity = effects.DefaultIntensity,
+                defaultEnvironment = effects.DefaultEnvironment,
+                defaultEnvironmentIntensity = effects.DefaultEnvironmentIntensity,
+                extendReverbTailOnFinish = effects.ExtendReverbTailOnFinish,
+                available = Enum.GetNames<VoiceEffectType>(),
+                availableEnvironments = Enum.GetNames<SpatialEnvironment>()
+            },
+            streaming = new
+            {
+                enabled = stream.EnableStreaming,
+                flushAfterEachSentence = stream.FlushAfterEachSentence,
+                minChunkSizeKb = stream.MinChunkSizeKb
+            },
+            language = new
+            {
+                autoDetectEnabled = phonemizer.UseLanguageDetector,
+                supportedLanguages = phonemizer.SupportedLanguages
+            },
+            limits = new
+            {
+                // 0 means unlimited server-side (see ApiSettings) — surfaced as null so a
+                // frontend doesn't misread it as "zero characters allowed".
+                maxTextLength = api.MaxTextLength == 0 ? (int?)null : api.MaxTextLength,
+                rateLimit = new
+                {
+                    permitLimit = rateLimit.PermitLimit,
+                    windowSeconds = rateLimit.WindowSeconds,
+                    queueLimit = rateLimit.QueueLimit
+                }
+            },
+            availableVoices = GetAvailableVoiceNames()
         });
     }
 

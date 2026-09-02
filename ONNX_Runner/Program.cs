@@ -158,6 +158,7 @@ builder.Services.AddSingleton(hardwareConfig);
 builder.Services.AddSingleton(chunkerConfig);
 builder.Services.AddSingleton(dspConfig);
 builder.Services.AddSingleton(rateLimitConfig);
+builder.Services.AddSingleton(phonemizerConfig);
 
 // Only wire up the heavy services if the base Piper model was successfully loaded
 if (piperConfig != null && piperModelPath != null)
@@ -510,6 +511,10 @@ app.MapGet("/tsbk/audio/effects", InfoEndpoints.GetEffects)
 
 app.MapGet("/tsbk/audio/environments", InfoEndpoints.GetEnvironments)
    .WithName("GetEnvironments");
+//.AddEndpointFilter<LocalHostOnlyFilter>();
+
+app.MapGet("/tsbk/server/status", InfoEndpoints.GetServerStatus)
+   .WithName("GetServerStatus");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 // Endpoints to imitate OpenAI's model listing for better compatibility with existing tools and dashboards that expect this format.
