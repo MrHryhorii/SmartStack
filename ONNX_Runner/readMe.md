@@ -360,17 +360,17 @@ Set `"DefaultEffect": "None"` to bypass effects entirely.
 
 ### Reverb Tail Extension
 
-The per-sentence pause between sentences is sized for natural speech pacing, not for how long a reverb takes to decay — on a long `environment` at high intensity, that pause is too short and the tail gets cut off mid-ring, which sounds unnatural. `ExtendReverbTailOnFinish` fixes this: after the very last sentence, the server keeps feeding the active `environment` silent audio and measures the real output level, rather than guessing a fixed extra duration per environment.
+The pause between sentences is designed for natural speech pacing, not for reverb decay. With long environments at high intensity, the pause can end before the reverb naturally dies out, cutting the tail mid-decay. `ExtendReverbTailOnFinish` prevents this by extending the **final** reverb tail until the actual output level falls below the configured threshold.
 
-`ReverbTailSilenceFloor` is the threshold this measurement is checked against — a linear amplitude value, where the default `0.005` is roughly −46 dBFS. Once the tail's peak drops below it, the tail is considered inaudible and playback ends. Lower this for a longer, more complete decay; raise it to cut the tail shorter.
+`ReverbTailSilenceFloor` controls that threshold using linear amplitude. The default `0.005` is roughly −46 dBFS. Lower values allow the reverb to decay further; higher values end playback sooner.
 
-This only ever applies to `environment` (spatial reverb) — character `effect`s like `LoFiTape` or `Telephone` are untouched, because their noise floor (tape hiss, line noise) doesn't decay the way a reverb tail does; it correctly stops with the dry voice instead.
+This applies only to spatial `environment` reverb. Character `effect`s such as `LoFiTape` or `Telephone` are not extended, because their noise floors do not decay like a reverb tail.
 
-**Effect on audio length:** on a long-tail environment (`Cave`, `ConcreteHall`) at high `environment_intensity`, this can noticeably extend the total audio duration — the reverb genuinely needs that time to ring out, which is the point, not a bug. At low intensity (`0.25`, the shipped default) or on weak/no-reverb environments (`Forest`, `Muffled`, `None`), the extra length is negligible or exactly zero.
+**Effect on audio length:** Long-tail environments such as `Cave` and `ConcreteHall` can add noticeable duration at high `environment_intensity`. At lower intensity (`0.25`, the shipped default), the added time is usually small or zero.
 
-**Watch out for chunked requests.** If an agent splits its own narration into several separate `/tsbk/audio/speech` calls instead of sending one longer `input` and letting Tsubaki's own sentence chunker handle pacing internally, each call gets its own independent tail — so a strong environment at high intensity adds a full decay's worth of extra silence *after every fragment*, not just once at the true end of the turn. Prefer sending a complete turn as a single request when using a strong environment.
+> **Chunked requests:** When an agent sends several separate `/tsbk/audio/speech` requests instead of one complete turn, each request gets its own independent reverb tail. With strong environments, this can add a full decay after every fragment. For continuous narration, prefer sending the complete turn as a single request.
 
-**Per-request override:** If a client explicitly sends `"extend_reverb_tail": false` (or `true`), that value takes priority over `ExtendReverbTailOnFinish` for that request only. `ReverbTailSilenceFloor` is server-only and has no per-request equivalent.
+**Per-request override:** `"extend_reverb_tail": true` or `false` overrides `ExtendReverbTailOnFinish` for that request only. `ReverbTailSilenceFloor` is server-only.
 
 ---
 
