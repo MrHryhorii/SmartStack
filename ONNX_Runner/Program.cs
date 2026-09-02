@@ -498,30 +498,38 @@ app.MapPost("/tsbk/audio/phonemize", PhonemizeEndpoint.HandlePhonemizeRequest)
 
 app.MapGet("/health", InfoEndpoints.GetHealth)
    .WithName("GetHealth");
+// No rate limit here on purpose — monitoring/load-balancer health probes need reliable,
+// frequent access; a 429 on a health check could wrongly mark a healthy instance as down.
 
 // With limited access for security,
 // these endpoints are designed for local dashboard integration and should not be exposed publicly.
 app.MapGet("/tsbk/audio/voices", InfoEndpoints.GetVoices)
-   .WithName("GetVoices");
+   .WithName("GetVoices")
+   .RequireRateLimiting("ip_limit");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.MapGet("/tsbk/audio/effects", InfoEndpoints.GetEffects)
-   .WithName("GetEffects");
+   .WithName("GetEffects")
+   .RequireRateLimiting("ip_limit");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.MapGet("/tsbk/audio/environments", InfoEndpoints.GetEnvironments)
-   .WithName("GetEnvironments");
+   .WithName("GetEnvironments")
+   .RequireRateLimiting("ip_limit");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 app.MapGet("/tsbk/server/status", InfoEndpoints.GetServerStatus)
-   .WithName("GetServerStatus");
+   .WithName("GetServerStatus")
+   .RequireRateLimiting("ip_limit");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
 
 // Endpoints to imitate OpenAI's model listing for better compatibility with existing tools and dashboards that expect this format.
 app.MapGet("/v1/models", InfoEndpoints.GetModels)
-   .WithName("GetModels");
+   .WithName("GetModels")
+   .RequireRateLimiting("ip_limit");
 app.MapGet("/v1/models/{id}", InfoEndpoints.GetModelById)
-   .WithName("GetModelById");
+   .WithName("GetModelById")
+   .RequireRateLimiting("ip_limit");
 app.MapGet("/v1/health", InfoEndpoints.GetHealth)
    .WithName("GetV1Health");
 
