@@ -615,6 +615,59 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                         if (rentedBuffer3 != null) ArrayPool<float>.Shared.Return(rentedBuffer3);
                     }
                 }
+
+                // =================================================================
+                // REVERB TAIL EXTENSION (Flushes spatial acoustics once at the end)
+                // =================================================================
+                // Drains residual reverb by feeding silence until output drops below -60 dBFS.
+                // Strictly spatial-only: excludes character effects to avoid spinning on static noise floors.
+                // Priority: request.ExtendReverbTail -> ctx.EffectsConfig.ExtendReverbTailOnFinish.
+                bool extendTail = request.ExtendReverbTail ?? ctx.EffectsConfig.ExtendReverbTailOnFinish;
+
+                if (extendTail && envType != SpatialEnvironment.None)
+                {
+                    float silenceFloor = ctx.EffectsConfig.ReverbTailSilenceFloor;     // perceptual silence threshold
+                    const float maxTailSeconds = 4.0f;          // safety cap for environments that never fully settle
+
+                    int probeSamples = ctx.FinalSampleRate / 50; // 20ms probe blocks
+                    int maxSamples = (int)(ctx.FinalSampleRate * maxTailSeconds);
+                    int written = 0;
+
+                    // ZERO-ALLOCATION PATTERN: rent the probe buffer instead of `new float[]`.
+                    // Rent() may return an array larger than requested, so every access below
+                    // is explicitly bounded to probeSamples.
+                    float[] tailProbe = ArrayPool<float>.Shared.Rent(probeSamples);
+                    try
+                    {
+                        while (written < maxSamples)
+                        {
+                            Array.Clear(tailProbe, 0, probeSamples);
+                            var probeSpan = tailProbe.AsSpan(0, probeSamples);
+
+                            // effectsEngine intentionally NOT applied here — see note above.
+                            spatialEngine.ApplyEnvironment(probeSpan, envType, envIntensity);
+                            streamManager.WriteChunk(probeSpan, filter);
+                            written += probeSamples;
+
+                            float peak = 0f;
+                            for (int i = 0; i < probeSamples; i++)
+                            {
+                                float absVal = MathF.Abs(tailProbe[i]);
+                                if (absVal > peak) peak = absVal;
+                            }
+                            if (peak < silenceFloor) break; // tail has decayed below audibility
+                        }
+                    }
+                    finally
+                    {
+                        ArrayPool<float>.Shared.Return(tailProbe);
+                    }
+
+                    if (ctx.UseStreaming && ctx.StreamConfig.FlushAfterEachSentence)
+                    {
+                        ctx.TargetStream!.Flush();
+                    }
+                }
             }, cancellationToken);
 
             await Task.WhenAll(producerTask, consumerTask);

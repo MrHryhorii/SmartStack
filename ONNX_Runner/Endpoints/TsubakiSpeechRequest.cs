@@ -202,4 +202,13 @@ public class TsubakiSpeechRequest
         // Values above 1.0 start introducing resonant peaks (ringing), which defeats the purpose of smoothing.
         set => _lowPassQFactor = value.HasValue ? Math.Clamp(value.Value, 0.1f, 1.0f) : null;
     }
+
+    /// <summary>
+    /// Per-request override of whether the server keeps feeding the active spatial Environment
+    /// silent audio after the last sentence until its reverb tail decays below audibility,
+    /// instead of cutting it off at the fixed inter-sentence pause length. Has no effect on
+    /// character Effects (e.g. LoFiTape) — their noise floor doesn't decay.
+    /// </summary>
+    [JsonPropertyName("extend_reverb_tail")]
+    public bool? ExtendReverbTail { get; set; }
 }

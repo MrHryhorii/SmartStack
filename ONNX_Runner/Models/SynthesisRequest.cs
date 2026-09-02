@@ -109,4 +109,10 @@ public class SynthesisRequest
     /// 0.707 = Butterworth curve (brighter, sharper cutoff).
     /// </summary>
     public float? LowPassQFactor { get; set; }
+
+    /// <summary>
+    /// Extends generation until the active spatial environment's reverb tail naturally fades below audibility.
+    /// Overrides <c>ExtendReverbTailOnFinish</c> for this request. Does not affect character voice effects.
+    /// </summary>
+    public bool? ExtendReverbTail { get; set; }
 }

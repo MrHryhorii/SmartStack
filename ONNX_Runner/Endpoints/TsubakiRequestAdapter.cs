@@ -42,7 +42,8 @@ public static class TsubakiRequestAdapter
             Language = cleanLanguage,
             CloneIntensity = dto.CloneIntensity,
             ToneTemperature = dto.ToneTemperature,
-            LowPassQFactor = dto.LowPassQFactor
+            LowPassQFactor = dto.LowPassQFactor,
+            ExtendReverbTail = dto.ExtendReverbTail
         }, null);
     }
 }
