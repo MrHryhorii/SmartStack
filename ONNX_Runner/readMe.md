@@ -360,15 +360,17 @@ Set `"DefaultEffect": "None"` to bypass effects entirely.
 
 ### Reverb Tail Extension
 
-The pause between sentences is designed for natural speech pacing, not for reverb decay. With long environments at high intensity, the pause can end before the reverb naturally dies out, cutting the tail mid-decay. `ExtendReverbTailOnFinish` prevents this by extending the **final** reverb tail until the actual output level falls below the configured threshold.
+The pause between sentences is designed for natural speech pacing, not for reverb decay. With long environments at high intensity, the reverb may still be audible when the generated speech reaches the end of the request. `ExtendReverbTailOnFinish` allows the active `environment` reverb to decay naturally after the generated voice ends, until the measured output level falls below the configured threshold.
 
 `ReverbTailSilenceFloor` controls that threshold using linear amplitude. The default `0.005` is roughly −46 dBFS. Lower values allow the reverb to decay further; higher values end playback sooner.
 
-This applies only to spatial `environment` reverb. Character `effect`s such as `LoFiTape` or `Telephone` are not extended, because their noise floors do not decay like a reverb tail.
+The extension applies only to spatial `environment` reverb. Character `effect`s such as `LoFiTape` or `Telephone` are not extended.
 
-**Effect on audio length:** Long-tail environments such as `Cave` and `ConcreteHall` can add noticeable duration at high `environment_intensity`. At lower intensity (`0.25`, the shipped default), the added time is usually small or zero.
+**Effect on audio length:** Long-tail environments such as `Cave` and `ConcreteHall` can noticeably increase the final duration at high `environment_intensity`. At lower intensity (`0.25`, the shipped default), the additional time is usually small or zero.
 
-> **Chunked requests:** When an agent sends several separate `/tsbk/audio/speech` requests instead of one complete turn, each request gets its own independent reverb tail. With strong environments, this can add a full decay after every fragment. For continuous narration, prefer sending the complete turn as a single request.
+> **Chunked requests:** Tsubaki can split a single large request into internal chunks for more predictable model load, while carrying the reverb state seamlessly between them. However, if an agent splits one logical turn into multiple separate `/tsbk/audio/speech` requests, each request has its own completion point and will wait for its own reverb tail to decay, creating unnatural gaps between fragments. **To prevent this:**
+> * **Option A (Recommended):** Send the complete turn as a single request and let Tsubaki handle the chunking internally.
+> * **Option B (Request-by-request streaming):** If the agent must send multiple separate requests for a single turn, explicitly send `"extend_reverb_tail": false` on all intermediate requests, enabling it only on the final one. Otherwise, avoid using strong reverb environments for this type of streaming.
 
 **Per-request override:** `"extend_reverb_tail": true` or `false` overrides `ExtendReverbTailOnFinish` for that request only. `ReverbTailSilenceFloor` is server-only.
 
@@ -382,7 +384,8 @@ This applies only to spatial `environment` reverb. Character `effect`s such as `
   "LowPassCutoffFrequency": 11000.0,
   "LowPassQFactor": 0.577,
   "DefaultPitch": 1.0,
-  "DefaultVolume": 1.0
+  "DefaultVolume": 1.0,
+  "VolumeBoosterDb": 8.0
 }
 ```
 
@@ -425,9 +428,17 @@ Sets the server-wide volume multiplier applied to all generated audio. The engin
 | `2.0`  | +6 dB          | Noticeably louder — good for quiet clones      |
 | `4.0`  | +12 dB         | Maximum boost — soft-knee limiter fully active |
 
-**Why use it?** The perceived loudness of a cloned voice is determined almost entirely by the recording level of the reference `.wav` file. If your voice sample was recorded quietly, the cloned output will also be quiet. `DefaultVolume` lets you compensate for this once in `appsettings.json` rather than adjusting every client.
+**Why use it?** `DefaultVolume` is the server-wide playback level. It is useful when you want the same volume adjustment applied consistently to every request, including standard OpenAI-compatible clients.
 
 **Per-request override:** If a client explicitly sends `"volume": 2.0` in the request body, that value takes priority and the server default is ignored for that request only.
+
+`1.0` means the server's baseline volume is unchanged. The fixed `VolumeBoosterDb` correction described below is applied underneath this multiplier.
+
+### VolumeBoosterDb
+
+Applies a fixed gain correction in decibels underneath `DefaultVolume`/`volume`. It is intended as a baseline calibration for the engine's output rather than a per-request volume preference. A value of `0` disables the correction.
+
+The booster and resolved `volume` are combined into a single gain stage before the final audio processing. It is not an additional audio-processing pass. `VolumeBoosterDb` is server-only; clients that need a different playback level should use `volume`.
 
 ---
 
@@ -501,15 +512,17 @@ Both settings below can be tuned server-wide via `ClonerSettings` in `appsetting
 
 ## Cloned Voice Volume
 
-The perceived loudness of a cloned voice is **not** controlled by `ClonerSettings` — it is shaped by two factors: the **recording level of the reference sample** and the **natural pitch of the cloned voice**.
+The perceived loudness of a cloned voice is shaped by three factors: **reference loudness normalization**, the **remaining recording characteristics** that normalization does not fully remove, and the **natural pitch of the cloned voice**.
 
-- **Recording level:** OpenVoice extracts a voice fingerprint from the magnitude spectrogram of your `.wav` file and transfers its energy envelope onto the generated audio. A quietly recorded sample produces a quietly cloned voice, regardless of the base Piper model's output level. If the sample is too loud or peaks above 0 dBFS (clipping), the cloned audio will also clip and distort.
+- **Reference loudness:** Tsubaki measures each reference `.wav`'s integrated loudness in LUFS and normalizes it to `ClonerSettings.ReferenceAudioTargetLufs` before extracting the voice embedding. This reduces the effect of recording level and ignores leading/trailing silence, so exact recording loudness matters less. It cannot recover detail already lost to clipping, so clean recordings are still important.
 
-- **Voice pitch:** Lower-pitched voices — deep male voices, bass characters — naturally concentrate their spectral energy in the low-frequency range, which results in a lower overall magnitude in the spectrogram. Because OpenVoice transfers this energy profile directly, deep voices will consistently sound quieter than brighter, higher-pitched ones, even from identically recorded samples. This is an inherent property of the cloning architecture, not a bug.
+- **Residual recording characteristics:** Loudness normalization matches overall perceived loudness, not every detail of the source recording. Microphone response, room coloration, dynamics, and other characteristics can still influence the resulting clone.
 
-**Recommended recording level:** aim for peaks around **−6 to −3 dBFS** — loud enough to fully capture the voice character, with just enough headroom to avoid distortion.
+- **Voice pitch:** Lower-pitched voices — deep male voices, bass characters — naturally concentrate more spectral energy in the low-frequency range. Because OpenVoice transfers this energy profile, deep voices can still sound quieter than brighter, higher-pitched voices even when the reference samples have been loudness-normalized. This is a property of the cloning process, not a bug.
 
-If the cloned voice is too quiet, compensate using `DefaultVolume` in `DspSettings`, or send `"volume"` per request:
+**Recommended recording level:** aim for peaks around **−6 to −3 dBFS** — loud enough to capture the voice clearly, with enough headroom to avoid distortion. See *Recommended Sample Quality* above.
+
+If the cloned voice is still too quiet, compensate using `DefaultVolume` or `VolumeBoosterDb` in `DspSettings`, or send `"volume"` per request:
 
 ```json
 {
@@ -518,7 +531,7 @@ If the cloned voice is too quiet, compensate using `DefaultVolume` in `DspSettin
 }
 ```
 
-This applies a clean gain stage with soft-knee limiting **before** the audio is encoded, so the result stays clean without harsh digital clipping.
+The volume adjustment is applied as a final gain stage with soft-knee limiting **after cloning and before encoding**. The cloning model itself always works from the natural, un-boosted waveform.
 
 ---
 
@@ -830,7 +843,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 - **`EffectsSettings`** — Standard OpenAI API clients (like SillyTavern or AutoGen) do not support sending custom DSP parameters in their requests. This section allows you to define a `"DefaultEffect"` that the server will automatically apply to all incoming API requests unless explicitly overridden by a custom client (like the built-in web dashboard).
 
-- **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter) to remove high-frequency noise, and allows setting **server-wide default pitch and volume** applied to every request. This is especially useful when Tsubaki is used as a personal AI assistant backend — you can tune the voice character once in the config and every client, including standard OpenAI-compatible ones that cannot send custom parameters, will automatically receive the adjusted audio.
+- **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter), server-wide default pitch and volume, and a fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once in the config while keeping `DefaultVolume`/`volume` available for playback-level control.
 
 - **`ClonerSettings`** — Controls the OpenVoice cloning behavior. It is best not to touch these. Increasing the intensity often yields a caricature-like exaggeration of the voice characteristics, while decreasing it simply reverts the audio back to the default base model's voice.
 - **`EnableCloning`** — Enables or disables OpenVoice voice cloning. Leave it `true` to use voices stored in the `Voices/` folder; when enabled, those voices are discovered automatically at server startup and appear in the Web Dashboard voice list.

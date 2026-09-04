@@ -61,7 +61,7 @@ async function bootEngine() {
 
     // Bind toggles to enable/disable related controls
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
-    bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum']); 
+    bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum', 'extendTailToggle']); 
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
     bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
@@ -124,6 +124,7 @@ async function bootEngine() {
         if (document.getElementById('useEnvironment').checked) {
             payload.environment = document.getElementById('environmentSelect').value;
             payload.environment_intensity = parseFloat(document.getElementById('envIntNum').value);
+            payload.extend_reverb_tail = document.getElementById('extendTailToggle').checked;
         }
         // Include noise parameters if enabled
         if (document.getElementById('useNoiseScale').checked) payload.noise_scale = parseFloat(document.getElementById('nsNum').value);
