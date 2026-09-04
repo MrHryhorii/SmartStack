@@ -307,8 +307,13 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         }
 
         // Volume Priority: explicit request value → server default from config → fallback 1.0 (no change)
-        float targetVolume = request.Volume ?? ctx.DspConfig.DefaultVolume;
-        bool useVolumeShift = Math.Abs(targetVolume - 1.0f) > 0.001f;
+        float requestedVolume = request.Volume ?? ctx.DspConfig.DefaultVolume;
+
+        // Converts VolumeBoosterDb from dB to linear gain and merges it with requestedVolume.
+        // Evaluated as a single float multiply, applying flat compensation without an extra audio pass.
+        float boosterLinear = MathF.Pow(10f, ctx.DspConfig.VolumeBoosterDb / 20f);
+        float targetVolume = requestedVolume * boosterLinear;
+        bool useVolumeShift = MathF.Abs(targetVolume - 1.0f) > 0.001f;
         // =================================================================
 
         float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
@@ -443,11 +448,9 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                         // Pass the streaming flags to the generator
                         var rawResult = ctx.PiperRunner.SynthesizeAudioRaw(phonemes, isContinuation, isFinished, request.Speed, request.NoiseScale, request.NoiseW);
 
-                        // Apply volume adjustment if requested
-                        if (useVolumeShift)
-                        {
-                            VolumeShifter.ApplyVolume(rawResult.Buffer.AsSpan(0, rawResult.Length), targetVolume);
-                        }
+                        // NOTE: Volume is intentionally NOT applied here. It's applied in the
+                        // consumer task, after voice cloning (if active), so the cloning model
+                        // always sees Piper's natural, un-boosted waveform.
 
                         // Apply Pitch Shifting if requested
                         if (usePitchShift)
@@ -572,6 +575,13 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                                 currentBuffer = rentedBuffer1;
                                 currentLength = r1.Length;
                             }
+                        }
+
+                        // Applies target volume post-cloning to protect OpenVoice from boosted input levels.
+                        // Acts as unified gain staging for both cloned and base Piper outputs.
+                        if (useVolumeShift)
+                        {
+                            VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume);
                         }
 
                         // Final resampling to match the requested output format (e.g., Opus requires 24kHz/48kHz)

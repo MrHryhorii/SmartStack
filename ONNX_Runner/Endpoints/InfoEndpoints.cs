@@ -175,7 +175,13 @@ public static class InfoEndpoints
                 lowPassCutoffHz = dsp.LowPassCutoffFrequency,
                 lowPassQFactor = dsp.LowPassQFactor,
                 defaultPitch = dsp.DefaultPitch,
-                defaultVolume = dsp.DefaultVolume
+                defaultVolume = dsp.DefaultVolume,
+                // Server baseline applied to requests; exposed so clients can determine the exact gain offset.
+                volumeBoosterDb = dsp.VolumeBoosterDb,
+                // Guard: Log10(0) produces -Infinity, which breaks System.Text.Json serialization.
+                defaultTotalGainDb = dsp.DefaultVolume > 0f
+                    ? 20f * MathF.Log10(dsp.DefaultVolume) + dsp.VolumeBoosterDb
+                    : (float?)null
             },
             effects = new
             {

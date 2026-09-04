@@ -24,4 +24,11 @@ public class ClonerSettings
     /// 1.0 = Standard. < 1.0 = More conservative/stable. > 1.0 = More expressive/diverse.
     /// </summary>
     public float ToneTemperature { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Target integrated loudness (LUFS, ITU-R BS.1770-4) for reference audio.
+    /// Normalizes both user WAVs and Piper's baseline fingerprint to identical levels before tone extraction.
+    /// Default: -23 LUFS (EBU R128 standard).
+    /// </summary>
+    public float ReferenceAudioTargetLufs { get; set; } = -23f;
 }

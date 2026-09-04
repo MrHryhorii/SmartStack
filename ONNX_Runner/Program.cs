@@ -264,6 +264,9 @@ if (piperConfig != null && piperModelPath != null)
                             continue;
                         }
 
+                        // Normalizes loudness before extraction to keep tone embeddings level-invariant.
+                        audioProc.NormalizeLufs(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length), targetRate, clonerConfig.ReferenceAudioTargetLufs);
+
                         float[,] spec;
                         try
                         {
@@ -469,7 +472,7 @@ using (var scope = app.Services.CreateScope())
 
     if (openVoiceSvc != null && audioProcSvc != null && unifiedPhonemizerSvc != null && piperRunnerSvc != null && pipConfig != null)
     {
-        var baseGenerator = new BaseVoiceGenerator(unifiedPhonemizerSvc, piperRunnerSvc, audioProcSvc, openVoiceSvc, pipConfig);
+        var baseGenerator = new BaseVoiceGenerator(unifiedPhonemizerSvc, piperRunnerSvc, audioProcSvc, openVoiceSvc, pipConfig, clonerConfig);
         baseGenerator.GenerateAndCacheBaseFingerprint();
 
         // Free up memory since extraction is only needed once at startup

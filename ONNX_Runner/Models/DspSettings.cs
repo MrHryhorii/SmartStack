@@ -34,4 +34,12 @@ public class DspSettings
     /// 1.0 = original, <1.0 = quieter, >1.0 = louder (soft-knee limiter applies above 0.8). Range: 0.0–4.0.
     /// </summary>
     public float DefaultVolume { get; set; } = 1.0f;
+
+    /// <summary>
+    /// Flat gain compensation in dB applied on top of resolved volume across all endpoints,
+    /// including those without a volume field (e.g. OpenAI /v1/audio/speech).
+    /// Compensates for Piper's quiet baseline output without skewing <see cref="DefaultVolume"/>.
+    /// 0 = no boost. Composed with volume as a single multiplier with no extra audio pass.
+    /// </summary>
+    public float VolumeBoosterDb { get; set; } = 0f;
 }

@@ -231,6 +231,21 @@ public class AudioProcessor
     }
 
     /// <summary>
+    /// Normalizes an audio buffer to target integrated loudness (LUFS, ITU-R BS.1770-4) in place,
+    /// applying VolumeShifter's soft-knee limiter to prevent peak clipping.
+    /// Used for reference audio to ensure consistent tone embeddings during voice cloning.
+    /// Runs exclusively during fingerprint creation (startup/cache miss), never per synthesis request.
+    /// </summary>
+    public void NormalizeLufs(Span<float> buffer, int sampleRate, float targetLufs = -23f)
+    {
+        if (buffer.Length == 0) return;
+
+        double measured = LufsMeter.MeasureIntegratedLoudness(buffer, sampleRate);
+        float gain = LufsMeter.GainForTarget(measured, targetLufs);
+        VolumeShifter.ApplyVolume(buffer, gain);
+    }
+
+    /// <summary>
     /// Extracts a Linear Magnitude Spectrogram from raw PCM audio samples using Hardware Accelerated FFT.
     /// Uses ReadOnlySpan to inspect the array without copying it, further reducing memory allocations.
     /// </summary>

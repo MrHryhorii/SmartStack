@@ -14,13 +14,15 @@ public class BaseVoiceGenerator(
     PiperRunner piperRunner,
     AudioProcessor audioProcessor,
     OpenVoiceRunner openVoice,
-    PiperConfig piperConfig)
+    PiperConfig piperConfig,
+    ClonerSettings clonerConfig)
 {
     private readonly UnifiedPhonemizer _phonemizer = phonemizer;
     private readonly PiperRunner _piperRunner = piperRunner;
     private readonly AudioProcessor _audioProcessor = audioProcessor;
     private readonly OpenVoiceRunner _openVoice = openVoice;
     private readonly PiperConfig _piperConfig = piperConfig;
+    private readonly ClonerSettings _clonerConfig = clonerConfig;
 
     // Dictionary of reference texts. 
     // Contains pangrams or phonetically rich sentences for 75 languages.
@@ -225,6 +227,10 @@ public class BaseVoiceGenerator(
 
         try
         {
+            // Matches reference WAV normalization (Program.cs) to ensure baseline and target
+            // embeddings are extracted under identical loudness conditions.
+            _audioProcessor.NormalizeLufs(resampled.Buffer.AsSpan(0, resampled.Length), openVoiceRate, _clonerConfig.ReferenceAudioTargetLufs);
+
             // 4. Generate the Magnitude Spectrogram from the resampled samples
             var spec = _audioProcessor.GetMagnitudeSpectrogram(resampled.Buffer.AsSpan(0, resampled.Length));
 
