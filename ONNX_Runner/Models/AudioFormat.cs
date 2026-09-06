@@ -10,5 +10,6 @@ public enum AudioFormat
     Wav,
     Mp3,
     Opus,
-    Pcm
+    Pcm,
+    B64Json
 }

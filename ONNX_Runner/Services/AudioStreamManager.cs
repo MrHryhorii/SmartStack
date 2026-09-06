@@ -41,7 +41,7 @@ public class AudioStreamManager : IDisposable
         _baseStream = targetStream;
         _isMemoryStream = targetStream is MemoryStream;
 
-        if (_format == AudioFormat.Mp3)
+        if (_format == AudioFormat.Mp3 || _format == AudioFormat.B64Json)
         {
             var waveFormat = new WaveFormat(sampleRate, 16, 1);
             // 128 kbps is a standard, high-quality bitrate for voice audio
@@ -223,6 +223,7 @@ public class AudioStreamManager : IDisposable
             AudioFormat.Mp3 => "audio/mpeg",
             AudioFormat.Opus => "audio/ogg",
             AudioFormat.Pcm => "audio/pcm",
+            AudioFormat.B64Json => "application/json",
             _ => "audio/wav" // Fallback (AudioFormat.Wav)
         };
     }
@@ -234,6 +235,7 @@ public class AudioStreamManager : IDisposable
             AudioFormat.Mp3 => "speech.mp3",
             AudioFormat.Opus => "speech.ogg",
             AudioFormat.Pcm => "speech.pcm",
+            AudioFormat.B64Json => "speech.json",
             _ => "speech.wav" // Fallback (AudioFormat.Wav)
         };
     }

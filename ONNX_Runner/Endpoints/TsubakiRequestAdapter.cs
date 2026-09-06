@@ -11,9 +11,16 @@ public static class TsubakiRequestAdapter
 {
     public static (SynthesisRequest? Request, string? FormatError) ToSynthesisRequest(TsubakiSpeechRequest dto)
     {
-        if (!Enum.TryParse<AudioFormat>(dto.ResponseFormat, true, out var format))
+        AudioFormat format;
+        string formatStr = dto.ResponseFormat?.Trim().ToLowerInvariant() ?? "mp3";
+
+        if (formatStr == "b64_json")
         {
-            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, pcm.");
+            format = AudioFormat.B64Json;
+        }
+        else if (!Enum.TryParse(formatStr, true, out format))
+        {
+            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, pcm, b64_json.");
         }
 
         string? cleanLanguage = dto.Language?.Trim().ToLowerInvariant();
