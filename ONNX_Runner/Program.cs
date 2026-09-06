@@ -232,66 +232,86 @@ if (piperConfig != null && piperModelPath != null)
 
                 if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
 
-                // Iterate through all .wav files in the voices directory to build the voice library
+                // PASS 1 (Generation): Scan for .wav files and generate missing .voice fingerprints.
+                // This pass strictly writes to disk; it does not load data into the VoiceLibrary.
                 var wavFiles = Directory.GetFiles(voicesDirectory, "*.wav");
                 foreach (var wavPath in wavFiles)
                 {
                     string voiceName = Path.GetFileNameWithoutExtension(wavPath);
                     string fingerprintPath = Path.Combine(voicesDirectory, voiceName + ".voice");
 
-                    // Load pre-computed voice fingerprint if it exists to save startup time
                     if (File.Exists(fingerprintPath))
                     {
-                        var fingerprint = openVoice.LoadVoiceFingerprint(fingerprintPath);
+                        // Already fingerprinted on a previous run — nothing to do here.
+                        continue;
+                    }
+
+                    // Extract new fingerprint from WAV file using the Tone Extractor model
+                    Console.ForegroundColor = ConsoleColor.DarkYellow;
+                    Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
+                    Console.ResetColor();
+
+                    int targetRate = toneConfig.Data.SamplingRate;
+                    var normalizedAudio = audioProc.LoadAndNormalizeWav(wavPath, targetRate);
+
+                    if (normalizedAudio.Length == 0)
+                    {
+                        System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
+                        continue;
+                    }
+
+                    // Normalizes loudness before extraction to keep tone embeddings level-invariant.
+                    audioProc.NormalizeLufs(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length), targetRate, clonerConfig.ReferenceAudioTargetLufs);
+
+                    float[,] spec;
+                    try
+                    {
+                        spec = audioProc.GetMagnitudeSpectrogram(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length));
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"   -> [ERROR] Spectrogram generation failed: {ex.Message}");
+                        continue;
+                    }
+                    finally
+                    {
+                        // Always return rented arrays to the shared pool to prevent memory leaks
+                        System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
+                    }
+
+                    int frames = spec.GetLength(0);
+                    if (frames == 0) continue;
+
+                    var fingerprint = openVoice.ExtractToneColor(spec);
+                    openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint);
+
+                    Console.ForegroundColor = ConsoleColor.Green;
+                    Console.WriteLine($"   [SUCCESS] Fingerprint saved: {voiceName}.voice");
+                    Console.ResetColor();
+                }
+
+                // PASS 2 (Loading): Populate the VoiceLibrary directly from .voice files.
+                // Decoupling the load step from .wav discovery allows users to safely delete 
+                // the original reference audio once the fingerprint is cached.
+                var voiceFiles = Directory.GetFiles(voicesDirectory, "*.voice");
+                foreach (var voiceFilePath in voiceFiles)
+                {
+                    string voiceName = Path.GetFileNameWithoutExtension(voiceFilePath);
+                    try
+                    {
+                        var fingerprint = openVoice.LoadVoiceFingerprint(voiceFilePath);
                         openVoice.VoiceLibrary[voiceName] = fingerprint;
+
                         Console.ForegroundColor = ConsoleColor.DarkGreen;
-                        Console.WriteLine($"[VOICE] Loaded from cache: {voiceName}");
+                        Console.WriteLine($"[VOICE] Loaded: {voiceName}");
                         Console.ResetColor();
                     }
-                    else
+                    catch (Exception ex)
                     {
-                        // Extract new fingerprint from WAV file using the Tone Extractor model
-                        Console.ForegroundColor = ConsoleColor.DarkYellow;
-                        Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
-                        Console.ResetColor();
-
-                        int targetRate = toneConfig.Data.SamplingRate;
-                        var normalizedAudio = audioProc.LoadAndNormalizeWav(wavPath, targetRate);
-
-                        if (normalizedAudio.Length == 0)
-                        {
-                            System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
-                            continue;
-                        }
-
-                        // Normalizes loudness before extraction to keep tone embeddings level-invariant.
-                        audioProc.NormalizeLufs(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length), targetRate, clonerConfig.ReferenceAudioTargetLufs);
-
-                        float[,] spec;
-                        try
-                        {
-                            spec = audioProc.GetMagnitudeSpectrogram(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length));
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"   -> [ERROR] Spectrogram generation failed: {ex.Message}");
-                            continue;
-                        }
-                        finally
-                        {
-                            // Always return rented arrays to the shared pool to prevent memory leaks
-                            System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
-                        }
-
-                        int frames = spec.GetLength(0);
-                        if (frames == 0) continue;
-
-                        var fingerprint = openVoice.ExtractToneColor(spec);
-                        openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint);
-                        openVoice.VoiceLibrary[voiceName] = fingerprint;
-
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine($"   [SUCCESS] Fingerprint saved: {voiceName}.voice");
+                        // A single corrupt/unreadable .voice file shouldn't take down startup
+                        // for every other voice — skip it and keep going.
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[VOICE] [ERROR] Failed to load '{voiceName}.voice': {ex.Message}");
                         Console.ResetColor();
                     }
                 }
@@ -334,8 +354,8 @@ if (piperConfig != null && piperModelPath != null)
         builder.Services.AddSingleton(fallbackMapper);
 
         mixedPhonemizer = new MixedLanguagePhonemizer(
-            phonemizerConfig, 
-            piperConfig.Espeak.Voice ?? "en", 
+            phonemizerConfig,
+            piperConfig.Espeak.Voice ?? "en",
             bootstrapLoggerFactory.CreateLogger<MixedLanguagePhonemizer>()
         );
         builder.Services.AddSingleton(mixedPhonemizer);
@@ -559,7 +579,7 @@ if (!string.IsNullOrEmpty(url))
         Console.ResetColor();
 
         using var client = new HttpClient();
-        
+
         // Hit the Tsubaki endpoint with a maximized parameter payload to trigger 
         // the full middleware, JSON deserializers, DSP effects, and routing pipeline.
         var warmupRequest = new
@@ -584,8 +604,8 @@ if (!string.IsNullOrEmpty(url))
         };
 
         var content = new StringContent(
-            System.Text.Json.JsonSerializer.Serialize(warmupRequest), 
-            System.Text.Encoding.UTF8, 
+            System.Text.Json.JsonSerializer.Serialize(warmupRequest),
+            System.Text.Encoding.UTF8,
             "application/json"
         );
 
@@ -596,7 +616,7 @@ if (!string.IsNullOrEmpty(url))
         {
             // Read the byte array to ensure the server streams the response, then immediately discard it for GC
             _ = await response.Content.ReadAsByteArrayAsync();
-            
+
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("[SYSTEM] Pipeline is fully operational. JIT and Shaders cached.");
             Console.ResetColor();
@@ -617,7 +637,7 @@ if (!string.IsNullOrEmpty(url))
     Console.WriteLine("  ║             TSUBAKI TTS ENGINE IS READY             ║");
     Console.WriteLine("  ╚═════════════════════════════════════════════════════╝");
     Console.ResetColor();
-    
+
     Console.WriteLine($"    [Web Dashboard]       {baseUrl}");
     Console.WriteLine($"    [OpenAI Base URL]     {baseUrl}/v1");
     Console.WriteLine($"    [Speech Endpoint]     {baseUrl}/v1/audio/speech");
