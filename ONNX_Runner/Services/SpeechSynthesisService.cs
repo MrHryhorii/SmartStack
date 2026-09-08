@@ -46,6 +46,9 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         System.Threading.Channels.Channel<(byte[] Buffer, int Length)>? networkChannel = null;
         Task? networkSenderTask = null;
         Stream? rawUnderlyingStream = null;
+        RequestContext? ctx = null;
+        // Prevents finally block from writing a duplicate closing brace if the response already completed.
+        bool b64ResponseClosed = false;
 
         try
         {
@@ -59,7 +62,7 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
 
             try
             {
-                var ctx = BuildRequestContext(request, services, piperConfig);
+                ctx = BuildRequestContext(request, services, piperConfig);
 
                 // We define the codec once for both modes (streaming and whole file)
                 string actualCodec = request.Format == AudioFormat.B64Json ? "mp3" : request.Format.ToString().ToLowerInvariant();
@@ -145,11 +148,12 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                 // =================================================================
                 if (ctx.TargetStream is Base64EncodingStream b64Stream)
                 {
-                    b64Stream.FinalizeEncoding();
+                    b64Stream.Dispose();
 
                     // Write the JSON suffix to close the object
                     byte[] jsonSuffix = System.Text.Encoding.UTF8.GetBytes("\"\n}");
                     rawUnderlyingStream.Write(jsonSuffix, 0, jsonSuffix.Length);
+                    b64ResponseClosed = true;
                 }
 
                 // Gracefully close the network bridge
@@ -179,6 +183,20 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
             }
             finally
             {
+                // Best-effort: finalize base64 and close JSON if aborted mid-stream.
+                // Skipped if b64ResponseClosed is already true to prevent duplicate closing suffixes.
+                if (!b64ResponseClosed && ctx?.TargetStream is Base64EncodingStream b64StreamCleanup)
+                {
+                    try
+                    {
+                        b64StreamCleanup.Dispose();
+                        byte[] jsonSuffix = System.Text.Encoding.UTF8.GetBytes("\"\n}");
+                        rawUnderlyingStream?.Write(jsonSuffix, 0, jsonSuffix.Length);
+                        rawUnderlyingStream?.Flush();
+                    }
+                    catch { /* best-effort cleanup only */ }
+                }
+
                 rawUnderlyingStream?.Dispose();
                 // CRITICAL: Always release the semaphore slot, even if an error occurs, 
                 // so the next request in the queue can proceed.
@@ -408,6 +426,16 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         // Internal channel for passing raw audio chunks between the Generator and the DSP Processor
         var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length)>(10);
 
+        // Deadlock guard: Channel<T> lacks a native reader-abort signal. If the consumer faults while
+        // the producer waits on WriteAsync (bounded capacity), the producer would hang forever and
+        // leak the GPU semaphore. The consumer catch block cancels this linked token to unstick it.
+        using var producerUnstickCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        CancellationToken producerToken = producerUnstickCts.Token;
+
+        // Preserves the root-cause consumer exception, preventing it from being masked by
+        // the synthetic OperationCanceledException triggered when unsticking the producer.
+        Exception? consumerFault = null;
+
         // PRODUCER: Phonemizes text and generates raw base audio using Piper ONNX
         var producerTask = Task.Run(async () =>
         {
@@ -534,7 +562,7 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                             }
 
                             // Send the fully reassembled sentence to the Consumer
-                            await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength), cancellationToken);
+                            await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength), producerToken);
                             handedOff = true; // Ownership successfully transferred to the Consumer
                         }
                         finally
@@ -555,7 +583,7 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                         try
                         {
                             // If Pitch is exactly 1.0, bypass DSP and send the original raw audio chunk directly
-                            await channel.Writer.WriteAsync(rawResult, cancellationToken);
+                            await channel.Writer.WriteAsync(rawResult, producerToken);
                             handedOff = true;
                         }
                         finally
@@ -569,161 +597,194 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                     }
                 }
             }
+            catch (Exception ex)
+            {
+                // Completing with the exception forces the consumer's `await foreach` to rethrow once drained,
+                // preventing it from executing graceful completion (reverb tails, clean EOF) on a truncated stream.
+                channel.Writer.TryComplete(ex);
+                throw; // preserve existing propagation to Task.WhenAll / the outer catch
+            }
             finally
             {
-                // CRITICAL: Always close the channel
-                channel.Writer.Complete();
+                // Must use TryComplete: if catch already faulted the channel, calling Complete()
+                // would throw InvalidOperationException and mask the original failure.
+                channel.Writer.TryComplete();
             }
         }, cancellationToken);
 
         // CONSUMER: Applies voice cloning, resampling, effects, and pushes to the network stream
         var consumerTask = Task.Run(async () =>
         {
-            await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
+            try
             {
-                float[]? rentedBuffer1 = null;
-                float[]? rentedBuffer2 = null;
-                float[]? rentedBuffer3 = null;
-
-                try
+                await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    float[]? rentedBuffer1 = null;
+                    float[]? rentedBuffer2 = null;
+                    float[]? rentedBuffer3 = null;
 
-                    float[] currentBuffer = chunk.Buffer;
-                    int currentLength = chunk.Length;
-
-                    if (ctx.CanClone && blendedTarget != null && sourceFingerprint != null)
+                    try
                     {
-                        // OpenVoice requires a specific sample rate (typically 22050 Hz)
-                        var r1 = ctx.AudioProc!.Resample(currentBuffer, currentLength, ctx.PiperConfig.Audio.SampleRate, ctx.OutSampleRate);
-                        rentedBuffer1 = r1.Buffer;
+                        cancellationToken.ThrowIfCancellationRequested();
 
-                        var specChunk = ctx.AudioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
-                        if (specChunk.GetLength(0) > 0)
+                        float[] currentBuffer = chunk.Buffer;
+                        int currentLength = chunk.Length;
+
+                        if (ctx.CanClone && blendedTarget != null && sourceFingerprint != null)
                         {
-                            // Tone Temperature Priority: explicit request value → server default from config,
-                            // same ?? pattern already used for Pitch/Volume above.
-                            float tau = request.ToneTemperature ?? ctx.ClonerConfig.ToneTemperature;
-                            // Apply tone color cloning in the latent space and decode back to audio. 
-                            // This is the most computationally expensive step, so we do it strictly 
-                            // once per sentence rather than per smaller chunk to optimize performance.
-                            var rClone = ctx.OpenVoice!.ApplyToneColor(specChunk, sourceFingerprint, blendedTarget, tau);
+                            // OpenVoice requires a specific sample rate (typically 22050 Hz)
+                            var r1 = ctx.AudioProc!.Resample(currentBuffer, currentLength, ctx.PiperConfig.Audio.SampleRate, ctx.OutSampleRate);
+                            rentedBuffer1 = r1.Buffer;
 
-                            rentedBuffer3 = rClone.Buffer;
-                            currentBuffer = rentedBuffer3;
-                            currentLength = rClone.Length;
+                            var specChunk = ctx.AudioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
+                            if (specChunk.GetLength(0) > 0)
+                            {
+                                // Tone Temperature Priority: explicit request value → server default from config,
+                                // same ?? pattern already used for Pitch/Volume above.
+                                float tau = request.ToneTemperature ?? ctx.ClonerConfig.ToneTemperature;
+                                // Apply tone color cloning in the latent space and decode back to audio. 
+                                // This is the most computationally expensive step, so we do it strictly 
+                                // once per sentence rather than per smaller chunk to optimize performance.
+                                var rClone = ctx.OpenVoice!.ApplyToneColor(specChunk, sourceFingerprint, blendedTarget, tau);
+
+                                rentedBuffer3 = rClone.Buffer;
+                                currentBuffer = rentedBuffer3;
+                                currentLength = rClone.Length;
+                            }
+                            else
+                            {
+                                currentBuffer = rentedBuffer1;
+                                currentLength = r1.Length;
+                            }
                         }
-                        else
+
+                        // Applies target volume post-cloning to protect OpenVoice from boosted input levels.
+                        // Acts as unified gain staging for both cloned and base Piper outputs.
+                        if (useVolumeShift)
                         {
-                            currentBuffer = rentedBuffer1;
-                            currentLength = r1.Length;
+                            VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume);
+                        }
+
+                        // Final resampling to match the requested output format (e.g., Opus requires 24kHz/48kHz)
+                        if (ctx.OutSampleRate != ctx.FinalSampleRate)
+                        {
+                            var r2 = ctx.AudioProc!.Resample(currentBuffer, currentLength, ctx.OutSampleRate, ctx.FinalSampleRate);
+                            rentedBuffer2 = r2.Buffer;
+                            currentBuffer = rentedBuffer2;
+                            currentLength = r2.Length;
+                        }
+
+                        // Apply character effects FIRST (Overdrive, Telephone, LoFiTape, etc.)
+                        effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
+
+                        // Apply spatial acoustics AFTER character effects
+                        spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
+                        streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
+
+                        // Append a brief pause (silence) between sentences for natural pacing
+                        Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
+
+                        // Apply character effects to silence (e.g. tape hiss continues during pauses)
+                        effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
+
+                        // Apply spatial acoustics to silence so reverb tails ring out naturally
+                        spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
+                        streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
+
+                        if (ctx.UseStreaming && ctx.StreamConfig.FlushAfterEachSentence)
+                        {
+                            ctx.TargetStream!.Flush();
                         }
                     }
-
-                    // Applies target volume post-cloning to protect OpenVoice from boosted input levels.
-                    // Acts as unified gain staging for both cloned and base Piper outputs.
-                    if (useVolumeShift)
+                    finally
                     {
-                        VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume);
+                        // ZERO-ALLOCATION PATTERN: 
+                        // Always return rented memory arrays to the shared pool to prevent Garbage Collector (GC) pressure and memory leaks.
+                        ArrayPool<float>.Shared.Return(chunk.Buffer);
+                        if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);
+                        if (rentedBuffer2 != null) ArrayPool<float>.Shared.Return(rentedBuffer2);
+                        if (rentedBuffer3 != null) ArrayPool<float>.Shared.Return(rentedBuffer3);
                     }
+                }
 
-                    // Final resampling to match the requested output format (e.g., Opus requires 24kHz/48kHz)
-                    if (ctx.OutSampleRate != ctx.FinalSampleRate)
+                // =================================================================
+                // REVERB TAIL EXTENSION (Flushes spatial acoustics once at the end)
+                // =================================================================
+                // Drains residual reverb by feeding silence until output drops below -60 dBFS.
+                // Strictly spatial-only: excludes character effects to avoid spinning on static noise floors.
+                // Priority: request.ExtendReverbTail -> ctx.EffectsConfig.ExtendReverbTailOnFinish.
+                bool extendTail = request.ExtendReverbTail ?? ctx.EffectsConfig.ExtendReverbTailOnFinish;
+
+                if (extendTail && envType != SpatialEnvironment.None)
+                {
+                    float silenceFloor = ctx.EffectsConfig.ReverbTailSilenceFloor;     // perceptual silence threshold
+                    const float maxTailSeconds = 4.0f;          // safety cap for environments that never fully settle
+
+                    int probeSamples = ctx.FinalSampleRate / 50; // 20ms probe blocks
+                    int maxSamples = (int)(ctx.FinalSampleRate * maxTailSeconds);
+                    int written = 0;
+
+                    // ZERO-ALLOCATION PATTERN: rent the probe buffer instead of `new float[]`.
+                    // Rent() may return an array larger than requested, so every access below
+                    // is explicitly bounded to probeSamples.
+                    float[] tailProbe = ArrayPool<float>.Shared.Rent(probeSamples);
+                    try
                     {
-                        var r2 = ctx.AudioProc!.Resample(currentBuffer, currentLength, ctx.OutSampleRate, ctx.FinalSampleRate);
-                        rentedBuffer2 = r2.Buffer;
-                        currentBuffer = rentedBuffer2;
-                        currentLength = r2.Length;
+                        while (written < maxSamples)
+                        {
+                            Array.Clear(tailProbe, 0, probeSamples);
+                            var probeSpan = tailProbe.AsSpan(0, probeSamples);
+
+                            // effectsEngine intentionally NOT applied here — see note above.
+                            spatialEngine.ApplyEnvironment(probeSpan, envType, envIntensity);
+                            streamManager.WriteChunk(probeSpan, filter);
+                            written += probeSamples;
+
+                            float peak = 0f;
+                            for (int i = 0; i < probeSamples; i++)
+                            {
+                                float absVal = MathF.Abs(tailProbe[i]);
+                                if (absVal > peak) peak = absVal;
+                            }
+                            if (peak < silenceFloor) break; // tail has decayed below audibility
+                        }
                     }
-
-                    // Apply character effects FIRST (Overdrive, Telephone, LoFiTape, etc.)
-                    effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
-
-                    // Apply spatial acoustics AFTER character effects
-                    spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
-                    streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
-
-                    // Append a brief pause (silence) between sentences for natural pacing
-                    Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
-
-                    // Apply character effects to silence (e.g. tape hiss continues during pauses)
-                    effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
-
-                    // Apply spatial acoustics to silence so reverb tails ring out naturally
-                    spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
-                    streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
+                    finally
+                    {
+                        ArrayPool<float>.Shared.Return(tailProbe);
+                    }
 
                     if (ctx.UseStreaming && ctx.StreamConfig.FlushAfterEachSentence)
                     {
                         ctx.TargetStream!.Flush();
                     }
                 }
-                finally
-                {
-                    // ZERO-ALLOCATION PATTERN: 
-                    // Always return rented memory arrays to the shared pool to prevent Garbage Collector (GC) pressure and memory leaks.
-                    ArrayPool<float>.Shared.Return(chunk.Buffer);
-                    if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);
-                    if (rentedBuffer2 != null) ArrayPool<float>.Shared.Return(rentedBuffer2);
-                    if (rentedBuffer3 != null) ArrayPool<float>.Shared.Return(rentedBuffer3);
-                }
             }
-
-            // =================================================================
-            // REVERB TAIL EXTENSION (Flushes spatial acoustics once at the end)
-            // =================================================================
-            // Drains residual reverb by feeding silence until output drops below -60 dBFS.
-            // Strictly spatial-only: excludes character effects to avoid spinning on static noise floors.
-            // Priority: request.ExtendReverbTail -> ctx.EffectsConfig.ExtendReverbTailOnFinish.
-            bool extendTail = request.ExtendReverbTail ?? ctx.EffectsConfig.ExtendReverbTailOnFinish;
-
-            if (extendTail && envType != SpatialEnvironment.None)
+            catch (Exception ex)
             {
-                float silenceFloor = ctx.EffectsConfig.ReverbTailSilenceFloor;     // perceptual silence threshold
-                const float maxTailSeconds = 4.0f;          // safety cap for environments that never fully settle
+                // Preserve root cause so the producer's synthetic OperationCanceledException doesn't mask it.
+                consumerFault = ex;
 
-                int probeSamples = ctx.FinalSampleRate / 50; // 20ms probe blocks
-                int maxSamples = (int)(ctx.FinalSampleRate * maxTailSeconds);
-                int written = 0;
-
-                // ZERO-ALLOCATION PATTERN: rent the probe buffer instead of `new float[]`.
-                // Rent() may return an array larger than requested, so every access below
-                // is explicitly bounded to probeSamples.
-                float[] tailProbe = ArrayPool<float>.Shared.Rent(probeSamples);
-                try
-                {
-                    while (written < maxSamples)
-                    {
-                        Array.Clear(tailProbe, 0, probeSamples);
-                        var probeSpan = tailProbe.AsSpan(0, probeSamples);
-
-                        // effectsEngine intentionally NOT applied here — see note above.
-                        spatialEngine.ApplyEnvironment(probeSpan, envType, envIntensity);
-                        streamManager.WriteChunk(probeSpan, filter);
-                        written += probeSamples;
-
-                        float peak = 0f;
-                        for (int i = 0; i < probeSamples; i++)
-                        {
-                            float absVal = MathF.Abs(tailProbe[i]);
-                            if (absVal > peak) peak = absVal;
-                        }
-                        if (peak < silenceFloor) break; // tail has decayed below audibility
-                    }
-                }
-                finally
-                {
-                    ArrayPool<float>.Shared.Return(tailProbe);
-                }
-
-                if (ctx.UseStreaming && ctx.StreamConfig.FlushAfterEachSentence)
-                {
-                    ctx.TargetStream!.Flush();
-                }
+                // Unstick producer waiting on bounded WriteAsync to prevent deadlock.
+                producerUnstickCts.Cancel();
+                throw;
             }
         }, cancellationToken);
 
-        await Task.WhenAll(producerTask, consumerTask);
+        try
+        {
+            await Task.WhenAll(producerTask, consumerTask);
+        }
+        catch
+        {
+            // Prefer the consumer's real failure over a synthetic cancellation that may
+            // have been raised in the producer purely to unstick it from a full channel.
+            if (consumerFault != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(consumerFault).Throw();
+            }
+            throw;
+        }
     }
 
     // Auxiliary interpolation method
