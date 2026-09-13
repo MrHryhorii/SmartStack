@@ -18,6 +18,12 @@ public class TextChunker(ChunkerSettings settings)
         // Common Latin punctuation
         '.', '!', '?', '\n',
 
+        // Ellipsis variants — semantically equivalent to ASCII "..." for sentence chunking
+        '…',  // U+2026  HORIZONTAL ELLIPSIS
+        '‥',  // U+2025  TWO DOT LEADER
+        '⋯',  // U+22EF  MIDLINE HORIZONTAL ELLIPSIS
+        '᠅',  // U+1805  MONGOLIAN FOUR DOTS
+
         // Compound Latin punctuation — frequently used in chat and AI-generated text
         '‼',  // U+203C  DOUBLE EXCLAMATION MARK
         '‽',  // U+203D  INTERROBANG (combination of ? and !)
@@ -57,7 +63,6 @@ public class TextChunker(ChunkerSettings settings)
 
         // Greek — visually identical to semicolon but a different Unicode codepoint
         ';',  // U+037E  GREEK QUESTION MARK
-        ';',  // U+003B  LATIN SEMICOLON (kept as a sentence boundary for streaming heuristics)
 
         // Ethiopic (Amharic, Tigrinya)
         '።',  // U+1362  ETHIOPIC FULL STOP
@@ -98,7 +103,6 @@ public class TextChunker(ChunkerSettings settings)
         '-', // U+002D  HYPHEN-MINUS
         '–', // U+2013  EN DASH
         '—', // U+2014  EM DASH
-        '…', // U+2026  HORIZONTAL ELLIPSIS (pause in speech)
 
         // Arabic pause punctuation
         '،', // U+060C  ARABIC COMMA

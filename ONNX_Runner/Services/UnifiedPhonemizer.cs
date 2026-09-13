@@ -178,13 +178,25 @@ public partial class UnifiedPhonemizer
                 continue;
             }
 
+            // Normalize the complete orthographic segment before language tokenization.
+            // This lets punctuation collapse operate across future TextChunk boundaries and
+            // prevents visual quotes, unsupported symbols, and model-specific punctuation from
+            // leaking into eSpeak as pronounceable text. Raw IPA blocks were already extracted
+            // above and therefore remain completely untouched.
+            string normalizedSegment = _punctuationMapper.Normalize(segmentText);
+
+            if (string.IsNullOrWhiteSpace(normalizedSegment))
+            {
+                continue;
+            }
+
             // Pass forcedLanguage to the detector. If the detector is disabled, resolve the
             // language locally using the same smart-inheritance rule.
             if (_mixedPhonemizer != null)
             {
                 tokens.AddRange(
                     _mixedPhonemizer.ProcessTextToLanguageTokens(
-                        segmentText,
+                        normalizedSegment,
                         forcedLanguage));
 
                 continue;
@@ -192,7 +204,7 @@ public partial class UnifiedPhonemizer
 
             tokens.Add(new TextChunk
             {
-                Text = segmentText,
+                Text = normalizedSegment,
                 DetectedLanguage = ResolveFallbackLanguage(forcedLanguage),
                 IsPunctuationOrSpace = false
             });
@@ -221,10 +233,11 @@ public partial class UnifiedPhonemizer
                 continue;
             }
 
-            SetVoiceSafely(chunk.DetectedLanguage);
+            bool voiceAvailable = TrySetVoiceSafely(chunk.DetectedLanguage);
 
-            string normalizedChunk = _punctuationMapper.Normalize(chunk.Text);
-            ReadOnlySpan<char> chunkSpan = normalizedChunk.AsSpan();
+            // Non-raw text was normalized once at segment level before tokenization.
+            // Re-normalizing each chunk would lose cross-chunk collapse state and duplicate work.
+            ReadOnlySpan<char> chunkSpan = chunk.Text.AsSpan();
 
             // PREFIX, CORE, AND SUFFIX EXTRACTION:
             // Isolates the core word from surrounding punctuation to prevent eSpeak mispronunciations.
@@ -233,7 +246,7 @@ public partial class UnifiedPhonemizer
 
             finalPhonemes.Append(chunkSpan[..start]);
 
-            if (start < end)
+            if (start < end && voiceAvailable)
             {
                 string core = chunkSpan[start..end].ToString();
                 string rawPhonemes = _espeakWrapper.GetIpaPhonemes(core);
@@ -282,20 +295,77 @@ public partial class UnifiedPhonemizer
 
         if (!skipPeriod)
         {
-            output.Append(_punctuationMapper.Normalize(chunk.Text));
+            // Punctuation was already normalized before tokenization, so append the model-native
+            // token directly. Keeping this path allocation-free also preserves collapse decisions
+            // that were made across the original segment.
+            output.Append(chunk.Text);
         }
     }
 
-    private void SetVoiceSafely(string language)
+    private bool TrySetVoiceSafely(string language)
     {
+        string resolvedLanguage = CanonicalizeEspeakVoiceCode(language);
+
         try
         {
-            _espeakWrapper.SetVoice(language);
+            _espeakWrapper.SetVoice(resolvedLanguage);
+            return true;
         }
         catch
         {
-            _espeakWrapper.SetVoice(_piperConfig.Espeak.Voice ?? "en");
+            // Falling back to an English/model voice for a foreign script produces spoken labels
+            // such as "Chinese letter" for every Han character. Only use the model voice when the
+            // failed code belongs to the same base language family; otherwise skip that core safely.
+            if (!HasSameBaseLanguage(
+                    resolvedLanguage,
+                    CanonicalizeEspeakVoiceCode(_modelEspeakCode)))
+            {
+                return false;
+            }
+
+            try
+            {
+                _espeakWrapper.SetVoice(_piperConfig.Espeak.Voice ?? "en");
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
+    }
+
+    private static string CanonicalizeEspeakVoiceCode(string language)
+    {
+        if (language.Equals("zh", StringComparison.OrdinalIgnoreCase) ||
+            language.Equals("zh-cn", StringComparison.OrdinalIgnoreCase) ||
+            language.Equals("zh-hans", StringComparison.OrdinalIgnoreCase))
+        {
+            return "cmn";
+        }
+
+        return language;
+    }
+
+    private static bool HasSameBaseLanguage(string left, string right)
+    {
+        ReadOnlySpan<char> leftSpan = left.AsSpan();
+        ReadOnlySpan<char> rightSpan = right.AsSpan();
+
+        int leftSeparator = leftSpan.IndexOfAny('-', '_');
+        int rightSeparator = rightSpan.IndexOfAny('-', '_');
+
+        if (leftSeparator >= 0)
+        {
+            leftSpan = leftSpan[..leftSeparator];
+        }
+
+        if (rightSeparator >= 0)
+        {
+            rightSpan = rightSpan[..rightSeparator];
+        }
+
+        return leftSpan.Equals(rightSpan, StringComparison.OrdinalIgnoreCase);
     }
 
     // Identifies letters, decimal digits, and combining marks to define the "core" of a word.

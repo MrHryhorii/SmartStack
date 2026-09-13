@@ -68,7 +68,7 @@ public partial class MixedLanguagePhonemizer
         { ScriptType.Latin, "en" },
         { ScriptType.Cyrillic, "uk" },
         { ScriptType.Greek, "el" },
-        { ScriptType.Han, "zh" },
+        { ScriptType.Han, "cmn" },
         { ScriptType.Hiragana, "ja" },
         { ScriptType.Katakana, "ja" },
         { ScriptType.Hangul, "ko" },
@@ -290,6 +290,9 @@ public partial class MixedLanguagePhonemizer
     /// </summary>
     private static ScriptType DetectScript(ReadOnlySpan<char> word)
     {
+        ScriptType firstNonHanScript = ScriptType.Other;
+        bool hasHan = false;
+
         foreach (Rune rune in word.EnumerateRunes())
         {
             if (!IsLetterRune(rune))
@@ -298,13 +301,32 @@ public partial class MixedLanguagePhonemizer
             }
 
             ScriptType script = DetectScript(rune);
-            if (script != ScriptType.Other)
+
+            // Any Kana inside a token is decisive evidence for Japanese. This must win over
+            // leading Kanji; otherwise text such as "日本語のテスト" is incorrectly routed to Mandarin.
+            if (script is ScriptType.Hiragana or ScriptType.Katakana)
             {
                 return script;
             }
+
+            if (script == ScriptType.Han)
+            {
+                hasHan = true;
+                continue;
+            }
+
+            if (script != ScriptType.Other && firstNonHanScript == ScriptType.Other)
+            {
+                firstNonHanScript = script;
+            }
         }
 
-        return ScriptType.Other;
+        if (firstNonHanScript != ScriptType.Other)
+        {
+            return firstNonHanScript;
+        }
+
+        return hasHan ? ScriptType.Han : ScriptType.Other;
     }
 
     private static ScriptType DetectScript(Rune rune)
@@ -730,40 +752,20 @@ public partial class MixedLanguagePhonemizer
             || IsLexicalHyphen(value);
     }
 
-    private static bool IsHardPunctuation(char value)
+    private static bool IsHardPunctuation(Rune rune)
     {
-        return value is '.'
-            or ','
-            or '-'
-            or '\u2010'
-            or '\u2011'
-            or '\u058A'
-            or '\u05BE'
-            or '\u30A0'
-            or '\u2012'
-            or '\u2013'
-            or '\u2014'
-            or '\u2015'
-            or '\u2212'
-            or ':'
-            or '!'
-            or '?'
-            or ';'
-            or '"'
-            or '«'
-            or '»'
-            or '('
-            or ')'
-            or '['
-            or ']'
-            or '{'
-            or '}'
-            or '⟨'
-            or '⟩'
-            or '。'
-            or '！'
-            or '？'
-            or '…';
+        // After DynamicPunctuationMapper normalizes an orthographic segment, the selected
+        // model-native punctuation may come from any writing system. Classifying by Unicode
+        // category keeps tokenization symmetric for Western, CJK, Arabic, Indic, and other
+        // punctuation without maintaining a second hard-coded symbol catalog here.
+        UnicodeCategory category = Rune.GetUnicodeCategory(rune);
+
+        return category is UnicodeCategory.DashPunctuation
+            or UnicodeCategory.OpenPunctuation
+            or UnicodeCategory.ClosePunctuation
+            or UnicodeCategory.InitialQuotePunctuation
+            or UnicodeCategory.FinalQuotePunctuation
+            or UnicodeCategory.OtherPunctuation;
     }
 
     private static int EstimateResultCapacity(int textLength)
@@ -1077,8 +1079,7 @@ public partial class MixedLanguagePhonemizer
             int currentLength = DecodeRune(input[index..], out Rune currentRune);
 
             // GROUP 1: Punctuation and dashes.
-            if (currentRune.Value <= char.MaxValue &&
-                IsHardPunctuation((char)currentRune.Value))
+            if (IsHardPunctuation(currentRune))
             {
                 int start = index;
                 index += currentLength;
@@ -1089,8 +1090,7 @@ public partial class MixedLanguagePhonemizer
                         input[index..],
                         out Rune punctuationRune);
 
-                    if (punctuationRune.Value > char.MaxValue ||
-                        !IsHardPunctuation((char)punctuationRune.Value))
+                    if (!IsHardPunctuation(punctuationRune))
                     {
                         break;
                     }
@@ -1157,9 +1157,7 @@ public partial class MixedLanguagePhonemizer
                     input[index..],
                     out Rune nextRune);
 
-                bool isHardPunctuation =
-                    nextRune.Value <= char.MaxValue &&
-                    IsHardPunctuation((char)nextRune.Value);
+                bool isHardPunctuation = IsHardPunctuation(nextRune);
 
                 if (isHardPunctuation || IsWordCoreRune(nextRune))
                 {

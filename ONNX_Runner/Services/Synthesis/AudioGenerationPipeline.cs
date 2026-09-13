@@ -200,11 +200,22 @@ internal static class AudioGenerationPipeline
                     }
                     isFinished = TextChunker.SentenceTerminators.AsSpan().Contains(cleanChunk[lastRealCharIdx]);
 
-                    // Update local state for the next iteration safely
-                    previousChunkWasFinished = isFinished;
-
-                    // Generate the base voice using neural network
+                    // Generate the base voice phonemes first. A non-empty text chunk can become
+                    // empty after normalization (for example, a standalone closing quote).
                     string phonemes = ctx.Phonemizer.GetPhonemes(chunk, request.Language);
+
+                    // Never invoke Piper with an empty phoneme stream. The wrapper IDs alone can
+                    // produce a short voiced artifact even though there is no pronounceable input.
+                    // Deliberately do NOT reject punctuation-only phonemes here: supported sequences
+                    // such as ?, !, ?!, ⁉, and ‽ must remain available to the acoustic model.
+                    if (string.IsNullOrWhiteSpace(phonemes))
+                    {
+                        continue;
+                    }
+
+                    // Update local state only for chunks that are actually synthesized. A stripped
+                    // quote-only chunk must not change continuation state for the next real chunk.
+                    previousChunkWasFinished = isFinished;
 
                     // Pass the streaming flags to the generator
                     var rawResult = ctx.PiperRunner.SynthesizeAudioRaw(phonemes, isContinuation, isFinished, request.Speed, request.NoiseScale, request.NoiseW);
