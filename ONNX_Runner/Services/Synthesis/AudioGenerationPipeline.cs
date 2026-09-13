@@ -53,8 +53,11 @@ internal static class AudioGenerationPipeline
         float targetPitch = request.Pitch ?? ctx.DspConfig.DefaultPitch;
         bool usePitchShift = Math.Abs(targetPitch - 1.0f) > 0.001f;
 
-        using var pitchShifter = new PitchShifter(ctx.PiperConfig.Audio.SampleRate);
-        if (usePitchShift)
+        using var pitchShifter = usePitchShift
+            ? new PitchShifter(ctx.PiperConfig.Audio.SampleRate)
+            : null;
+
+        if (pitchShifter != null)
         {
             pitchShifter.SetPitch(targetPitch);
         }
@@ -104,12 +107,12 @@ internal static class AudioGenerationPipeline
         float[]? blendedTarget = null;
         if (ctx.CanClone && targetFingerprint != null && sourceFingerprint != null)
         {
-            blendedTarget = new float[targetFingerprint.Length];
             // Clone Intensity Priority: explicit request value → server default from config,
             // same ?? pattern already used for Pitch/Volume above.
             float intensity = request.CloneIntensity ?? ctx.ClonerConfig.CloneIntensity;
 
-            // We use SLERP for natural mixing of latent vectors
+            // We use SLERP for natural mixing of latent vectors. Slerp owns the single
+            // result allocation; avoid allocating and immediately discarding a second array here.
             blendedTarget = Slerp(sourceFingerprint, targetFingerprint, intensity);
         }
 
@@ -236,7 +239,7 @@ internal static class AudioGenerationPipeline
                         try
                         {
                             // Process the main audio
-                            foreach (var segment in pitchShifter.ProcessChunk(rawResult.Buffer.AsSpan(0, rawResult.Length)))
+                            foreach (var segment in pitchShifter!.ProcessChunk(rawResult.Buffer, rawResult.Length))
                             {
                                 if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
                                 {
@@ -249,7 +252,7 @@ internal static class AudioGenerationPipeline
                                 accumulatedLength += segment.Count;
                             }
                             // Flush internal WSOLA buffers immediately for THIS sentence
-                            foreach (var segment in pitchShifter.Flush())
+                            foreach (var segment in pitchShifter!.Flush())
                             {
                                 if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
                                 {
@@ -333,29 +336,56 @@ internal static class AudioGenerationPipeline
 
                         if (ctx.CanClone && blendedTarget != null && sourceFingerprint != null)
                         {
-                            // OpenVoice requires a specific sample rate (typically 22050 Hz)
-                            var r1 = ctx.AudioProc!.Resample(currentBuffer, currentLength, ctx.PiperConfig.Audio.SampleRate, ctx.OutSampleRate);
-                            rentedBuffer1 = r1.Buffer;
+                            // OpenVoice requires its configured sampling rate. Avoid cloning the whole
+                            // sentence into a second pooled buffer when Piper already produces that rate.
+                            float[] cloneInputBuffer = currentBuffer;
+                            int cloneInputLength = currentLength;
 
-                            var specChunk = ctx.AudioProc.GetMagnitudeSpectrogram(rentedBuffer1.AsSpan(0, r1.Length));
-                            if (specChunk.GetLength(0) > 0)
+                            if (ctx.PiperConfig.Audio.SampleRate != ctx.OutSampleRate)
                             {
-                                // Tone Temperature Priority: explicit request value → server default from config,
-                                // same ?? pattern already used for Pitch/Volume above.
-                                float tau = request.ToneTemperature ?? ctx.ClonerConfig.ToneTemperature;
-                                // Apply tone color cloning in the latent space and decode back to audio. 
-                                // This is the most computationally expensive step, so we do it strictly 
-                                // once per sentence rather than per smaller chunk to optimize performance.
-                                var rClone = ctx.OpenVoice!.ApplyToneColor(specChunk, sourceFingerprint, blendedTarget, tau);
+                                var r1 = ctx.AudioProc!.Resample(
+                                    currentBuffer,
+                                    currentLength,
+                                    ctx.PiperConfig.Audio.SampleRate,
+                                    ctx.OutSampleRate);
 
-                                rentedBuffer3 = rClone.Buffer;
-                                currentBuffer = rentedBuffer3;
-                                currentLength = rClone.Length;
+                                rentedBuffer1 = r1.Buffer;
+                                cloneInputBuffer = rentedBuffer1;
+                                cloneInputLength = r1.Length;
+                            }
+
+                            // Runtime cloning computes the spectrogram directly into a pooled flat
+                            // [bins, frames] buffer, matching the ONNX tensor layout and avoiding both
+                            // a large float[,] allocation and a full transpose/copy before inference.
+                            var specChunk = ctx.AudioProc!.GetColorizerSpectrogram(
+                                cloneInputBuffer.AsSpan(0, cloneInputLength));
+
+                            if (specChunk.Buffer != null)
+                            {
+                                try
+                                {
+                                    float tau = request.ToneTemperature ?? ctx.ClonerConfig.ToneTemperature;
+                                    var rClone = ctx.OpenVoice!.ApplyToneColor(
+                                        specChunk.Buffer,
+                                        specChunk.Frames,
+                                        specChunk.Bins,
+                                        sourceFingerprint,
+                                        blendedTarget,
+                                        tau);
+
+                                    rentedBuffer3 = rClone.Buffer;
+                                    currentBuffer = rentedBuffer3;
+                                    currentLength = rClone.Length;
+                                }
+                                finally
+                                {
+                                    ArrayPool<float>.Shared.Return(specChunk.Buffer);
+                                }
                             }
                             else
                             {
-                                currentBuffer = rentedBuffer1;
-                                currentLength = r1.Length;
+                                currentBuffer = cloneInputBuffer;
+                                currentLength = cloneInputLength;
                             }
                         }
 

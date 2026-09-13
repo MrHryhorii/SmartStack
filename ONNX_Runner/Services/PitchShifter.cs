@@ -43,21 +43,19 @@ public class PitchShifter : IDisposable
     /// Iterates over all available output since pitch shifting may produce
     /// more samples than the input.
     /// </summary>
-    public IEnumerable<ArraySegment<float>> ProcessChunk(ReadOnlySpan<float> inputSamples)
+    public IEnumerable<ArraySegment<float>> ProcessChunk(float[] inputSamples, int length)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        // SoundTouch requires an array, so we rent a temporary buffer to avoid allocations.
-        float[] tempBuffer = System.Buffers.ArrayPool<float>.Shared.Rent(inputSamples.Length);
-        try
+        ArgumentNullException.ThrowIfNull(inputSamples);
+        if ((uint)length > (uint)inputSamples.Length)
         {
-            inputSamples.CopyTo(tempBuffer);
-            _soundTouch.PutSamples(tempBuffer, inputSamples.Length);
+            throw new ArgumentOutOfRangeException(nameof(length));
         }
-        finally
-        {
-            System.Buffers.ArrayPool<float>.Shared.Return(tempBuffer);
-        }
+
+        // Piper already returns a pooled float[] buffer. Feed it directly to SoundTouch instead
+        // of renting another array and copying the entire sentence before every pitch shift.
+        _soundTouch.PutSamples(inputSamples, length);
 
         return DrainBuffer();
     }

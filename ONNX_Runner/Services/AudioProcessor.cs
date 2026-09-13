@@ -323,4 +323,78 @@ public class AudioProcessor
 
         return spectrogram;
     }
+
+    /// <summary>
+    /// Runtime OpenVoice path. Computes the same linear magnitude spectrogram directly into
+    /// a pooled flat buffer in the [bins, frames] layout consumed by the Tone Color model.
+    /// This avoids allocating a potentially LOH-sized float[,] and avoids the subsequent
+    /// full spectrogram transpose/copy before ONNX inference. The caller owns the returned
+    /// pooled buffer and must return it to ArrayPool&lt;float&gt;.Shared.
+    /// </summary>
+    public (float[]? Buffer, int Frames, int Bins) GetColorizerSpectrogram(ReadOnlySpan<float> samples)
+    {
+        int numFrames = (samples.Length - _fftSize) / _hopSize + 1;
+        if (numFrames <= 0)
+        {
+            return (null, 0, 0);
+        }
+
+        int bins = (_fftSize / 2) + 1;
+        int tensorSize = checked(numFrames * bins);
+        float[] spectrogram = ArrayPool<float>.Shared.Rent(tensorSize);
+        NAudio.Dsp.Complex[] complex = ArrayPool<NAudio.Dsp.Complex>.Shared.Rent(_fftSize);
+
+        try
+        {
+            Span<float> destination = spectrogram.AsSpan(0, tensorSize);
+            int m = (int)Math.Log2(_fftSize);
+            int vectorSize = Vector<float>.Count;
+
+            for (int i = 0; i < numFrames; i++)
+            {
+                ReadOnlySpan<float> frame = samples.Slice(i * _hopSize, _fftSize);
+                int j = 0;
+
+                for (; j <= _fftSize - vectorSize; j += vectorSize)
+                {
+                    var vFrame = new Vector<float>(frame.Slice(j));
+                    var vWindow = new Vector<float>(_hanningWindow, j);
+                    var vResult = vFrame * vWindow;
+
+                    for (int k = 0; k < vectorSize; k++)
+                    {
+                        complex[j + k].X = vResult[k];
+                        complex[j + k].Y = 0f;
+                    }
+                }
+
+                for (; j < _fftSize; j++)
+                {
+                    complex[j].X = frame[j] * _hanningWindow[j];
+                    complex[j].Y = 0f;
+                }
+
+                FastFourierTransform.FFT(true, m, complex);
+
+                // The color converter expects [1, bins, frames], therefore write directly
+                // to the final tensor layout instead of materializing [frames, bins] first.
+                for (int k = 0; k < bins; k++)
+                {
+                    destination[(k * numFrames) + i] =
+                        MathF.Sqrt((complex[k].X * complex[k].X) + (complex[k].Y * complex[k].Y)) * _fftSize;
+                }
+            }
+
+            return (spectrogram, numFrames, bins);
+        }
+        catch
+        {
+            ArrayPool<float>.Shared.Return(spectrogram);
+            throw;
+        }
+        finally
+        {
+            ArrayPool<NAudio.Dsp.Complex>.Shared.Return(complex);
+        }
+    }
 }

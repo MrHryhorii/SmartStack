@@ -1,124 +1,235 @@
-using System.Security.Cryptography;
+using System.Buffers;
+using System.Buffers.Text;
 
 namespace ONNX_Runner.Services;
 
 /// <summary>
-/// Wraps an output <see cref="Stream"/> to encode written bytes into base64 text on the fly.
-/// Acts as a transparent drop-in replacement for the underlying stream (e.g., <c>BridgingStream</c> 
-/// for <c>text/plain</c> streaming, or <c>MemoryStream</c> for buffering), requiring zero changes 
-/// to the existing audio pipeline.
-/// 
-/// USAGE: Wrap the inner stream and write bytes normally. You MUST call <c>FinalizeEncoding()</c> 
-/// exactly once at the end of the response to append the final '=' padding. Do NOT call it from 
-/// <c>Flush()</c>, as premature padding will corrupt subsequent data.
-/// 
-/// WHY A CUSTOM TRANSFORM: Base64 encodes in fixed 3-byte blocks. Audio chunks arrive in arbitrary 
-/// sizes. This stream uses <see cref="ToBase64Transform"/> to safely carry over 0-2 leftover bytes 
-/// across <c>Write</c> calls, preventing chunk-boundary corruption.
-/// 
-/// LIMITATION: Streaming pure base64 reduces Time-To-First-Byte, but clients cannot decode or play 
-/// the audio until the entire sequence is completed and finalized.
+/// Forward-only stream that Base64-encodes written audio bytes without allocating temporary
+/// arrays on every Write call. A single pooled output buffer is reused for the lifetime of
+/// the response and only 0-2 raw carry bytes are retained between calls.
 /// </summary>
-public sealed class Base64EncodingStream(Stream inner, bool leaveInnerOpen = false) : Stream
+public sealed class Base64EncodingStream : Stream
 {
-    private readonly ICryptoTransform _transform = new ToBase64Transform();
+    private const int EncodedBufferSize = 16 * 1024;
 
-    // 0–2 raw bytes from the previous Write() that didn't complete a 3-byte group yet.
-    private byte[] _carry = [];
+    private readonly Stream _inner;
+    private readonly bool _leaveInnerOpen;
+    private readonly byte[] _carry = new byte[2];
+
+    private byte[]? _encodedBuffer;
+    private int _carryCount;
     private bool _finalized;
+    private bool _disposed;
+
+    public Base64EncodingStream(Stream inner, bool leaveInnerOpen = false)
+    {
+        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+        _leaveInnerOpen = leaveInnerOpen;
+        _encodedBuffer = ArrayPool<byte>.Shared.Rent(EncodedBufferSize);
+    }
 
     public override bool CanRead => false;
     public override bool CanSeek => false;
-    public override bool CanWrite => true;
+    public override bool CanWrite => !_disposed && !_finalized;
     public override long Length => throw new NotSupportedException("Base64EncodingStream is write-only and forward-only.");
+
     public override long Position
     {
         get => throw new NotSupportedException("Base64EncodingStream is write-only and forward-only.");
-        set => throw new NotSupportedException("Base64EncodingStream is write-only and forward-only.");
+        set => throw new NotSupportedException("Base64EncodingStream is forward-only.");
     }
 
     public override void Write(byte[] buffer, int offset, int count)
     {
-        if (_finalized) throw new InvalidOperationException("Cannot write after FinalizeEncoding() has been called.");
-        if (count == 0) return;
+        ArgumentNullException.ThrowIfNull(buffer);
+        ArgumentOutOfRangeException.ThrowIfNegative(offset);
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
 
-        // Combine any leftover bytes from the previous call with the newly written data —
-        // this is what lets chunk boundaries fall anywhere without corrupting a 3-byte group.
-        byte[] combined;
-        if (_carry.Length > 0)
+        if (buffer.Length - offset < count)
         {
-            combined = new byte[_carry.Length + count];
-            Buffer.BlockCopy(_carry, 0, combined, 0, _carry.Length);
-            Buffer.BlockCopy(buffer, offset, combined, _carry.Length, count);
-        }
-        else
-        {
-            combined = new byte[count];
-            Buffer.BlockCopy(buffer, offset, combined, 0, count);
+            throw new ArgumentException("Offset and count exceed the source buffer length.");
         }
 
-        int wholeGroups = combined.Length / 3;
-        int wholeBytes = wholeGroups * 3;
+        WriteCore(buffer.AsSpan(offset, count));
+    }
 
-        if (wholeBytes > 0)
+    public override void Write(ReadOnlySpan<byte> buffer)
+    {
+        WriteCore(buffer);
+    }
+
+    private void WriteCore(ReadOnlySpan<byte> source)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_finalized)
         {
-            // ToBase64Transform.CanTransformMultipleBlocks is false: it must be called once
-            // per exact 3-byte group (its InputBlockSize), never with a larger count.
-            var outBuf = new byte[wholeGroups * 4]; // OutputBlockSize is 4 per group.
-            int written = 0;
-            for (int i = 0; i < wholeBytes; i += 3)
+            throw new InvalidOperationException("Cannot write after FinalizeEncoding() has been called.");
+        }
+
+        if (source.IsEmpty)
+        {
+            return;
+        }
+
+        byte[] encodedBuffer = _encodedBuffer
+            ?? throw new ObjectDisposedException(nameof(Base64EncodingStream));
+
+        // Complete a 3-byte group left over from the previous call first.
+        if (_carryCount > 0)
+        {
+            int needed = 3 - _carryCount;
+
+            if (source.Length < needed)
             {
-                written += _transform.TransformBlock(combined, i, 3, outBuf, written);
+                source.CopyTo(_carry.AsSpan(_carryCount));
+                _carryCount += source.Length;
+                return;
             }
-            inner.Write(outBuf, 0, written);
+
+            Span<byte> rawBlock = stackalloc byte[3];
+            _carry.AsSpan(0, _carryCount).CopyTo(rawBlock);
+            source[..needed].CopyTo(rawBlock[_carryCount..]);
+
+            Span<byte> encodedBlock = stackalloc byte[4];
+            OperationStatus blockStatus = Base64.EncodeToUtf8(
+                rawBlock,
+                encodedBlock,
+                out int blockConsumed,
+                out int blockWritten,
+                isFinalBlock: false);
+
+            if (blockStatus != OperationStatus.Done || blockConsumed != 3 || blockWritten != 4)
+            {
+                throw new InvalidOperationException("Unexpected Base64 block encoding failure.");
+            }
+
+            _inner.Write(encodedBlock);
+            source = source[needed..];
+            _carryCount = 0;
         }
 
-        int leftover = combined.Length - wholeBytes;
-        _carry = leftover > 0 ? combined[wholeBytes..] : [];
+        // Encode complete 3-byte groups directly from the caller's buffer. The output side uses
+        // one pooled buffer for the whole response, avoiding combined/input copies and per-write GC.
+        int wholeBytes = source.Length - (source.Length % 3);
+        int maxRawBytesPerPass = (encodedBuffer.Length / 4) * 3;
+
+        while (wholeBytes > 0)
+        {
+            int rawBytesThisPass = Math.Min(wholeBytes, maxRawBytesPerPass);
+            ReadOnlySpan<byte> rawChunk = source[..rawBytesThisPass];
+
+            OperationStatus status = Base64.EncodeToUtf8(
+                rawChunk,
+                encodedBuffer,
+                out int consumed,
+                out int written,
+                isFinalBlock: false);
+
+            if (status != OperationStatus.Done || consumed != rawBytesThisPass)
+            {
+                throw new InvalidOperationException("Unexpected Base64 streaming encoding failure.");
+            }
+
+            _inner.Write(encodedBuffer, 0, written);
+
+            source = source[consumed..];
+            wholeBytes -= consumed;
+        }
+
+        // Preserve only the final 1-2 bytes for the next call. No slice allocation is required.
+        if (!source.IsEmpty)
+        {
+            source.CopyTo(_carry);
+            _carryCount = source.Length;
+        }
     }
 
     /// <summary>
-    /// Passes through to the inner stream so buffered bytes actually reach the network for a
-    /// streaming response. Deliberately does NOT finalize the base64 sequence — see the class
-    /// remarks on why that must stay separate from per-sentence Flush() calls.
+    /// Flushes only the transport. Base64 padding is emitted exclusively by FinalizeEncoding().
     /// </summary>
-    public override void Flush() => inner.Flush();
+    public override void Flush()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _inner.Flush();
+    }
 
     /// <summary>
-    /// Writes the final base64 group — including '=' padding if the total raw byte count
-    /// wasn't a multiple of 3 — and flushes the inner stream. Call exactly once, after the
-    /// last Write(), at true end-of-response. The base64 sequence is not valid/decodable
-    /// until this has run.
+    /// Writes the final padded Base64 group, if any, and flushes the underlying transport.
     /// </summary>
     public void FinalizeEncoding()
     {
-        if (_finalized) return;
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_finalized)
+        {
+            return;
+        }
+
         _finalized = true;
 
-        byte[] finalBlock = _transform.TransformFinalBlock(_carry, 0, _carry.Length);
-        if (finalBlock.Length > 0) inner.Write(finalBlock, 0, finalBlock.Length);
-        inner.Flush();
+        if (_carryCount > 0)
+        {
+            Span<byte> finalBlock = stackalloc byte[4];
+            OperationStatus status = Base64.EncodeToUtf8(
+                _carry.AsSpan(0, _carryCount),
+                finalBlock,
+                out int consumed,
+                out int written,
+                isFinalBlock: true);
+
+            if (status != OperationStatus.Done || consumed != _carryCount)
+            {
+                throw new InvalidOperationException("Unexpected Base64 finalization failure.");
+            }
+
+            _inner.Write(finalBlock[..written]);
+            _carryCount = 0;
+        }
+
+        _inner.Flush();
     }
 
     protected override void Dispose(bool disposing)
     {
+        if (_disposed)
+        {
+            base.Dispose(disposing);
+            return;
+        }
+
         if (disposing)
         {
-            // Safety net: if the caller forgot to call FinalizeEncoding() explicitly (e.g. an
-            // exception cut generation short), still emit a valid, decodable base64 sequence
-            // for whatever was actually written, rather than silently dropping the tail.
-            FinalizeEncoding();
-            _transform.Dispose();
-            if (!leaveInnerOpen) inner.Dispose();
+            try
+            {
+                FinalizeEncoding();
+            }
+            finally
+            {
+                _disposed = true;
+
+                if (_encodedBuffer != null)
+                {
+                    ArrayPool<byte>.Shared.Return(_encodedBuffer);
+                    _encodedBuffer = null;
+                }
+
+                if (!_leaveInnerOpen)
+                {
+                    _inner.Dispose();
+                }
+            }
         }
+
         base.Dispose(disposing);
     }
 
-    // Not meaningful for a write-only, forward-only stream.
     public override int Read(byte[] buffer, int offset, int count) =>
         throw new NotSupportedException("Base64EncodingStream is write-only.");
+
     public override long Seek(long offset, SeekOrigin origin) =>
         throw new NotSupportedException("Base64EncodingStream is forward-only.");
+
     public override void SetLength(long value) =>
         throw new NotSupportedException("Base64EncodingStream is forward-only.");
 }

@@ -95,8 +95,8 @@ public partial class OpenVoiceRunner : IDisposable
         // Protection against negative numbers in config
         int startingDeviceId = Math.Max(0, hwSettings.OpenVoiceGpuDeviceId);
         // Try the desired device + the next 3 as a fallback
-        int maxGpusToTry = startingDeviceId + 4; 
-        
+        int maxGpusToTry = startingDeviceId + 4;
+
         for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
         {
             try
@@ -105,11 +105,11 @@ public partial class OpenVoiceRunner : IDisposable
                 using var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                 {
                     LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-                    GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
-                        ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                    GraphOptimizationLevel = onnxSettings.EnableGraphOptimization
+                        ? GraphOptimizationLevel.ORT_ENABLE_ALL
                         : GraphOptimizationLevel.ORT_DISABLE_ALL
                 };
-                
+
                 // We apply a profile specifically for the GPU
                 onnxSettings.Gpu.ApplyTo(gpuOptions);
 
@@ -243,11 +243,11 @@ public partial class OpenVoiceRunner : IDisposable
         using var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
         {
             LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-            GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
-                ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+            GraphOptimizationLevel = onnxSettings.EnableGraphOptimization
+                ? GraphOptimizationLevel.ORT_ENABLE_ALL
                 : GraphOptimizationLevel.ORT_DISABLE_ALL
         };
-        
+
         // We apply a profile specifically for the CPU
         onnxSettings.Cpu.ApplyTo(cpuOptions);
 
@@ -406,11 +406,99 @@ public partial class OpenVoiceRunner : IDisposable
     {
         int frames = spectrogram.GetLength(0);
         int bins = spectrogram.GetLength(1);
-        int channels = _config.Model.GinChannels;
-        int tensorSize = frames * bins;
+        int tensorSize = checked(frames * bins);
 
-        // Rent memory for input audio tensor
+        // Compatibility/startup path: transpose the traditional [frames, bins] matrix into
+        // the [bins, frames] layout expected by the color converter. Runtime synthesis uses
+        // the pooled flat overload below and therefore skips both this allocation and copy.
         float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
+
+        try
+        {
+            if (tensorSize > 0)
+            {
+                System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
+                    "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
+
+                ReadOnlySpan<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
+                Span<float> destination = rentedInput.AsSpan(0, tensorSize);
+
+                for (int i = 0; i < frames; i++)
+                {
+                    int rowOffset = i * bins;
+                    for (int j = 0; j < bins; j++)
+                    {
+                        destination[(j * frames) + i] = flatSpectrogram[rowOffset + j];
+                    }
+                }
+            }
+
+            return ApplyToneColorCore(
+                rentedInput,
+                tensorSize,
+                frames,
+                bins,
+                srcFingerprint,
+                destFingerprint,
+                tau);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rentedInput);
+        }
+    }
+
+    /// <summary>
+    /// Zero-copy runtime path. The supplied pooled buffer must already contain the spectrogram
+    /// in [bins, frames] row-major order, exactly matching the ONNX input tensor layout.
+    /// Ownership remains with the caller; this method never returns or retains the input buffer.
+    /// </summary>
+    public (float[] Buffer, int Length) ApplyToneColor(
+        float[] transposedSpectrogram,
+        int frames,
+        int bins,
+        float[] srcFingerprint,
+        float[] destFingerprint,
+        float tau = 1.0f)
+    {
+        ArgumentNullException.ThrowIfNull(transposedSpectrogram);
+
+        if (frames <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frames));
+        }
+
+        if (bins <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(bins));
+        }
+
+        int tensorSize = checked(frames * bins);
+        if (transposedSpectrogram.Length < tensorSize)
+        {
+            throw new ArgumentException("Spectrogram buffer is smaller than frames * bins.", nameof(transposedSpectrogram));
+        }
+
+        return ApplyToneColorCore(
+            transposedSpectrogram,
+            tensorSize,
+            frames,
+            bins,
+            srcFingerprint,
+            destFingerprint,
+            tau);
+    }
+
+    private (float[] Buffer, int Length) ApplyToneColorCore(
+        float[] tensorBuffer,
+        int tensorSize,
+        int frames,
+        int bins,
+        float[] srcFingerprint,
+        float[] destFingerprint,
+        float tau)
+    {
+        int channels = _config.Model.GinChannels;
 
         // --- SESSION ROUTING ---
         InferenceSession activeSession;
@@ -418,53 +506,28 @@ public partial class OpenVoiceRunner : IDisposable
 
         if (_isUsingColorPool)
         {
-            // DirectML Object Pool. In practice this should never actually wait, since
-            // the pool is sized to match the caller's own gpuSemaphore capacity — but it
-            // blocks (rather than throwing) if those two limits were ever to drift apart.
+            // DirectML/WebGPU object pool. Blocking here is intentional: it is the final
+            // hardware-level safety gate if outer request concurrency ever exceeds pool capacity.
             _colorGate!.Wait();
             releaseGate = true;
-            _colorSessionPool!.TryDequeue(out activeSession!);
+
+            if (!_colorSessionPool!.TryDequeue(out activeSession!))
+            {
+                _colorGate.Release();
+                releaseGate = false;
+                throw new InvalidOperationException("OpenVoice color session pool is unexpectedly empty.");
+            }
         }
         else
         {
-            // Shared Execution (CUDA/CPU)
             activeSession = _sharedColorSession!;
         }
 
         try
         {
-            if (tensorSize > 0)
-            {
-                // TRUST BOUNDARY: CreateSpan takes tensorSize on faith — it never verifies that
-                // many elements actually follow spectrogram[0,0] in memory. Safe here only because
-                // 'spectrogram' is never reassigned between the GetLength() calls above and here.
-                // The assert below (Release no-op) catches any future edit that breaks that order.
-                System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
-                    "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
-
-                // A rectangular float[,] is stored as one contiguous row-major block, so this
-                // flat span is a zero-copy view over the same memory — reading through it is
-                // far faster than the float[,] indexer. The tensor's [1, bins, frames] layout
-                // is transposed relative to the source spectrogram's [frames, bins], so element
-                // (0, j, i) lands at flat offset j*frames + i; writing straight into the rented
-                // Span bypasses the much slower DenseTensor indexer for the write side too.
-                ReadOnlySpan<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
-                Span<float> dst = rentedInput.AsSpan(0, tensorSize);
-
-                for (int i = 0; i < frames; i++)
-                {
-                    int rowOffset = i * bins;
-                    for (int j = 0; j < bins; j++)
-                    {
-                        dst[j * frames + i] = flatSpectrogram[rowOffset + j];
-                    }
-                }
-            }
-
-            var memory = new Memory<float>(rentedInput, 0, tensorSize);
+            var memory = new Memory<float>(tensorBuffer, 0, tensorSize);
             var audioTensor = new DenseTensor<float>(memory, [1, bins, frames]);
 
-            // Prepare voice fingerprints and parameters for ONNX inference
             var srcTensor = new DenseTensor<float>(srcFingerprint, [1, channels, 1]);
             var destTensor = new DenseTensor<float>(destFingerprint, [1, channels, 1]);
             var lengthTensor = new DenseTensor<long>(new[] { (long)frames }, [1]);
@@ -480,35 +543,42 @@ public partial class OpenVoiceRunner : IDisposable
             };
 
             using var results = activeSession.Run(inputs);
-
-            // Extract the converted audio result into a rented buffer
             var outputNode = results.First(r => r.Name == "converted_audio");
             var outputTensor = outputNode.AsTensor<float>();
 
             int outLength = (int)outputTensor.Length;
             float[] outBuffer = ArrayPool<float>.Shared.Rent(outLength);
 
-            if (outputTensor is DenseTensor<float> denseTensor)
+            try
             {
-                denseTensor.Buffer.Span.CopyTo(outBuffer);
-            }
-            else
-            {
-                int index = 0;
-                foreach (var val in outputTensor) outBuffer[index++] = val;
-            }
+                if (outputTensor is DenseTensor<float> denseTensor)
+                {
+                    denseTensor.Buffer.Span.CopyTo(outBuffer);
+                }
+                else
+                {
+                    int index = 0;
+                    foreach (var value in outputTensor)
+                    {
+                        outBuffer[index++] = value;
+                    }
+                }
 
-            return (outBuffer, outLength);
+                return (outBuffer, outLength);
+            }
+            catch
+            {
+                ArrayPool<float>.Shared.Return(outBuffer);
+                throw;
+            }
         }
         finally
         {
-            // Ensure the locked session is returned to the queue even if inference fails
             if (releaseGate)
             {
                 _colorSessionPool!.Enqueue(activeSession);
                 _colorGate!.Release();
             }
-            ArrayPool<float>.Shared.Return(rentedInput);
         }
     }
 

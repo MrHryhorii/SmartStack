@@ -51,15 +51,45 @@ public partial class MixedLanguagePhonemizer
     private static readonly IReadOnlyList<string> ForcedLanguageDiagnostic =
         ["Forced by API"];
 
-    private static readonly IReadOnlyList<string> LetterFallbackDiagnostic =
-        ["letter fallback"];
+    private static readonly IReadOnlyList<string> StrongLanguageHintDiagnostic =
+        ["strong script-language hint"];
 
     private static readonly IReadOnlyList<string> ScriptFallbackDiagnostic =
         ["script fallback"];
 
-    public enum ScriptType { None, Latin, Cyrillic, Greek, Han, Hiragana, Katakana, Hangul, Arabic, Hebrew, Other }
+    private static readonly IReadOnlyList<string> ScriptCapabilityRouteDiagnostic =
+        ["script capability route"];
 
-    // Ultimate script-level emergency fallback for when both Lingua and unique letter checks 
+    public enum ScriptType
+    {
+        None,
+        Latin,
+        Cyrillic,
+        Greek,
+        Han,
+        Hiragana,
+        Katakana,
+        Hangul,
+        Arabic,
+        Hebrew,
+        Armenian,
+        Bengali,
+        Devanagari,
+        Georgian,
+        Gujarati,
+        Gurmukhi,
+        Odia,
+        Tamil,
+        Telugu,
+        Kannada,
+        Malayalam,
+        Sinhala,
+        Thai,
+        Myanmar,
+        Other
+    }
+
+    // Ultimate script-level emergency fallback for when both Lingua and strong script-language hints
     // find ZERO signal (e.g. Cyrillic text on a server with only Latin models loaded). 
     // Direct eSpeak codes, not Lingua enums, so this works even if the fallback language 
     // isn't in SupportedLanguages. None/Other stay unmapped.
@@ -74,21 +104,35 @@ public partial class MixedLanguagePhonemizer
         { ScriptType.Hangul, "ko" },
         { ScriptType.Arabic, "ar" },
         { ScriptType.Hebrew, "he" },
+        { ScriptType.Armenian, "hy" },
+        { ScriptType.Bengali, "bn" },
+        { ScriptType.Devanagari, "hi" },
+        { ScriptType.Georgian, "ka" },
+        { ScriptType.Gujarati, "gu" },
+        { ScriptType.Gurmukhi, "pa" },
+        { ScriptType.Odia, "or" },
+        { ScriptType.Tamil, "ta" },
+        { ScriptType.Telugu, "te" },
+        { ScriptType.Kannada, "kn" },
+        { ScriptType.Malayalam, "ml" },
+        { ScriptType.Sinhala, "si" },
+        { ScriptType.Thai, "th" },
+        { ScriptType.Myanmar, "my" },
     };
 
-    // Diagnostic-letter fallback, grouped by script so each subphrase (whose ScriptType is
-    // already known before we get here) only ever searches its own alphabet's set. Not
-    // exhaustive or linguistically airtight — some letters are exclusive to one language
-    // (narrows all the way down), others are shared by a small cluster (narrows to "one of
-    // these", then falls back to the most populous member — see the Cyrillic sr/mk note).
+    // Strong script-language hints used only after Lingua produced no usable signal.
+    // Each subphrase has already been classified by Unicode script, so this table performs one
+    // cheap IndexOfAny over a small script-specific set. The markers are deliberately conservative:
+    // they need not be mathematically unique, but must strongly narrow the most likely language.
+    // If no marker is present, ScriptFallbackLanguage provides the final coarse degradation.
     //
     // Turkish: dotless "ı" uppercases to plain "I", which would misfire on virtually every
-    // capitalized Latin word — deliberately NOT mapped. Its dotted capital "İ" (U+0130) is a
-    // distinct, genuinely unique codepoint used instead. Arabic-script letters have no case.
-    private static readonly Dictionary<ScriptType, (SearchValues<char> Chars, Dictionary<char, string> Map)> UniqueLettersByScript = new()
+    // capitalized Latin word — deliberately NOT mapped by itself. Its dotted capital "İ" (U+0130)
+    // and other strong Turkish letters remain useful hints. Arabic-script letters have no case.
+    private static readonly Dictionary<ScriptType, (SearchValues<char> Chars, Dictionary<char, string> Map)> StrongLanguageHintsByScript = new()
     {
         [ScriptType.Cyrillic] = (
-            SearchValues.Create("їЇєЄґҐ" + "ўЎ" + "ъЪэЭ" + "ѓЃѕЅќЌ" + "ђЂћЋ" + "јЈљЉњЊџЏ"),
+            SearchValues.Create("їЇєЄґҐ" + "ўЎ" + "эЭ" + "ѝЍ" + "әӘғҒқҚңҢұҰһҺ" + "ѓЃѕЅќЌ" + "ђЂћЋ" + "јЈљЉњЊџЏ"),
             new Dictionary<char, string>
             {
                 ['ї'] = "uk",
@@ -99,10 +143,27 @@ public partial class MixedLanguagePhonemizer
                 ['Ґ'] = "uk",
                 ['ў'] = "be",
                 ['Ў'] = "be",
-                ['ъ'] = "ru",
-                ['Ъ'] = "ru",
+                // Russian-specific strong signal. Hard sign (ъ) is deliberately excluded
+                // because it is also a very common Bulgarian vowel letter.
                 ['э'] = "ru",
                 ['Э'] = "ru",
+                // Bulgarian-specific I with grave.
+                ['ѝ'] = "bg",
+                ['Ѝ'] = "bg",
+                // Strong Kazakh letters among the languages supported by the detector.
+                // ө/ү are deliberately excluded because Mongolian shares them.
+                ['ә'] = "kk",
+                ['Ә'] = "kk",
+                ['ғ'] = "kk",
+                ['Ғ'] = "kk",
+                ['қ'] = "kk",
+                ['Қ'] = "kk",
+                ['ң'] = "kk",
+                ['Ң'] = "kk",
+                ['ұ'] = "kk",
+                ['Ұ'] = "kk",
+                ['һ'] = "kk",
+                ['Һ'] = "kk",
                 // Exclusive to Macedonian (not in Serbian):
                 ['ѓ'] = "mk",
                 ['Ѓ'] = "mk",
@@ -129,15 +190,33 @@ public partial class MixedLanguagePhonemizer
             }
         ),
         [ScriptType.Latin] = (
-            SearchValues.Create("øØåÅ" + "ßẞ" + "łŁąĄęĘśŚźŹżŻ" + "řŘěĚůŮ" + "ığİĞ" + "þÞðÐ" + "œŒ"),
+            SearchValues.Create(
+                "øØåÅ" +
+                "ßẞ" +
+                "łŁąĄęĘśŚźŹżŻ" +
+                "řŘěĚůŮ" +
+                "ľĽĺĹŕŔ" +
+                "ģĢķĶļĻņŅ" +
+                "ėĖįĮųŲ" +
+                "őŐűŰ" +
+                "șȘțȚ" +
+                "ơƠưƯ" +
+                "ĉĈĝĜĥĤĵĴŝŜŭŬ" +
+                "ŵŴŷŶ" +
+                "ığİĞ" +
+                "þÞðÐ" +
+                "œŒ" +
+                "ħĦ"),
             new Dictionary<char, string>
             {
+                // Norwegian/Danish overlap; keep the existing Bokmål-biased degradation.
                 ['ø'] = "nb",
                 ['Ø'] = "nb",
                 ['å'] = "nb",
                 ['Å'] = "nb",
                 ['ß'] = "de",
                 ['ẞ'] = "de",
+
                 ['ł'] = "pl",
                 ['Ł'] = "pl",
                 ['ą'] = "pl",
@@ -150,12 +229,68 @@ public partial class MixedLanguagePhonemizer
                 ['Ź'] = "pl",
                 ['ż'] = "pl",
                 ['Ż'] = "pl",
+
                 ['ř'] = "cs",
                 ['Ř'] = "cs",
                 ['ě'] = "cs",
                 ['Ě'] = "cs",
                 ['ů'] = "cs",
                 ['Ů'] = "cs",
+
+                ['ľ'] = "sk",
+                ['Ľ'] = "sk",
+                ['ĺ'] = "sk",
+                ['Ĺ'] = "sk",
+                ['ŕ'] = "sk",
+                ['Ŕ'] = "sk",
+
+                ['ģ'] = "lv",
+                ['Ģ'] = "lv",
+                ['ķ'] = "lv",
+                ['Ķ'] = "lv",
+                ['ļ'] = "lv",
+                ['Ļ'] = "lv",
+                ['ņ'] = "lv",
+                ['Ņ'] = "lv",
+
+                ['ė'] = "lt",
+                ['Ė'] = "lt",
+                ['į'] = "lt",
+                ['Į'] = "lt",
+                ['ų'] = "lt",
+                ['Ų'] = "lt",
+
+                ['ő'] = "hu",
+                ['Ő'] = "hu",
+                ['ű'] = "hu",
+                ['Ű'] = "hu",
+                ['ș'] = "ro",
+                ['Ș'] = "ro",
+                ['ț'] = "ro",
+                ['Ț'] = "ro",
+                ['ơ'] = "vi",
+                ['Ơ'] = "vi",
+                ['ư'] = "vi",
+                ['Ư'] = "vi",
+
+                ['ĉ'] = "eo",
+                ['Ĉ'] = "eo",
+                ['ĝ'] = "eo",
+                ['Ĝ'] = "eo",
+                ['ĥ'] = "eo",
+                ['Ĥ'] = "eo",
+                ['ĵ'] = "eo",
+                ['Ĵ'] = "eo",
+                ['ŝ'] = "eo",
+                ['Ŝ'] = "eo",
+                ['ŭ'] = "eo",
+                ['Ŭ'] = "eo",
+
+                ['ŵ'] = "cy",
+                ['Ŵ'] = "cy",
+                ['ŷ'] = "cy",
+                ['Ŷ'] = "cy",
+
                 ['ı'] = "tr",
                 ['İ'] = "tr",
                 ['ğ'] = "tr",
@@ -166,11 +301,50 @@ public partial class MixedLanguagePhonemizer
                 ['Ð'] = "is",
                 ['œ'] = "fr",
                 ['Œ'] = "fr",
+
+                // Maltese is not a Lingua language in the current mapper, but eSpeak supports it.
+                ['ħ'] = "mt",
+                ['Ħ'] = "mt",
             }
         ),
         [ScriptType.Arabic] = (
-            SearchValues.Create("پچژگ"),
-            new Dictionary<char, string> { ['پ'] = "fa", ['چ'] = "fa", ['ژ'] = "fa", ['گ'] = "fa" }
+            // پ/چ/گ are shared by Persian and Urdu, so they are intentionally not used as
+            // single-character language decisions. Keep only substantially stronger hints.
+            SearchValues.Create("ژۀٹڈڑںھہےۂۓ"),
+            new Dictionary<char, string>
+            {
+                ['ژ'] = "fa",
+                ['ۀ'] = "fa",
+
+                ['ٹ'] = "ur",
+                ['ڈ'] = "ur",
+                ['ڑ'] = "ur",
+                ['ں'] = "ur",
+                ['ھ'] = "ur",
+                ['ہ'] = "ur",
+                ['ے'] = "ur",
+                ['ۂ'] = "ur",
+                ['ۓ'] = "ur",
+            }
+        ),
+        [ScriptType.Devanagari] = (
+            // Marathi strongly favors retroflex lateral /ळ/ and /ऱ/ compared with Hindi.
+            SearchValues.Create("ळऱ"),
+            new Dictionary<char, string>
+            {
+                ['ळ'] = "mr",
+                ['ऱ'] = "mr",
+            }
+        ),
+        [ScriptType.Bengali] = (
+            // Assamese shares the Bengali script, but these two letters are strong Assamese signals.
+            // eSpeak supports Assamese directly even though Lingua does not participate in this tier.
+            SearchValues.Create("ৰৱ"),
+            new Dictionary<char, string>
+            {
+                ['ৰ'] = "as",
+                ['ৱ'] = "as",
+            }
         ),
     };
 
@@ -290,9 +464,6 @@ public partial class MixedLanguagePhonemizer
     /// </summary>
     private static ScriptType DetectScript(ReadOnlySpan<char> word)
     {
-        ScriptType firstNonHanScript = ScriptType.Other;
-        bool hasHan = false;
-
         foreach (Rune rune in word.EnumerateRunes())
         {
             if (!IsLetterRune(rune))
@@ -301,32 +472,13 @@ public partial class MixedLanguagePhonemizer
             }
 
             ScriptType script = DetectScript(rune);
-
-            // Any Kana inside a token is decisive evidence for Japanese. This must win over
-            // leading Kanji; otherwise text such as "日本語のテスト" is incorrectly routed to Mandarin.
-            if (script is ScriptType.Hiragana or ScriptType.Katakana)
+            if (script != ScriptType.Other)
             {
                 return script;
             }
-
-            if (script == ScriptType.Han)
-            {
-                hasHan = true;
-                continue;
-            }
-
-            if (script != ScriptType.Other && firstNonHanScript == ScriptType.Other)
-            {
-                firstNonHanScript = script;
-            }
         }
 
-        if (firstNonHanScript != ScriptType.Other)
-        {
-            return firstNonHanScript;
-        }
-
-        return hasHan ? ScriptType.Han : ScriptType.Other;
+        return ScriptType.Other;
     }
 
     private static ScriptType DetectScript(Rune rune)
@@ -357,6 +509,81 @@ public partial class MixedLanguagePhonemizer
             IsInRange(value, 0x1F00, 0x1FFF))
         {
             return ScriptType.Greek;
+        }
+
+        if (IsInRange(value, 0x0530, 0x058F))
+        {
+            return ScriptType.Armenian;
+        }
+
+        if (IsInRange(value, 0x0900, 0x097F) ||
+            IsInRange(value, 0xA8E0, 0xA8FF))
+        {
+            return ScriptType.Devanagari;
+        }
+
+        if (IsInRange(value, 0x0980, 0x09FF))
+        {
+            return ScriptType.Bengali;
+        }
+
+        if (IsInRange(value, 0x0A00, 0x0A7F))
+        {
+            return ScriptType.Gurmukhi;
+        }
+
+        if (IsInRange(value, 0x0A80, 0x0AFF))
+        {
+            return ScriptType.Gujarati;
+        }
+
+        if (IsInRange(value, 0x0B00, 0x0B7F))
+        {
+            return ScriptType.Odia;
+        }
+
+        if (IsInRange(value, 0x0B80, 0x0BFF))
+        {
+            return ScriptType.Tamil;
+        }
+
+        if (IsInRange(value, 0x0C00, 0x0C7F))
+        {
+            return ScriptType.Telugu;
+        }
+
+        if (IsInRange(value, 0x0C80, 0x0CFF))
+        {
+            return ScriptType.Kannada;
+        }
+
+        if (IsInRange(value, 0x0D00, 0x0D7F))
+        {
+            return ScriptType.Malayalam;
+        }
+
+        if (IsInRange(value, 0x0D80, 0x0DFF))
+        {
+            return ScriptType.Sinhala;
+        }
+
+        if (IsInRange(value, 0x0E00, 0x0E7F))
+        {
+            return ScriptType.Thai;
+        }
+
+        if (IsInRange(value, 0x1000, 0x109F) ||
+            IsInRange(value, 0xA9E0, 0xA9FF) ||
+            IsInRange(value, 0xAA60, 0xAA7F))
+        {
+            return ScriptType.Myanmar;
+        }
+
+        if (IsInRange(value, 0x10A0, 0x10FF) ||
+            IsInRange(value, 0x1C90, 0x1CBF) ||
+            IsInRange(value, 0x2D00, 0x2D2F))
+        {
+            return ScriptType.Georgian;
         }
 
         if (IsInRange(value, 0x3400, 0x4DBF) ||
@@ -499,9 +726,10 @@ public partial class MixedLanguagePhonemizer
             return true;
         }
 
-        // Japanese naturally mixes Han, Hiragana, and Katakana within the same language.
-        // Treating those transitions as hard language boundaries would create false splits.
-        return IsJapaneseScript(left) && IsJapaneseScript(right);
+        // Hiragana and Katakana are both handled by the Japanese eSpeak frontend and can safely
+        // remain in one run. Han is intentionally NOT compatible here: eSpeak's Japanese frontend
+        // cannot resolve Kanji readings reliably, so Han must be routed separately through Mandarin.
+        return IsJapaneseKanaScript(left) && IsJapaneseKanaScript(right);
     }
 
     /// <summary>
@@ -532,19 +760,15 @@ public partial class MixedLanguagePhonemizer
             Language.Korean => ScriptType.Hangul,
             Language.Arabic or Language.Persian or Language.Urdu => ScriptType.Arabic,
             Language.Hebrew => ScriptType.Hebrew,
-
-            // These languages use scripts that the current ScriptType detector intentionally
-            // does not classify yet. Do not gate them as Latin by accident.
-            Language.Armenian or
-            Language.Bengali or
-            Language.Georgian or
-            Language.Gujarati or
-            Language.Hindi or
-            Language.Marathi or
-            Language.Punjabi or
-            Language.Tamil or
-            Language.Telugu or
-            Language.Thai => ScriptType.Other,
+            Language.Armenian => ScriptType.Armenian,
+            Language.Bengali => ScriptType.Bengali,
+            Language.Georgian => ScriptType.Georgian,
+            Language.Gujarati => ScriptType.Gujarati,
+            Language.Hindi or Language.Marathi => ScriptType.Devanagari,
+            Language.Punjabi => ScriptType.Gurmukhi,
+            Language.Tamil => ScriptType.Tamil,
+            Language.Telugu => ScriptType.Telugu,
+            Language.Thai => ScriptType.Thai,
 
             // All remaining Lingua languages currently supported by EspeakLinguaMapper use Latin
             // as their primary script.
@@ -566,11 +790,11 @@ public partial class MixedLanguagePhonemizer
             return true;
         }
 
-        // Japanese is genuinely multi-script. Do not apply the broader Japanese compatibility
-        // rule to Chinese Han models, which must not inherit Hiragana/Katakana chunks.
+        // Only Kana can safely use the Japanese eSpeak frontend without an external Kanji G2P
+        // dictionary. Han is capability-routed to Mandarin before statistical language detection.
         if (_modelLinguaLang == Language.Japanese)
         {
-            return IsJapaneseScript(chunkScript);
+            return IsJapaneseKanaScript(chunkScript);
         }
 
         // Serbian is routinely written in both Cyrillic and Latin.
@@ -582,9 +806,9 @@ public partial class MixedLanguagePhonemizer
         return chunkScript == _modelScript;
     }
 
-    private static bool IsJapaneseScript(ScriptType script)
+    private static bool IsJapaneseKanaScript(ScriptType script)
     {
-        return script is ScriptType.Han or ScriptType.Hiragana or ScriptType.Katakana;
+        return script is ScriptType.Hiragana or ScriptType.Katakana;
     }
 
     private static bool ContainsLetter(ReadOnlySpan<char> value)
@@ -633,6 +857,20 @@ public partial class MixedLanguagePhonemizer
             ScriptType.Hangul => "Hangul",
             ScriptType.Arabic => "Arabic",
             ScriptType.Hebrew => "Hebrew",
+            ScriptType.Armenian => "Armenian",
+            ScriptType.Bengali => "Bengali",
+            ScriptType.Devanagari => "Devanagari",
+            ScriptType.Georgian => "Georgian",
+            ScriptType.Gujarati => "Gujarati",
+            ScriptType.Gurmukhi => "Gurmukhi",
+            ScriptType.Odia => "Odia",
+            ScriptType.Tamil => "Tamil",
+            ScriptType.Telugu => "Telugu",
+            ScriptType.Kannada => "Kannada",
+            ScriptType.Malayalam => "Malayalam",
+            ScriptType.Sinhala => "Sinhala",
+            ScriptType.Thai => "Thai",
+            ScriptType.Myanmar => "Myanmar",
             ScriptType.Other => "Other",
             _ => "None"
         };
@@ -980,8 +1218,31 @@ public partial class MixedLanguagePhonemizer
             hasSpeakableContent = false;
         }
 
-        // Appends a normal word fragment while preserving the existing hard script-boundary behavior.
-        // ReadOnlySpan keeps mixed-script compound splitting allocation-free on the word side.
+        // Appends one already-classified script run to the current phrase.
+        // Hiragana/Katakana may share a run; all other script transitions are hard boundaries.
+        void AppendScriptRun(ReadOnlySpan<char> run, ScriptType runScript)
+        {
+            if (run.IsEmpty)
+            {
+                return;
+            }
+
+            if (currentScript != ScriptType.None &&
+                !AreScriptsCompatible(currentScript, runScript))
+            {
+                FlushPhrase();
+            }
+
+            currentScript = runScript;
+            hasLetters = true;
+            hasSpeakableContent = true;
+            currentSubPhrase.Append(run);
+        }
+
+        // Splits a word into Unicode-script runs without allocating substrings.
+        // Neutral digits/combining marks stay attached to the surrounding run. This is especially
+        // important for Japanese: 日本語のテスト becomes Han "日本語" + Kana "のテスト",
+        // allowing Han to use Mandarin while Hiragana/Katakana use Japanese.
         void AppendWord(ReadOnlySpan<char> word)
         {
             if (word.IsEmpty)
@@ -995,7 +1256,7 @@ public partial class MixedLanguagePhonemizer
                 out bool fragmentHasDecimalDigits);
 
             // Numbers and combining marks are language-neutral. Keep numeric content inside the
-            // surrounding phrase, but do not let it choose or change a writing system.
+            // surrounding phrase, but do not let them choose or change a writing system.
             if (!fragmentHasLetters)
             {
                 currentSubPhrase.Append(word);
@@ -1003,19 +1264,44 @@ public partial class MixedLanguagePhonemizer
                 return;
             }
 
-            ScriptType wordScript = DetectScript(word);
+            int runStart = 0;
+            int scanIndex = 0;
+            ScriptType runScript = ScriptType.None;
 
-            // Hard boundary: flush if the writing system changes (e.g., from Latin to Cyrillic)
-            if (currentScript != ScriptType.None &&
-                !AreScriptsCompatible(currentScript, wordScript))
+            while (scanIndex < word.Length)
             {
-                FlushPhrase();
+                int runeLength = DecodeRune(word[scanIndex..], out Rune rune);
+
+                if (IsLetterRune(rune))
+                {
+                    ScriptType script = DetectScript(rune);
+
+                    if (script != ScriptType.Other)
+                    {
+                        if (runScript == ScriptType.None)
+                        {
+                            runScript = script;
+                        }
+                        else if (!AreScriptsCompatible(runScript, script))
+                        {
+                            AppendScriptRun(word[runStart..scanIndex], runScript);
+                            runStart = scanIndex;
+                            runScript = script;
+                        }
+                    }
+                }
+
+                scanIndex += runeLength;
             }
 
-            currentScript = wordScript;
-            hasLetters = true;
-            hasSpeakableContent = true;
-            currentSubPhrase.Append(word);
+            if (runScript == ScriptType.None)
+            {
+                // Unicode letters outside our known script table keep the previous generic behavior.
+                AppendScriptRun(word, ScriptType.Other);
+                return;
+            }
+
+            AppendScriptRun(word[runStart..], runScript);
         }
 
         // Preserves the original tokenizer behavior for punctuation that becomes a real boundary.
@@ -1185,6 +1471,43 @@ public partial class MixedLanguagePhonemizer
 
         string cleanText = text.Trim();
         int letterCount = CountLetters(cleanText.AsSpan());
+
+        // SCRIPT CAPABILITY ROUTING:
+        // eSpeak can pronounce Han through Mandarin, but its Japanese frontend does not resolve
+        // Kanji readings without an external dictionary. Keep the engine dependency-free by routing
+        // Han to Mandarin and reserving Japanese for Hiragana/Katakana. This applies only to automatic
+        // detection; an API-forced language is handled earlier in FlushPhrase and remains authoritative.
+        string? capabilityCode = script switch
+        {
+            ScriptType.Han => "cmn",
+            ScriptType.Hiragana or ScriptType.Katakana => "ja",
+            _ => null
+        };
+
+        if (capabilityCode != null)
+        {
+            result.Add(new TextChunk
+            {
+                Text = text,
+                DetectedLanguage = capabilityCode,
+                Probability = 1.0,
+                IsReliable = true,
+                IsPunctuationOrSpace = false,
+                Script = GetScriptName(script),
+                RawTop5 = ScriptCapabilityRouteDiagnostic
+            });
+
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug(
+                    "[LANG-DEBUG] \"{Text}\" — script capability route → {Code}",
+                    text,
+                    capabilityCode);
+            }
+
+            return;
+        }
+
         bool canFavorModelLanguage = IsModelScriptCompatible(script);
 
         // SENTENCE-CONTEXT OVERRIDE: a confidently single-language sentence may win only when
@@ -1273,20 +1596,20 @@ public partial class MixedLanguagePhonemizer
         }
 
         // EMERGENCY FALLBACK: every candidate scored zero, so "the winner" above is arbitrary
-        // dictionary order, not a real detection. Try a diagnostic letter within this script's
-        // own set first (narrower, e.g. Ukrainian over generic Cyrillic), then the script default.
+        // dictionary order, not a real detection. Try a strong script-language hint first
+        // (narrower, e.g. Ukrainian over generic Cyrillic), then the coarse script default.
         if (bestAdjustedScore <= 0)
         {
             string? fallbackCode = null;
             string tier = "script";
 
-            if (UniqueLettersByScript.TryGetValue(script, out var letters))
+            if (StrongLanguageHintsByScript.TryGetValue(script, out var hints))
             {
-                int hitIndex = cleanText.AsSpan().IndexOfAny(letters.Chars);
-                if (hitIndex >= 0 && letters.Map.TryGetValue(cleanText[hitIndex], out var byChar))
+                int hitIndex = cleanText.AsSpan().IndexOfAny(hints.Chars);
+                if (hitIndex >= 0 && hints.Map.TryGetValue(cleanText[hitIndex], out var byChar))
                 {
                     fallbackCode = byChar;
-                    tier = "letter";
+                    tier = "hint";
                 }
             }
 
@@ -1302,8 +1625,8 @@ public partial class MixedLanguagePhonemizer
                     IsReliable = false,
                     IsPunctuationOrSpace = false,
                     Script = GetScriptName(script),
-                    RawTop5 = tier == "letter"
-                        ? LetterFallbackDiagnostic
+                    RawTop5 = tier == "hint"
+                        ? StrongLanguageHintDiagnostic
                         : ScriptFallbackDiagnostic
                 });
 
