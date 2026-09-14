@@ -11,7 +11,7 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 - Piper model engine — run standard Piper models locally
 - Voice Freedom — use different voices without replacing the underlying Piper model
 - Zero-shot voice cloning via OpenVoice V2
-- OpenAI-compatible API — drop-in replacement for existing tools
+- OpenAI-compatible API — works with existing OpenAI TTS clients and tools
 - Dedicated Tsubaki API for detailed audio control
 - Real-time streaming (Chunked Transfer Encoding)
 - Studio-grade DSP effects and spatial environments
@@ -40,6 +40,8 @@ Dashboard features:
 
 **[Tsubaki TTS Engine v1.0.7 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.7)**
 
+> This documentation describes the upcoming **v1.0.8**. The latest published binary release is currently **v1.0.7**.
+
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
 ---
@@ -52,9 +54,9 @@ Tsubaki is built with an engineering-first approach to distribution:
 
 - **No Python Required:** Runs purely on compiled C# and `Microsoft.ML.OnnxRuntime`.
 - **Portable (Self-Contained):** Can be compiled into a single executable. Just download and run.
-- **Hardware Acceleration:** Runs on CPU by default, with optional WebGPU, DirectML, or CUDA acceleration for voice cloning.
+- **Hardware Acceleration:** Runs on CPU by default, with optional WebGPU, DirectML, or CUDA acceleration depending on the selected build and hardware configuration.
 - **Memory Protection (OOM Guard):** Built-in queueing and semaphore system that calculates available VRAM/RAM to prevent server crashes under heavy load.
-- **True Concurrency (Shared Memory):** The common way Python TTS servers scale concurrency is by spinning up a separate worker process per request — each one duplicating the full model (often 2GB+) along with its own PyTorch/CUDA runtime in RAM, since getting true in-process parallelism right around the GIL is hard. On CPU and NVIDIA (CUDA) GPUs, Tsubaki loads the model exactly once and processes multiple API requests concurrently through a shared memory space, keeping RAM usage flat regardless of how many AI agents are talking at the same time. On DirectML — Windows' unified GPU backend covering NVIDIA, AMD, and Intel alike, since Tsubaki intentionally doesn't ship a separate Windows CUDA build — a small, fixed-size pool of sessions is used instead. This is a hardware limitation of DirectML itself, not a Tsubaki design choice; see `HardwareSettings` for details.
+- **True Concurrency:** On CPU and CUDA, concurrent requests share the same loaded model instead of requiring a full model/runtime copy per request. DirectML uses a fixed-size session pool because a single DirectML session cannot execute concurrently; see `HardwareSettings` for details.
 
 | Tsubaki                               | Typical Python TTS                   |
 | ------------------------------------- | ------------------------------------ |
@@ -73,7 +75,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 
 | Feature                    | Description                                                                                                                                                        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| OpenAI API Compatible      | Exposes a `/v1/audio/speech` endpoint compatible with the official OpenAI API. Drop-in replacement for SillyTavern, LangChain, AutoGen, and other AI agents. |
+| OpenAI API Compatible      | Exposes a `/v1/audio/speech` endpoint compatible with the official OpenAI API. Compatible with SillyTavern, LangChain, AutoGen, and other clients that use the standard OpenAI TTS request fields. |
 | Zero-Shot Voice Cloning    | Integrated with the OpenVoice V2 architecture. Clone any voice instantly by dropping a clean 10-second `.wav` file into the `Voices` folder.                       |
 | Foreign Word Pronunciation | Offline language detection via Lingua. Detects foreign words and applies phoneme approximation for natural accented pronunciation.                                 |
 | Studio-Grade DSP Effects   | Real-time audio effects (Telephone, Overdrive, Reverb, etc.), pitch and volume shifting.                                                                           |
@@ -152,7 +154,7 @@ That is enough for a complete first launch.
 
 # OpenAI API Compatibility
 
-Tsubaki mimics the standard OpenAI `/v1/audio/speech` endpoint. Any tool or agent that knows how to talk to the OpenAI API can talk to Tsubaki immediately — just change the base URL.
+Tsubaki mimics the standard OpenAI `/v1/audio/speech` endpoint. Clients that use the standard OpenAI TTS request fields can usually connect to Tsubaki by changing only the base URL.
 
 **This is not a stripped-down mode.** Cloned voices, DSP effects, spatial environments, pitch, volume, and the reverb tail extension all still apply to `/v1/audio/speech` — an OpenAI-only client just can't adjust them *per request*, since none of those fields exist in the OpenAI schema. Set them once as server defaults (see *Server-Side DSP Defaults* below) and every client gets the full result automatically, including ones that have no idea Tsubaki-specific parameters exist. The dedicated `/tsbk/...` endpoint below adds *dynamic, per-request* control on top of that — not a separate, more-capable engine.
 
@@ -185,11 +187,24 @@ curl http://localhost:5045/v1/audio/speech \
 | `model`           | string | Any value (e.g. `"tts-1"`) — ignored, present for compatibility               |
 | `input`           | string | Text to synthesize                                                            |
 | `voice`           | string | `piper_base` for the base Piper voice, or a cloned voice name (e.g. `"John"`) |
-| `response_format` | string | `mp3`, `wav`, `opus`, `pcm`                                                   |
+| `response_format` | string | `mp3`, `wav`, `opus`, `pcm`, `b64_json` |
 | `speed`           | float  | Speech speed multiplier. `1.0` is default.                                    |
 | `stream`          | bool   | Enable chunked streaming. Not part of the official OpenAI schema, but widely accepted as a de facto standard by AI agents and frontends — see Real-Time Streaming below. |
 
-This endpoint follows the official OpenAI request schema with `stream` additionally supported for Tsubaki streaming. For DSP effects, voice cloning tuning, and detailed audio control, use the dedicated Tsubaki Endpoint below.
+This endpoint follows the OpenAI-compatible request shape, with two optional Tsubaki extensions: `stream` for chunked delivery and `b64_json` as an additional response format. For DSP effects, voice cloning tuning, and detailed audio control, use the dedicated Tsubaki Endpoint below.
+
+
+### Base64 JSON Response
+
+Set `"response_format": "b64_json"` when a client needs audio embedded in JSON instead of a binary audio response.
+
+```json
+{
+  "audioContent": "<base64-encoded MP3>"
+}
+```
+
+`b64_json` is a response representation, not a separate audio codec: Tsubaki generates MP3 audio and Base64-encodes those bytes into the `audioContent` field. It works with both `"stream": false` and `"stream": true`. In streaming mode the JSON/Base64 payload is emitted progressively as audio becomes available, although clients that use a normal whole-document JSON parser will still need the closing JSON suffix before parsing the complete object.
 
 ---
 
@@ -217,7 +232,7 @@ Recommended server-side streaming configuration in `appsettings.json`:
 
 `FlushAfterEachSentence: true` means the client receives each synthesized sentence immediately as it is generated, rather than waiting for the full response. This is recommended for AI companion backends and real-time agent systems.
 
-> WAV format does not support true chunked streaming because its header requires the total file size to be written upfront. For streaming, use `mp3` or `opus`.
+> WAV format does not support true chunked streaming because its header requires the total file size to be written upfront. `mp3`, `opus`, `pcm`, and `b64_json` can use streaming delivery.
 
 ---
 
@@ -283,15 +298,20 @@ Both settings below can be tuned server-wide via `ClonerSettings` in `appsetting
 }
 ```
 
-**Tone Temperature** controls the variance in the latent space during voice color transfer. The shipped default is `0.7`, chosen as a stability-oriented setting.
+**Tone Temperature** maps to OpenVoice's `tau` parameter during tone-color conversion. It controls the amount of stochastic variation injected into the converter's latent representation; it is **not an emotion control**. Tsubaki ships with `0.7` as its default.
 
-- **High temperature (1.0 and above):** Makes the voice more emotional and lively, but significantly increases sensitivity to base model noise. On low-frequency models (16 kHz) or `medium` quality, this often causes micro-vibrations perceived as trembling or sobbing.
-- **Low temperature (0.5 – 0.7):** Stabilizes the sound wave, making the voice feel "firmer" and more confident. This is the recommended range for eliminating the trembling effect on models with a limited frequency range.
+- **Lower values:** Reduce latent randomness and usually make conversion more deterministic and stable. This can help voices that develop trembling, warbling, or other instability during conversion.
+- **Higher values:** Increase latent randomness. They do not intentionally make speech more emotional; instead, sufficiently high values can make the converted voice less stable and may introduce audible trembling, roughness, or other artifacts.
+- **Practical use:** Treat `tone_temperature` as a stability/variation control for the tone-color converter. If a clone sounds unstable, lowering it is the first thing to try.
 
-**Clone Intensity** defines the blending coefficient (Latent Space Blending) between the base Piper fingerprint and the target voice.
+**Clone Intensity** is a Tsubaki-side blend between the active Piper base-voice fingerprint and the selected target-voice fingerprint.
 
-- **Value 1.0:** Full timbre transfer, which can amplify digital artifacts.
-- **Value 0.8 – 0.9 (Recommended):** Preserves some of the original Piper model's articulatory stability while overlaying the character of the chosen voice. This provides the best balance between voice similarity and audio cleanliness.
+- **`0.0`:** Uses the base Piper voice characteristics; cloning is effectively bypassed.
+- **Between `0.0` and `1.0`:** Progressively moves from the base voice toward the target voice. Lower values retain more of the base Piper character.
+- **`1.0`:** Uses the target voice fingerprint directly and is the shipped default.
+- **Above `1.0`:** Extrapolates beyond the target relative to the base voice, emphasizing the characteristics that distinguish the target voice from the base. This can be useful for deliberately stronger coloration, but extreme values may sound exaggerated or unnatural.
+
+`clone_intensity` therefore controls **how strongly the target voice differs from the base voice**, while `tone_temperature` controls **how much stochastic variation OpenVoice allows during conversion**. They solve different problems and should not be treated as two versions of the same "voice strength" control.
 
 ## Cloned Voice Volume
 
@@ -334,7 +354,7 @@ The simplest way to think about the two APIs:
 - `/v1/...` — use this when your client expects the OpenAI API. It provides the OpenAI-compatible request surface.
 - `/tsbk/...` — use this when you want Tsubaki's full audio controls. It accepts the same basic request fields plus Tsubaki-specific parameters.
 
-What it adds: real-time DSP effects, spatial environments, pitch/volume control, voice cloning tuning, and pronunciation variance — a much larger surface for **mechanically** controlling how something sounds, per request, without touching server config. This is especially useful for AI agents that want to express emotional state or acoustic context on the fly. Supported audio formats: `wav`, `mp3`, `opus`, `pcm`.
+What it adds: real-time DSP effects, spatial environments, pitch/volume control, voice cloning tuning, and pronunciation variance — a much larger surface for **mechanically** controlling how something sounds, per request, without touching server config. This is especially useful for AI agents that want to express emotional state or acoustic context on the fly. Supported `response_format` values: `wav`, `mp3`, `opus`, `pcm`, and `b64_json`.
 
 A detailed **Swagger UI** with every parameter is available at `http://localhost:5045/swagger` when the server is running.
 
@@ -428,13 +448,13 @@ curl http://localhost:5045/tsbk/audio/speech \
 
 | Parameter             | Type  | Description                                                                                           |
 | --------------------- | ----- | ------------------------------------------------------------------------------------------------------- |
-| `clone_intensity`     | float | Latent space blend ratio between Piper base fingerprint and target voice. Per-request override of `ClonerSettings.CloneIntensity`. |
-| `tone_temperature`    | float | Variance during timbre transfer (tau). Per-request override of `ClonerSettings.ToneTemperature`.      |
+| `clone_intensity`     | float | Tsubaki-side blend between the Piper base fingerprint and target voice: `0.0` = base, `1.0` = target, values above `1.0` emphasize target-vs-base differences. Per-request override of `ClonerSettings.CloneIntensity`. |
+| `tone_temperature`    | float | OpenVoice `tau`: controls stochastic latent variation during tone-color conversion. Higher values increase randomness and can destabilize the voice; this is not an emotion control. Per-request override of `ClonerSettings.ToneTemperature`. |
 | `low_pass_q_factor`   | float | Resonance curve (`0.1` - `1.0`) for the server-side low-pass filter on cloned voices. Mathematically fine-tunes high-frequency artifact reduction, though the acoustic difference is practically imperceptible to the human ear. |
 
 > **Note:** For recommended values and their effect on high-frequency artifact reduction, see *LowPassQFactor* in the Server-Side DSP Defaults section below.
 
-> **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or tweaking `tone_temperature` to stabilize voice artifacts on the fly.
+> **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or lowering `tone_temperature` when a cloned voice needs more stable conversion.
 
 ---
 
@@ -578,14 +598,14 @@ For each voice you need to download exactly **2 files**:
 
 ## Available Quality Tiers
 
-Most voices come in multiple quality levels. Higher quality = larger file and more VRAM:
+Most voices come in multiple quality levels. Higher quality = larger model and higher memory usage:
 
 | Quality  | Approx. Size | Notes                             |
 | -------- | ------------ | ----------------------------------- |
 | `x_low`  | ~5 MB        | Fast, lower fidelity               |
 | `low`    | ~15 MB       | Good for low-end hardware          |
 | `medium` | ~60 MB       | Recommended for most use cases     |
-| `high`   | ~130 MB      | Best quality, requires more VRAM   |
+| `high`   | ~130 MB      | Best quality, requires more memory |
 
 > **For voice cloning, the `high` quality tier (22050 Hz) is strongly recommended.** Its fuller frequency spectrum allows the OpenVoice neural network to operate without producing instability artifacts such as trembling or "crying" effects that are common on `medium` (16 kHz) models.
 
@@ -648,7 +668,7 @@ cd SmartStack/ONNX_Runner
 
 ## Compiling the Server
 
-Tsubaki provides several build variants for different hardware configurations. You can build a **Lightweight CPU-only** version for standard TTS, or enable **WebGPU, DirectML, or CUDA** for GPU-accelerated voice cloning.
+Tsubaki provides several build variants for different hardware configurations. You can build a **Lightweight CPU-only** version, or enable **WebGPU, DirectML, or CUDA** for hardware-accelerated configurations, especially voice cloning.
 
 > **Which version should I choose?**
 > For standard TTS generation, the **CPU-only version** is highly recommended. Piper models are designed to be fast and efficient on modern CPUs, making this the simplest option for most users.
@@ -709,7 +729,7 @@ The provided `Dockerfile` is pre-configured to build the lightweight CPU version
 docker-compose up --build -d
 ```
 
-> **Voice model required:** The compiled application does not include a Piper voice model to keep the binary size small. Before starting the server, download a voice model (`.onnx` + `.onnx.json`) and configure its path. See the Installation & Model Management section above.
+> **Voice model required for source builds:** Builds compiled from source do not bundle a Piper voice model. Before starting the server, download a voice model (`.onnx` + `.onnx.json`) and configure its path. Ready-to-use binary releases include a preconfigured default voice.
 
 ---
 
@@ -805,14 +825,17 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 ## Text Processing
 
-- **`ChunkerSettings`** — Piper models notoriously struggle with massive, unbroken blocks of text. This setting automatically slices "walls of text" and run-on sentences into smaller, logical chunks for stable and high-quality generation. Keep this enabled.
+- **`ChunkerSettings`** — Controls sentence-level safety chunking for Piper. Normal input is first split at sentence boundaries; `MaxChunkLength` is only used when a single sentence is unusually long. Such sentences are force-split at a natural pause mark when possible, then at whitespace, and finally at a safe character boundary. The shipped `200`-character limit protects Piper from oversized single-sentence inference inputs without cutting ordinary sentences into fixed-size blocks.
 
 ```json
 "ChunkerSettings": {
-  "MaxChunkLength": 250,
+  "MaxChunkLength": 200,
   "SentencePauseSeconds": 0.3
 }
 ```
+
+- **`MaxChunkLength`** — emergency safety cap for one already-detected sentence, measured in text characters. It does not mean that normal input is blindly cut every 200 characters.
+- **`SentencePauseSeconds`** — configurable pause inserted between generated text chunks. Adjust it to match the pacing of your model and use case.
 
 ---
 
@@ -832,7 +855,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 | Parameter                 | Description                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is a pure throttle** — a queueing limit with no extra memory cost, since all concurrent requests share a single loaded model. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled. |
+| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is primarily a concurrency throttle** — concurrent requests share the same loaded model rather than requiring one full model copy per request. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled. |
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value auto-detects and uses all available physical cores.                                                                                                                                                                                                                                                                                |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
 | `OpenVoiceGpuDeviceId`     | Hardware index of the GPU used to execute the OpenVoice Tone Color Converter. Can be assigned a different ID in multi-GPU setups to split the computational load. |
@@ -858,7 +881,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 - **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter), server-wide default pitch and volume, and a fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
 
-- **`ClonerSettings`** — Controls the OpenVoice cloning behavior. It is best not to touch these. Increasing the intensity often yields a caricature-like exaggeration of the voice characteristics, while decreasing it simply reverts the audio back to the default base model's voice.
+- **`ClonerSettings`** — Controls how Tsubaki blends the target voice with the Piper base voice and how much stochastic variation OpenVoice uses during tone-color conversion. `CloneIntensity` moves the embedding from the base voice toward the target (`1.0` = target; values above `1.0` emphasize target-vs-base differences), while `ToneTemperature` controls OpenVoice latent randomness. Higher temperature is not an emotion setting and can make conversion unstable; lower it when a clone develops trembling or warbling.
 - **`EnableCloning`** — Enables or disables OpenVoice voice cloning. Leave it `true` to use voices stored in the `Voices/` folder; when enabled, those voices are discovered automatically at server startup and appear in the Web Dashboard voice list.
 
 ---
