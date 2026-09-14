@@ -26,11 +26,16 @@ public static class SpeechEndpoint
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.BadRequest(new { error = "Input text cannot be empty." });
 
-        var (synthesisRequest, formatError) = OpenAiRequestAdapter.ToSynthesisRequest(request);
-        if (formatError != null)
-            return Results.BadRequest(new { error = formatError });
+        var (synthesisRequest, validationError) =
+            OpenAiRequestAdapter.ToSynthesisRequest(request);
 
-        return await synthesisService.SynthesizeAsync(synthesisRequest!, httpContext, cancellationToken);
+        if (validationError != null)
+            return Results.BadRequest(new { error = validationError });
+
+        return await synthesisService.SynthesizeAsync(
+            synthesisRequest!,
+            httpContext,
+            cancellationToken);
     }
 
     public static async Task<IResult> HandleTsubakiRequest(
@@ -45,10 +50,15 @@ public static class SpeechEndpoint
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.BadRequest(new { error = "Input text cannot be empty." });
 
-        var (synthesisRequest, formatError) = TsubakiRequestAdapter.ToSynthesisRequest(request);
+        var (synthesisRequest, formatError) =
+            TsubakiRequestAdapter.ToSynthesisRequest(request);
+
         if (formatError != null)
             return Results.BadRequest(new { error = formatError });
 
-        return await synthesisService.SynthesizeAsync(synthesisRequest!, httpContext, cancellationToken);
+        return await synthesisService.SynthesizeAsync(
+            synthesisRequest!,
+            httpContext,
+            cancellationToken);
     }
 }

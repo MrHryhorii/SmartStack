@@ -4,12 +4,13 @@ namespace ONNX_Runner.Endpoints;
 
 /// <summary>
 /// Translates an incoming OpenAI-shaped request into the engine's wire-agnostic
-/// SynthesisRequest. Parsing/validating the response_format string is done here, not in
-/// SpeechSynthesisService, since the accepted format names can differ per external API.
+/// SynthesisRequest. Wire-specific compatibility and validation stay here so the
+/// synthesis service never needs to know which external API shape was used.
 /// </summary>
 public static class OpenAiRequestAdapter
 {
-    public static (SynthesisRequest? Request, string? FormatError) ToSynthesisRequest(OpenAiSpeechRequest dto)
+    public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(
+        OpenAiSpeechRequest dto)
     {
         AudioFormat format;
         string formatStr = dto.ResponseFormat?.Trim().ToLowerInvariant() ?? "mp3";
@@ -20,19 +21,47 @@ public static class OpenAiRequestAdapter
         }
         else if (!Enum.TryParse(formatStr, true, out format))
         {
-            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, pcm, b64_json.");
+            return (
+                null,
+                $"Unsupported response_format: '{dto.ResponseFormat}'. " +
+                "Supported formats are: wav, mp3, opus, pcm, b64_json.");
         }
+
+        string? streamFormat = dto.StreamFormat?.Trim().ToLowerInvariant();
+
+        if (!string.IsNullOrEmpty(streamFormat) && streamFormat != "audio")
+        {
+            if (streamFormat == "sse")
+            {
+                return (
+                    null,
+                    "Unsupported stream_format: 'sse'. " +
+                    "Tsubaki currently supports only 'audio'; SSE event streaming is not implemented.");
+            }
+
+            return (
+                null,
+                $"Unsupported stream_format: '{dto.StreamFormat}'. Supported value is: audio.");
+        }
+
+        string voice = string.IsNullOrWhiteSpace(dto.Voice?.Id)
+            ? "piper_base"
+            : dto.Voice.Id.Trim();
+
+        // dto.Instructions is intentionally accepted but ignored.
+        // Piper/OpenVoice do not expose an equivalent natural-language style-control input.
 
         return (new SynthesisRequest
         {
             Input = dto.Input,
             Format = format,
-            Voice = dto.Voice,
+            Voice = voice,
             Speed = dto.Speed,
             Stream = dto.Stream
+
             // DSP effects and cloning tuning are Tsubaki-specific extensions, not
-            // part of the official OpenAI schema — left at their SynthesisRequest defaults
-            // (null) here, so the server's own config defaults apply downstream instead.
+            // part of the OpenAI compatibility surface. Their null defaults allow
+            // the server configuration to resolve them downstream.
         }, null);
     }
 }

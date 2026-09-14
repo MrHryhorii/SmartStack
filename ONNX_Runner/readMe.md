@@ -576,7 +576,7 @@ All official Piper voices are hosted on HuggingFace:
 
 **[rhasspy/piper-voices on HuggingFace](https://huggingface.co/rhasspy/piper-voices/tree/main)**
 
-The repository contains **35 languages**, each in its own folder (`en`, `de`, `fr`, `uk`, `zh`, etc.).
+The repository contains **35 languages**, each in its own folder (`en`, `de`, `fr`, `uk`, `cmn`, etc.).
 
 ## What to Download
 
@@ -808,7 +808,7 @@ A different *script* (Cyrillic hitting an English model, for example) is a hard 
 
 None of this is unique to Tsubaki — identifying a language from a handful of characters is a hard problem for any detector, including the much heavier neural models commercial systems use. The parameters above bias that inherent uncertainty toward whichever outcome fits your case, they don't remove it: keep `SupportedLanguages` narrow (fewer rival candidates means fewer ways for an ambiguous word to lose), and raise the bonus/override values for a stable, unbroken accent, or lower them if foreign words should switch pronunciation more readily.
 
-- **Format:** Supports standard base language codes (`"en"`, `"uk"`, `"de"`, `"fr"`, `"zh"`, etc.) as well as extended eSpeak dialect and pronunciation tags (`"en-us"`, `"fr-ca"`, `"en-gb-x-rp"`). While eSpeak applies the requested dialect rules, the result is still constrained by the active Piper model's phonetic inventory — missing foreign phonemes are approximated by the fallback mapper, producing an accented delivery rather than a native acoustic profile.
+- **Format:** Supports standard base language codes (`"en"`, `"uk"`, `"de"`, `"fr"`, `"cmn"`, etc.) as well as extended eSpeak dialect and pronunciation tags (`"en-us"`, `"fr-ca"`, `"en-gb-x-rp"`). While eSpeak applies the requested dialect rules, the result is still constrained by the active Piper model's phonetic inventory — missing foreign phonemes are approximated by the fallback mapper, producing an accented delivery rather than a native acoustic profile.
 - **Performance Warning:** Each added language increases memory consumption and slows down detection. Keep this to **2–3 languages** most likely to appear in your texts.
 
 ---
