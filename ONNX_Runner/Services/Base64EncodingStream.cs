@@ -39,6 +39,9 @@ public sealed class Base64EncodingStream : Stream
         set => throw new NotSupportedException("Base64EncodingStream is forward-only.");
     }
 
+    /// <summary>
+    /// Base64-encodes the supplied bytes and forwards encoded output to the inner stream.
+    /// </summary>
     public override void Write(byte[] buffer, int offset, int count)
     {
         ArgumentNullException.ThrowIfNull(buffer);
@@ -53,11 +56,15 @@ public sealed class Base64EncodingStream : Stream
         WriteCore(buffer.AsSpan(offset, count));
     }
 
+    /// <summary>
+    /// Base64-encodes the supplied bytes and forwards encoded output to the inner stream.
+    /// </summary>
     public override void Write(ReadOnlySpan<byte> buffer)
     {
         WriteCore(buffer);
     }
 
+    // Encodes complete Base64 groups while preserving at most two carry bytes between writes.
     private void WriteCore(ReadOnlySpan<byte> source)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -190,6 +197,9 @@ public sealed class Base64EncodingStream : Stream
         _inner.Flush();
     }
 
+    /// <summary>
+    /// Finalizes Base64 output, returns the pooled buffer, and optionally disposes the inner stream.
+    /// </summary>
     protected override void Dispose(bool disposing)
     {
         if (_disposed)
@@ -224,12 +234,21 @@ public sealed class Base64EncodingStream : Stream
         base.Dispose(disposing);
     }
 
+    /// <summary>
+    /// Read operations are not supported by this forward-only stream.
+    /// </summary>
     public override int Read(byte[] buffer, int offset, int count) =>
         throw new NotSupportedException("Base64EncodingStream is write-only.");
 
+    /// <summary>
+    /// Seeking is not supported by this forward-only stream.
+    /// </summary>
     public override long Seek(long offset, SeekOrigin origin) =>
         throw new NotSupportedException("Base64EncodingStream is forward-only.");
 
+    /// <summary>
+    /// Changing length is not supported by this forward-only stream.
+    /// </summary>
     public override void SetLength(long value) =>
         throw new NotSupportedException("Base64EncodingStream is forward-only.");
 }

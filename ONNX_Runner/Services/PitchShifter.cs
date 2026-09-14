@@ -89,6 +89,9 @@ public class PitchShifter : IDisposable
         }
     }
 
+    /// <summary>
+    /// Marks the pitch shifter as disposed and prevents further processing.
+    /// </summary>
     public void Dispose()
     {
         if (_disposed) return;

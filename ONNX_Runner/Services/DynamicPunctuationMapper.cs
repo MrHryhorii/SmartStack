@@ -453,6 +453,7 @@ public sealed class DynamicPunctuationMapper
         return builder.ToString();
     }
 
+    // Checks whether the input contains punctuation that requires rewriting or collapsing.
     private bool NeedsNormalization(ReadOnlySpan<char> text)
     {
         int index = 0;
@@ -524,6 +525,7 @@ public sealed class DynamicPunctuationMapper
         return false;
     }
 
+    // Returns the first candidate punctuation token supported by the loaded model.
     private string SelectSupported(string candidates)
     {
         foreach (Rune rune in candidates.EnumerateRunes())
@@ -537,11 +539,13 @@ public sealed class DynamicPunctuationMapper
         return string.Empty;
     }
 
+    // Returns a space only when the loaded model exposes a space token.
     private string SpaceFallback()
     {
         return _supportsSpace ? " " : string.Empty;
     }
 
+    // Builds a longer pause from the strongest usable terminator.
     private string BuildExtendedPause(string terminator)
     {
         if (_supportsSpace)
@@ -554,6 +558,7 @@ public sealed class DynamicPunctuationMapper
         return terminator;
     }
 
+    // Finds a model-native punctuation token outside the known semantic catalog.
     private string SelectUnknownSupportedPause()
     {
         foreach (Rune rune in _supportedSymbols)
@@ -583,6 +588,7 @@ public sealed class DynamicPunctuationMapper
         return b;
     }
 
+    // Returns the first non-empty fallback candidate.
     private static string FirstNonEmpty(string a, string b, string c)
     {
         if (!string.IsNullOrEmpty(a)) return a;
@@ -590,6 +596,7 @@ public sealed class DynamicPunctuationMapper
         return c;
     }
 
+    // Returns the first non-empty fallback candidate.
     private static string FirstNonEmpty(string a, string b, string c, string d)
     {
         if (!string.IsNullOrEmpty(a)) return a;
@@ -598,6 +605,7 @@ public sealed class DynamicPunctuationMapper
         return d;
     }
 
+    // Returns the first non-empty fallback candidate.
     private static string FirstNonEmpty(
         string a,
         string b,
@@ -612,6 +620,7 @@ public sealed class DynamicPunctuationMapper
         return e;
     }
 
+    // Combines two non-empty native punctuation representations.
     private static string Combine(string first, string second)
     {
         if (string.IsNullOrEmpty(first) || string.IsNullOrEmpty(second))
@@ -622,6 +631,7 @@ public sealed class DynamicPunctuationMapper
         return string.Concat(first, second);
     }
 
+    // Returns the first non-empty fallback candidate.
     private static string FirstNonEmpty(
         string a,
         string b,
@@ -638,6 +648,7 @@ public sealed class DynamicPunctuationMapper
         return f;
     }
 
+    // Classifies a native punctuation rune for duplicate-pause collapsing.
     private static CollapseKind GetNativeCollapseKind(Rune rune)
     {
         if (!SemanticKinds.TryGetValue(rune, out PunctuationKind kind))
@@ -653,6 +664,7 @@ public sealed class DynamicPunctuationMapper
         };
     }
 
+    // Classifies a fallback replacement for duplicate-pause collapsing.
     private CollapseKind GetReplacementCollapseKind(
         PunctuationKind sourceKind,
         string replacement)
@@ -667,12 +679,14 @@ public sealed class DynamicPunctuationMapper
             : CollapseKind.None;
     }
 
+    // Checks whether a replacement equals the model-selected weak pause.
     private bool IsWeakPauseReplacement(string replacement)
     {
         return !string.IsNullOrEmpty(_commaFallback) &&
                string.Equals(replacement, _commaFallback, StringComparison.Ordinal);
     }
 
+    // Checks whether the model exposes any usable punctuation token.
     private bool HasAnyUsablePunctuation()
     {
         foreach (Rune rune in _supportedSymbols)
@@ -691,6 +705,7 @@ public sealed class DynamicPunctuationMapper
         return false;
     }
 
+    // Appends a natively supported punctuation rune while maintaining collapse state.
     private static void AppendNativeRune(
         StringBuilder builder,
         Rune rune,
@@ -707,6 +722,7 @@ public sealed class DynamicPunctuationMapper
         lastCollapseKind = collapseKind;
     }
 
+    // Appends a fallback punctuation string while suppressing redundant pauses.
     private static void AppendReplacement(
         StringBuilder builder,
         string replacement,
@@ -730,6 +746,7 @@ public sealed class DynamicPunctuationMapper
         lastCollapseKind = collapseKind;
     }
 
+    // Builds the immutable lookup from punctuation rune to semantic family.
     private static FrozenDictionary<Rune, PunctuationKind> BuildSemanticKinds()
     {
         var map = new Dictionary<Rune, PunctuationKind>();
@@ -755,6 +772,7 @@ public sealed class DynamicPunctuationMapper
         return map.ToFrozenDictionary();
     }
 
+    // Adds every rune from one semantic family to the lookup table.
     private static void AddSemanticGroup(
         Dictionary<Rune, PunctuationKind> map,
         PunctuationKind kind,
@@ -766,6 +784,7 @@ public sealed class DynamicPunctuationMapper
         }
     }
 
+    // Consumes a run of three or more ASCII periods as one semantic ellipsis.
     private static bool TryConsumeAsciiEllipsis(
         ReadOnlySpan<char> text,
         int index,
@@ -789,6 +808,7 @@ public sealed class DynamicPunctuationMapper
         return true;
     }
 
+    // Inserts a safe separator when removing a visual quote would merge words.
     private static void AppendQuoteSeparatorIfNeeded(
         StringBuilder builder,
         ReadOnlySpan<char> text,
@@ -824,6 +844,7 @@ public sealed class DynamicPunctuationMapper
         }
     }
 
+    // Checks whether a rune is treated as a removable visual quote.
     private static bool IsVisualQuote(Rune rune)
     {
         return VisualQuotes.Contains(rune) ||
@@ -831,6 +852,7 @@ public sealed class DynamicPunctuationMapper
                    or UnicodeCategory.FinalQuotePunctuation;
     }
 
+    // Builds an immutable rune set from a Unicode string.
     private static FrozenSet<Rune> BuildRuneSet(string symbols)
     {
         var set = new HashSet<Rune>();
@@ -843,6 +865,7 @@ public sealed class DynamicPunctuationMapper
         return set.ToFrozenSet();
     }
 
+    // Checks whether punctuation is acting as an in-word connector at this position.
     private static bool IsLexicalConnector(
         ReadOnlySpan<char> text,
         int index,
@@ -868,6 +891,7 @@ public sealed class DynamicPunctuationMapper
         return IsWordRune(previous) && IsWordRune(next);
     }
 
+    // Checks whether a rune is an apostrophe or lexical hyphen connector.
     private static bool IsConnectorRune(Rune rune)
     {
         return rune.Value is
@@ -876,11 +900,13 @@ public sealed class DynamicPunctuationMapper
             '\u058A' or '\u05BE' or '\u30A0';
     }
 
+    // Checks whether a rune belongs to Piper/eSpeak control syntax.
     private static bool IsModelControlRune(Rune rune)
     {
         return rune.Value is '^' or '$' or '_';
     }
 
+    // Checks whether Unicode categorizes the rune as punctuation.
     private static bool IsUnicodePunctuation(Rune rune)
     {
         UnicodeCategory category = Rune.GetUnicodeCategory(rune);
@@ -895,6 +921,7 @@ public sealed class DynamicPunctuationMapper
             UnicodeCategory.OtherPunctuation;
     }
 
+    // Checks whether a rune can participate in orthographic word content.
     private static bool IsWordRune(Rune rune)
     {
         UnicodeCategory category = Rune.GetUnicodeCategory(rune);
@@ -911,6 +938,7 @@ public sealed class DynamicPunctuationMapper
             UnicodeCategory.EnclosingMark;
     }
 
+    // Checks whether a rune may pass through normalization unchanged.
     private static bool IsSafeTextRune(Rune rune)
     {
         if (Rune.IsWhiteSpace(rune))
@@ -934,6 +962,7 @@ public sealed class DynamicPunctuationMapper
             UnicodeCategory.EnclosingMark;
     }
 
+    // Appends a Unicode scalar without allocating an intermediate string.
     private static void AppendRune(StringBuilder builder, Rune rune)
     {
         Span<char> buffer = stackalloc char[2];
@@ -941,6 +970,7 @@ public sealed class DynamicPunctuationMapper
         builder.Append(buffer[..written]);
     }
 
+    // Parses a string only when it contains exactly one Unicode scalar.
     private static bool TryGetSingleRune(string value, out Rune rune)
     {
         rune = default;
@@ -958,6 +988,7 @@ public sealed class DynamicPunctuationMapper
         return status == OperationStatus.Done && consumed == value.Length;
     }
 
+    // Decodes the first Unicode scalar and returns its UTF-16 width.
     private static int DecodeRune(ReadOnlySpan<char> text, out Rune rune)
     {
         OperationStatus status = Rune.DecodeFromUtf16(
@@ -974,6 +1005,7 @@ public sealed class DynamicPunctuationMapper
         return 1;
     }
 
+    // Decodes the Unicode scalar immediately before an index.
     private static bool TryDecodePreviousRune(
         ReadOnlySpan<char> text,
         out Rune rune)
@@ -986,6 +1018,7 @@ public sealed class DynamicPunctuationMapper
         return status == OperationStatus.Done;
     }
 
+    // Decodes the Unicode scalar immediately after an index.
     private static bool TryDecodeNextRune(
         ReadOnlySpan<char> text,
         out Rune rune)

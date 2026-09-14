@@ -8,8 +8,20 @@ using Microsoft.Extensions.Logging.Console;
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Logging must never become backpressure for synthesis. The built-in console provider already
+// formats/enqueues on the caller and drains output on its own worker thread; use a bounded
+// non-blocking queue so a stalled terminal cannot stall TTS requests. Under an extreme log burst,
+// new log messages are dropped once the queue is full instead of blocking request threads.
+const int ConsoleLogQueueCapacity = 4096;
+
 builder.Logging.ClearProviders();
-builder.Logging.AddConsole(options => options.FormatterName = "clean");
+builder.Logging.AddConsole(options =>
+{
+    options.FormatterName = "clean";
+    options.MaxQueueLength = ConsoleLogQueueCapacity;
+    options.QueueFullMode = ConsoleLoggerQueueFullMode.DropWrite;
+});
 builder.Logging.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
 
 // PiperRunner, OpenVoiceRunner, and PiperPhonemizer are constructed directly with 'new'
@@ -20,7 +32,12 @@ using var bootstrapLoggerFactory = LoggerFactory.Create(lb =>
 {
     lb.AddConfiguration(builder.Configuration.GetSection("Logging"));
 
-    lb.AddConsole(options => options.FormatterName = "clean");
+    lb.AddConsole(options =>
+    {
+        options.FormatterName = "clean";
+        options.MaxQueueLength = ConsoleLogQueueCapacity;
+        options.QueueFullMode = ConsoleLoggerQueueFullMode.DropWrite;
+    });
     lb.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
 });
 

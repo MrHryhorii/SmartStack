@@ -9,7 +9,7 @@ public class ChunkerSettings
     /// The maximum character length of a single text chunk before forcing an emergency split.
     /// Prevents GPU/CPU timeouts or memory overloads on extremely long, run-on sentences.
     /// </summary>
-    public int MaxChunkLength { get; set; } = 250;
+    public int MaxChunkLength { get; set; } = 200;
 
     /// <summary>
     /// The base silence duration (in seconds) inserted between generated sentences 

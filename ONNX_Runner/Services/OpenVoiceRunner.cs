@@ -53,6 +53,9 @@ public partial class OpenVoiceRunner : IDisposable
     // Key - Voice name (e.g., "MorganFreeman"), Value - Tonal fingerprint (256-float embedding).
     public Dictionary<string, float[]> VoiceLibrary { get; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Returns the sample rate expected by the OpenVoice models.
+    /// </summary>
     public int GetTargetSamplingRate() => _config.Data.SamplingRate;
 
     // Represents the Color Converter's technical concurrency limit (pool size for DML,
@@ -317,6 +320,9 @@ public partial class OpenVoiceRunner : IDisposable
         }
     }
 
+    /// <summary>
+    /// Persists a tone-color embedding for reuse without re-running the extractor.
+    /// </summary>
     public void SaveVoiceFingerprint(string path, float[] embedding)
     {
         byte[] result = new byte[embedding.Length * sizeof(float)];
@@ -324,6 +330,9 @@ public partial class OpenVoiceRunner : IDisposable
         File.WriteAllBytes(path, result);
     }
 
+    /// <summary>
+    /// Loads a previously persisted tone-color embedding.
+    /// </summary>
     public float[] LoadVoiceFingerprint(string path)
     {
         byte[] data = File.ReadAllBytes(path);
@@ -376,6 +385,7 @@ public partial class OpenVoiceRunner : IDisposable
         }
     }
 
+    // Logs ONNX input and output metadata for one session.
     private void InspectSession(string name, InferenceSession session)
     {
         if (!_logger.IsEnabled(LogLevel.Information)) return;
@@ -398,60 +408,8 @@ public partial class OpenVoiceRunner : IDisposable
     }
 
     /// <summary>
-    /// Applies the destination tone color to a source audio spectrogram.
-    /// This is the core logic of Voice Cloning. Handles safe Object Pool routing,
-    /// identical in spirit to PiperRunner.SynthesizeAudioRaw.
-    /// </summary>
-    public (float[] Buffer, int Length) ApplyToneColor(float[,] spectrogram, float[] srcFingerprint, float[] destFingerprint, float tau = 1.0f)
-    {
-        int frames = spectrogram.GetLength(0);
-        int bins = spectrogram.GetLength(1);
-        int tensorSize = checked(frames * bins);
-
-        // Compatibility/startup path: transpose the traditional [frames, bins] matrix into
-        // the [bins, frames] layout expected by the color converter. Runtime synthesis uses
-        // the pooled flat overload below and therefore skips both this allocation and copy.
-        float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
-
-        try
-        {
-            if (tensorSize > 0)
-            {
-                System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
-                    "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
-
-                ReadOnlySpan<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
-                Span<float> destination = rentedInput.AsSpan(0, tensorSize);
-
-                for (int i = 0; i < frames; i++)
-                {
-                    int rowOffset = i * bins;
-                    for (int j = 0; j < bins; j++)
-                    {
-                        destination[(j * frames) + i] = flatSpectrogram[rowOffset + j];
-                    }
-                }
-            }
-
-            return ApplyToneColorCore(
-                rentedInput,
-                tensorSize,
-                frames,
-                bins,
-                srcFingerprint,
-                destFingerprint,
-                tau);
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(rentedInput);
-        }
-    }
-
-    /// <summary>
-    /// Zero-copy runtime path. The supplied pooled buffer must already contain the spectrogram
-    /// in [bins, frames] row-major order, exactly matching the ONNX input tensor layout.
-    /// Ownership remains with the caller; this method never returns or retains the input buffer.
+    /// Applies tone-color conversion using a flat spectrogram already arranged in the
+    /// [bins, frames] layout required by the ONNX model. Ownership remains with the caller.
     /// </summary>
     public (float[] Buffer, int Length) ApplyToneColor(
         float[] transposedSpectrogram,
@@ -463,15 +421,9 @@ public partial class OpenVoiceRunner : IDisposable
     {
         ArgumentNullException.ThrowIfNull(transposedSpectrogram);
 
-        if (frames <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(frames));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frames);
 
-        if (bins <= 0)
-        {
-            throw new ArgumentOutOfRangeException(nameof(bins));
-        }
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bins);
 
         int tensorSize = checked(frames * bins);
         if (transposedSpectrogram.Length < tensorSize)
@@ -489,6 +441,7 @@ public partial class OpenVoiceRunner : IDisposable
             tau);
     }
 
+    // Executes the color-converter inference using the already prepared tensor buffer.
     private (float[] Buffer, int Length) ApplyToneColorCore(
         float[] tensorBuffer,
         int tensorSize,
@@ -596,12 +549,12 @@ public partial class OpenVoiceRunner : IDisposable
             int channels = _config.Model.GinChannels;
             // Use a fixed seed for reproducibility in dummy data generation
             var rng = new Random(42);
-            // Generate a dummy spectrogram with small random values to simulate real input
-            //  without causing extreme activations in the model.
-            var dummySpectrogram = new float[frames, bins];
-            for (int i = 0; i < frames; i++)
-                for (int j = 0; j < bins; j++)
-                    dummySpectrogram[i, j] = (float)(rng.NextDouble() * 0.1);
+            // Build directly in the [bins, frames] layout used by the runtime colorizer.
+            var dummySpectrogram = new float[checked(frames * bins)];
+            for (int i = 0; i < dummySpectrogram.Length; i++)
+            {
+                dummySpectrogram[i] = (float)(rng.NextDouble() * 0.1);
+            }
             // Generate dummy source and destination fingerprints with small random values to simulate real embeddings.
             var dummySrcFingerprint = Enumerable.Range(0, channels)
                 .Select(_ => (float)(rng.NextDouble() * 0.1))
@@ -614,7 +567,7 @@ public partial class OpenVoiceRunner : IDisposable
             // Perform multiple passes to ensure all parts of the model are warmed up, including any dynamic graph optimizations.
             for (int pass = 0; pass < 2; pass++)
             {
-                var result = ApplyToneColor(dummySpectrogram, dummySrcFingerprint, dummyDestFingerprint, 1.0f);
+                var result = ApplyToneColor(dummySpectrogram, frames, bins, dummySrcFingerprint, dummyDestFingerprint, 1.0f);
                 ArrayPool<float>.Shared.Return(result.Buffer);
             }
             // If we reach this point without exceptions, the warmup is successful.
@@ -626,6 +579,9 @@ public partial class OpenVoiceRunner : IDisposable
         }
     }
 
+    /// <summary>
+    /// Releases all OpenVoice ONNX sessions and concurrency gates.
+    /// </summary>
     public void Dispose()
     {
         _extractSession?.Dispose();

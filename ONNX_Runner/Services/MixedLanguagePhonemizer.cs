@@ -481,6 +481,7 @@ public partial class MixedLanguagePhonemizer
         return ScriptType.Other;
     }
 
+    // Returns the Unicode script associated with a single decoded rune.
     private static ScriptType DetectScript(Rune rune)
     {
         int value = rune.Value;
@@ -645,6 +646,7 @@ public partial class MixedLanguagePhonemizer
         return ScriptType.Other;
     }
 
+    // Checks whether a Unicode scalar falls inside an inclusive range.
     private static bool IsInRange(int value, int min, int max)
     {
         return value >= min && value <= max;
@@ -669,6 +671,7 @@ public partial class MixedLanguagePhonemizer
         return !AreScriptsCompatible(leftScript, rightScript);
     }
 
+    // Finds the nearest letter script before a lexical hyphen.
     private static ScriptType FindNearestLetterScriptLeft(ReadOnlySpan<char> word, int hyphenIndex)
     {
         int segmentEnd = hyphenIndex;
@@ -694,6 +697,7 @@ public partial class MixedLanguagePhonemizer
         return ScriptType.None;
     }
 
+    // Finds the nearest letter script after a lexical hyphen.
     private static ScriptType FindNearestLetterScriptRight(ReadOnlySpan<char> word, int hyphenIndex)
     {
         int segmentStart = hyphenIndex + 1;
@@ -719,6 +723,7 @@ public partial class MixedLanguagePhonemizer
         return ScriptType.None;
     }
 
+    // Determines whether adjacent scripts may remain in the same lexical run.
     private static bool AreScriptsCompatible(ScriptType left, ScriptType right)
     {
         if (left == right)
@@ -806,11 +811,13 @@ public partial class MixedLanguagePhonemizer
         return chunkScript == _modelScript;
     }
 
+    // Returns true for Hiragana or Katakana.
     private static bool IsJapaneseKanaScript(ScriptType script)
     {
         return script is ScriptType.Hiragana or ScriptType.Katakana;
     }
 
+    // Checks whether the span contains at least one Unicode letter.
     private static bool ContainsLetter(ReadOnlySpan<char> value)
     {
         foreach (Rune rune in value.EnumerateRunes())
@@ -824,6 +831,7 @@ public partial class MixedLanguagePhonemizer
         return false;
     }
 
+    // Returns true for hyphens that may participate in a word token.
     private static bool IsLexicalHyphen(char value)
     {
         return value is '-'
@@ -834,6 +842,7 @@ public partial class MixedLanguagePhonemizer
             or '\u30A0';
     }
 
+    // Extracts the base language family from an eSpeak language code.
     private static string GetBaseFamily(string languageCode)
     {
         int separator = languageCode.AsSpan().IndexOfAny('-', '_');
@@ -843,6 +852,7 @@ public partial class MixedLanguagePhonemizer
             : languageCode;
     }
 
+    // Returns the diagnostic name for a detected script.
     private static string GetScriptName(ScriptType script)
     {
         // Enum.ToString() may allocate. The set is fixed, so return cached string literals instead.
@@ -876,6 +886,7 @@ public partial class MixedLanguagePhonemizer
         };
     }
 
+    // Counts Unicode letters without allocating a normalized copy.
     private static int CountLetters(ReadOnlySpan<char> value)
     {
         int count = 0;
@@ -891,6 +902,7 @@ public partial class MixedLanguagePhonemizer
         return count;
     }
 
+    // Counts speakable letters and records the dominant script for a span.
     private static void AnalyzeSpeakableContent(
         ReadOnlySpan<char> value,
         out bool hasLetters,
@@ -925,6 +937,7 @@ public partial class MixedLanguagePhonemizer
         }
     }
 
+    // Returns true when the rune is a Unicode letter.
     private static bool IsLetterRune(Rune rune)
     {
         UnicodeCategory category = Rune.GetUnicodeCategory(rune);
@@ -936,6 +949,7 @@ public partial class MixedLanguagePhonemizer
             or UnicodeCategory.OtherLetter;
     }
 
+    // Returns true when the rune can participate in the core of a word token.
     private static bool IsWordCoreRune(Rune rune)
     {
         int value = rune.Value;
@@ -966,6 +980,7 @@ public partial class MixedLanguagePhonemizer
             or UnicodeCategory.EnclosingMark;
     }
 
+    // Decodes the first Unicode scalar and returns its UTF-16 width.
     private static int DecodeRune(ReadOnlySpan<char> value, out Rune rune)
     {
         OperationStatus status = Rune.DecodeFromUtf16(
@@ -984,12 +999,14 @@ public partial class MixedLanguagePhonemizer
         return 1;
     }
 
+    // Checks whether a character is an apostrophe, period, or lexical hyphen allowed inside a word.
     private static bool IsWordConnector(char value)
     {
         return value is '\'' or '’' or '.'
             || IsLexicalHyphen(value);
     }
 
+    // Returns true for punctuation that forms a hard phrase boundary.
     private static bool IsHardPunctuation(Rune rune)
     {
         // After DynamicPunctuationMapper normalizes an orthographic segment, the selected
@@ -1006,6 +1023,7 @@ public partial class MixedLanguagePhonemizer
             or UnicodeCategory.OtherPunctuation;
     }
 
+    // Estimates the initial token-list capacity for an input length.
     private static int EstimateResultCapacity(int textLength)
     {
         // Most TTS chunks contain several words per TextChunk. A small bounded estimate
@@ -1013,6 +1031,7 @@ public partial class MixedLanguagePhonemizer
         return Math.Clamp((textLength / 32) + 4, 4, 64);
     }
 
+    // Formats the highest-confidence language candidates for debug diagnostics.
     private static IReadOnlyList<string> BuildTopDiagnostics(
         IEnumerable<KeyValuePair<Language, double>> confidences)
     {

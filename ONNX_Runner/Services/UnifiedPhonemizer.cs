@@ -73,6 +73,7 @@ public partial class UnifiedPhonemizer
         _maxSupportedPhonemeLength = maxSupportedLength;
     }
 
+    // Checks whether a span contains at least one explicit IPA symbol.
     private static bool ContainsIpaSymbol(ReadOnlySpan<char> text)
     {
         return text.IndexOfAny(IpaSearchValues) >= 0;
@@ -267,7 +268,8 @@ public partial class UnifiedPhonemizer
         return finalPhonemes.ToString();
     }
 
-    private void AppendPunctuationToken(
+    // Appends a punctuation token while suppressing title and acronym periods.
+    private static void AppendPunctuationToken(
         TextChunk chunk,
         int tokenIndex,
         List<TextChunk> tokens,
@@ -302,6 +304,7 @@ public partial class UnifiedPhonemizer
         }
     }
 
+    // Selects an eSpeak voice without falling back across unrelated language families.
     private bool TrySetVoiceSafely(string language)
     {
         string resolvedLanguage = CanonicalizeEspeakVoiceCode(language);
@@ -335,6 +338,7 @@ public partial class UnifiedPhonemizer
         }
     }
 
+    // Normalizes equivalent eSpeak language aliases to one canonical code.
     private static string CanonicalizeEspeakVoiceCode(string language)
     {
         if (language.Equals("zh", StringComparison.OrdinalIgnoreCase) ||
@@ -347,6 +351,7 @@ public partial class UnifiedPhonemizer
         return language;
     }
 
+    // Checks whether two eSpeak voice codes belong to the same base language family.
     private static bool HasSameBaseLanguage(string left, string right)
     {
         ReadOnlySpan<char> leftSpan = left.AsSpan();
@@ -385,6 +390,7 @@ public partial class UnifiedPhonemizer
             or UnicodeCategory.EnclosingMark;
     }
 
+    // Finds the first rune that belongs to the speakable core of a token.
     private static int FindCoreStart(ReadOnlySpan<char> text)
     {
         int index = 0;
@@ -404,6 +410,7 @@ public partial class UnifiedPhonemizer
         return text.Length;
     }
 
+    // Finds the exclusive end of the speakable core of a token.
     private static int FindCoreEnd(ReadOnlySpan<char> text, int start)
     {
         int end = text.Length;
@@ -432,6 +439,7 @@ public partial class UnifiedPhonemizer
         return start;
     }
 
+    // Checks whether a span contains exactly one Unicode letter.
     private static bool IsSingleLetter(ReadOnlySpan<char> text)
     {
         if (text.IsEmpty)
@@ -453,6 +461,7 @@ public partial class UnifiedPhonemizer
             or UnicodeCategory.OtherLetter;
     }
 
+    // Decodes the first Unicode scalar and returns its UTF-16 width.
     private static int DecodeRune(ReadOnlySpan<char> text, out Rune rune)
     {
         OperationStatus status = Rune.DecodeFromUtf16(
@@ -544,6 +553,7 @@ public partial class UnifiedPhonemizer
         }
     }
 
+    // Finds the longest active complex IPA sequence with a precomputed fallback.
     private bool TryFindSequenceFallback(
         ReadOnlySpan<char> input,
         out int matchedLength,
@@ -581,6 +591,7 @@ public partial class UnifiedPhonemizer
         return false;
     }
 
+    // Finds the longest model-supported phoneme beginning at the current position.
     private bool TryFindLongestSupported(
         ReadOnlySpan<char> input,
         int minimumLength,
@@ -613,6 +624,7 @@ public partial class UnifiedPhonemizer
         return false;
     }
 
+    // Checks whether a candidate UTF-16 length would split a surrogate pair.
     private static bool SplitsSurrogatePair(ReadOnlySpan<char> input, int length)
     {
         return length > 0 &&

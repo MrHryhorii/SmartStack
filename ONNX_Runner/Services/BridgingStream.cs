@@ -12,17 +12,24 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public class BridgingStream : Stream
 {
-    private readonly ChannelWriter<(byte[] Buffer, int Length)> _writer;
+    private readonly ChannelWriter<(byte[] Buffer, int Length, bool ContainsAudio)> _writer;
     private readonly int _minChunkSizeBytes;
+    private readonly RequestDiagnostics? _diagnostics;
 
     private byte[]? _currentBuffer;
     private int _bufferPosition;
     private long _totalBytesWritten;
+    private bool _bufferContainsAudio;
+    private bool _audioEncodingStarted;
+    private bool _transportTimingMarked;
 
-    public BridgingStream(ChannelWriter<(byte[] Buffer, int Length)> writer, int minChunkSizeBytes = 8192)
+    public BridgingStream(
+        ChannelWriter<(byte[] Buffer, int Length, bool ContainsAudio)> writer,
+        int minChunkSizeBytes = 8192)
     {
         _writer = writer;
         _minChunkSizeBytes = minChunkSizeBytes > 0 ? minChunkSizeBytes : 1024;
+        _diagnostics = RequestLogContext.Current;
         _currentBuffer = ArrayPool<byte>.Shared.Rent(_minChunkSizeBytes);
     }
 
@@ -51,6 +58,7 @@ public class BridgingStream : Stream
         WriteCore(buffer);
     }
 
+    // Buffers incoming bytes and dispatches full chunks to the network channel.
     private void WriteCore(ReadOnlySpan<byte> buffer)
     {
         if (buffer.IsEmpty)
@@ -59,6 +67,14 @@ public class BridgingStream : Stream
         }
 
         ObjectDisposedException.ThrowIf(_currentBuffer == null, this);
+
+        if (!_audioEncodingStarted && _diagnostics?.HasEncoderInput == true)
+        {
+            _diagnostics.MarkEncodedAudio();
+            _audioEncodingStarted = true;
+        }
+
+        bool incomingContainsAudio = _audioEncodingStarted;
 
         int sourceOffset = 0;
 
@@ -73,6 +89,7 @@ public class BridgingStream : Stream
             _bufferPosition += bytesToCopy;
             sourceOffset += bytesToCopy;
             _totalBytesWritten += bytesToCopy;
+            _bufferContainsAudio |= incomingContainsAudio;
 
             if (_bufferPosition >= _minChunkSizeBytes)
             {
@@ -105,11 +122,12 @@ public class BridgingStream : Stream
 
         byte[] bufferToSend = _currentBuffer;
         int lengthToSend = _bufferPosition;
+        bool containsAudio = _bufferContainsAudio;
         bool ownershipTransferred = false;
 
         try
         {
-            var item = (Buffer: bufferToSend, Length: lengthToSend);
+            var item = (Buffer: bufferToSend, Length: lengthToSend, ContainsAudio: containsAudio);
 
             if (_writer.TryWrite(item))
             {
@@ -123,6 +141,12 @@ public class BridgingStream : Stream
                 _writer.WriteAsync(item).AsTask().GetAwaiter().GetResult();
                 ownershipTransferred = true;
             }
+
+            if (containsAudio && !_transportTimingMarked)
+            {
+                _diagnostics?.MarkTransportQueued();
+                _transportTimingMarked = true;
+            }
         }
         finally
         {
@@ -131,6 +155,7 @@ public class BridgingStream : Stream
                 ArrayPool<byte>.Shared.Return(bufferToSend);
                 _currentBuffer = null;
                 _bufferPosition = 0;
+                _bufferContainsAudio = false;
             }
         }
 
@@ -138,8 +163,12 @@ public class BridgingStream : Stream
         // the handoff succeeds, keeping pooled-buffer ownership unambiguous on failure paths.
         _currentBuffer = ArrayPool<byte>.Shared.Rent(_minChunkSizeBytes);
         _bufferPosition = 0;
+        _bufferContainsAudio = false;
     }
 
+    /// <summary>
+    /// Flushes any buffered bytes and returns locally owned pooled memory.
+    /// </summary>
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -155,6 +184,7 @@ public class BridgingStream : Stream
                     ArrayPool<byte>.Shared.Return(_currentBuffer);
                     _currentBuffer = null;
                     _bufferPosition = 0;
+                    _bufferContainsAudio = false;
                 }
             }
         }
@@ -173,12 +203,21 @@ public class BridgingStream : Stream
         set => throw new NotSupportedException("BridgingStream is forward-only.");
     }
 
+    /// <summary>
+    /// Read operations are not supported by this write-only stream.
+    /// </summary>
     public override int Read(byte[] buffer, int offset, int count) =>
         throw new NotSupportedException("BridgingStream is write-only.");
 
+    /// <summary>
+    /// Seeking is not supported by this forward-only stream.
+    /// </summary>
     public override long Seek(long offset, SeekOrigin origin) =>
         throw new NotSupportedException("BridgingStream is forward-only.");
 
+    /// <summary>
+    /// Changing length is not supported by this forward-only stream.
+    /// </summary>
     public override void SetLength(long value) =>
         throw new NotSupportedException("BridgingStream does not support SetLength.");
 }

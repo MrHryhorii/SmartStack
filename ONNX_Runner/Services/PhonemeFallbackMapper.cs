@@ -136,29 +136,6 @@ public sealed class PhonemeFallbackMapper
         return lookup.TryGetValue(phoneme, out fallback!);
     }
 
-    /// <summary>
-    /// Backward-compatible string API. Prefer the span-based TryGet methods in hot paths.
-    /// Unknown phonemes are returned unchanged instead of disappearing silently.
-    /// </summary>
-    public string GetClosestPhoneme(string unknownPhoneme)
-    {
-        if (string.IsNullOrEmpty(unknownPhoneme))
-        {
-            return string.Empty;
-        }
-
-        if (TryGetSequenceFallback(unknownPhoneme.AsSpan(), out string sequenceFallback))
-        {
-            return sequenceFallback;
-        }
-
-        if (TryGetClosestPhoneme(unknownPhoneme.AsSpan(), out string fallback))
-        {
-            return fallback;
-        }
-
-        return unknownPhoneme;
-    }
 
     /// <summary>
     /// Loads phonemes and their corresponding feature vectors from the PHOIBLE CSV file.
@@ -226,6 +203,7 @@ public sealed class PhonemeFallbackMapper
         return db;
     }
 
+    // Intersects PHOIBLE entries with the loaded Piper model inventory.
     private Dictionary<string, char[]> GetSupportedPhonemes(
         Dictionary<string, char[]> phoibleDb)
     {
@@ -350,6 +328,7 @@ public sealed class PhonemeFallbackMapper
         }
     }
 
+    // Checks whether a phoneme sequence can be emitted entirely from native model tokens.
     private bool CanEmitDirectly(ReadOnlySpan<char> sequence)
     {
         var supportedLookup = _supportedModelPhonemes.GetAlternateLookup<ReadOnlySpan<char>>();
@@ -390,6 +369,7 @@ public sealed class PhonemeFallbackMapper
         return true;
     }
 
+    // Resolves a decomposition recursively until every emitted token is model-supported.
     private bool TryResolveToSupportedSequence(
         ReadOnlySpan<char> sequence,
         out string resolved)
@@ -440,6 +420,7 @@ public sealed class PhonemeFallbackMapper
         return resolved.Length > 0;
     }
 
+    // Finds the longest supported model token at the beginning of a span.
     private bool TryFindLongestSupported(
         ReadOnlySpan<char> input,
         HashSet<string>.AlternateLookup<ReadOnlySpan<char>> supportedLookup,
@@ -469,6 +450,7 @@ public sealed class PhonemeFallbackMapper
         return false;
     }
 
+    // Checks whether a candidate UTF-16 length would split a surrogate pair.
     private static bool SplitsSurrogatePair(
         ReadOnlySpan<char> input,
         int length)
@@ -558,6 +540,7 @@ public sealed class PhonemeFallbackMapper
         return length;
     }
 
+    // Parses one PHOIBLE CSV row while preserving quoted fields.
     private static string[] ParseCsvLine(string line)
     {
         var result = new List<string>();

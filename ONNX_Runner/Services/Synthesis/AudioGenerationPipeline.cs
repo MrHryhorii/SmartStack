@@ -11,8 +11,21 @@ namespace ONNX_Runner.Services.Synthesis;
 /// </summary>
 internal static class AudioGenerationPipeline
 {
-    // Runs the full producer/consumer generation pipeline.
-    public static async Task GenerateAsync(
+    /// <summary>
+    /// Statistics for one completed generation pipeline.
+    /// </summary>
+    internal readonly record struct GenerationResult(long SamplesWritten, int SampleRate)
+    {
+        public double AudioSeconds => SampleRate > 0
+            ? SamplesWritten / (double)SampleRate
+            : 0.0;
+    }
+
+    /// <summary>
+    /// Runs synthesis, cloning, DSP, and encoding through the producer/consumer pipeline.
+    /// Returns the exact logical output duration produced by the audio path.
+    /// </summary>
+    public static async Task<GenerationResult> GenerateAsync(
         SynthesisContext ctx,
         Stream targetStream,
         bool flushAfterEachSentence,
@@ -20,6 +33,7 @@ internal static class AudioGenerationPipeline
     {
         var request = ctx.Request;
         var textChunks = ctx.TextChunker.Split(request.Input);
+        RequestDiagnostics? diagnostics = RequestLogContext.Current;
 
         float[]? targetFingerprint = null;
         float[]? sourceFingerprint = null;
@@ -137,6 +151,7 @@ internal static class AudioGenerationPipeline
                 // LOCAL STATE: Tracks sentence continuation across chunks within the same request.
                 // Defaults to true, assuming the very first chunk is the start of a new thought.
                 bool previousChunkWasFinished = true;
+                bool piperTimingMarked = false;
 
                 foreach (var chunk in textChunks)
                 {
@@ -222,6 +237,11 @@ internal static class AudioGenerationPipeline
 
                     // Pass the streaming flags to the generator
                     var rawResult = ctx.PiperRunner.SynthesizeAudioRaw(phonemes, isContinuation, isFinished, request.Speed, request.NoiseScale, request.NoiseW);
+                    if (!piperTimingMarked)
+                    {
+                        diagnostics?.MarkPiperReady();
+                        piperTimingMarked = true;
+                    }
 
                     // NOTE: Volume is intentionally NOT applied here. It's applied in the
                     // consumer task, after voice cloning (if active), so the cloning model
@@ -321,6 +341,9 @@ internal static class AudioGenerationPipeline
         {
             try
             {
+                bool cloneTimingMarked = false;
+                bool processedTimingMarked = false;
+
                 await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
                 {
                     float[]? rentedBuffer1 = null;
@@ -389,6 +412,12 @@ internal static class AudioGenerationPipeline
                             }
                         }
 
+                        if (ctx.CanClone && !cloneTimingMarked)
+                        {
+                            diagnostics?.MarkCloneReady();
+                            cloneTimingMarked = true;
+                        }
+
                         // Applies target volume post-cloning to protect OpenVoice from boosted input levels.
                         // Acts as unified gain staging for both cloned and base Piper outputs.
                         if (useVolumeShift)
@@ -410,6 +439,12 @@ internal static class AudioGenerationPipeline
 
                         // Apply spatial acoustics AFTER character effects
                         spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
+                        if (!processedTimingMarked)
+                        {
+                            diagnostics?.MarkProcessedReady();
+                            processedTimingMarked = true;
+                        }
+
                         streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
                         // Append a brief pause (silence) between sentences for natural pacing
@@ -514,8 +549,13 @@ internal static class AudioGenerationPipeline
             {
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(consumerFault).Throw();
             }
+
             throw;
         }
+
+        return new GenerationResult(
+            streamManager.SamplesWritten,
+            ctx.FinalSampleRate);
     }
 
     // Auxiliary interpolation method

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services.Synthesis;
 
@@ -11,13 +12,41 @@ namespace ONNX_Runner.Services;
 /// different endpoints exist. Endpoints and adapters should never call the generation
 /// pipeline or touch the semaphore directly; they should only ever call SynthesizeAsync.
 /// </summary>
-public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider services)
+public class SpeechSynthesisService(
+    SemaphoreSlim gpuSemaphore,
+    IServiceProvider services,
+    ILogger<SpeechSynthesisService> logger)
 {
+    private static long s_requestSequence = -1;
+
+    /// <summary>
+    /// Executes one validated synthesis request under the shared concurrency limit.
+    /// Assigns a lightweight process-local request ID and records queue/generation timing.
+    /// </summary>
     public async Task<IResult> SynthesizeAsync(
         SynthesisRequest request,
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
+        long requestId = Interlocked.Increment(ref s_requestSequence);
+        long requestStartedTimestamp = Stopwatch.GetTimestamp();
+
+        using var requestLogContext =
+            RequestLogContext.Push(requestId, requestStartedTimestamp);
+
+        RequestDiagnostics diagnostics = requestLogContext.Diagnostics;
+
+        string requestedVoice = string.IsNullOrWhiteSpace(request.Voice)
+            ? "piper_base"
+            : request.Voice;
+
+        logger.LogInformation(
+            "Request accepted | chars={CharacterCount} | voice={Voice} | format={Format} | stream={Stream}",
+            request.Input.Length,
+            requestedVoice,
+            request.Format,
+            request.Stream?.ToString() ?? "default");
+
         // =================================================================
         // REQUEST VALIDATION
         // =================================================================
@@ -35,6 +64,10 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         if (apiSettings.MaxTextLength > 0 && request.Input.Length > apiSettings.MaxTextLength)
         {
             request.Input = request.Input[..apiSettings.MaxTextLength];
+
+            logger.LogWarning(
+                "Input truncated to {CharacterCount} characters by MaxTextLength",
+                request.Input.Length);
         }
 
         // Safely verify if the base TTS model was successfully loaded at startup.
@@ -42,6 +75,7 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         var piperConfig = services.GetService<PiperConfig>();
         if (piperConfig == null)
         {
+            logger.LogError("Request rejected because the Piper model is not loaded");
             return Results.Problem("Model is not loaded properly.", statusCode: 500);
         }
 
@@ -51,16 +85,23 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
         ResponsePipeline.Plan responsePlan = default;
         bool responsePlanResolved = false;
         bool semaphoreAcquired = false;
+        bool generationStarted = false;
+
+        long generationStartedTimestamp = 0;
+        TimeSpan queueElapsed = TimeSpan.Zero;
 
         try
         {
             // =================================================================
             // CONCURRENCY CONTROL (SEMAPHORE PATTERN)
             // =================================================================
-            // Wait for an available slot in the execution queue. This strictly limits
-            // concurrent ONNX inferences to prevent GPU VRAM Out-Of-Memory (OOM) errors
-            // or CPU thread starvation.
+            // Measure only time actually spent waiting for a concurrency slot. Request parsing,
+            // validation, and response setup are deliberately excluded from this queue metric.
+            long queueStartedTimestamp = Stopwatch.GetTimestamp();
+
             await gpuSemaphore.WaitAsync(cancellationToken);
+
+            queueElapsed = Stopwatch.GetElapsedTime(queueStartedTimestamp);
             semaphoreAcquired = true;
 
             // =================================================================
@@ -108,17 +149,43 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                 ref response,
                 responsePlan);
 
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                float effectivePitch = request.Pitch ?? ctx.DspConfig.DefaultPitch;
+                string effectiveEffect = request.Effect ?? ctx.EffectsConfig.DefaultEffect;
+                string effectiveEnvironment = request.Environment ?? ctx.EffectsConfig.DefaultEnvironment;
+
+                logger.LogDebug(
+                    "Generation started | queue={QueueMs:F1} ms | clone={Clone} | stream={Stream} | speed={SpeechSpeed:F2} | pitch={Pitch:F2} | effect={Effect} | environment={Environment} | sample_rate={SampleRate} Hz",
+                    queueElapsed.TotalMilliseconds,
+                    ctx.CanClone ? "yes" : "no",
+                    responsePlan.UseStreaming ? "yes" : "no",
+                    request.Speed,
+                    effectivePitch,
+                    effectiveEffect,
+                    effectiveEnvironment,
+                    ctx.FinalSampleRate);
+            }
+
+            generationStarted = true;
+            generationStartedTimestamp = Stopwatch.GetTimestamp();
+            diagnostics.StartGeneration(generationStartedTimestamp);
+
             // =================================================================
             // ASYNCHRONOUS AUDIO GENERATION (PRODUCER-CONSUMER PATTERN)
             // =================================================================
             // Base synthesis and post-processing remain independent producer/consumer stages.
             // Different hardware can therefore work concurrently, while bounded channels apply
             // backpressure when one stage outruns another and propagate failures across the pipe.
-            await AudioGenerationPipeline.GenerateAsync(
-                ctx,
-                response.TargetStream!,
-                responsePlan.FlushAfterEachSentence,
-                cancellationToken);
+            AudioGenerationPipeline.GenerationResult generationResult =
+                await AudioGenerationPipeline.GenerateAsync(
+                    ctx,
+                    response.TargetStream!,
+                    responsePlan.FlushAfterEachSentence,
+                    cancellationToken);
+
+            TimeSpan generationElapsed =
+                Stopwatch.GetElapsedTime(generationStartedTimestamp);
 
             // =================================================================
             // RESPONSE FINALIZATION
@@ -129,10 +196,77 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                 ref response,
                 responsePlan);
 
-            return await ResponsePipeline.CompleteAsync(
+            IResult result = await ResponsePipeline.CompleteAsync(
                 response,
                 responsePlan,
                 request);
+
+            TimeSpan totalElapsed =
+                Stopwatch.GetElapsedTime(requestStartedTimestamp);
+
+            double audioSeconds = generationResult.AudioSeconds;
+            double generationSeconds = generationElapsed.TotalSeconds;
+            double rtf = audioSeconds > 0.0
+                ? generationSeconds / audioSeconds
+                : 0.0;
+            double realtimeSpeed = generationSeconds > 0.0
+                ? audioSeconds / generationSeconds
+                : 0.0;
+
+            double? ttfaMs = diagnostics.TtfaMs;
+
+            if (ttfaMs.HasValue)
+            {
+                logger.LogInformation(
+                    "Generation completed | audio={AudioSeconds:F3} s | generation={GenerationSeconds:F3} s | TTFA={TtfaMs:F1} ms | RTF={Rtf:F3} | speed={Speed:F2}x | queue={QueueMs:F1} ms | total={TotalSeconds:F3} s",
+                    audioSeconds,
+                    generationSeconds,
+                    ttfaMs.Value,
+                    rtf,
+                    realtimeSpeed,
+                    queueElapsed.TotalMilliseconds,
+                    totalElapsed.TotalSeconds);
+            }
+            else
+            {
+                logger.LogInformation(
+                    "Generation completed | audio={AudioSeconds:F3} s | generation={GenerationSeconds:F3} s | TTFA=n/a | RTF={Rtf:F3} | speed={Speed:F2}x | queue={QueueMs:F1} ms | total={TotalSeconds:F3} s",
+                    audioSeconds,
+                    generationSeconds,
+                    rtf,
+                    realtimeSpeed,
+                    queueElapsed.TotalMilliseconds,
+                    totalElapsed.TotalSeconds);
+            }
+
+            if (logger.IsEnabled(LogLevel.Debug))
+            {
+                if (ctx.CanClone)
+                {
+                    logger.LogDebug(
+                        "First audio timing | piper={PiperMs:F1} ms | clone={CloneMs:F1} ms | processed={ProcessedMs:F1} ms | encoder_in={EncoderInputMs:F1} ms | encoded={EncodedMs:F1} ms | transport={TransportMs:F1} ms | http={HttpMs:F1} ms",
+                        diagnostics.PiperMs ?? double.NaN,
+                        diagnostics.CloneMs ?? double.NaN,
+                        diagnostics.ProcessedMs ?? double.NaN,
+                        diagnostics.EncoderInputMs ?? double.NaN,
+                        diagnostics.EncodedAudioMs ?? double.NaN,
+                        diagnostics.TransportQueuedMs ?? double.NaN,
+                        diagnostics.HttpAudioMs ?? double.NaN);
+                }
+                else
+                {
+                    logger.LogDebug(
+                        "First audio timing | piper={PiperMs:F1} ms | processed={ProcessedMs:F1} ms | encoder_in={EncoderInputMs:F1} ms | encoded={EncodedMs:F1} ms | transport={TransportMs:F1} ms | http={HttpMs:F1} ms",
+                        diagnostics.PiperMs ?? double.NaN,
+                        diagnostics.ProcessedMs ?? double.NaN,
+                        diagnostics.EncoderInputMs ?? double.NaN,
+                        diagnostics.EncodedAudioMs ?? double.NaN,
+                        diagnostics.TransportQueuedMs ?? double.NaN,
+                        diagnostics.HttpAudioMs ?? double.NaN);
+                }
+            }
+
+            return result;
         }
         catch (OperationCanceledException)
         {
@@ -148,9 +282,13 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
 
             await ResponsePipeline.AbortAsync(response);
 
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [INFO] Client disconnected. Generation stopped to save resources.");
-            Console.ResetColor();
+            TimeSpan totalElapsed =
+                Stopwatch.GetElapsedTime(requestStartedTimestamp);
+
+            logger.LogWarning(
+                "Request canceled | stage={Stage} | total={TotalSeconds:F3} s",
+                GetStage(semaphoreAcquired, generationStarted),
+                totalElapsed.TotalSeconds);
 
             return Results.Empty;
         }
@@ -165,15 +303,20 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
 
             await ResponsePipeline.AbortAsync(response, ex);
 
+            TimeSpan totalElapsed =
+                Stopwatch.GetElapsedTime(requestStartedTimestamp);
+
+            logger.LogError(
+                ex,
+                "Request failed | stage={Stage} | total={TotalSeconds:F3} s",
+                GetStage(semaphoreAcquired, generationStarted),
+                totalElapsed.TotalSeconds);
+
             if (httpContext.Response.HasStarted)
             {
                 // If streaming already started, we can't send a 500 status code anymore.
                 // The response channel has already been faulted so every pipeline stage can
                 // terminate instead of continuing expensive inference for a dead connection.
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] [ERROR] Stream aborted unexpectedly: {ex.Message}");
-                Console.ResetColor();
-
                 return Results.Empty;
             }
 
@@ -190,5 +333,17 @@ public class SpeechSynthesisService(SemaphoreSlim gpuSemaphore, IServiceProvider
                 gpuSemaphore.Release();
             }
         }
+    }
+
+    private static string GetStage(bool semaphoreAcquired, bool generationStarted)
+    {
+        if (!semaphoreAcquired)
+        {
+            return "queue";
+        }
+
+        return generationStarted
+            ? "generation"
+            : "setup";
     }
 }

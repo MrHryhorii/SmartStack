@@ -9,39 +9,6 @@ using System.Runtime.InteropServices; // REQUIRED FOR MemoryMarshal (fast flat a
 namespace ONNX_Runner.Services;
 
 /// <summary>
-/// A lightweight wrapper that bridges raw float[] arrays directly to NAudio's IWaveProvider.
-/// This prevents the heavy allocation overhead of converting float[] to byte[] arrays before resampling.
-///
-/// PUBLIC API NOTE: This top-level class is the unbounded variant (reads the entire array).
-/// AudioProcessor internally uses its own nested FloatArrayWaveProvider (with a validLength
-/// boundary) because pooled arrays from ArrayPool often contain trailing garbage data from
-/// previous rentals — reading samples.Length instead of the actual valid length would leak
-/// stale data into the resampled output. This top-level version is kept as public API for
-/// callers elsewhere in the project that already have a tightly-sized, non-pooled array.
-/// </summary>
-public class FloatArrayWaveProvider(float[] samples, int sampleRate) : IWaveProvider
-{
-    private readonly float[] _samples = samples;
-    private int _position;
-    public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1);
-
-    public int Read(byte[] buffer, int offset, int count)
-    {
-        int floatsRequired = count / 4;
-        int floatsAvailable = _samples.Length - _position;
-        int floatsToRead = Math.Min(floatsRequired, floatsAvailable);
-
-        if (floatsToRead > 0)
-        {
-            // Fast unmanaged memory copy
-            Buffer.BlockCopy(_samples, _position * 4, buffer, offset, floatsToRead * 4);
-            _position += floatsToRead;
-        }
-        return floatsToRead * 4;
-    }
-}
-
-/// <summary>
 /// High-performance audio processing engine.
 /// Handles I/O operations, format normalization, and heavy DSP tasks like FFT and Spectrogram extraction.
 /// Heavily utilizes ArrayPool to achieve Zero-Allocation during active processing.
@@ -145,13 +112,16 @@ public class AudioProcessor
     /// of a rented array. Since pooled arrays often contain trailing garbage data from previous uses, 
     /// this safety boundary is critical.
     /// </summary>
-    public class FloatArrayWaveProvider(float[] samples, int validLength, int sampleRate) : IWaveProvider
+    private sealed class FloatArrayWaveProvider(float[] samples, int validLength, int sampleRate) : IWaveProvider
     {
         private readonly float[] _samples = samples;
         private readonly int _validLength = validLength;
         private int _position;
         public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1);
 
+        /// <summary>
+        /// Copies available float samples into the requested byte buffer.
+        /// </summary>
         public int Read(byte[] buffer, int offset, int count)
         {
             int floatsRequired = count / 4;
