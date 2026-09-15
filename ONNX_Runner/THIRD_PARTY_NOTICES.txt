@@ -61,6 +61,16 @@ License: LGPL-2.0-or-later
 Source: https://lame.sourceforge.io/
 Purpose: MP3 encoding backend used through NAudio.Lame.
 
+Browser / Web dependencies
+--------------------------
+
+mpg123-decoder 1.0.3
+Author / maintainer: eshaz
+License: MIT
+Source: https://github.com/eshaz/wasm-audio-decoders
+Purpose: WebAssembly MP3 decoding fallback for browsers without audio/mpeg MediaSource support.
+Note: The bundled decoder includes mpg123/libmpg123 components, which are licensed separately under LGPL-2.1.
+
 Models and datasets
 -------------------
 
