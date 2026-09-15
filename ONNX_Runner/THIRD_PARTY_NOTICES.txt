@@ -67,7 +67,14 @@ Models and datasets
 Piper TTS
 License: MIT for the original rhasspy/piper software.
 Source: https://github.com/rhasspy/piper
-Note: Piper voice models have their own per-model licenses. Attribution for the bundled default voice will be added once the exact model is identified.
+Note: Piper voice models have their own per-model licenses.
+
+Bundled default Piper voice: en_US-amy-medium
+Voice source: https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/amy/medium
+Upstream model card: https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/amy/medium/MODEL_CARD
+Training: Fine-tuned from the U.S. English lessac medium voice.
+Dataset/provenance: The upstream model card points to MycroftAI/mimic3-voices and defers dataset licensing to that source.
+Licensing note: The linked mimic3-voices repository is licensed under CC BY-SA 4.0, but upstream discussion notes uncertainty about Amy's exact dataset provenance and does not establish a separate Amy-specific license. Tsubaki preserves the upstream attribution and does not claim authorship of the voice model or its source data.
 
 OpenVoice V2
 License: MIT

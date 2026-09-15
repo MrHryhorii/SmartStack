@@ -11,7 +11,7 @@ function log(msg) {
     const logger = document.getElementById('statusLog');
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
     logger.innerHTML += `[${time}] ${msg}<br>`;
-    logger.scrollTop = logger.scrollHeight; 
+    logger.scrollTop = logger.scrollHeight;
 }
 
 function syncInputs(sliderId, numId) {
@@ -35,7 +35,7 @@ async function bootEngine() {
 
     // Fetch available voices, effects, and environments from backend
     const [voicesData, effectsData, envData] = await Promise.all([getVoices(), getEffects(), getEnvironments()]);
-    
+
     document.getElementById('voiceSelect').innerHTML = voicesData.voices.map(v => `<option value="${v}" ${v === 'piper_base' ? 'selected' : ''}>${v}</option>`).join('');
     document.getElementById('effectSelect').innerHTML = effectsData.effects.map(e => `<option value="${e}">${e}</option>`).join('');
     document.getElementById('environmentSelect').innerHTML = envData.environments.map(e => `<option value="${e}">${e}</option>`).join('');
@@ -61,7 +61,7 @@ async function bootEngine() {
 
     // Bind toggles to enable/disable related controls
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
-    bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum', 'extendTailToggle']); 
+    bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum', 'extendTailToggle']);
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
     bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
@@ -82,6 +82,7 @@ async function bootEngine() {
         a.download = `tsubaki_voice_${Date.now()}.${currentExtension}`;
         a.click();
     });
+
     // Main click handler for generating speech
     btn.addEventListener('click', async () => {
         const text = document.getElementById('textInput').value.trim();
@@ -91,9 +92,9 @@ async function bootEngine() {
         btn.disabled = true;
         downloadBtn.disabled = true;
         btn.innerText = "Processing...";
-        
+
         // Reset audio player for new playback
-        player.pause(); 
+        player.pause();
         player.removeAttribute('src');
         player.srcObject = null;
         player.load();
@@ -119,13 +120,14 @@ async function bootEngine() {
             payload.effect = document.getElementById('effectSelect').value;
             payload.effect_intensity = parseFloat(document.getElementById('effectIntNum').value);
         }
-        
+
         // Include environment parameters if enabled
         if (document.getElementById('useEnvironment').checked) {
             payload.environment = document.getElementById('environmentSelect').value;
             payload.environment_intensity = parseFloat(document.getElementById('envIntNum').value);
             payload.extend_reverb_tail = document.getElementById('extendTailToggle').checked;
         }
+
         // Include noise parameters if enabled
         if (document.getElementById('useNoiseScale').checked) payload.noise_scale = parseFloat(document.getElementById('nsNum').value);
         if (document.getElementById('useNoiseW').checked) payload.noise_w = parseFloat(document.getElementById('nwNum').value);
@@ -134,6 +136,7 @@ async function bootEngine() {
         if (document.getElementById('usePitch').checked) {
             payload.pitch = parseFloat(document.getElementById('pitchNum').value);
         }
+
         // Include volume adjustment if enabled
         if (document.getElementById('useVolume').checked) {
             payload.volume = parseFloat(document.getElementById('volumeNum').value);
@@ -143,97 +146,130 @@ async function bootEngine() {
         if (document.getElementById('useCloneInt').checked) {
             payload.clone_intensity = parseFloat(document.getElementById('cloneIntNum').value);
         }
+
         if (document.getElementById('useToneTemp').checked) {
             payload.tone_temperature = parseFloat(document.getElementById('toneTempNum').value);
         }
+
         if (document.getElementById('useLpqf').checked) {
             payload.low_pass_q_factor = parseFloat(document.getElementById('lpqfNum').value);
         }
 
         log(`Transmitting payload to backend...`);
-        // Log payload details while masking sensitive info
+
         try {
             const response = await synthesizeSpeech(payload);
             const mimeType = response.headers.get('Content-Type') || 'audio/mpeg';
             const supportsMSE = window.MediaSource && MediaSource.isTypeSupported(mimeType);
             const targetSampleRate = parseInt(response.headers.get('X-Audio-Sample-Rate') || "22050");
-            
+
             currentExtension = payload.response_format === 'opus' ? 'ogg' : payload.response_format;
             let totalBytes = 0;
-            // Callbacks for streaming progress and completion
+
+            // Reports encoded bytes received from the HTTP response.
             const onChunk = (chunkSize) => {
                 totalBytes += chunkSize;
-                log(`⬇️ Chunk decoded: ${chunkSize} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
+                log(`⬇️ Chunk received: ${chunkSize} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
             };
-            // Completion callback to enable download and log final status
-            const onComplete = async (finalBlob) => {
+
+            // Network completion makes the original response available for download immediately.
+            const onComplete = (finalBlob) => {
                 log("✅ Transmission complete.");
-                
-                if (payload.response_format === 'pcm') {
-                    // Create a downloadable URL for the raw PCM data (for users who want the original stream)
-                    currentDownloadUrl = URL.createObjectURL(finalBlob);
-                    
-                    // Convert raw PCM to WAV format for browser playback
-                    const arrayBuffer = await finalBlob.arrayBuffer();
-                    const playableWavBlob = AudioEngine.addWavHeader(arrayBuffer, targetSampleRate);
-                    const playerUrl = URL.createObjectURL(playableWavBlob);
-                    
-                    // Set the player's source to the playable WAV URL instead of the raw PCM stream
-                    player.srcObject = null; 
-                    player.src = playerUrl;
-                } else {
-                    currentDownloadUrl = URL.createObjectURL(finalBlob);
-                }
-                
+                currentDownloadUrl = URL.createObjectURL(finalBlob);
                 downloadBtn.disabled = false;
             };
+
             // Handle different response formats and streaming capabilities
             if (payload.response_format === 'pcm') {
                 if (payload.stream) {
                     log('Routing Raw PCM via Web Audio API Queue...');
-                    await AudioEngine.streamPCM(response.body.getReader(), targetSampleRate, player, onChunk, onComplete);
+
+                    await AudioEngine.streamPCM(
+                        response.body.getReader(),
+                        targetSampleRate,
+                        player,
+                        onChunk,
+                        onComplete
+                    );
                 } else {
                     log('Buffering complete Raw PCM payload...');
+
                     const blob = await response.blob();
-                    // Create a playable WAV Blob by adding the appropriate header for raw PCM data
+
+                    // Keep the requested raw PCM file for download.
                     currentDownloadUrl = URL.createObjectURL(blob);
                     downloadBtn.disabled = false;
-                    // Convert raw PCM to WAV format for browser playback
+
+                    // Wrap buffered PCM in WAV only for browser playback.
                     const arrayBuffer = await blob.arrayBuffer();
                     const playableWavBlob = AudioEngine.addWavHeader(arrayBuffer, targetSampleRate);
+
                     player.src = URL.createObjectURL(playableWavBlob);
-                    player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
-                    
+
+                    player.play().catch(
+                        e => log(`⚠️ Autoplay blocked: ${e.message}`)
+                    );
+
                     log(`✅ PCM Blob ready & Wrapped for playback. Size: ${(blob.size / 1024).toFixed(2)} KB`);
                 }
-            } 
-            // For compressed formats (MP3, OGG/Opus), prefer MSE streaming if supported, otherwise fallback to buffering
+            }
+
+            // Prefer the browser-native path when MSE supports the returned format.
             else if (payload.stream && supportsMSE) {
-                await AudioEngine.streamMSE(response.body.getReader(), mimeType, player, onChunk, onComplete);
-            } 
-            // Fallback for browsers that don't support MSE or if streaming is disabled: buffer the entire response and then play
+                await AudioEngine.streamMSE(
+                    response.body.getReader(),
+                    mimeType,
+                    player,
+                    onChunk,
+                    onComplete
+                );
+            }
+
+            // Decode MP3 incrementally when the browser does not expose audio/mpeg through MSE.
+            else if (payload.stream && payload.response_format === 'mp3') {
+                log('⚠️ Native MP3 MSE unavailable. Routing stream through mpg123 WebAssembly decoder...');
+
+                await AudioEngine.streamMP3(
+                    response.body.getReader(),
+                    targetSampleRate,
+                    player,
+                    onChunk,
+                    onComplete
+                );
+            }
+
+            // Unsupported streaming formats keep the original full-buffer fallback.
             else {
-                if (payload.stream) log("⚠️ Native MSE unavailable for this format. Buffering...");
+                if (payload.stream) {
+                    log("⚠️ Native MSE unavailable for this format. Buffering...");
+                }
+
                 const blob = await response.blob();
-                
+
                 currentDownloadUrl = URL.createObjectURL(blob);
-                downloadBtn.disabled = false; 
-                
+                downloadBtn.disabled = false;
+
                 player.src = currentDownloadUrl;
-                player.play().catch(e => log(`⚠️ Autoplay blocked: ${e.message}`));
+
+                player.play().catch(
+                    e => log(`⚠️ Autoplay blocked: ${e.message}`)
+                );
+
                 log(`✅ File reconstructed. Size: ${(blob.size / 1024).toFixed(2)} KB`);
             }
         } catch (error) {
             log(`❌ CRITICAL ERROR: ${error.message}`);
         } finally {
+            // Streaming methods return when the HTTP response ends, not when queued audio finishes playing.
             btn.disabled = false;
             btn.innerText = "Generate";
         }
     });
 }
+
 // Initialize the engine once the DOM is fully loaded
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', bootEngine);
 } else {
-    bootEngine(); 
+    bootEngine();
 }
