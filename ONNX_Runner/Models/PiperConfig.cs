@@ -17,7 +17,22 @@ public class PiperConfig
     public InferenceConfig Inference { get; set; } = new();
 
     /// <summary>
-    /// The phoneme dictionary mapping. 
+    /// Number of speakers available in the Piper model.
+    /// Single-speaker models normally report 1.
+    /// </summary>
+    [JsonPropertyName("num_speakers")]
+    public int NumSpeakers { get; set; } = 1;
+
+    /// <summary>
+    /// Maps the model-specific speaker name/identifier to the internal ONNX speaker ID (sid).
+    /// Example: "3922" -> 0.
+    /// Empty for single-speaker models.
+    /// </summary>
+    [JsonPropertyName("speaker_id_map")]
+    public Dictionary<string, int> SpeakerIdMap { get; set; } = [];
+
+    /// <summary>
+    /// The phoneme dictionary mapping.
     /// Key: Phoneme string (e.g., "a", "t͡ʃ"). Value: Array of corresponding integer IDs.
     /// </summary>
     [JsonPropertyName("phoneme_id_map")]

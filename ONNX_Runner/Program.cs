@@ -188,7 +188,14 @@ if (piperConfig != null && piperModelPath != null)
     var textChunker = new TextChunker(chunkerConfig);
     builder.Services.AddSingleton(textChunker);
 
-    var runner = new PiperRunner(piperModelPath, piperConfig, phonemizer, onnxConfig, hardwareConfig, bootstrapLoggerFactory.CreateLogger<PiperRunner>());
+    var runner = new PiperRunner(
+     piperModelPath,
+     piperConfig,
+     phonemizer,
+     onnxConfig,
+     hardwareConfig,
+     modelConfig,
+     bootstrapLoggerFactory.CreateLogger<PiperRunner>());
     builder.Services.AddSingleton(runner);
 
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig);

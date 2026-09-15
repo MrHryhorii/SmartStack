@@ -20,4 +20,12 @@ public class ModelSettings
     /// If provided, this will be used instead of searching the ModelDirectory.
     /// </summary>
     public string ExactConfigFilePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Preferred speaker key for multi-speaker Piper models.
+    /// Must match a key from the model's speaker_id_map.
+    /// If empty or not found, the first available speaker is used.
+    /// Ignored for single-speaker models.
+    /// </summary>
+    public string Speaker { get; set; } = string.Empty;
 }

@@ -24,35 +24,83 @@ public partial class PiperRunner : IDisposable
     // --- SESSION STATE MANAGEMENT ---
     // Used for thread-safe execution providers (CPU, CUDA)
     private readonly InferenceSession? _sharedSession;
-    
+
     // Used for execution providers that do not support concurrent execution (DirectML)
     private readonly ConcurrentQueue<InferenceSession>? _isolatedSessionPool;
-    
+
     // Fast path routing flag for the hot loop
     private readonly bool _isUsingPool;
 
     private readonly IPhonemizer _phonemizer;
     private readonly PiperConfig _config;
-    private readonly ILogger<PiperRunner> _logger;
+    private readonly long? _speakerId;
 
     public bool IsUsingGPU { get; private set; }
-    
+
     // Represents the engine's technical concurrency limit (pool size for DML, int.MaxValue for CUDA/CPU)
     public int ConcurrencyCapacity { get; private set; }
 
-    public PiperRunner(string modelPath, PiperConfig config, IPhonemizer phonemizer, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<PiperRunner> logger)
+    public PiperRunner(
+        string modelPath,
+        PiperConfig config,
+        IPhonemizer phonemizer,
+        OnnxSettings onnxSettings,
+        HardwareSettings hwSettings,
+        ModelSettings modelSettings,
+        ILogger<PiperRunner>? logger)
     {
+        ArgumentNullException.ThrowIfNull(logger);
+
         _phonemizer = phonemizer;
         _config = config;
-        _logger = logger;
+        _speakerId = ResolveSpeakerId(config, modelSettings, logger);
 
         var initResult = InitializeSession(modelPath, onnxSettings, hwSettings, logger);
-        
+
         _sharedSession = initResult.SharedSession;
         _isolatedSessionPool = initResult.SessionPool;
         IsUsingGPU = initResult.IsUsingGPU;
         _isUsingPool = initResult.IsUsingPool;
         ConcurrencyCapacity = initResult.Capacity;
+    }
+
+
+    /// <summary>
+    /// Resolves the configured Piper speaker once at startup.
+    /// Single-speaker models do not receive a sid input.
+    /// </summary>
+    private static long? ResolveSpeakerId(PiperConfig config, ModelSettings modelSettings, ILogger<PiperRunner> logger)
+    {
+        if (config.NumSpeakers <= 1)
+        {
+            LogSingleSpeakerModel(logger);
+            return null;
+        }
+
+        if (config.SpeakerIdMap.Count == 0)
+        {
+            LogEmptySpeakerMap(logger, config.NumSpeakers);
+            return 0;
+        }
+
+        string requestedSpeaker = modelSettings.Speaker.Trim();
+
+        if (!string.IsNullOrEmpty(requestedSpeaker))
+        {
+            if (config.SpeakerIdMap.TryGetValue(requestedSpeaker, out int configuredId))
+            {
+                LogConfiguredSpeaker(logger, requestedSpeaker, configuredId);
+                return configuredId;
+            }
+
+            LogSpeakerNotFound(logger, requestedSpeaker);
+        }
+
+        var fallback = config.SpeakerIdMap.OrderBy(static pair => pair.Value).First();
+
+        LogFallbackSpeaker(logger, fallback.Key, fallback.Value);
+
+        return fallback.Value;
     }
 
     /// <summary>
@@ -74,8 +122,8 @@ public partial class PiperRunner : IDisposable
             // Protection against negative numbers in config
             int startingDeviceId = Math.Max(0, hwSettings.PiperGpuDeviceId);
             // Try the desired device + the next 3 as a fallback
-            int maxGpusToTry = startingDeviceId + 4; 
-            
+            int maxGpusToTry = startingDeviceId + 4;
+
             for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
             {
                 try
@@ -84,13 +132,13 @@ public partial class PiperRunner : IDisposable
                     using var gpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
                     {
                         LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-                        GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
-                            ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+                        GraphOptimizationLevel = onnxSettings.EnableGraphOptimization
+                            ? GraphOptimizationLevel.ORT_ENABLE_ALL
                             : GraphOptimizationLevel.ORT_DISABLE_ALL
                     };
-                    
+
                     // We apply a profile specifically for the GPU
-                    onnxSettings.Gpu.ApplyTo(gpuOptions); 
+                    onnxSettings.Gpu.ApplyTo(gpuOptions);
 
 #if USE_CUDA
                     // CUDA supports concurrent execution on a single session.
@@ -103,10 +151,10 @@ public partial class PiperRunner : IDisposable
 #elif USE_DML
                     // DirectML crashes on concurrent execution. We create a fixed-size Object Pool.
                     gpuOptions.AppendExecutionProvider_DML(deviceId);
-                    
+
                     int poolSize = Math.Max(1, hwSettings.MaxConcurrentGpuRequests);
                     var pool = new ConcurrentQueue<InferenceSession>();
-                    
+
                     try
                     {
                         for (int i = 0; i < poolSize; i++)
@@ -170,17 +218,17 @@ public partial class PiperRunner : IDisposable
         using var cpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
         {
             LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-            GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
-                ? GraphOptimizationLevel.ORT_ENABLE_ALL 
+            GraphOptimizationLevel = onnxSettings.EnableGraphOptimization
+                ? GraphOptimizationLevel.ORT_ENABLE_ALL
                 : GraphOptimizationLevel.ORT_DISABLE_ALL
         };
-        
+
         // We apply a profile specifically for the CPU
         onnxSettings.Cpu.ApplyTo(cpuOptions);
 
         var fallbackSession = new InferenceSession(modelPath, cpuOptions);
         logger.LogInformation("[HARDWARE] Piper Model loaded successfully on CPU.");
-        
+
         // CPU supports concurrent execution on a single session.
         return (fallbackSession, null, false, false, int.MaxValue);
     }
@@ -215,6 +263,12 @@ public partial class PiperRunner : IDisposable
             NamedOnnxValue.CreateFromTensor("scales", scalesTensor)
         };
 
+        if (_speakerId.HasValue)
+        {
+            var speakerTensor = new DenseTensor<long>(new[] { _speakerId.Value }, [1]);
+            inputs.Add(NamedOnnxValue.CreateFromTensor("sid", speakerTensor));
+        }
+
         // --- SESSION ROUTING ---
         InferenceSession activeSession;
         bool returnToPool = false;
@@ -224,7 +278,7 @@ public partial class PiperRunner : IDisposable
             // DirectML Object Pool
             if (!_isolatedSessionPool!.TryDequeue(out activeSession!))
                 throw new InvalidOperationException("DirectML Session Pool is exhausted. Check your global Semaphore limits.");
-            
+
             returnToPool = true;
         }
         else
@@ -419,6 +473,21 @@ public partial class PiperRunner : IDisposable
 
         GC.SuppressFinalize(this);
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Single-speaker model detected. Speaker selection is not required.")]
+    private static partial void LogSingleSpeakerModel(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "[PIPER] Model reports {SpeakerCount} speakers but speaker_id_map is empty. Falling back to sid=0.")]
+    private static partial void LogEmptySpeakerMap(ILogger logger, int speakerCount);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Multi-speaker model detected. Using configured speaker '{Speaker}' (sid={SpeakerId}).")]
+    private static partial void LogConfiguredSpeaker(ILogger logger, string speaker, int speakerId);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "[PIPER] Configured speaker '{Speaker}' was not found in speaker_id_map. Falling back to the first available speaker.")]
+    private static partial void LogSpeakerNotFound(ILogger logger, string speaker);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Using fallback speaker '{Speaker}' (sid={SpeakerId}).")]
+    private static partial void LogFallbackSpeaker(ILogger logger, string speaker, int speakerId);
 
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {DeviceId})")]
     private static partial void LogCudaLoaded(ILogger logger, int deviceId);

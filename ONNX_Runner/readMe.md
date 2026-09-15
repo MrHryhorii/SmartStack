@@ -283,7 +283,7 @@ Place all three files into the `Cloner/` folder:
 | `tone_color.onnx`   | Transfers the extracted voice characteristics onto the generated base audio |
 | `tone_config.json`  | Hyperparameters and structural configuration for both models                |
 
-> These models are released under the **MIT License** and are free for commercial use.
+> These ONNX files are conversions of the **OpenVoice V2** models by MyShell; Tsubaki does not claim authorship of the original models. They are distributed under the **MIT License** and are free for commercial use.
 
 > **Performance Note:** Zero-shot voice cloning is a mathematically intensive operation. While the base `piper_base` voice synthesizes almost instantly, applying a custom cloned voice takes significantly more processing time. If you are running the engine on a CPU and want faster voice cloning, consider significantly increasing `IntraOpNumThreads` in `appsettings.json` (e.g., to match your physical core count). The default value is kept intentionally moderate so the engine balances cloning throughput with other applications (like games, LLMs, or AI agents) running in the background.
 
@@ -298,20 +298,22 @@ Both settings below can be tuned server-wide via `ClonerSettings` in `appsetting
 }
 ```
 
-**Tone Temperature** maps to OpenVoice's `tau` parameter during tone-color conversion. It controls the amount of stochastic variation injected into the converter's latent representation; it is **not an emotion control**. Tsubaki ships with `0.7` as its default.
+**Clone Intensity** controls the blending weight between the active Piper base-voice fingerprint and the selected target-voice fingerprint.
 
-- **Lower values:** Reduce latent randomness and usually make conversion more deterministic and stable. This can help voices that develop trembling, warbling, or other instability during conversion.
-- **Higher values:** Increase latent randomness. They do not intentionally make speech more emotional; instead, sufficiently high values can make the converted voice less stable and may introduce audible trembling, roughness, or other artifacts.
-- **Practical use:** Treat `tone_temperature` as a stability/variation control for the tone-color converter. If a clone sounds unstable, lowering it is the first thing to try.
+- **`0.0`:** Base Piper voice only; cloning is effectively bypassed.
+- **`0.5`:** 50% base voice, 50% target voice.
+- **`1.0`:** Target voice fingerprint at standard strength. This is the default.
+- **`1.5`:** Exaggerates the characteristics that distinguish the target voice from the base voice.
+- **Above `1.0`:** Extrapolates beyond the target fingerprint. Higher values can strengthen the target coloration, but excessive values may sound exaggerated or unnatural.
 
-**Clone Intensity** is a Tsubaki-side blend between the active Piper base-voice fingerprint and the selected target-voice fingerprint.
+**Tone Temperature** maps directly to OpenVoice's `tau` parameter and controls stochastic variation during tone-color conversion. It is **not an emotion control**.
 
-- **`0.0`:** Uses the base Piper voice characteristics; cloning is effectively bypassed.
-- **Between `0.0` and `1.0`:** Progressively moves from the base voice toward the target voice. Lower values retain more of the base Piper character.
-- **`1.0`:** Uses the target voice fingerprint directly and is the shipped default.
-- **Above `1.0`:** Extrapolates beyond the target relative to the base voice, emphasizing the characteristics that distinguish the target voice from the base. This can be useful for deliberately stronger coloration, but extreme values may sound exaggerated or unnatural.
+- **`1.0`:** Standard OpenVoice behavior.
+- **Below `1.0`:** More conservative and stable conversion with less latent variation.
+- **Above `1.0`:** More variation in the converter output. Higher values can make the result less stable and may introduce trembling, roughness, or other artifacts.
+- **`0.7`:** Tsubaki's shipped default, chosen as a more conservative setting for stable voice conversion.
 
-`clone_intensity` therefore controls **how strongly the target voice differs from the base voice**, while `tone_temperature` controls **how much stochastic variation OpenVoice allows during conversion**. They solve different problems and should not be treated as two versions of the same "voice strength" control.
+If a cloned voice develops trembling or warbling, lowering `tone_temperature` is the first thing to try. Use `clone_intensity` when you want to change **how strongly the target voice replaces or exceeds the base voice**, and `tone_temperature` when you want to change **how conservative or variable the OpenVoice conversion is**.
 
 ## Cloned Voice Volume
 
@@ -627,9 +629,14 @@ If you store models on a different drive, open `appsettings.json` and change the
 
 ```json
 "ModelSettings": {
-  "ModelDirectory": "D:\\AI_Models\\Piper"
+  "ModelDirectory": "D:\\AI_Models\\Piper",
+  "ExactModelFilePath": "",
+  "ExactConfigFilePath": "",
+  "Speaker": ""
 }
 ```
+
+`Speaker` selects a speaker only for multi-speaker Piper models. Set it to a key from the model's `speaker_id_map` (for example, `"3922"`). Leave it empty to use the model's first available speaker. If the configured key is not found, Tsubaki also falls back to the first available speaker. The setting is ignored for single-speaker models.
 
 ### Option C — Exact File Paths (Advanced)
 
@@ -881,7 +888,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 - **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter), server-wide default pitch and volume, and a fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
 
-- **`ClonerSettings`** — Controls how Tsubaki blends the target voice with the Piper base voice and how much stochastic variation OpenVoice uses during tone-color conversion. `CloneIntensity` moves the embedding from the base voice toward the target (`1.0` = target; values above `1.0` emphasize target-vs-base differences), while `ToneTemperature` controls OpenVoice latent randomness. Higher temperature is not an emotion setting and can make conversion unstable; lower it when a clone develops trembling or warbling.
+- **`ClonerSettings`** — Controls voice blending and OpenVoice conversion stability. `CloneIntensity`: `0.0` = base Piper voice, `0.5` = equal base/target blend, `1.0` = target voice at standard strength, values above `1.0` exaggerate target-vs-base differences. `ToneTemperature`: `1.0` = standard OpenVoice behavior, values below `1.0` are more conservative/stable, values above `1.0` introduce more latent variation and may become unstable. Tsubaki ships with `ToneTemperature: 0.7`.
 - **`EnableCloning`** — Enables or disables OpenVoice voice cloning. Leave it `true` to use voices stored in the `Voices/` folder; when enabled, those voices are discovered automatically at server startup and appear in the Web Dashboard voice list.
 
 ---
@@ -983,15 +990,23 @@ Tsubaki TTS Engine stands on the shoulders of giants. A massive thank you to the
 ## AI Models & Datasets
 
 - [**Piper TTS**](https://github.com/rhasspy/piper) — The core VITS neural network architecture by Rhasspy.
-- [**OpenVoice V2**](https://github.com/myshell-ai/OpenVoice) — The innovative tone color cloning architecture by MyShell.
-- [**PHOIBLE**](https://phoible.org/) — Cross-linguistic phonological data used for fallback phoneme matching.
+- [**OpenVoice V2**](https://github.com/myshell-ai/OpenVoice) — The tone-color voice cloning architecture by MyShell.
+- [**PHOIBLE 2.0**](https://phoible.org/) — Cross-linguistic phonological data used for fallback phoneme matching. Edited by Steven Moran and Daniel McCloy; CC BY-SA 3.0.
 
 ## C# / .NET Libraries
 
-- [**Microsoft.ML.OnnxRuntime**](https://github.com/microsoft/onnxruntime) — GPU-accelerated neural network inference.
-- [**NAudio & NAudio.Lame**](https://github.com/naudio/NAudio) — Audio processing and MP3 encoding.
+- [**Microsoft.ML.OnnxRuntime**](https://github.com/microsoft/onnxruntime) — CPU and GPU neural network inference.
+- [**NAudio & NAudio.Lame**](https://github.com/naudio/NAudio) — Audio processing and the .NET LAME integration.
+- [**Concentus**](https://github.com/lostromb/concentus) — Pure C# Opus encoding.
 - [**SoundTouch.Net**](https://github.com/owoudenberg/soundtouch.net) — High-quality pitch and tempo shifting (WSOLA algorithm).
 - [**SearchPioneer.Lingua**](https://github.com/searchpioneer/lingua-dotnet) — Fast, offline language detection for foreign word pronunciation.
+
+## Native Components
+
+- [**eSpeak NG**](https://github.com/espeak-ng/espeak-ng) — Phonemization and language/dialect pronunciation rules.
+- [**LAME**](https://lame.sourceforge.io/) — MP3 encoding backend used through NAudio.Lame.
+
+Additional third-party license and attribution information is listed in `THIRD_PARTY_NOTICES.txt`.
 
 ## Voice Sources & Attribution
 

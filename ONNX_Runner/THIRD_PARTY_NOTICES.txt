@@ -1,0 +1,86 @@
+Tsubaki TTS Engine - Third-Party Notices
+========================================
+
+This distribution uses third-party software, models, and datasets listed below.
+The upstream license terms remain controlling.
+
+.NET / NuGet dependencies
+-------------------------
+
+Concentus 2.2.2
+License: BSD-3-Clause
+Source: https://github.com/lostromb/concentus
+Purpose: Opus encoding.
+
+Microsoft.OpenApi 2.7.5
+License: MIT
+Source: https://github.com/microsoft/OpenAPI.NET
+
+Microsoft.AspNetCore.OpenApi 10.0.7
+License: MIT
+Source: https://github.com/dotnet/aspnetcore
+
+NAudio 2.2.1
+License: MIT
+Source: https://github.com/naudio/NAudio
+
+NAudio.Lame 2.1.0
+License: MIT
+Source: https://github.com/Corey-M/NAudio.Lame
+
+SearchPioneer.Lingua 1.0.5
+License: Apache-2.0
+Source: https://github.com/searchpioneer/lingua-dotnet
+
+SoundTouch.Net 2.3.2
+License: LGPL-2.1-or-later
+Source: https://github.com/owoudenberg/soundtouch.net
+
+Swashbuckle.AspNetCore 10.1.7
+License: MIT
+Source: https://github.com/domaindrivendev/Swashbuckle.AspNetCore
+
+Microsoft.ML.OnnxRuntime 1.29.0
+Microsoft.ML.OnnxRuntime.DirectML 1.24.4
+Microsoft.ML.OnnxRuntime.Gpu 1.29.0
+Microsoft.ML.OnnxRuntime.EP.WebGpu 0.3.0
+License: MIT
+Source: https://github.com/microsoft/onnxruntime
+Note: ONNX Runtime packages include additional third-party components; see the upstream ThirdPartyNotices.txt for their notices.
+
+Native components
+-----------------
+
+eSpeak NG
+License: GPL-3.0-or-later
+Source: https://github.com/espeak-ng/espeak-ng
+Purpose: phonemization and pronunciation rules.
+
+LAME MP3 Encoder
+License: LGPL-2.0-or-later
+Source: https://lame.sourceforge.io/
+Purpose: MP3 encoding backend used through NAudio.Lame.
+
+Models and datasets
+-------------------
+
+Piper TTS
+License: MIT for the original rhasspy/piper software.
+Source: https://github.com/rhasspy/piper
+Note: Piper voice models have their own per-model licenses. Attribution for the bundled default voice will be added once the exact model is identified.
+
+OpenVoice V2
+License: MIT
+Source: https://github.com/myshell-ai/OpenVoice
+ONNX distribution used by Tsubaki: https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2
+Note: The ONNX files are inference-format conversions of OpenVoice V2 models; Tsubaki does not claim authorship of the original models.
+
+PHOIBLE
+License: CC BY-SA 3.0
+Source: https://phoible.org/
+Citation: Steven Moran and Daniel McCloy (eds.), PHOIBLE 2.0, 2019.
+
+LibriTTS-R
+License: CC BY 4.0
+Source: http://www.openslr.org/141/
+Citation: Yuma Koizumi, Heiga Zen, Shigeki Karita, Yifan Ding, Kohei Yatabe, Nobuyuki Morioka, Michiel Bacchiani, Yu Zhang, Wei Han, Ankur Bapna. "LibriTTS-R: A Restored Multi-Speaker Text-to-Speech Corpus", Interspeech 2023.
