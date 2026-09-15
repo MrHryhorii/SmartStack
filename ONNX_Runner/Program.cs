@@ -393,11 +393,11 @@ builder.Services.AddCors(options =>
     {
         if (corsConfig.AllowAnyOrigin)
         {
-            policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("X-Audio-Sample-Rate", "Content-Disposition");
+            policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("X-Audio-Sample-Rate", "X-Audio-Codec", "Content-Disposition");
         }
         else
         {
-            policy.WithOrigins(corsConfig.AllowedOrigins).AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("X-Audio-Sample-Rate", "Content-Disposition");
+            policy.WithOrigins(corsConfig.AllowedOrigins).AllowAnyMethod().AllowAnyHeader().WithExposedHeaders("X-Audio-Sample-Rate", "X-Audio-Codec", "Content-Disposition");
         }
     });
 });

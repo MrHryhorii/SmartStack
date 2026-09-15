@@ -121,17 +121,9 @@ internal static class ResponsePipeline
             return;
         }
 
+        // Streaming responses are content streams, not download attachments.
+        // B64Json keeps its dedicated application/json MIME type here as well.
         httpContext.Response.ContentType = AudioStreamManager.GetMimeType(request.Format);
-
-        // JSON is a normal response body rather than an attachment.
-        if (plan.Payload == PayloadKind.Base64Json)
-        {
-            return;
-        }
-
-        httpContext.Response.Headers.Append(
-            "Content-Disposition",
-            $"attachment; filename=\"{AudioStreamManager.GetFileName(request.Format)}\"");
     }
 
     public static void StartNetworkSender(
@@ -249,6 +241,8 @@ internal static class ResponsePipeline
         // caller explicitly requested a non-streaming response or the format requires it.
         byte[] finalBytes = memoryStream.ToArray();
 
+        // Buffered audio responses are complete files, so preserve a download filename.
+        // B64Json is a JSON payload rather than an audio file and must never be an attachment.
         string? fileName = plan.Payload == PayloadKind.Base64Json
             ? null
             : AudioStreamManager.GetFileName(request.Format);

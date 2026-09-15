@@ -11,7 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Concentus.OggFile" Version="1.0.7" />
+    <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="Microsoft.OpenApi" Version="2.7.5" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.7" />
     <PackageReference Include="NAudio" Version="2.2.1" />
