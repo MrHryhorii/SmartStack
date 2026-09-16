@@ -1,6 +1,5 @@
 import {
     resolveStreamHandler,
-    supportsStreamingFormat,
     addWavHeader
 } from './codecs/index.js';
 
@@ -87,12 +86,13 @@ export const AudioEngine = {
         );
     },
 
-    // Reports whether the requested format has an implemented streaming path.
-    supportsStreamingFormat(
-        format
-    ) {
-        return supportsStreamingFormat(
-            format
+    // Reports whether the dashboard has a live-playback handler for this audio format.
+    supportsStreamingFormat(format) {
+        return (
+            format === 'mp3' ||
+            format === 'opus' ||
+            format === 'ogg' ||
+            format === 'pcm'
         );
     },
 

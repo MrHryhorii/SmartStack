@@ -2,6 +2,7 @@ import { initTheme } from './theme.js';
 import { getVoices, getEffects, getEnvironments, synthesizeSpeech } from './api.js';
 import { AudioEngine } from './audio.js';
 import { SUPPORTED_LANGUAGES } from './languages.js';
+import { receiveBase64Json } from './b64-json.js';
 
 let currentDownloadUrl = null;
 let currentExtension = 'mp3';
@@ -328,6 +329,15 @@ async function bootEngine() {
 
         if (
             payload.stream &&
+            payload.response_format === 'b64_json'
+        ) {
+            log(
+                '⚠️ Live playback is unavailable for streamed Base64 JSON. ' +
+                'Incoming response chunks will be displayed; playback starts after the complete JSON is received.'
+            );
+        }
+        else if (
+            payload.stream &&
             !AudioEngine.supportsStreamingFormat(
                 payload.response_format
             )
@@ -355,16 +365,23 @@ async function bootEngine() {
             currentExtension =
                 payload.response_format === 'opus'
                     ? 'ogg'
-                    : payload.response_format;
+                    : payload.response_format === 'b64_json'
+                        ? 'json'
+                        : payload.response_format;
 
             let totalBytes = 0;
 
-            // Reports encoded bytes received from the HTTP response.
+            // Reports transport bytes received from the HTTP response.
             const onChunk = (chunkSize) => {
                 totalBytes += chunkSize;
 
+                const label =
+                    payload.response_format === 'b64_json'
+                        ? 'JSON chunk received'
+                        : 'Chunk received';
+
                 log(
-                    `⬇️ Chunk received: ${chunkSize} bytes ` +
+                    `⬇️ ${label}: ${chunkSize} bytes ` +
                     `(Total: ${(totalBytes / 1024).toFixed(2)} KB)`
                 );
             };
@@ -394,6 +411,53 @@ async function bootEngine() {
 
                 downloadBtn.disabled = false;
             };
+
+            if (payload.response_format === 'b64_json') {
+                const {
+                    jsonBlob,
+                    audioBlob
+                } = await receiveBase64Json(
+                    response,
+                    {
+                        stream: payload.stream,
+                        onChunk
+                    }
+                );
+
+                currentDownloadUrl =
+                    URL.createObjectURL(jsonBlob);
+
+                downloadBtn.disabled = false;
+
+                await AudioEngine.playBuffered(
+                    'mp3',
+                    audioBlob,
+                    targetSampleRate,
+                    player
+                );
+
+                const durationSeconds =
+                    await getPlayerDuration(player);
+
+                const formattedDuration =
+                    formatDuration(durationSeconds);
+
+                const jsonSizeKb =
+                    (jsonBlob.size / 1024)
+                        .toFixed(2);
+
+                const audioSizeKb =
+                    (audioBlob.size / 1024)
+                        .toFixed(2);
+
+                log(
+                    formattedDuration
+                        ? `✅ Base64 JSON ready. JSON: ${jsonSizeKb} KB | Decoded MP3: ${audioSizeKb} KB | Audio duration: ${formattedDuration}`
+                        : `✅ Base64 JSON ready. JSON: ${jsonSizeKb} KB | Decoded MP3: ${audioSizeKb} KB`
+                );
+
+                return;
+            }
 
             let streamed = false;
 
