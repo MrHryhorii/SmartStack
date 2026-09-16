@@ -1154,6 +1154,18 @@ public partial class MixedLanguagePhonemizer
                 .TryGetValue(_modelLinguaLang.Value, out double conf);
 
             sentenceConfidence = conf;
+
+            // Log only failed sentence overrides to avoid duplicating the existing
+            // [SENTENCE OVERRIDE] diagnostics for successful cases.
+            if (_logger.IsEnabled(LogLevel.Debug) &&
+                conf < _overrideThreshold)
+            {
+                _logger.LogDebug(
+                    "[LANG-DEBUG] Sentence context → {Code} | conf={Conf:0.0000} < threshold={Threshold:0.0000}; using chunk detection",
+                    _modelContextOverrideCode ?? _modelEspeakCode,
+                    conf,
+                    _overrideThreshold);
+            }
         }
 
         // TEXT TOKENIZATION

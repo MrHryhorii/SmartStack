@@ -130,6 +130,13 @@ export async function streamMSE({
         } = await reader.read();
 
         if (done) {
+            const bufferedDuration =
+                sourceBuffer.buffered.length > 0
+                    ? sourceBuffer.buffered.end(
+                        sourceBuffer.buffered.length - 1
+                    )
+                    : NaN;
+
             if (
                 mediaSource.readyState ===
                 'open'
@@ -137,6 +144,7 @@ export async function streamMSE({
                 mediaSource
                     .endOfStream();
             }
+
 
             const finalBlob =
                 new Blob(
@@ -148,7 +156,11 @@ export async function streamMSE({
                 );
 
             await onComplete(
-                finalBlob
+                finalBlob,
+                Number.isFinite(bufferedDuration) &&
+                    bufferedDuration > 0
+                    ? bufferedDuration
+                    : null
             );
 
             return;

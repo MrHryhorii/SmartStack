@@ -4,91 +4,17 @@ import {
     scheduleReplay
 } from './web-audio.js';
 
-let decoderLoader = null;
+import {
+    loadCodecLibrary
+} from './script-loader.js';
 
-// Loads the local mpg123 WebAssembly decoder only when the fallback is selected.
+// Resolves the mpg123 decoder exported by the local UMD bundle.
 async function loadMPEGDecoder() {
-    const globalName =
-        'mpg123-decoder';
-
-    const existing =
-        window[globalName]
-            ?.MPEGDecoder;
-
-    if (existing) {
-        return existing;
-    }
-
-    if (!decoderLoader) {
-        decoderLoader =
-            new Promise(
-                (
-                    resolve,
-                    reject
-                ) => {
-                    const script =
-                        document.createElement(
-                            'script'
-                        );
-
-                    script.src =
-                        new URL(
-                            './lib/mpg123-decoder.min.js',
-                            import.meta.url
-                        ).href;
-
-                    script.charset =
-                        'UTF-8';
-
-                    script.async =
-                        true;
-
-                    script.onload =
-                        () => {
-                            const MPEGDecoder =
-                                window[
-                                    globalName
-                                ]?.MPEGDecoder;
-
-                            if (!MPEGDecoder) {
-                                decoderLoader =
-                                    null;
-
-                                reject(
-                                    new Error(
-                                        'mpg123-decoder loaded but MPEGDecoder was not exposed.'
-                                    )
-                                );
-
-                                return;
-                            }
-
-                            resolve(
-                                MPEGDecoder
-                            );
-                        };
-
-                    script.onerror =
-                        () => {
-                            decoderLoader =
-                                null;
-
-                            reject(
-                                new Error(
-                                    'Failed to load local mpg123-decoder.min.js.'
-                                )
-                            );
-                        };
-
-                    document.head
-                        .appendChild(
-                            script
-                        );
-                }
-            );
-    }
-
-    return decoderLoader;
+    return loadCodecLibrary(
+        './lib/mpg123-decoder.min.js',
+        () => window['mpg123-decoder']?.MPEGDecoder,
+        'MPEGDecoder'
+    );
 }
 
 // Streams MP3 through mpg123 when native audio/mpeg MSE is unavailable.
@@ -136,7 +62,8 @@ export async function streamMP3({
 
                 // Network completion is independent from queued playback completion.
                 await onComplete(
-                    finalBlob
+                    finalBlob,
+                    session.totalDuration
                 );
 
                 scheduleReplay(

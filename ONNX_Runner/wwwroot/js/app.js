@@ -14,6 +14,115 @@ function log(msg) {
     logger.scrollTop = logger.scrollHeight;
 }
 
+function formatDuration(seconds) {
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        return null;
+    }
+
+    const totalMinutes =
+        Math.floor(seconds / 60);
+
+    const remainingSeconds =
+        seconds -
+        (totalMinutes * 60);
+
+    const hours =
+        Math.floor(totalMinutes / 60);
+
+    const minutes =
+        totalMinutes % 60;
+
+    return hours > 0
+        ? `${hours}:${String(minutes).padStart(2, '0')}:${remainingSeconds.toFixed(3).padStart(6, '0')}`
+        : `${minutes}:${remainingSeconds.toFixed(3).padStart(6, '0')}`;
+}
+
+async function getPlayerDuration(player) {
+    const readDuration = () =>
+        Number.isFinite(player.duration) &&
+        player.duration > 0
+            ? player.duration
+            : null;
+
+    const existingDuration =
+        readDuration();
+
+    if (existingDuration !== null) {
+        return existingDuration;
+    }
+
+    return await new Promise(resolve => {
+        let settled = false;
+
+        const cleanup = () => {
+            player.removeEventListener(
+                'loadedmetadata',
+                tryResolve
+            );
+
+            player.removeEventListener(
+                'durationchange',
+                tryResolve
+            );
+
+            player.removeEventListener(
+                'error',
+                resolveWithoutDuration
+            );
+
+            clearTimeout(timeoutId);
+        };
+
+        const finish = duration => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            cleanup();
+            resolve(duration);
+        };
+
+        const tryResolve = () => {
+            const duration =
+                readDuration();
+
+            if (duration !== null) {
+                finish(duration);
+            }
+        };
+
+        const resolveWithoutDuration = () =>
+            finish(null);
+
+        player.addEventListener(
+            'loadedmetadata',
+            tryResolve
+        );
+
+        player.addEventListener(
+            'durationchange',
+            tryResolve
+        );
+
+        player.addEventListener(
+            'error',
+            resolveWithoutDuration,
+            { once: true }
+        );
+
+        const timeoutId =
+            setTimeout(
+                resolveWithoutDuration,
+                2000
+            );
+
+        // Covers a metadata event that completed between the initial check
+        // and listener registration.
+        tryResolve();
+    });
+}
+
 function syncInputs(sliderId, numId) {
     const slider = document.getElementById(sliderId);
     const num = document.getElementById(numId);
@@ -191,6 +300,18 @@ async function bootEngine() {
             );
         }
 
+        if (
+            payload.stream &&
+            !AudioEngine.supportsStreamingFormat(
+                payload.response_format
+            )
+        ) {
+            log(
+                `⚠️ Streaming is not available for ${payload.response_format.toUpperCase()}. ` +
+                `Waiting for the complete audio file.`
+            );
+        }
+
         log('Transmitting payload to backend...');
 
         try {
@@ -223,8 +344,24 @@ async function bootEngine() {
             };
 
             // Makes the original response available for download when transport completes.
-            const onComplete = async (finalBlob) => {
-                log('✅ Transmission complete.');
+            const onComplete = async (
+                finalBlob,
+                durationSeconds = null
+            ) => {
+                const formattedDuration =
+                    formatDuration(
+                        durationSeconds
+                    );
+
+                const sizeKb =
+                    (finalBlob.size / 1024)
+                        .toFixed(2);
+
+                log(
+                    formattedDuration
+                        ? `✅ Transmission complete. Size: ${sizeKb} KB | Audio duration: ${formattedDuration}`
+                        : `✅ Transmission complete. Size: ${sizeKb} KB`
+                );
 
                 currentDownloadUrl =
                     URL.createObjectURL(finalBlob);
@@ -247,7 +384,6 @@ async function bootEngine() {
             }
 
             if (!streamed) {
-                // Unsupported streaming paths fall back to complete-file playback silently.
                 const blob = await response.blob();
 
                 currentDownloadUrl =
@@ -262,9 +398,24 @@ async function bootEngine() {
                     player
                 );
 
+                const durationSeconds =
+                    await getPlayerDuration(
+                        player
+                    );
+
+                const formattedDuration =
+                    formatDuration(
+                        durationSeconds
+                    );
+
+                const sizeKb =
+                    (blob.size / 1024)
+                        .toFixed(2);
+
                 log(
-                    `✅ File ready. Size: ` +
-                    `${(blob.size / 1024).toFixed(2)} KB`
+                    formattedDuration
+                        ? `✅ File ready. Size: ${sizeKb} KB | Audio duration: ${formattedDuration}`
+                        : `✅ File ready. Size: ${sizeKb} KB`
                 );
             }
         } catch (error) {

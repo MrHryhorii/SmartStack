@@ -28,7 +28,7 @@ NAudio.Lame 2.1.0
 License: MIT
 Source: https://github.com/Corey-M/NAudio.Lame
 
-SearchPioneer.Lingua 1.0.5
+SearchPioneer.Lingua 2.0.0
 License: Apache-2.0
 Source: https://github.com/searchpioneer/lingua-dotnet
 
@@ -70,6 +70,13 @@ License: MIT
 Source: https://github.com/eshaz/wasm-audio-decoders
 Purpose: WebAssembly MP3 decoding fallback for browsers without audio/mpeg MediaSource support.
 Note: The bundled decoder includes mpg123/libmpg123 components, which are licensed separately under LGPL-2.1.
+
+ogg-opus-decoder 1.7.5
+Author / maintainer: eshaz
+License: MIT
+Source: https://github.com/eshaz/wasm-audio-decoders
+Purpose: WebAssembly Ogg/Opus streaming decoder fallback for browsers without native Ogg/Opus MediaSource support.
+Note: The bundled decoder includes libopus (BSD-3-Clause) and codec-parser (LGPL-3.0-or-later); their upstream license terms remain controlling.
 
 Models and datasets
 -------------------

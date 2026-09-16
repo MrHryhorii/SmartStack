@@ -42,7 +42,8 @@ export async function streamPCM({
 
             // Network completion is independent from queued playback completion.
             await onComplete(
-                finalBlob
+                finalBlob,
+                session.totalDuration
             );
 
             scheduleReplay(

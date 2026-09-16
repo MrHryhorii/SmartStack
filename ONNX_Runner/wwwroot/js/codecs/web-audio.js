@@ -46,7 +46,8 @@ export function createWebAudioSession(
         playbackToken,
         streamDestination,
         nextStartTime:
-            audioContext.currentTime
+            audioContext.currentTime,
+        totalDuration: 0
     };
 }
 
@@ -151,6 +152,9 @@ export function queueAudioChannels(
     );
 
     session.nextStartTime +=
+        audioBuffer.duration;
+
+    session.totalDuration +=
         audioBuffer.duration;
 
     return true;

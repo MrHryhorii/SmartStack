@@ -12,18 +12,26 @@ public class EspeakLinguaMapper
 {
     private readonly Dictionary<Language, string> _linguaToEspeak = [];
 
-    // Comprehensive mapping of eSpeak language/dialect codes to Lingua macro-languages.
-    // Includes 75 languages supported by lingua-dotnet and their common regional variants.
-    private static readonly Dictionary<string, Language> EspeakToLinguaBase = new(StringComparer.OrdinalIgnoreCase)
+    // Comprehensive mapping of eSpeak / BCP 47 base language codes to Lingua languages.
+    // Includes all 79 languages supported by SearchPioneer.Lingua 2.x,
+    // plus a small set of useful alternative codes that cannot be resolved
+    // by simply stripping a regional/dialect suffix.
+    private static readonly Dictionary<string, Language> EspeakToLinguaBase =
+        new(StringComparer.OrdinalIgnoreCase)
     {
         // Afrikaans
         { "af", Language.Afrikaans },
         // Albanian
         { "sq", Language.Albanian },
+        // Amharic
+        { "am", Language.Amharic },
         // Arabic
         { "ar", Language.Arabic },
         // Armenian
+        // hy  = Eastern / generic Armenian
+        // hyw = Western Armenian
         { "hy", Language.Armenian },
+        { "hyw", Language.Armenian },
         // Azerbaijani
         { "az", Language.Azerbaijani },
         // Basque
@@ -32,14 +40,24 @@ public class EspeakLinguaMapper
         { "be", Language.Belarusian },
         // Bengali
         { "bn", Language.Bengali },
+        // Bokmål (Norwegian)
+        // nb = Norwegian Bokmål
+        // no = generic Norwegian; treated as Bokmål for compatibility
+        { "nb", Language.Bokmal },
+        { "no", Language.Bokmal },
         // Bosnian
         { "bs", Language.Bosnian },
         // Bulgarian
         { "bg", Language.Bulgarian },
         // Catalan
         { "ca", Language.Catalan },
-        // Chinese (cmn = Mandarin, yue = Cantonese, hak = Hakka are macro-language base codes without hyphens)
-        { "zh", Language.Chinese }, { "cmn", Language.Chinese }, { "yue", Language.Chinese }, { "hak", Language.Chinese },
+        // Chinese
+        // Lingua detects only the Chinese macro-language.
+        // The configured eSpeak code determines the actual frontend/dialect.
+        { "zh", Language.Chinese },
+        { "cmn", Language.Chinese }, // Mandarin
+        { "yue", Language.Chinese }, // Cantonese
+        { "hak", Language.Chinese }, // Hakka
         // Croatian
         { "hr", Language.Croatian },
         // Czech
@@ -64,8 +82,11 @@ public class EspeakLinguaMapper
         { "ka", Language.Georgian },
         // German
         { "de", Language.German },
-        // Greek (grc is Ancient Greek base code)
-        { "el", Language.Greek }, { "grc", Language.Greek },
+        // Greek
+        // el  = Modern Greek
+        // grc = Ancient Greek
+        { "el", Language.Greek },
+        { "grc", Language.Greek },
         // Gujarati
         { "gu", Language.Gujarati },
         // Hebrew
@@ -104,8 +125,10 @@ public class EspeakLinguaMapper
         { "mr", Language.Marathi },
         // Mongolian
         { "mn", Language.Mongolian },
-        // Norwegian (nn = Nynorsk, nb = Bokmal, no = Generic/Bokmal - all are distinct base codes)
-        { "nn", Language.Nynorsk }, { "nb", Language.Bokmal }, { "no", Language.Bokmal },
+        // Nynorsk (Norwegian)
+        { "nn", Language.Nynorsk },
+        // Oromo
+        { "om", Language.Oromo },
         // Persian (Farsi)
         { "fa", Language.Persian },
         // Polish
@@ -122,9 +145,11 @@ public class EspeakLinguaMapper
         { "sr", Language.Serbian },
         // Shona
         { "sn", Language.Shona },
+        // Sinhala
+        { "si", Language.Sinhala },
         // Slovak
         { "sk", Language.Slovak },
-        // Slovenian
+        // Slovene
         { "sl", Language.Slovene },
         // Somali
         { "so", Language.Somali },
@@ -144,6 +169,8 @@ public class EspeakLinguaMapper
         { "te", Language.Telugu },
         // Thai
         { "th", Language.Thai },
+        // Tigrinya
+        { "ti", Language.Tigrinya },
         // Tsonga
         { "ts", Language.Tsonga },
         // Tswana
@@ -190,11 +217,11 @@ public class EspeakLinguaMapper
             {
                 // If no exact match is found, strip the dialect part (everything after the hyphen or underscore)
                 string baseFamily = cleanCode.Split('-', '_')[0];
-                
+
                 if (EspeakToLinguaBase.TryGetValue(baseFamily, out var fallbackLang))
                 {
                     linguaLangs.Add(fallbackLang);
-                    
+
                     // CRITICAL: Cache the original cleanCode (e.g., "en-us"), not the baseFamily.
                     // Lingua will search using the base language enum, but espeak-ng will receive the exact dialect string.
                     _linguaToEspeak.TryAdd(fallbackLang, cleanCode);

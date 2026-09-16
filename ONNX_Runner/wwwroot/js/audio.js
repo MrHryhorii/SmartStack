@@ -1,5 +1,6 @@
 import {
     resolveStreamHandler,
+    supportsStreamingFormat,
     addWavHeader
 } from './codecs/index.js';
 
@@ -83,6 +84,15 @@ export const AudioEngine = {
                 console.warn(
                     `Autoplay blocked: ${e.message}`
                 )
+        );
+    },
+
+    // Reports whether the requested format has an implemented streaming path.
+    supportsStreamingFormat(
+        format
+    ) {
+        return supportsStreamingFormat(
+            format
         );
     },
 
