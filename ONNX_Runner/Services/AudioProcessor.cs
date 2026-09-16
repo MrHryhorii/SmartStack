@@ -15,10 +15,14 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public class AudioProcessor
 {
+    private const float OpenVoiceMagnitudeEpsilon = 1e-6f;
+
     private readonly int _fftSize;
     private readonly int _hopSize;
+    private readonly int _reflectPadding;
+    private readonly float _scaledMagnitudeEpsilon;
 
-    // Cached Hanning window prevents recalculating trigonometric functions for every audio frame
+    // OpenVoice uses torch.hann_window(periodic: true), so the denominator is N rather than N - 1.
     private readonly float[] _hanningWindow;
 
     public AudioProcessor(ToneConfig toneConfig)
@@ -26,12 +30,22 @@ public class AudioProcessor
         _fftSize = toneConfig.Data.FilterLength;
         _hopSize = toneConfig.Data.HopLength;
 
+        if (_fftSize <= 0 || (_fftSize & (_fftSize - 1)) != 0)
+            throw new ArgumentException("OpenVoice FFT size must be a positive power of two.", nameof(toneConfig));
+
+        if (_hopSize <= 0 || _hopSize > _fftSize)
+            throw new ArgumentException("OpenVoice hop size must be between 1 and the FFT size.", nameof(toneConfig));
+
+        _reflectPadding = (_fftSize - _hopSize) / 2;
+
+        // NAudio scales the forward FFT by 1/N. Scale epsilon by 1/N^2 so multiplying
+        // the final magnitude by N remains equivalent to OpenVoice's unnormalized STFT.
+        _scaledMagnitudeEpsilon = OpenVoiceMagnitudeEpsilon / (_fftSize * (float)_fftSize);
+
         _hanningWindow = new float[_fftSize];
         for (int i = 0; i < _fftSize; i++)
         {
-            // PERFORMANCE NOTE: Using MathF instead of Math ensures the operation stays 
-            // strictly in 32-bit float space, avoiding costly double-to-float conversion overhead.
-            _hanningWindow[i] = (float)(0.5 * (1.0 - MathF.Cos(2.0f * MathF.PI * i / (_fftSize - 1))));
+            _hanningWindow[i] = 0.5f * (1.0f - MathF.Cos(2.0f * MathF.PI * i / _fftSize));
         }
     }
 
@@ -216,96 +230,66 @@ public class AudioProcessor
     }
 
     /// <summary>
-    /// Extracts a Linear Magnitude Spectrogram from raw PCM audio samples using Hardware Accelerated FFT.
-    /// Uses ReadOnlySpan to inspect the array without copying it, further reducing memory allocations.
+    /// Extracts the OpenVoice-compatible linear magnitude spectrogram in [frames, bins] layout.
+    /// The waveform is reflect-padded before STFT, matching OpenVoice spectrogram_torch(center: false).
     /// </summary>
     public float[,] GetMagnitudeSpectrogram(ReadOnlySpan<float> samples)
     {
-        int numFrames = (samples.Length - _fftSize) / _hopSize + 1;
-        if (numFrames <= 0) return new float[0, 0];
+        float[]? padded = RentReflectPadded(samples, out int paddedLength);
+        if (padded == null) return new float[0, 0];
 
-        int bins = (_fftSize / 2) + 1;
-        var spectrogram = new float[numFrames, bins];
-        int m = (int)Math.Log2(_fftSize);
-
-        // TRUST BOUNDARY: MemoryMarshal.CreateSpan below takes numFrames * bins on faith — it
-        // does not itself verify that many elements actually follow spectrogram[0,0] in memory.
-        // This is safe here only because 'spectrogram' is a fresh, local array that is never
-        // reassigned before the span is created. If this method is ever changed to reassign
-        // 'spectrogram' (e.g. to a trimmed/filtered copy) between here and CreateSpan, the debug
-        // assert below will catch the mismatch before it silently corrupts memory in Release.
-        System.Diagnostics.Debug.Assert(numFrames * bins == spectrogram.Length,
-            "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
-
-        // A rectangular float[,] is stored as one contiguous row-major block, so this flat
-        // span is a zero-copy view over the same memory — writes below bypass the much
-        // slower float[,] indexer while the method's public signature stays unchanged.
-        Span<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], numFrames * bins);
-
-        // Pre-allocate the Complex array ONCE per spectrogram generation, rather than per frame
-        var complex = new NAudio.Dsp.Complex[_fftSize];
-
-        // Determine how many floats the CPU can process in a single instruction (e.g., 8 for AVX2)
-        int vectorSize = Vector<float>.Count;
-
-        for (int i = 0; i < numFrames; i++)
+        try
         {
-            var frame = samples.Slice(i * _hopSize, _fftSize);
-            int j = 0;
+            int numFrames = GetFrameCount(paddedLength);
+            if (numFrames <= 0) return new float[0, 0];
 
-            // --- SIMD VECTORIZATION (Hardware Acceleration) ---
-            for (; j <= _fftSize - vectorSize; j += vectorSize)
+            int bins = (_fftSize / 2) + 1;
+            var spectrogram = new float[numFrames, bins];
+            int tensorSize = checked(numFrames * bins);
+
+            // Rectangular arrays are contiguous in row-major order.
+            System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
+                "Spectrogram element count must match frames * bins.");
+
+            Span<float> destination = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
+            var complex = new NAudio.Dsp.Complex[_fftSize];
+            int fftPower = (int)Math.Log2(_fftSize);
+            int vectorSize = Vector<float>.Count;
+
+            for (int frameIndex = 0; frameIndex < numFrames; frameIndex++)
             {
-                // Load a vector of audio samples and a vector of Hanning window values simultaneously
-                var vFrame = new Vector<float>(frame.Slice(j));
-                var vWindow = new Vector<float>(_hanningWindow, j);
+                ReadOnlySpan<float> frame = padded.AsSpan(frameIndex * _hopSize, _fftSize);
+                FillWindowedFrame(frame, complex, vectorSize);
+                FastFourierTransform.FFT(true, fftPower, complex);
 
-                // Multiply multiple numbers in a SINGLE CPU clock cycle
-                var vResult = vFrame * vWindow;
-
-                // Write the results back to the complex array
-                for (int k = 0; k < vectorSize; k++)
+                int rowOffset = frameIndex * bins;
+                for (int bin = 0; bin < bins; bin++)
                 {
-                    complex[j + k].X = vResult[k];
-                    complex[j + k].Y = 0f;
+                    destination[rowOffset + bin] = GetOpenVoiceMagnitude(complex[bin]);
                 }
             }
 
-            // --- SCALAR TAIL PROCESSING ---
-            // Process any remaining elements if _fftSize is not perfectly divisible by the SIMD vector size
-            for (; j < _fftSize; j++)
-            {
-                complex[j].X = frame[j] * _hanningWindow[j];
-                complex[j].Y = 0f;
-            }
-
-            // Execute the Fast Fourier Transform (In-place)
-            FastFourierTransform.FFT(true, m, complex);
-
-            // Calculate the magnitude for each frequency bin
-            int rowOffset = i * bins;
-            for (int k = 0; k < bins; k++)
-            {
-                // MathF.Sqrt executes directly on 32-bit floats, avoiding double conversion overhead
-                flatSpectrogram[rowOffset + k] = MathF.Sqrt(complex[k].X * complex[k].X + complex[k].Y * complex[k].Y) * _fftSize;
-            }
+            return spectrogram;
         }
-
-        return spectrogram;
+        finally
+        {
+            ArrayPool<float>.Shared.Return(padded);
+        }
     }
 
     /// <summary>
-    /// Runtime OpenVoice path. Computes the same linear magnitude spectrogram directly into
-    /// a pooled flat buffer in the [bins, frames] layout consumed by the Tone Color model.
-    /// This avoids allocating a potentially LOH-sized float[,] and avoids the subsequent
-    /// full spectrogram transpose/copy before ONNX inference. The caller owns the returned
-    /// pooled buffer and must return it to ArrayPool&lt;float&gt;.Shared.
+    /// Runtime OpenVoice path. Produces the same spectrogram directly in [bins, frames] layout
+    /// required by the Tone Color Converter. The caller owns the returned pooled buffer.
     /// </summary>
     public (float[]? Buffer, int Frames, int Bins) GetColorizerSpectrogram(ReadOnlySpan<float> samples)
     {
-        int numFrames = (samples.Length - _fftSize) / _hopSize + 1;
+        float[]? padded = RentReflectPadded(samples, out int paddedLength);
+        if (padded == null) return (null, 0, 0);
+
+        int numFrames = GetFrameCount(paddedLength);
         if (numFrames <= 0)
         {
+            ArrayPool<float>.Shared.Return(padded);
             return (null, 0, 0);
         }
 
@@ -317,41 +301,19 @@ public class AudioProcessor
         try
         {
             Span<float> destination = spectrogram.AsSpan(0, tensorSize);
-            int m = (int)Math.Log2(_fftSize);
+            int fftPower = (int)Math.Log2(_fftSize);
             int vectorSize = Vector<float>.Count;
 
-            for (int i = 0; i < numFrames; i++)
+            for (int frameIndex = 0; frameIndex < numFrames; frameIndex++)
             {
-                ReadOnlySpan<float> frame = samples.Slice(i * _hopSize, _fftSize);
-                int j = 0;
+                ReadOnlySpan<float> frame = padded.AsSpan(frameIndex * _hopSize, _fftSize);
+                FillWindowedFrame(frame, complex, vectorSize);
+                FastFourierTransform.FFT(true, fftPower, complex);
 
-                for (; j <= _fftSize - vectorSize; j += vectorSize)
+                // The converter consumes [1, bins, frames], so write directly in transposed layout.
+                for (int bin = 0; bin < bins; bin++)
                 {
-                    var vFrame = new Vector<float>(frame.Slice(j));
-                    var vWindow = new Vector<float>(_hanningWindow, j);
-                    var vResult = vFrame * vWindow;
-
-                    for (int k = 0; k < vectorSize; k++)
-                    {
-                        complex[j + k].X = vResult[k];
-                        complex[j + k].Y = 0f;
-                    }
-                }
-
-                for (; j < _fftSize; j++)
-                {
-                    complex[j].X = frame[j] * _hanningWindow[j];
-                    complex[j].Y = 0f;
-                }
-
-                FastFourierTransform.FFT(true, m, complex);
-
-                // The color converter expects [1, bins, frames], therefore write directly
-                // to the final tensor layout instead of materializing [frames, bins] first.
-                for (int k = 0; k < bins; k++)
-                {
-                    destination[(k * numFrames) + i] =
-                        MathF.Sqrt((complex[k].X * complex[k].X) + (complex[k].Y * complex[k].Y)) * _fftSize;
+                    destination[(bin * numFrames) + frameIndex] = GetOpenVoiceMagnitude(complex[bin]);
                 }
             }
 
@@ -365,6 +327,70 @@ public class AudioProcessor
         finally
         {
             ArrayPool<NAudio.Dsp.Complex>.Shared.Return(complex);
+            ArrayPool<float>.Shared.Return(padded);
         }
+    }
+
+    // OpenVoice pads by (n_fft - hop_size) / 2 on both sides with reflect mode.
+    private float[]? RentReflectPadded(ReadOnlySpan<float> samples, out int paddedLength)
+    {
+        paddedLength = 0;
+
+        // Reflect padding excludes the edge sample and therefore requires input longer than the pad.
+        if (samples.Length <= _reflectPadding) return null;
+
+        paddedLength = checked(samples.Length + (_reflectPadding * 2));
+        float[] padded = ArrayPool<float>.Shared.Rent(paddedLength);
+        Span<float> destination = padded.AsSpan(0, paddedLength);
+
+        samples.CopyTo(destination.Slice(_reflectPadding, samples.Length));
+
+        for (int i = 0; i < _reflectPadding; i++)
+        {
+            destination[_reflectPadding - 1 - i] = samples[i + 1];
+            destination[_reflectPadding + samples.Length + i] = samples[samples.Length - 2 - i];
+        }
+
+        return padded;
+    }
+
+    private int GetFrameCount(int paddedLength)
+    {
+        if (paddedLength < _fftSize) return 0;
+
+        return ((paddedLength - _fftSize) / _hopSize) + 1;
+    }
+
+    private void FillWindowedFrame(
+        ReadOnlySpan<float> frame,
+        Span<NAudio.Dsp.Complex> complex,
+        int vectorSize)
+    {
+        int i = 0;
+
+        for (; i <= _fftSize - vectorSize; i += vectorSize)
+        {
+            var frameVector = new Vector<float>(frame.Slice(i));
+            var windowVector = new Vector<float>(_hanningWindow, i);
+            var windowed = frameVector * windowVector;
+
+            for (int lane = 0; lane < vectorSize; lane++)
+            {
+                complex[i + lane].X = windowed[lane];
+                complex[i + lane].Y = 0f;
+            }
+        }
+
+        for (; i < _fftSize; i++)
+        {
+            complex[i].X = frame[i] * _hanningWindow[i];
+            complex[i].Y = 0f;
+        }
+    }
+
+    private float GetOpenVoiceMagnitude(NAudio.Dsp.Complex value)
+    {
+        float power = (value.X * value.X) + (value.Y * value.Y) + _scaledMagnitudeEpsilon;
+        return MathF.Sqrt(power) * _fftSize;
     }
 }

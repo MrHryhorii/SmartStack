@@ -106,6 +106,32 @@
                         </div>
                     </div>
                 </details>
+                <!-- Collapsible section for prosody and rhythm controls, allowing users to adjust expression and rhythm parameters -->
+                <details class="advanced-group">
+                    <summary>Speech Dynamics</summary>
+                    <div class="group-content">
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useNoiseScale">
+                                <label for="useNoiseScale">Expression</label>
+                            </div>
+                            <div class="row">
+                                <input type="range" id="nsSlider" min="0" max="1.0" step="0.001" value="0.667" disabled>
+                                <input type="number" id="nsNum" class="input-num" min="0" max="1.0" step="0.001" value="0.667" disabled>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useNoiseW">
+                                <label for="useNoiseW">Rhythm</label>
+                            </div>
+                            <div class="row">
+                                <input type="range" id="nwSlider" min="0" max="1.0" step="0.001" value="0.8" disabled>
+                                <input type="number" id="nwNum" class="input-num" min="0" max="1.0" step="0.001" value="0.8" disabled>
+                            </div>
+                        </div>
+                    </div>
+                </details>
                 <!-- Collapsible sections for advanced audio effect controls, initially hidden and disabled until a voice is selected -->
                 <details class="advanced-group">
                     <summary>Audio Effects</summary>
@@ -137,32 +163,6 @@
                             <div class="toggle" style="margin-top: 8px;">
                                 <input type="checkbox" id="extendTailToggle" checked disabled>
                                 <label for="extendTailToggle" title="Let the reverb ring out naturally after the last sentence instead of cutting it off. Recommended, especially for strong effects.">Extend Reverb Tail</label>
-                            </div>
-                        </div>
-                    </div>
-                </details>
-                <!-- Collapsible section for prosody and rhythm controls, allowing users to adjust expression and rhythm parameters -->
-                <details class="advanced-group">
-                    <summary>Speech Dynamics</summary>
-                    <div class="group-content">
-                        <div class="field">
-                            <div class="toggle">
-                                <input type="checkbox" id="useNoiseScale">
-                                <label for="useNoiseScale">Expression</label>
-                            </div>
-                            <div class="row">
-                                <input type="range" id="nsSlider" min="0" max="1.0" step="0.001" value="0.667" disabled>
-                                <input type="number" id="nsNum" class="input-num" min="0" max="1.0" step="0.001" value="0.667" disabled>
-                            </div>
-                        </div>
-                        <div class="field">
-                            <div class="toggle">
-                                <input type="checkbox" id="useNoiseW">
-                                <label for="useNoiseW">Rhythm</label>
-                            </div>
-                            <div class="row">
-                                <input type="range" id="nwSlider" min="0" max="1.0" step="0.001" value="0.8" disabled>
-                                <input type="number" id="nwNum" class="input-num" min="0" max="1.0" step="0.001" value="0.8" disabled>
                             </div>
                         </div>
                     </div>

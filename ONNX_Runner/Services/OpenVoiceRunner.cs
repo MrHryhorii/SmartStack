@@ -273,35 +273,31 @@ public partial class OpenVoiceRunner : IDisposable
     /// </summary>
     public float[] ExtractToneColor(float[,] spectrogram)
     {
+        ArgumentNullException.ThrowIfNull(spectrogram);
+
         if (_extractSession == null)
             throw new InvalidOperationException("Tone Extractor has been unloaded from memory.");
 
         int frames = spectrogram.GetLength(0);
-        int bins = spectrogram.GetLength(1); // Expected to be 513 for standard STFT
-        int tensorSize = frames * bins;
+        int bins = spectrogram.GetLength(1);
 
-        // ZERO-ALLOCATION PATTERN: Rent memory from a shared pool to avoid GC pressure
+        if (frames <= 0 || bins <= 0)
+            throw new ArgumentException("Tone Extractor spectrogram must contain at least one frame and one bin.", nameof(spectrogram));
+
+        int tensorSize = checked(frames * bins);
+
+        // The exported extractor already consumes OpenVoice ref_enc layout: [1, frames, bins].
         float[] rentedInput = ArrayPool<float>.Shared.Rent(tensorSize);
         try
         {
-            if (tensorSize > 0)
-            {
-                // TRUST BOUNDARY: CreateSpan takes tensorSize on faith — it never verifies that
-                // many elements actually follow spectrogram[0,0] in memory. Safe here only because
-                // 'spectrogram' is never reassigned between the GetLength() calls above and here.
-                // The assert below (Release no-op) catches any future edit that breaks that order.
-                System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
-                    "flatSpectrogram element count must match spectrogram's own length — CreateSpan trusts this blindly.");
+            // Rectangular float arrays are contiguous and already match [frames, bins] row order.
+            System.Diagnostics.Debug.Assert(tensorSize == spectrogram.Length,
+                "Spectrogram element count must match frames * bins.");
 
-                // A rectangular float[,] is stored as one contiguous row-major block, and the
-                // tensor's [1, frames, bins] layout matches it exactly — no transpose needed —
-                // so the whole thing is a single fast copy instead of a per-element loop through
-                // the much slower float[,] and DenseTensor indexers.
-                ReadOnlySpan<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
-                flatSpectrogram.CopyTo(rentedInput.AsSpan(0, tensorSize));
-            }
+            ReadOnlySpan<float> flatSpectrogram = MemoryMarshal.CreateSpan(ref spectrogram[0, 0], tensorSize);
+            flatSpectrogram.CopyTo(rentedInput.AsSpan(0, tensorSize));
 
-            // Map the rented array to a Tensor without copying data
+            // Map the rented array to a Tensor without copying data.
             var memory = new Memory<float>(rentedInput, 0, tensorSize);
             var inputTensor = new DenseTensor<float>(memory, [1, frames, bins]);
 
@@ -311,8 +307,13 @@ public partial class OpenVoiceRunner : IDisposable
             };
 
             using var results = _extractSession.Run(inputs);
-            // Resulting embedding is small (256 floats ~ 1KB)
-            return [.. results.First(r => r.Name == "tone_embedding").AsEnumerable<float>()];
+            float[] embedding = [.. results.First(r => r.Name == "tone_embedding").AsEnumerable<float>()];
+
+            if (embedding.Length != _config.Model.GinChannels)
+                throw new InvalidDataException(
+                    $"Tone Extractor returned {embedding.Length} channels, expected {_config.Model.GinChannels}.");
+
+            return embedding;
         }
         finally
         {
@@ -420,10 +421,18 @@ public partial class OpenVoiceRunner : IDisposable
         float tau = 1.0f)
     {
         ArgumentNullException.ThrowIfNull(transposedSpectrogram);
+        ArgumentNullException.ThrowIfNull(srcFingerprint);
+        ArgumentNullException.ThrowIfNull(destFingerprint);
 
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(frames);
-
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bins);
+
+        int channels = _config.Model.GinChannels;
+        if (srcFingerprint.Length != channels)
+            throw new ArgumentException($"Source tone embedding must contain exactly {channels} values.", nameof(srcFingerprint));
+
+        if (destFingerprint.Length != channels)
+            throw new ArgumentException($"Destination tone embedding must contain exactly {channels} values.", nameof(destFingerprint));
 
         int tensorSize = checked(frames * bins);
         if (transposedSpectrogram.Length < tensorSize)
