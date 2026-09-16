@@ -34,11 +34,23 @@ async function bootEngine() {
     log('SYSTEM READY... Awaiting commands.');
 
     // Fetch available voices, effects, and environments from backend
-    const [voicesData, effectsData, envData] = await Promise.all([getVoices(), getEffects(), getEnvironments()]);
+    const [voicesData, effectsData, envData] = await Promise.all([
+        getVoices(),
+        getEffects(),
+        getEnvironments()
+    ]);
 
-    document.getElementById('voiceSelect').innerHTML = voicesData.voices.map(v => `<option value="${v}" ${v === 'piper_base' ? 'selected' : ''}>${v}</option>`).join('');
-    document.getElementById('effectSelect').innerHTML = effectsData.effects.map(e => `<option value="${e}">${e}</option>`).join('');
-    document.getElementById('environmentSelect').innerHTML = envData.environments.map(e => `<option value="${e}">${e}</option>`).join('');
+    document.getElementById('voiceSelect').innerHTML = voicesData.voices
+        .map(v => `<option value="${v}" ${v === 'piper_base' ? 'selected' : ''}>${v}</option>`)
+        .join('');
+
+    document.getElementById('effectSelect').innerHTML = effectsData.effects
+        .map(e => `<option value="${e}">${e}</option>`)
+        .join('');
+
+    document.getElementById('environmentSelect').innerHTML = envData.environments
+        .map(e => `<option value="${e}">${e}</option>`)
+        .join('');
 
     // --- DYNAMICLY FILL THE LANGUAGE LIST ---
     document.getElementById('languageSelect').innerHTML = SUPPORTED_LANGUAGES.map(
@@ -77,6 +89,7 @@ async function bootEngine() {
     // Handle download button click to save the generated audio file
     downloadBtn.addEventListener('click', () => {
         if (!currentDownloadUrl) return;
+
         const a = document.createElement('a');
         a.href = currentDownloadUrl;
         a.download = `tsubaki_voice_${Date.now()}.${currentExtension}`;
@@ -98,7 +111,6 @@ async function bootEngine() {
         player.removeAttribute('src');
         player.srcObject = null;
         player.load();
-        // ----------------
 
         if (currentDownloadUrl) {
             URL.revokeObjectURL(currentDownloadUrl);
@@ -118,158 +130,159 @@ async function bootEngine() {
 
         if (document.getElementById('useEffect').checked) {
             payload.effect = document.getElementById('effectSelect').value;
-            payload.effect_intensity = parseFloat(document.getElementById('effectIntNum').value);
+            payload.effect_intensity = parseFloat(
+                document.getElementById('effectIntNum').value
+            );
         }
 
         // Include environment parameters if enabled
         if (document.getElementById('useEnvironment').checked) {
             payload.environment = document.getElementById('environmentSelect').value;
-            payload.environment_intensity = parseFloat(document.getElementById('envIntNum').value);
-            payload.extend_reverb_tail = document.getElementById('extendTailToggle').checked;
+            payload.environment_intensity = parseFloat(
+                document.getElementById('envIntNum').value
+            );
+            payload.extend_reverb_tail =
+                document.getElementById('extendTailToggle').checked;
         }
 
         // Include noise parameters if enabled
-        if (document.getElementById('useNoiseScale').checked) payload.noise_scale = parseFloat(document.getElementById('nsNum').value);
-        if (document.getElementById('useNoiseW').checked) payload.noise_w = parseFloat(document.getElementById('nwNum').value);
+        if (document.getElementById('useNoiseScale').checked) {
+            payload.noise_scale = parseFloat(
+                document.getElementById('nsNum').value
+            );
+        }
+
+        if (document.getElementById('useNoiseW').checked) {
+            payload.noise_w = parseFloat(
+                document.getElementById('nwNum').value
+            );
+        }
 
         // Include voice shift parameters if enabled
         if (document.getElementById('usePitch').checked) {
-            payload.pitch = parseFloat(document.getElementById('pitchNum').value);
+            payload.pitch = parseFloat(
+                document.getElementById('pitchNum').value
+            );
         }
 
         // Include volume adjustment if enabled
         if (document.getElementById('useVolume').checked) {
-            payload.volume = parseFloat(document.getElementById('volumeNum').value);
+            payload.volume = parseFloat(
+                document.getElementById('volumeNum').value
+            );
         }
 
         // Include voice cloning parameters if enabled
         if (document.getElementById('useCloneInt').checked) {
-            payload.clone_intensity = parseFloat(document.getElementById('cloneIntNum').value);
+            payload.clone_intensity = parseFloat(
+                document.getElementById('cloneIntNum').value
+            );
         }
 
         if (document.getElementById('useToneTemp').checked) {
-            payload.tone_temperature = parseFloat(document.getElementById('toneTempNum').value);
+            payload.tone_temperature = parseFloat(
+                document.getElementById('toneTempNum').value
+            );
         }
 
         if (document.getElementById('useLpqf').checked) {
-            payload.low_pass_q_factor = parseFloat(document.getElementById('lpqfNum').value);
+            payload.low_pass_q_factor = parseFloat(
+                document.getElementById('lpqfNum').value
+            );
         }
 
-        log(`Transmitting payload to backend...`);
+        log('Transmitting payload to backend...');
 
         try {
             const response = await synthesizeSpeech(payload);
-            const mimeType = response.headers.get('Content-Type') || 'audio/mpeg';
-            const supportsMSE = window.MediaSource && MediaSource.isTypeSupported(mimeType);
-            const targetSampleRate = parseInt(response.headers.get('X-Audio-Sample-Rate') || "22050");
 
-            currentExtension = payload.response_format === 'opus' ? 'ogg' : payload.response_format;
+            const mimeType =
+                response.headers.get('Content-Type') ||
+                'audio/mpeg';
+
+            const targetSampleRate = parseInt(
+                response.headers.get('X-Audio-Sample-Rate') ||
+                '22050'
+            );
+
+            currentExtension =
+                payload.response_format === 'opus'
+                    ? 'ogg'
+                    : payload.response_format;
+
             let totalBytes = 0;
 
             // Reports encoded bytes received from the HTTP response.
             const onChunk = (chunkSize) => {
                 totalBytes += chunkSize;
-                log(`⬇️ Chunk received: ${chunkSize} bytes (Total: ${(totalBytes / 1024).toFixed(2)} KB)`);
+
+                log(
+                    `⬇️ Chunk received: ${chunkSize} bytes ` +
+                    `(Total: ${(totalBytes / 1024).toFixed(2)} KB)`
+                );
             };
 
-            // Network completion makes the original response available for download immediately.
-            const onComplete = (finalBlob) => {
-                log("✅ Transmission complete.");
-                currentDownloadUrl = URL.createObjectURL(finalBlob);
+            // Makes the original response available for download when transport completes.
+            const onComplete = async (finalBlob) => {
+                log('✅ Transmission complete.');
+
+                currentDownloadUrl =
+                    URL.createObjectURL(finalBlob);
+
                 downloadBtn.disabled = false;
             };
 
-            // Handle different response formats and streaming capabilities
-            if (payload.response_format === 'pcm') {
-                if (payload.stream) {
-                    log('Routing Raw PCM via Web Audio API Queue...');
+            let streamed = false;
 
-                    await AudioEngine.streamPCM(
-                        response.body.getReader(),
-                        targetSampleRate,
-                        player,
-                        onChunk,
-                        onComplete
-                    );
-                } else {
-                    log('Buffering complete Raw PCM payload...');
-
-                    const blob = await response.blob();
-
-                    // Keep the requested raw PCM file for download.
-                    currentDownloadUrl = URL.createObjectURL(blob);
-                    downloadBtn.disabled = false;
-
-                    // Wrap buffered PCM in WAV only for browser playback.
-                    const arrayBuffer = await blob.arrayBuffer();
-                    const playableWavBlob = AudioEngine.addWavHeader(arrayBuffer, targetSampleRate);
-
-                    player.src = URL.createObjectURL(playableWavBlob);
-
-                    player.play().catch(
-                        e => log(`⚠️ Autoplay blocked: ${e.message}`)
-                    );
-
-                    log(`✅ PCM Blob ready & Wrapped for playback. Size: ${(blob.size / 1024).toFixed(2)} KB`);
-                }
-            }
-
-            // Prefer the browser-native path when MSE supports the returned format.
-            else if (payload.stream && supportsMSE) {
-                await AudioEngine.streamMSE(
-                    response.body.getReader(),
+            if (payload.stream) {
+                streamed = await AudioEngine.stream({
+                    format: payload.response_format,
+                    body: response.body,
                     mimeType,
+                    sampleRate: targetSampleRate,
                     player,
                     onChunk,
                     onComplete
-                );
+                });
             }
 
-            // Decode MP3 incrementally when the browser does not expose audio/mpeg through MSE.
-            else if (payload.stream && payload.response_format === 'mp3') {
-                log('⚠️ Native MP3 MSE unavailable. Routing stream through mpg123 WebAssembly decoder...');
-
-                await AudioEngine.streamMP3(
-                    response.body.getReader(),
-                    targetSampleRate,
-                    player,
-                    onChunk,
-                    onComplete
-                );
-            }
-
-            // Unsupported streaming formats keep the original full-buffer fallback.
-            else {
-                if (payload.stream) {
-                    log("⚠️ Native MSE unavailable for this format. Buffering...");
-                }
-
+            if (!streamed) {
+                // Unsupported streaming paths fall back to complete-file playback silently.
                 const blob = await response.blob();
 
-                currentDownloadUrl = URL.createObjectURL(blob);
+                currentDownloadUrl =
+                    URL.createObjectURL(blob);
+
                 downloadBtn.disabled = false;
 
-                player.src = currentDownloadUrl;
-
-                player.play().catch(
-                    e => log(`⚠️ Autoplay blocked: ${e.message}`)
+                await AudioEngine.playBuffered(
+                    payload.response_format,
+                    blob,
+                    targetSampleRate,
+                    player
                 );
 
-                log(`✅ File reconstructed. Size: ${(blob.size / 1024).toFixed(2)} KB`);
+                log(
+                    `✅ File ready. Size: ` +
+                    `${(blob.size / 1024).toFixed(2)} KB`
+                );
             }
         } catch (error) {
             log(`❌ CRITICAL ERROR: ${error.message}`);
         } finally {
-            // Streaming methods return when the HTTP response ends, not when queued audio finishes playing.
+            // Streaming methods return when transport ends, not when queued audio finishes.
             btn.disabled = false;
-            btn.innerText = "Generate";
+            btn.innerText = 'Generate';
         }
     });
 }
 
 // Initialize the engine once the DOM is fully loaded
 if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', bootEngine);
+    document.addEventListener(
+        'DOMContentLoaded',
+        bootEngine
+    );
 } else {
     bootEngine();
 }
