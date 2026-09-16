@@ -44,9 +44,9 @@ public static class OpenAiRequestAdapter
                 $"Unsupported stream_format: '{dto.StreamFormat}'. Supported value is: audio.");
         }
 
-        string voice = string.IsNullOrWhiteSpace(dto.Voice?.Id)
+        string voice = string.IsNullOrWhiteSpace(dto.Voice)
             ? "piper_base"
-            : dto.Voice.Id.Trim();
+            : dto.Voice.Trim();
 
         // dto.Instructions is intentionally accepted but ignored.
         // Piper/OpenVoice do not expose an equivalent natural-language style-control input.

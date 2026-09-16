@@ -27,10 +27,12 @@ public class TsubakiSpeechRequest
     public required string Input { get; set; }
 
     /// <summary>
-    /// The voice to use. For OpenVoice cloning, this should match a saved voice fingerprint name.
+    /// The voice to use. The canonical form is a string voice ID.
+    /// Compatibility forms are normalized by VoiceIdJsonConverter.
     /// If empty or "piper_base", it defaults to the base Piper voice.
     /// </summary>
     [JsonPropertyName("voice")]
+    [JsonConverter(typeof(VoiceIdJsonConverter))]
     public string Voice { get; set; } = "piper_base";
 
     /// <summary>

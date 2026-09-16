@@ -193,6 +193,8 @@ curl http://localhost:5045/v1/audio/speech \
 
 This endpoint follows the OpenAI-compatible request shape, with two optional Tsubaki extensions: `stream` for chunked delivery and `b64_json` as an additional response format. For DSP effects, voice cloning tuning, and detailed audio control, use the dedicated Tsubaki Endpoint below.
 
+> **Voice compatibility:** Both `/v1/audio/speech` and `/tsbk/audio/speech` also accept `voice` as an object with an `id` field (for example, `{"voice":{"id":"John"}}`) or as a numeric ID. Numeric IDs, including numeric object IDs, are normalized to strings internally.
+
 
 ### Base64 JSON Response
 
@@ -355,6 +357,8 @@ The simplest way to think about the two APIs:
 
 - `/v1/...` — use this when your client expects the OpenAI API. It provides the OpenAI-compatible request surface.
 - `/tsbk/...` — use this when you want Tsubaki's full audio controls. It accepts the same basic request fields plus Tsubaki-specific parameters.
+
+The `voice` field uses the same compatibility parser as `/v1/audio/speech`: string IDs are canonical, while numeric IDs and `{ "id": ... }` objects are also accepted.
 
 What it adds: real-time DSP effects, spatial environments, pitch/volume control, voice cloning tuning, and pronunciation variance — a much larger surface for **mechanically** controlling how something sounds, per request, without touching server config. This is especially useful for AI agents that want to express emotional state or acoustic context on the fly. Supported `response_format` values: `wav`, `mp3`, `opus`, `pcm`, and `b64_json`.
 

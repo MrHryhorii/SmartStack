@@ -23,6 +23,10 @@ public static class TsubakiRequestAdapter
             return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, pcm, b64_json.");
         }
 
+        string voice = string.IsNullOrWhiteSpace(dto.Voice)
+            ? "piper_base"
+            : dto.Voice.Trim();
+
         string? cleanLanguage = dto.Language?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(cleanLanguage) || cleanLanguage == "auto")
         {
@@ -35,7 +39,7 @@ public static class TsubakiRequestAdapter
         {
             Input = dto.Input,
             Format = format,
-            Voice = dto.Voice,
+            Voice = voice,
             Speed = dto.Speed,
             Stream = dto.Stream,
             NoiseScale = dto.NoiseScale,

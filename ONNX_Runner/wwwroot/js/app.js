@@ -136,6 +136,34 @@ function bindToggle(chkId, elementsToToggle) {
     });
 }
 
+// Populates the pronunciation selector and exposes language-specific limitations as tooltips.
+function populateLanguageSelector() {
+    const select = document.getElementById('languageSelect');
+
+    select.replaceChildren(...SUPPORTED_LANGUAGES.map(language => {
+        const option = document.createElement('option');
+        option.value = language.code;
+        option.textContent = language.name;
+
+        if (language.note) {
+            option.title = language.note;
+        }
+
+        return option;
+    }));
+
+    const updateTooltip = () => {
+        const selected = SUPPORTED_LANGUAGES.find(
+            language => language.code === select.value
+        );
+
+        select.title = selected?.note ?? '';
+    };
+
+    select.addEventListener('change', updateTooltip);
+    updateTooltip();
+}
+
 // Main Boot Sequence
 async function bootEngine() {
     initTheme();
@@ -161,10 +189,8 @@ async function bootEngine() {
         .map(e => `<option value="${e}">${e}</option>`)
         .join('');
 
-    // --- DYNAMICLY FILL THE LANGUAGE LIST ---
-    document.getElementById('languageSelect').innerHTML = SUPPORTED_LANGUAGES.map(
-        lang => `<option value="${lang.code}">${lang.name}</option>`
-    ).join('');
+    // Populate pronunciation languages after the static page controls are available.
+    populateLanguageSelector();
 
     log('Resources synchronized successfully.');
 
