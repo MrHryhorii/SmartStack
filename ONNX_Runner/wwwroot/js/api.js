@@ -1,4 +1,4 @@
-// Using relative path. The browser will automatically resolve the host and port.
+// Uses same-origin Tsubaki routes so the dashboard follows the server host and port.
 const BASE_URL = '/tsbk/audio';
 
 export async function getVoices() {
@@ -8,7 +8,7 @@ export async function getVoices() {
         return await res.json();
     } catch (e) {
         console.error('API Error (Voices):', e);
-        return { voices: ["piper_base"] }; // Fallback
+        return { voices: ["piper_base"] };
     }
 }
 
@@ -19,7 +19,7 @@ export async function getEffects() {
         return await res.json();
     } catch (e) {
         console.error('API Error (Effects):', e);
-        return { effects: ["None"] }; // Fallback
+        return { effects: ["None"] };
     }
 }
 
@@ -30,7 +30,7 @@ export async function getEnvironments() {
         return await res.json();
     } catch (e) {
         console.error('API Error (Environments):', e);
-        return { environments: ["None"] }; // Fallback
+        return { environments: ["None"] };
     }
 }
 

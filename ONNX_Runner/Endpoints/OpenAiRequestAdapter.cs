@@ -24,7 +24,7 @@ public static class OpenAiRequestAdapter
             return (
                 null,
                 $"Unsupported response_format: '{dto.ResponseFormat}'. " +
-                "Supported formats are: wav, mp3, opus, pcm, b64_json.");
+                "Supported formats are: wav, mp3, opus, flac, pcm, b64_json.");
         }
 
         string? streamFormat = dto.StreamFormat?.Trim().ToLowerInvariant();
@@ -44,9 +44,9 @@ public static class OpenAiRequestAdapter
                 $"Unsupported stream_format: '{dto.StreamFormat}'. Supported value is: audio.");
         }
 
-        string voice = string.IsNullOrWhiteSpace(dto.Voice)
+        string voice = string.IsNullOrWhiteSpace(dto.Voice?.Id)
             ? "piper_base"
-            : dto.Voice.Trim();
+            : dto.Voice.Id.Trim();
 
         // dto.Instructions is intentionally accepted but ignored.
         // Piper/OpenVoice do not expose an equivalent natural-language style-control input.

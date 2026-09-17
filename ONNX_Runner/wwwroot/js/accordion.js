@@ -1,3 +1,4 @@
+// Animates advanced <details> groups while keeping their native open state synchronized.
 document.addEventListener('DOMContentLoaded', () => {
     const accordions = document.querySelectorAll('details.advanced-group');
 
@@ -9,7 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
         let isExpanding = false;
 
         summary.addEventListener('click', (e) => {
-            // Prevent the default toggle behavior to allow for custom animation
+            // Keep the native toggle under animation control.
             e.preventDefault();
             details.style.overflow = 'hidden';
 
@@ -27,12 +28,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             if (animation) animation.cancel();
 
-            // Animation for collapsing the details element
             animation = details.animate({
                 height: [startHeight, endHeight]
             }, {
-                duration: 250, // Duration of the animation in milliseconds
-                easing: 'cubic-bezier(0.4, 0, 0.2, 1)' // Easing function for a smooth animation
+                duration: 250,
+                easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
             });
 
             animation.onfinish = () => {
@@ -52,7 +52,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (animation) animation.cancel();
 
-                // Animation for expanding the details element
                 animation = details.animate({
                     height: [startHeight, endHeight]
                 }, {

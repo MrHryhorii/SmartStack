@@ -1,3 +1,4 @@
+// Shared lazy loader for local UMD codec bundles.
 const pendingLoads = new Map();
 
 // Loads a local UMD codec bundle once and resolves the requested global export.

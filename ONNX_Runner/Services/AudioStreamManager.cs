@@ -10,7 +10,7 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Manages the encoding, formatting, and routing of generated audio streams.
-/// Supports dynamic format switching (WAV, MP3, OPUS, PCM) and handles both
+/// Supports dynamic format switching (WAV, MP3, OPUS, FLAC, PCM) and handles both
 /// in-memory buffering and real-time chunked network streaming.
 ///
 /// Ogg/Opus is muxed internally instead of using Concentus.OggFile.
@@ -30,6 +30,7 @@ public class AudioStreamManager : IDisposable
 
     private readonly IOpusEncoder? _opusEncoder;
     private readonly OggOpusMuxer? _oggMuxer;
+    private readonly FlacStreamEncoder? _flacEncoder;
     private readonly short[]? _opusFrameBuffer;
     private readonly byte[]? _opusPacketBuffer;
     private readonly int _opusFrameSize;
@@ -112,6 +113,12 @@ public class AudioStreamManager : IDisposable
             return;
         }
 
+        if (_format == AudioFormat.Flac)
+        {
+            _flacEncoder = new FlacStreamEncoder(_baseStream, sampleRate);
+            return;
+        }
+
         // AudioFormat.Pcm: raw little-endian signed 16-bit mono PCM.
         _audioWriter = _baseStream;
     }
@@ -155,6 +162,10 @@ public class AudioStreamManager : IDisposable
             if (_format == AudioFormat.Opus)
             {
                 WriteOpusSamples(shortSamples.AsSpan(0, samples.Length));
+            }
+            else if (_format == AudioFormat.Flac)
+            {
+                _flacEncoder!.WriteSamples(shortSamples.AsSpan(0, samples.Length));
             }
             else if (_audioWriter != null)
             {
@@ -412,6 +423,12 @@ public class AudioStreamManager : IDisposable
                 return;
             }
 
+            if (_format == AudioFormat.Flac)
+            {
+                _flacEncoder?.Dispose();
+                return;
+            }
+
             if (_format != AudioFormat.Pcm)
             {
                 _audioWriter?.Dispose();
@@ -460,6 +477,7 @@ public class AudioStreamManager : IDisposable
         {
             AudioFormat.Mp3 => "audio/mpeg",
             AudioFormat.Opus => "audio/ogg; codecs=opus",
+            AudioFormat.Flac => "audio/flac",
             AudioFormat.Pcm => "audio/pcm",
             AudioFormat.B64Json => "application/json",
             _ => "audio/wav"
@@ -475,6 +493,7 @@ public class AudioStreamManager : IDisposable
         {
             AudioFormat.Mp3 => "speech.mp3",
             AudioFormat.Opus => "speech.opus",
+            AudioFormat.Flac => "speech.flac",
             AudioFormat.Pcm => "speech.pcm",
             AudioFormat.B64Json => "speech.json",
             _ => "speech.wav"

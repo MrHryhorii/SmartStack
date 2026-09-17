@@ -7,11 +7,17 @@ import { receiveBase64Json } from './b64-json.js';
 let currentDownloadUrl = null;
 let currentExtension = 'mp3';
 
-// UI Helpers
+// UI helpers.
 function log(msg) {
     const logger = document.getElementById('statusLog');
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
-    logger.innerHTML += `[${time}] ${msg}<br>`;
+
+    // Keep dynamic server/error text out of HTML parsing.
+    logger.append(
+        document.createTextNode(`[${time}] ${msg}`),
+        document.createElement('br')
+    );
+
     logger.scrollTop = logger.scrollHeight;
 }
 
@@ -137,7 +143,22 @@ function bindToggle(chkId, elementsToToggle) {
     });
 }
 
-// Populates the pronunciation selector and exposes language-specific limitations as tooltips.
+function populateSelect(selectId, values, selectedValue = null) {
+    const select = document.getElementById(selectId);
+
+    // Server-provided names are text, not markup.
+    const options = values.map(value => {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = value;
+        option.selected = value === selectedValue;
+        return option;
+    });
+
+    select.replaceChildren(...options);
+}
+
+// Populates pronunciation languages and exposes per-language notes as tooltips.
 function populateLanguageSelector() {
     const select = document.getElementById('languageSelect');
 
@@ -165,37 +186,28 @@ function populateLanguageSelector() {
     updateTooltip();
 }
 
-// Main Boot Sequence
+// Loads server metadata and binds dashboard controls.
 async function bootEngine() {
     initTheme();
     document.getElementById('statusLog').innerHTML = '';
     log('SYSTEM READY... Awaiting commands.');
 
-    // Fetch available voices, effects, and environments from backend
     const [voicesData, effectsData, envData] = await Promise.all([
         getVoices(),
         getEffects(),
         getEnvironments()
     ]);
 
-    document.getElementById('voiceSelect').innerHTML = voicesData.voices
-        .map(v => `<option value="${v}" ${v === 'piper_base' ? 'selected' : ''}>${v}</option>`)
-        .join('');
+    populateSelect('voiceSelect', voicesData.voices, 'piper_base');
+    populateSelect('effectSelect', effectsData.effects);
+    populateSelect('environmentSelect', envData.environments);
 
-    document.getElementById('effectSelect').innerHTML = effectsData.effects
-        .map(e => `<option value="${e}">${e}</option>`)
-        .join('');
-
-    document.getElementById('environmentSelect').innerHTML = envData.environments
-        .map(e => `<option value="${e}">${e}</option>`)
-        .join('');
-
-    // Populate pronunciation languages after the static page controls are available.
+    // Language metadata is local; dynamic audio options come from the server.
     populateLanguageSelector();
 
     log('Resources synchronized successfully.');
 
-    // Set up UI bindings for sliders and toggles
+    // Pair sliders with their numeric inputs.
     syncInputs('speedSlider', 'speedNum');
     syncInputs('effectIntSlider', 'effectIntNum');
     syncInputs('envIntSlider', 'envIntNum');
@@ -207,7 +219,7 @@ async function bootEngine() {
     syncInputs('toneTempSlider', 'toneTempNum');
     syncInputs('lpqfSlider', 'lpqfNum');
 
-    // Bind toggles to enable/disable related controls
+    // Disable dependent controls when an override is off.
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum', 'extendTailToggle']);
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
@@ -222,7 +234,47 @@ async function bootEngine() {
     const downloadBtn = document.getElementById('downloadBtn');
     const player = document.getElementById('audioPlayer');
 
-    // Handle download button click to save the generated audio file
+    // During live Web Audio playback the native player is a control surface.
+    // Its silent MediaStream never carries the real PCM.
+    player.addEventListener(
+        'pause',
+        () => {
+            if (
+                AudioEngine.hasLiveControl()
+            ) {
+                void AudioEngine
+                    .pauseLivePlayback();
+            }
+        }
+    );
+
+    player.addEventListener(
+        'play',
+        () => {
+            if (
+                AudioEngine.hasLiveControl()
+            ) {
+                void AudioEngine
+                    .resumeLivePlayback();
+            }
+        }
+    );
+
+    player.addEventListener(
+        'volumechange',
+        () => {
+            if (
+                AudioEngine.hasLiveControl()
+            ) {
+                AudioEngine.setLiveVolume(
+                    player.volume,
+                    player.muted
+                );
+            }
+        }
+    );
+
+    // Downloads the original response representation.
     downloadBtn.addEventListener('click', () => {
         if (!currentDownloadUrl) return;
 
@@ -232,7 +284,7 @@ async function bootEngine() {
         a.click();
     });
 
-    // Main click handler for generating speech
+    // Builds and sends one synthesis request.
     btn.addEventListener('click', async () => {
         const text = document.getElementById('textInput').value.trim();
         if (!text) return alert("Please enter text!");
@@ -242,7 +294,7 @@ async function bootEngine() {
         downloadBtn.disabled = true;
         btn.innerText = "Processing...";
 
-        // Reset audio player for new playback
+        // Stop previous playback before replacing response state.
         player.pause();
         player.removeAttribute('src');
         player.srcObject = null;
@@ -253,7 +305,8 @@ async function bootEngine() {
             currentDownloadUrl = null;
         }
 
-        await AudioEngine.stopAll();
+        const stopPromise =
+            AudioEngine.stopAll();
 
         const payload = {
             input: text,
@@ -264,6 +317,22 @@ async function bootEngine() {
             language: document.getElementById('languageSelect').value
         };
 
+        // Prime Web Audio before the first await so Safari/other autoplay policies
+        // see the context creation/resume as part of the user's Generate click.
+        if (
+            payload.stream &&
+            payload.response_format !==
+                'b64_json' &&
+            AudioEngine.supportsStreamingFormat(
+                payload.response_format
+            )
+        ) {
+            AudioEngine
+                .prepareStreamingPlayback(player);
+        }
+
+        await stopPromise;
+
         if (document.getElementById('useEffect').checked) {
             payload.effect = document.getElementById('effectSelect').value;
             payload.effect_intensity = parseFloat(
@@ -271,7 +340,6 @@ async function bootEngine() {
             );
         }
 
-        // Include environment parameters if enabled
         if (document.getElementById('useEnvironment').checked) {
             payload.environment = document.getElementById('environmentSelect').value;
             payload.environment_intensity = parseFloat(
@@ -281,7 +349,6 @@ async function bootEngine() {
                 document.getElementById('extendTailToggle').checked;
         }
 
-        // Include noise parameters if enabled
         if (document.getElementById('useNoiseScale').checked) {
             payload.noise_scale = parseFloat(
                 document.getElementById('nsNum').value
@@ -294,21 +361,18 @@ async function bootEngine() {
             );
         }
 
-        // Include voice shift parameters if enabled
         if (document.getElementById('usePitch').checked) {
             payload.pitch = parseFloat(
                 document.getElementById('pitchNum').value
             );
         }
 
-        // Include volume adjustment if enabled
         if (document.getElementById('useVolume').checked) {
             payload.volume = parseFloat(
                 document.getElementById('volumeNum').value
             );
         }
 
-        // Include voice cloning parameters if enabled
         if (document.getElementById('useCloneInt').checked) {
             payload.clone_intensity = parseFloat(
                 document.getElementById('cloneIntNum').value
@@ -357,10 +421,16 @@ async function bootEngine() {
                 response.headers.get('Content-Type') ||
                 'audio/mpeg';
 
-            const targetSampleRate = parseInt(
-                response.headers.get('X-Audio-Sample-Rate') ||
-                '22050'
+            const sampleRateHeader = Number.parseInt(
+                response.headers.get('X-Audio-Sample-Rate') ?? '',
+                10
             );
+
+            const targetSampleRate =
+                Number.isFinite(sampleRateHeader) &&
+                sampleRateHeader > 0
+                    ? sampleRateHeader
+                    : 22050;
 
             currentExtension =
                 payload.response_format === 'opus'
@@ -511,6 +581,10 @@ async function bootEngine() {
         } catch (error) {
             log(`❌ CRITICAL ERROR: ${error.message}`);
         } finally {
+            // MSE/buffered paths may leave the gesture-unlocked context unused.
+            await AudioEngine
+                .releasePreparedPlayback();
+
             // Streaming methods return when transport ends, not when queued audio finishes.
             btn.disabled = false;
             btn.innerText = 'Generate';
@@ -518,7 +592,7 @@ async function bootEngine() {
     });
 }
 
-// Initialize the engine once the DOM is fully loaded
+// Boot after the static DOM is available.
 if (document.readyState === 'loading') {
     document.addEventListener(
         'DOMContentLoaded',

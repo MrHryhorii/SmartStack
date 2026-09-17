@@ -1,6 +1,8 @@
+// Raw PCM path: converts streamed S16LE samples to Float32 for Web Audio and wraps downloads as WAV when needed.
 import {
     createWebAudioSession,
     queueAudioChannels,
+    flushQueuedAudio,
     scheduleReplay
 } from './web-audio.js';
 
@@ -31,6 +33,10 @@ export async function streamPCM({
         } = await reader.read();
 
         if (done) {
+            flushQueuedAudio(
+                session
+            );
+
             const finalBlob =
                 new Blob(
                     audioChunks,

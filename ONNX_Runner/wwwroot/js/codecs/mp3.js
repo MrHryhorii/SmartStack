@@ -1,6 +1,8 @@
+// MP3 fallback: incrementally decodes audio with the local mpg123 bundle when MSE is unavailable.
 import {
     createWebAudioSession,
     queueAudioChannels,
+    flushQueuedAudio,
     scheduleReplay
 } from './web-audio.js';
 
@@ -51,7 +53,11 @@ export async function streamMP3({
             } = await reader.read();
 
             if (done) {
-                const finalBlob =
+                flushQueuedAudio(
+            session
+        );
+
+        const finalBlob =
                     new Blob(
                         audioChunks,
                         {

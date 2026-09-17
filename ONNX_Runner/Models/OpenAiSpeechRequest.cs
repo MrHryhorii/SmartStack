@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace ONNX_Runner.Models;
@@ -24,17 +25,19 @@ public class OpenAiSpeechRequest
     public required string Input { get; set; }
 
     /// <summary>
-    /// Voice selector. The canonical form is a string voice ID.
-    /// Compatibility forms are normalized by VoiceIdJsonConverter.
+    /// Voice selector. Accepts either the traditional string form:
+    /// <c>"voice": "John"</c>
+    /// or the newer OpenAI custom-voice reference form:
+    /// <c>"voice": { "id": "John" }</c>.
+    /// The resolved ID is matched against Tsubaki's local voice fingerprint names.
     /// </summary>
     [JsonPropertyName("voice")]
-    [JsonConverter(typeof(VoiceIdJsonConverter))]
-    public string Voice { get; set; } = "piper_base";
+    public OpenAiVoice? Voice { get; set; } = new("piper_base");
 
     /// <summary>
     /// The requested response representation.
-    /// Tsubaki currently supports "wav", "mp3", "opus", "pcm", and the optional
-    /// Tsubaki extension "b64_json". AAC and FLAC are not implemented yet.
+    /// Tsubaki currently supports "wav", "mp3", "opus", "flac", "pcm", and the optional
+    /// Tsubaki extension "b64_json". AAC is not implemented yet.
     /// </summary>
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "mp3";
@@ -75,4 +78,64 @@ public class OpenAiSpeechRequest
     /// </summary>
     [JsonPropertyName("stream")]
     public bool? Stream { get; set; }
+}
+
+/// <summary>
+/// Normalized OpenAI voice reference. JSON may provide either a plain string or
+/// an object containing an <c>id</c>; both forms resolve to this single ID.
+/// </summary>
+[JsonConverter(typeof(OpenAiVoiceJsonConverter))]
+public sealed class OpenAiVoice
+{
+    public OpenAiVoice(string id)
+    {
+        Id = id;
+    }
+
+    public string Id { get; }
+}
+
+/// <summary>
+/// Accepts both OpenAI voice JSON shapes:
+/// <c>"voice": "alloy"</c>
+/// and <c>"voice": { "id": "voice_1234" }</c>.
+/// </summary>
+public sealed class OpenAiVoiceJsonConverter : JsonConverter<OpenAiVoice>
+{
+    public override OpenAiVoice Read(
+        ref Utf8JsonReader reader,
+        Type typeToConvert,
+        JsonSerializerOptions options)
+    {
+        if (reader.TokenType == JsonTokenType.String)
+        {
+            return new OpenAiVoice(reader.GetString() ?? string.Empty);
+        }
+
+        if (reader.TokenType == JsonTokenType.StartObject)
+        {
+            using var document = JsonDocument.ParseValue(ref reader);
+            JsonElement root = document.RootElement;
+
+            if (root.TryGetProperty("id", out JsonElement idElement) &&
+                idElement.ValueKind == JsonValueKind.String)
+            {
+                return new OpenAiVoice(idElement.GetString() ?? string.Empty);
+            }
+
+            throw new JsonException(
+                "The 'voice' object must contain a string 'id' property.");
+        }
+
+        throw new JsonException(
+            "The 'voice' field must be either a string or an object containing a string 'id'.");
+    }
+
+    public override void Write(
+        Utf8JsonWriter writer,
+        OpenAiVoice value,
+        JsonSerializerOptions options)
+    {
+        writer.WriteStringValue(value.Id);
+    }
 }

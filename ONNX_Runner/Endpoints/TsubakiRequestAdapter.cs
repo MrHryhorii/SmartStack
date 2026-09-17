@@ -20,12 +20,11 @@ public static class TsubakiRequestAdapter
         }
         else if (!Enum.TryParse(formatStr, true, out format))
         {
-            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, pcm, b64_json.");
+            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, flac, pcm, b64_json.");
         }
 
-        string voice = string.IsNullOrWhiteSpace(dto.Voice)
-            ? "piper_base"
-            : dto.Voice.Trim();
+        // dto.Instructions is intentionally accepted but ignored.
+        // It is a wire-compatibility field only and must not enter SynthesisRequest.
 
         string? cleanLanguage = dto.Language?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(cleanLanguage) || cleanLanguage == "auto")
@@ -39,7 +38,7 @@ public static class TsubakiRequestAdapter
         {
             Input = dto.Input,
             Format = format,
-            Voice = voice,
+            Voice = dto.Voice,
             Speed = dto.Speed,
             Stream = dto.Stream,
             NoiseScale = dto.NoiseScale,

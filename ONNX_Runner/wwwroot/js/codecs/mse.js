@@ -1,3 +1,4 @@
+// Native MSE path for encoded formats supported directly by the browser.
 // Checks whether the browser accepts the response MIME type through MSE.
 export function supportsMSE(
     mimeType

@@ -27,20 +27,26 @@ public class TsubakiSpeechRequest
     public required string Input { get; set; }
 
     /// <summary>
-    /// The voice to use. The canonical form is a string voice ID.
-    /// Compatibility forms are normalized by VoiceIdJsonConverter.
+    /// The voice to use. For OpenVoice cloning, this should match a saved voice fingerprint name.
     /// If empty or "piper_base", it defaults to the base Piper voice.
     /// </summary>
     [JsonPropertyName("voice")]
-    [JsonConverter(typeof(VoiceIdJsonConverter))]
     public string Voice { get; set; } = "piper_base";
 
     /// <summary>
     /// The format of the returned audio. 
-    /// Supported formats: "wav", "mp3", "opus", "pcm". Defaults to "mp3".
+    /// Supported formats: "wav", "mp3", "opus", "flac", "pcm", "b64_json". Defaults to "mp3".
     /// </summary>
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "mp3";
+
+    /// <summary>
+    /// Optional OpenAI-compatible natural-language speaking instruction.
+    /// Accepted to keep the Tsubaki endpoint a superset of the OpenAI request surface,
+    /// but intentionally ignored because Piper/OpenVoice do not expose an equivalent control.
+    /// </summary>
+    [JsonPropertyName("instructions")]
+    public string? Instructions { get; set; }
 
     /// <summary>
     /// Generation speed multiplier. Ranges from 0.25 to 4.0. Default is 1.0.

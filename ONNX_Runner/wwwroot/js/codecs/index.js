@@ -1,3 +1,4 @@
+// Central streaming-codec router used by AudioEngine.
 import {
     streamMSE,
     supportsMSE
@@ -16,32 +17,15 @@ import {
     streamOggOpus
 } from './ogg-opus.js';
 
-
-const STREAMING_FORMATS = new Set([
-    'pcm',
-    'mp3',
-    'opus',
-    'ogg'
-]);
-
-// Reports whether the dashboard has an implemented streaming path for the format.
-export function supportsStreamingFormat(
-    format
-) {
-    return STREAMING_FORMATS.has(
-        format
-    );
-}
+import {
+    streamFLAC
+} from './flac.js';
 
 // Resolves a streaming backend for the requested response format.
 export function resolveStreamHandler(
     format,
     mimeType
 ) {
-    if (!supportsStreamingFormat(format)) {
-        return null;
-    }
-
     if (format === 'pcm') {
         return streamPCM;
     }
@@ -73,6 +57,16 @@ export function resolveStreamHandler(
         // );
 
         return streamOggOpus;
+    }
+
+    if (format === 'flac') {
+        // FLAC selects native WebCodecs, the local Tsubaki decoder, or buffering internally.
+        return streamFLAC;
+    }
+
+    // Future formats can use the native browser path without UI changes.
+    if (supportsMSE(mimeType)) {
+        return streamMSE;
     }
 
     return null;

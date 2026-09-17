@@ -1,6 +1,8 @@
+// Ogg/Opus fallback: incrementally decodes audio with the local decoder bundle when MSE is unavailable.
 import {
     createWebAudioSession,
     queueAudioChannels,
+    flushQueuedAudio,
     scheduleReplay
 } from './web-audio.js';
 
@@ -122,6 +124,10 @@ export async function streamOggOpus({
         queueDecodedResult(
             session,
             flushed
+        );
+
+        flushQueuedAudio(
+            session
         );
 
         const finalBlob =

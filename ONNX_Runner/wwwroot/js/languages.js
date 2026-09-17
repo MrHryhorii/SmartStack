@@ -1,3 +1,4 @@
+// Language codes offered by the dashboard pronunciation selector.
 export const SUPPORTED_LANGUAGES = [
     { code: "auto", name: "Auto-detect", note: "Uses the server model language and automatic language-detection settings." },
     { code: "af", name: "Afrikaans" },
