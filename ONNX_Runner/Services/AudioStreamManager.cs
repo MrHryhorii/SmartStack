@@ -1,5 +1,4 @@
 using NAudio.Wave;
-using NAudio.Lame;
 using ONNX_Runner.Models;
 using System.Buffers;
 using System.Buffers.Binary;
@@ -25,6 +24,7 @@ public class AudioStreamManager : IDisposable
 
     private readonly Stream _baseStream;
     private readonly Stream? _audioWriter;
+    private readonly LameMp3Encoder? _lameEncoder;
     private readonly AudioFormat _format;
     private readonly RequestDiagnostics? _diagnostics;
 
@@ -62,8 +62,11 @@ public class AudioStreamManager : IDisposable
 
         if (_format == AudioFormat.Mp3 || _format == AudioFormat.B64Json)
         {
-            var waveFormat = new WaveFormat(sampleRate, 16, 1);
-            _audioWriter = new LameMP3FileWriter(_baseStream, waveFormat, 128);
+            _lameEncoder = new LameMp3Encoder(
+                _baseStream,
+                sampleRate,
+                128);
+
             return;
         }
 
@@ -159,7 +162,13 @@ public class AudioStreamManager : IDisposable
                 _encoderInputMarked = true;
             }
 
-            if (_format == AudioFormat.Opus)
+            if (_format == AudioFormat.Mp3 || _format == AudioFormat.B64Json)
+            {
+                _lameEncoder!.WriteSamples(
+                    shortSamples,
+                    samples.Length);
+            }
+            else if (_format == AudioFormat.Opus)
             {
                 WriteOpusSamples(shortSamples.AsSpan(0, samples.Length));
             }
@@ -426,6 +435,12 @@ public class AudioStreamManager : IDisposable
             if (_format == AudioFormat.Flac)
             {
                 _flacEncoder?.Dispose();
+                return;
+            }
+
+            if (_format == AudioFormat.Mp3 || _format == AudioFormat.B64Json)
+            {
+                _lameEncoder?.Dispose();
                 return;
             }
 

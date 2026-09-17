@@ -41,61 +41,39 @@ using var bootstrapLoggerFactory = LoggerFactory.Create(lb =>
     lb.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
 });
 
-/// =================================================================
-// LINUX SELF-HEALING
-// =================================================================
-// This block addresses common issues with native library loading on Linux, especially in containerized environments.
-// For the LAME MP3 encoder, if the Windows DLL is accidentally copied during publish, it will cause an ELF header error. 
-// We check for this and remove it if found.
-if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
+// Native dependencies are resolved by the platform loader.
+NativeLibraryResolver.Initialize();
+
+var nativeAudioDependencies =
+    NativeAudioDependencies.Detect();
+
+if (nativeAudioDependencies.EspeakAvailable)
 {
-    try
-    {
-        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-
-        // --- LAME MP3 ENCODER FIX ---
-        string lameSymlinkPath = Path.Combine(baseDir, "libmp3lame.64.dll");
-
-        // Remove the Windows DLL if it was copied during publish
-        if (File.Exists(lameSymlinkPath) && !File.GetAttributes(lameSymlinkPath).HasFlag(FileAttributes.ReparsePoint))
-        {
-            File.Delete(lameSymlinkPath);
-            Console.WriteLine("[SYSTEM] Removed Windows-specific LAME DLL to prevent ELF header errors.");
-        }
-
-        // Link to the real Linux LAME library
-        if (!File.Exists(lameSymlinkPath))
-        {
-            string[] possibleLame = ["/usr/lib/x86_64-linux-gnu/libmp3lame.so.0", "/usr/lib64/libmp3lame.so.0", "/usr/lib/libmp3lame.so.0"];
-            string? validLame = possibleLame.FirstOrDefault(File.Exists);
-            if (validLame != null)
-            {
-                File.CreateSymbolicLink(lameSymlinkPath, validLame);
-                Console.WriteLine($"[SYSTEM] Auto-linked LAME: {lameSymlinkPath} -> {validLame}");
-            }
-        }
-
-        // --- ESPEAK-NG FIX ---
-        // P/Invoke looks for 'libespeak-ng.so', but Linux usually only has 'libespeak-ng.so.1'
-        string espeakSymlinkPath = Path.Combine(baseDir, "libespeak-ng.so");
-
-        if (!File.Exists(espeakSymlinkPath))
-        {
-            string[] possibleEspeak = ["/usr/lib/x86_64-linux-gnu/libespeak-ng.so.1", "/usr/lib64/libespeak-ng.so.1", "/usr/lib/libespeak-ng.so.1"];
-            string? validEspeak = possibleEspeak.FirstOrDefault(File.Exists);
-            if (validEspeak != null)
-            {
-                File.CreateSymbolicLink(espeakSymlinkPath, validEspeak);
-                Console.WriteLine($"[SYSTEM] Auto-linked Espeak-ng: {espeakSymlinkPath} -> {validEspeak}");
-            }
-        }
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"[WARNING] Failed to auto-heal Linux libraries: {ex.Message}");
-    }
+    Console.WriteLine(
+        $"[SYSTEM] eSpeak NG loaded: {nativeAudioDependencies.EspeakLoadedFrom}");
+}
+else
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine(
+        "[ERROR] eSpeak NG was not found. TTS cannot initialize until the system library is installed.");
+    Console.ResetColor();
 }
 
+if (nativeAudioDependencies.Mp3Available)
+{
+    Console.WriteLine(
+        $"[SYSTEM] MP3 encoding enabled: {nativeAudioDependencies.LameLoadedFrom}");
+}
+else
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine(
+        "[WARNING] LAME was not found. MP3 and b64_json are disabled; WAV, FLAC, Opus, and PCM remain available.");
+    Console.WriteLine(
+        "[WARNING] Install your distribution's libmp3lame runtime package or set TSUBAKI_LAME_LIBRARY.");
+    Console.ResetColor();
+}
 
 // Add Swagger support for API documentation and easy testing
 builder.Services.AddEndpointsApiExplorer();
@@ -176,10 +154,18 @@ builder.Services.AddSingleton(chunkerConfig);
 builder.Services.AddSingleton(dspConfig);
 builder.Services.AddSingleton(rateLimitConfig);
 builder.Services.AddSingleton(phonemizerConfig);
+builder.Services.AddSingleton(nativeAudioDependencies);
 
 // Only wire up the heavy services if the base Piper model was successfully loaded
 if (piperConfig != null && piperModelPath != null)
 {
+    if (!nativeAudioDependencies.EspeakAvailable)
+    {
+        throw new InvalidOperationException(
+            "eSpeak NG is required by the phonemizer but its native library was not found. " +
+            "Install eSpeak NG using your system package manager or set TSUBAKI_ESPEAK_LIBRARY.");
+    }
+
     builder.Services.AddSingleton(piperConfig); // Make Piper config globally available
 
     var phonemizer = new PiperPhonemizer(piperConfig, bootstrapLoggerFactory.CreateLogger<PiperPhonemizer>());
@@ -611,7 +597,10 @@ if (!string.IsNullOrEmpty(url))
             model = "tts-1",
             input = "System warm-up sequence complete.",
             voice = "female", // Triggers OpenVoice if present, falls back safely if not
-            response_format = "mp3",
+            response_format =
+                nativeAudioDependencies.Mp3Available
+                    ? "mp3"
+                    : "pcm",
             speed = 1.0f,
             stream = false,
             noise_scale = 0.667f,

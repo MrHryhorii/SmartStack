@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Reflection;
 
 namespace ONNX_Runner.Services;
 
@@ -12,7 +11,7 @@ public partial class EspeakWrapper : IDisposable
 {
     // Universal library name without path or extension.
     // .NET will automatically append .dll on Windows, .so on Linux, and .dylib on macOS.
-    private const string DllPath = "espeak-ng";
+    private const string DllPath = NativeLibraryResolver.EspeakImportName;
 
     // Thread-safety lock object. Since the underlying espeak-ng C++ library is not thread-safe 
     // and uses global states, this lock prevents race conditions and segmentation faults (segfaults) 
@@ -24,29 +23,7 @@ public partial class EspeakWrapper : IDisposable
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     private static extern int GetShortPathName(string lpszLongPath, System.Text.StringBuilder lpszShortPath, int cchBuffer);
 
-    /// <summary>
-    /// Static constructor sets up a smart cross-platform DLL resolver.
-    /// Since espeak-ng is a native C++ binary and not a standard .NET NuGet package, 
-    /// this resolver ensures smooth execution on both local Windows machines (using the local PiperNative folder) 
-    /// and Docker Linux containers (using system-installed libraries).
-    /// </summary>
-    static EspeakWrapper()
-    {
-        NativeLibrary.SetDllImportResolver(typeof(EspeakWrapper).Assembly, ImportResolver);
-    }
-
-    private static IntPtr ImportResolver(string libraryName, Assembly assembly, DllImportSearchPath? searchPath)
-    {
-        // For Windows: explicitly route to the local structured folder to keep the project root clean.
-        if (libraryName == DllPath && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            return NativeLibrary.Load(@"PiperNative\espeak-ng.dll", assembly, searchPath);
-        }
-
-        // For Linux/macOS (Docker): return IntPtr.Zero to let .NET fall back to its default behavior,
-        // which perfectly locates system-installed libraries (e.g., via apt-get install espeak-ng).
-        return IntPtr.Zero;
-    }
+    // Native library resolution is centralized in NativeLibraryResolver.
 
     // UTF-8 marshalling is critical for correctly passing string data (like voice names) to the native library,
     // especially when dealing with internationalization and non-ASCII characters.

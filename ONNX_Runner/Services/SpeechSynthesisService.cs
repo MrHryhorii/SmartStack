@@ -15,6 +15,7 @@ namespace ONNX_Runner.Services;
 public class SpeechSynthesisService(
     SemaphoreSlim gpuSemaphore,
     IServiceProvider services,
+    NativeAudioDependencies nativeAudioDependencies,
     ILogger<SpeechSynthesisService> logger)
 {
     private static long s_requestSequence = -1;
@@ -41,7 +42,7 @@ public class SpeechSynthesisService(
             : request.Voice;
 
         logger.LogInformation(
-            "Request accepted | chars={CharacterCount} | voice={Voice} | format={Format} | stream={Stream}",
+            "Request received | chars={CharacterCount} | voice={Voice} | format={Format} | stream={Stream}",
             request.Input.Length,
             requestedVoice,
             request.Format,
@@ -50,9 +51,26 @@ public class SpeechSynthesisService(
         // =================================================================
         // REQUEST VALIDATION
         // =================================================================
-        // Wire-format-specific validation (empty input, invalid response_format string) is
-        // the adapter's responsibility, done before this method is ever called — by the time
-        // a SynthesisRequest reaches here, Input is non-empty and Format is already resolved.
+        // Wire-format validation belongs to the adapter. Runtime capability checks live here
+        // because every external endpoint funnels through this service.
+        if (!nativeAudioDependencies.IsFormatAvailable(request.Format))
+        {
+            string formatName = request.Format == AudioFormat.B64Json
+                ? "b64_json"
+                : request.Format.ToString().ToLowerInvariant();
+
+            logger.LogWarning(
+                "Request rejected because LAME is unavailable | format={Format}",
+                formatName);
+
+            return Results.Problem(
+                title: "Requested audio format is unavailable",
+                detail:
+                    $"'{formatName}' requires the native LAME MP3 library, " +
+                    "which was not found on this system. Install your distribution's " +
+                    "libmp3lame runtime package or request wav, flac, opus, or pcm.",
+                statusCode: StatusCodes.Status503ServiceUnavailable);
+        }
 
         // =================================================================
         // TEXT LENGTH LIMITATION (OOM PROTECTION)
