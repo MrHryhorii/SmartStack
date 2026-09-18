@@ -302,7 +302,7 @@ public class TextChunker(ChunkerSettings settings)
     /// A comprehensive list of global abbreviations and titles that should NOT trigger a sentence split.
     /// Includes titles from English, Spanish, French, German, and Slavic languages.
     /// </summary>
-    public static readonly HashSet<string> CommonTitles = new(StringComparer.OrdinalIgnoreCase)
+    public static readonly HashSet<string> CommonAbbreviations = new(StringComparer.OrdinalIgnoreCase)
     {
         // ================= SHARED / CROSS-LANGUAGE =================
         "dr", "prof", "fr", "mgr", "mag",
@@ -558,7 +558,7 @@ public class TextChunker(ChunkerSettings settings)
                     if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
                     if (maxSegmentLength <= 3) isAbbreviation = true;
                 }
-                else if (CommonTitles.GetAlternateLookup<ReadOnlySpan<char>>().Contains(cleanWord))
+                else if (CommonAbbreviations.GetAlternateLookup<ReadOnlySpan<char>>().Contains(cleanWord))
                 {
                     isAbbreviation = true;
                 }

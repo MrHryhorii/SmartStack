@@ -1,5 +1,6 @@
 using System.Net;
 using ONNX_Runner.Models;
+using ONNX_Runner.Services;
 
 namespace ONNX_Runner.Endpoints;
 
@@ -145,8 +146,10 @@ public static class InfoEndpoints
         ClonerSettings cloner,
         DspSettings dsp,
         StreamSettings stream,
+        ChunkerSettings chunker,
         PhonemizerSettings phonemizer,
         RateLimitSettings rateLimit,
+        NativeAudioDependencies nativeAudioDependencies,
         IServiceProvider services)
     {
         // PiperConfig is only registered if a base model loaded successfully at startup —
@@ -199,6 +202,19 @@ public static class InfoEndpoints
                 enabled = stream.EnableStreaming,
                 flushAfterEachSentence = stream.FlushAfterEachSentence,
                 minChunkSizeKb = stream.MinChunkSizeKb
+            },
+            formats = new
+            {
+                wav = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Wav),
+                mp3 = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Mp3),
+                opus = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Opus),
+                flac = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Flac),
+                pcm = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Pcm),
+                b64_json = nativeAudioDependencies.IsFormatAvailable(AudioFormat.B64Json)
+            },
+            chunking = new
+            {
+                earlySplit = chunker.EarlySplit
             },
             language = new
             {

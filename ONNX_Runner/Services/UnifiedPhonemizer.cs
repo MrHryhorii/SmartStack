@@ -285,7 +285,7 @@ public partial class UnifiedPhonemizer
             int lastSpaceIdx = prevText.LastIndexOf(' ');
             ReadOnlySpan<char> lastWord = prevText[(lastSpaceIdx + 1)..];
 
-            bool isTitle = TextChunker.CommonTitles
+            bool isTitle = TextChunker.CommonAbbreviations
                 .GetAlternateLookup<ReadOnlySpan<char>>()
                 .Contains(lastWord);
 

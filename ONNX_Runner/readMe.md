@@ -156,7 +156,7 @@ That is enough for a complete first launch.
 
 Tsubaki mimics the standard OpenAI `/v1/audio/speech` endpoint. Clients that use the standard OpenAI TTS request fields can usually connect to Tsubaki by changing only the base URL.
 
-**This is not a stripped-down mode.** Cloned voices, DSP effects, spatial environments, pitch, volume, and the reverb tail extension all still apply to `/v1/audio/speech` — an OpenAI-only client just can't adjust them *per request*, since none of those fields exist in the OpenAI schema. Set them once as server defaults (see *Server-Side DSP Defaults* below) and every client gets the full result automatically, including ones that have no idea Tsubaki-specific parameters exist. The dedicated `/tsbk/...` endpoint below adds *dynamic, per-request* control on top of that — not a separate, more-capable engine.
+Both API surfaces use the same synthesis engine. Server-side cloning, DSP, pitch, volume, and reverb defaults still apply to `/v1/audio/speech`; the dedicated `/tsbk/...` endpoint simply adds per-request control over Tsubaki-specific settings.
 
 Compatible with:
 
@@ -182,18 +182,18 @@ curl http://localhost:5045/v1/audio/speech \
 
 ## Standard Parameters
 
-| Field             | Type   | Description                                                                   |
-| ----------------- | ------ | ------------------------------------------------------------------------------- |
-| `model`           | string | Any value (e.g. `"tts-1"`) — ignored, present for compatibility               |
-| `input`           | string | Text to synthesize                                                            |
-| `voice`           | string | `piper_base` for the base Piper voice, or a cloned voice name (e.g. `"John"`) |
-| `response_format` | string | `mp3`, `wav`, `opus`, `pcm`, `b64_json` |
-| `speed`           | float  | Speech speed multiplier. `1.0` is default.                                    |
-| `stream`          | bool   | Enable chunked streaming. Not part of the official OpenAI schema, but widely accepted as a de facto standard by AI agents and frontends — see Real-Time Streaming below. |
+| Field             | Type          | Description |
+| ----------------- | ------------- | ----------- |
+| `model`           | string        | Any value (e.g. `"tts-1"`) — accepted for compatibility; the locally loaded Piper model is used. |
+| `input`           | string        | Text to synthesize. |
+| `voice`           | string/object | Local voice ID such as `"piper_base"` or `"John"`. `/v1` also accepts the OpenAI-style `{ "id": "John" }` object. |
+| `response_format` | string        | `mp3`, `wav`, `opus`, `flac`, `pcm`, or Tsubaki's `b64_json` representation. |
+| `instructions`    | string        | Accepted for OpenAI compatibility but intentionally ignored; Piper/OpenVoice has no equivalent natural-language style-control input. |
+| `speed`           | float         | Speech speed multiplier. `1.0` is default. |
+| `stream_format`   | string        | `audio` is supported. `sse` is recognized but currently rejected because SSE framing is not implemented. |
+| `stream`          | bool          | Tsubaki extension that overrides the server's chunked-streaming default for this request. |
 
-This endpoint follows the OpenAI-compatible request shape, with two optional Tsubaki extensions: `stream` for chunked delivery and `b64_json` as an additional response format. For DSP effects, voice cloning tuning, and detailed audio control, use the dedicated Tsubaki Endpoint below.
-
-> **Voice compatibility:** Both `/v1/audio/speech` and `/tsbk/audio/speech` also accept `voice` as an object with an `id` field (for example, `{"voice":{"id":"John"}}`) or as a numeric ID. Numeric IDs, including numeric object IDs, are normalized to strings internally.
+The Tsubaki endpoint reuses the same core fields and output formats where applicable, so they are not repeated below. Use `/tsbk/audio/speech` when you need Tsubaki-specific per-request controls.
 
 
 ### Base64 JSON Response
@@ -232,9 +232,9 @@ Recommended server-side streaming configuration in `appsettings.json`:
 }
 ```
 
-`FlushAfterEachSentence: true` means the client receives each synthesized sentence immediately as it is generated, rather than waiting for the full response. This is recommended for AI companion backends and real-time agent systems.
+`FlushAfterEachSentence: true` flushes each completed internal audio chunk immediately, including an `EarlySplit` first chunk. The setting name is retained for compatibility. This is recommended for AI companions and other latency-sensitive clients.
 
-> WAV format does not support true chunked streaming because its header requires the total file size to be written upfront. `mp3`, `opus`, `pcm`, and `b64_json` can use streaming delivery.
+> WAV does not support true chunked streaming because its header requires the final file size upfront. `mp3`, `opus`, `flac`, `pcm`, and `b64_json` can stream progressively.
 
 ---
 
@@ -287,11 +287,11 @@ Place all three files into the `Cloner/` folder:
 
 > These ONNX files are conversions of the **OpenVoice V2** models by MyShell; Tsubaki does not claim authorship of the original models. They are distributed under the **MIT License** and are free for commercial use.
 
-> **Performance Note:** Zero-shot voice cloning is a mathematically intensive operation. While the base `piper_base` voice synthesizes almost instantly, applying a custom cloned voice takes significantly more processing time. If you are running the engine on a CPU and want faster voice cloning, consider significantly increasing `IntraOpNumThreads` in `appsettings.json` (e.g., to match your physical core count). The default value is kept intentionally moderate so the engine balances cloning throughput with other applications (like games, LLMs, or AI agents) running in the background.
+> **Performance Note:** Voice cloning is substantially heavier than base Piper synthesis. On CPU, increasing `IntraOpNumThreads` can reduce cloning latency; the shipped value is intentionally moderate so Tsubaki can share CPU time with other applications.
 
 ## Fine-Tuning Cloning Behavior
 
-Both settings below can be tuned server-wide via `ClonerSettings` in `appsettings.json`, or overridden per request via `clone_intensity`/`tone_temperature` on the Tsubaki Endpoint — a per-request value takes priority for that request only, otherwise the server default applies.
+Both settings can be configured server-wide in `ClonerSettings` or overridden per request on the Tsubaki endpoint.
 
 ```json
 "ClonerSettings": {
@@ -300,22 +300,12 @@ Both settings below can be tuned server-wide via `ClonerSettings` in `appsetting
 }
 ```
 
-**Clone Intensity** controls the blending weight between the active Piper base-voice fingerprint and the selected target-voice fingerprint.
+| Setting | Practical meaning |
+| ------- | ----------------- |
+| `CloneIntensity` | `0.0` = base Piper voice, `0.5` = equal base/target blend, `1.0` = standard target voice, values above `1.0` exaggerate target-vs-base differences. |
+| `ToneTemperature` | OpenVoice `tau`. `0.7` is Tsubaki's stable default, `1.0` is standard OpenVoice behavior; lower values are more conservative, higher values add variation and can introduce artifacts. It is not an emotion control. |
 
-- **`0.0`:** Base Piper voice only; cloning is effectively bypassed.
-- **`0.5`:** 50% base voice, 50% target voice.
-- **`1.0`:** Target voice fingerprint at standard strength. This is the default.
-- **`1.5`:** Exaggerates the characteristics that distinguish the target voice from the base voice.
-- **Above `1.0`:** Extrapolates beyond the target fingerprint. Higher values can strengthen the target coloration, but excessive values may sound exaggerated or unnatural.
-
-**Tone Temperature** maps directly to OpenVoice's `tau` parameter and controls stochastic variation during tone-color conversion. It is **not an emotion control**.
-
-- **`1.0`:** Standard OpenVoice behavior.
-- **Below `1.0`:** More conservative and stable conversion with less latent variation.
-- **Above `1.0`:** More variation in the converter output. Higher values can make the result less stable and may introduce trembling, roughness, or other artifacts.
-- **`0.7`:** Tsubaki's shipped default, chosen as a more conservative setting for stable voice conversion.
-
-If a cloned voice develops trembling or warbling, lowering `tone_temperature` is the first thing to try. Use `clone_intensity` when you want to change **how strongly the target voice replaces or exceeds the base voice**, and `tone_temperature` when you want to change **how conservative or variable the OpenVoice conversion is**.
+If a clone develops trembling or warbling, lower `tone_temperature` first.
 
 ## Cloned Voice Volume
 
@@ -351,16 +341,9 @@ The volume adjustment is applied as a final gain stage with soft-knee limiting *
 
 # Tsubaki Endpoint
 
-Alongside the OpenAI-compatible endpoint above, Tsubaki exposes its own dedicated endpoint at `/tsbk/audio/speech` — a separate, independent API, not an extension bolted onto the OpenAI one. It shares the same core fields (`model`, `input`, `voice`, `response_format`, `speed`, `stream`) and follows the same philosophy: only `input` is required, every other field is optional and falls back to a sensible engine or server-config default if omitted. That makes it just as easy to point a minimal client at as the OpenAI endpoint — you only gain access to more, never lose the simplicity.
+Tsubaki also exposes `/tsbk/audio/speech` for full per-request control. It uses the same synthesis engine and core request fields described above, while adding DSP, spatial environments, pitch/volume, cloning controls, language routing, pronunciation variance, and synthesis chunk control.
 
-The simplest way to think about the two APIs:
-
-- `/v1/...` — use this when your client expects the OpenAI API. It provides the OpenAI-compatible request surface.
-- `/tsbk/...` — use this when you want Tsubaki's full audio controls. It accepts the same basic request fields plus Tsubaki-specific parameters.
-
-The `voice` field uses the same compatibility parser as `/v1/audio/speech`: string IDs are canonical, while numeric IDs and `{ "id": ... }` objects are also accepted.
-
-What it adds: real-time DSP effects, spatial environments, pitch/volume control, voice cloning tuning, and pronunciation variance — a much larger surface for **mechanically** controlling how something sounds, per request, without touching server config. This is especially useful for AI agents that want to express emotional state or acoustic context on the fly. Supported `response_format` values: `wav`, `mp3`, `opus`, `pcm`, and `b64_json`.
+Only `input` is required; omitted optional fields fall back to their engine or server defaults. Use `/v1/...` for OpenAI-shaped clients and `/tsbk/...` when you want Tsubaki-specific controls.
 
 A detailed **Swagger UI** with every parameter is available at `http://localhost:5045/swagger` when the server is running.
 
@@ -376,6 +359,7 @@ curl http://localhost:5045/tsbk/audio/speech \
     "response_format": "mp3",
     "speed": 1.0,
     "stream": true,
+    "early_split": true,
     "language": "auto",
 
     "effect": "Telephone",
@@ -442,25 +426,24 @@ curl http://localhost:5045/tsbk/audio/speech \
 
 ## Synthesis Parameters
 
-| Parameter     | Type   | Description                                                             |
-| ------------- | ------ | ------------------------------------------------------------------------ |
-| `language`    | string | Forces a specific eSpeak language or dialect code (e.g., `"uk"`, `"fr-ca"`), bypassing automatic language detection. Pass `"auto"` (or omit) to use Tsubaki's automatic language detection and fallback routing. |
-| `pitch`       | float | Pitch shift multiplier. `1.0` is original. `0.85` is noticeably deeper. |
-| `volume`      | float | Output volume multiplier with soft-knee limiter. `1.0` is original.     |
-| `noise_scale` | float | Controls pronunciation variance (intonation noise). Default: `0.667`.   |
-| `noise_w`     | float | Phoneme duration variance (rhythm). Default: `0.8`.                     |
+| Parameter     | Type   | Description |
+| ------------- | ------ | ----------- |
+| `language`    | string | Forces an eSpeak language/dialect code (e.g. `"uk"`, `"fr-ca"`). Use `"auto"` or omit it for automatic detection and fallback routing. |
+| `early_split` | bool   | Lets only the first synthesis chunk end at conservative clause punctuation to reduce time to first audio; normal sentence chunking resumes afterward. Overrides `ChunkerSettings.EarlySplit`. |
+| `pitch`       | float  | Pitch multiplier. `1.0` is unchanged. |
+| `volume`      | float  | Output volume multiplier with soft-knee limiting. `1.0` is unchanged. |
+| `noise_scale` | float  | Pronunciation/intonation variance. Default: `0.667`. |
+| `noise_w`     | float  | Phoneme-duration/rhythm variance. Default: `0.8`. |
 
 ## Cloning Parameters
 
-| Parameter             | Type  | Description                                                                                           |
-| --------------------- | ----- | ------------------------------------------------------------------------------------------------------- |
-| `clone_intensity`     | float | Tsubaki-side blend between the Piper base fingerprint and target voice: `0.0` = base, `1.0` = target, values above `1.0` emphasize target-vs-base differences. Per-request override of `ClonerSettings.CloneIntensity`. |
-| `tone_temperature`    | float | OpenVoice `tau`: controls stochastic latent variation during tone-color conversion. Higher values increase randomness and can destabilize the voice; this is not an emotion control. Per-request override of `ClonerSettings.ToneTemperature`. |
-| `low_pass_q_factor`   | float | Resonance curve (`0.1` - `1.0`) for the server-side low-pass filter on cloned voices. Mathematically fine-tunes high-frequency artifact reduction, though the acoustic difference is practically imperceptible to the human ear. |
+| Parameter             | Type  | Description |
+| --------------------- | ----- | ----------- |
+| `clone_intensity`     | float | Per-request override of `ClonerSettings.CloneIntensity`; see *Fine-Tuning Cloning Behavior*. |
+| `tone_temperature`    | float | Per-request OpenVoice `tau` override; see *Fine-Tuning Cloning Behavior*. |
+| `low_pass_q_factor`   | float | Per-request low-pass resonance/roll-off override (`0.1`–`1.0`) for cloned voices; see *LowPassQFactor* below. |
 
-> **Note:** For recommended values and their effect on high-frequency artifact reduction, see *LowPassQFactor* in the Server-Side DSP Defaults section below.
-
-> **For AI agents:** These parameters can be passed dynamically per utterance — allowing an agent to mechanically express state. `"Telephone"` + `"ConcreteHall"` for a basement interrogation, `"LoFiTape"` for a flashback, higher `pitch` for tension, or lowering `tone_temperature` when a cloned voice needs more stable conversion.
+> Tsubaki-specific controls can be changed per utterance, so agents can vary synthesis and acoustic context without changing server configuration.
 
 ---
 
@@ -532,39 +515,11 @@ Controls the resonance and roll-off curve of the low-pass filter used for cloned
 
 ### DefaultPitch
 
-Sets the server-wide pitch shift applied to all generated audio.
-
-| Value  | Effect                  |
-| ------ | ----------------------- |
-| `0.5`  | One octave lower        |
-| `0.85` | Noticeably deeper voice |
-| `1.0`  | Original (no change)    |
-| `1.15` | Slightly higher voice   |
-| `2.0`  | One octave higher       |
-
-**Why use it?** Standard OpenAI-compatible clients can't send a `pitch` parameter (see *Server-Side DSP Defaults* above) — set this once and every request automatically uses the adjusted pitch, no client changes required.
-
-**Per-request override:** If a client explicitly sends `"pitch": 0.85` in the request body, that value takes priority and the server default is ignored for that request only.
+Server-wide pitch multiplier: `1.0` leaves pitch unchanged, while `0.5`/`2.0` shift it one octave down/up. Tsubaki requests can override it per request with `pitch`; OpenAI-only clients use the server default.
 
 ### DefaultVolume
 
-Sets the server-wide volume multiplier applied to all generated audio. The engine uses a **soft-knee limiter** — the gain is applied linearly up to 80% of the signal ceiling, after which a smooth algebraic curve prevents harsh digital clipping on loud peaks.
-
-| Value  | Gain (approx.) | Practical effect                               |
-| ------ | -------------- | ------------------------------------------------ |
-| `0.25` | −12 dB         | Very quiet — good for mixing under other audio  |
-| `0.5`  | −6 dB          | Noticeably quieter                              |
-| `0.71` | −3 dB          | Slightly quieter                                |
-| `1.0`  | 0 dB           | Original level (no change)                      |
-| `1.41` | +3 dB          | Slightly louder                                 |
-| `2.0`  | +6 dB          | Noticeably louder — good for quiet clones       |
-| `4.0`  | +12 dB         | Maximum boost — soft-knee limiter fully active  |
-
-**Why use it?** `DefaultVolume` is the server-wide playback level. It is useful when you want the same volume adjustment applied consistently to every request, including standard OpenAI-compatible clients.
-
-**Per-request override:** If a client explicitly sends `"volume": 2.0` in the request body, that value takes priority and the server default is ignored for that request only.
-
-`1.0` means the server's baseline volume is unchanged. The fixed `VolumeBoosterDb` correction described below is applied underneath this multiplier.
+Server-wide volume multiplier with soft-knee limiting: `1.0` is unchanged, `0.5` is about −6 dB, `2.0` about +6 dB, and `4.0` is the maximum +12 dB setting. Tsubaki requests can override it with `volume`; `VolumeBoosterDb` is applied underneath this multiplier.
 
 ### VolumeBoosterDb
 
@@ -756,13 +711,15 @@ docker-compose up --build -d
 
 ## Bare-Metal Linux (CPU)
 
-If you are running directly on a Linux host without Docker, you must install the native TTS engine and MP3 encoder libraries before running the server:
+For bare-metal Linux, **eSpeak NG is required** for phonemization. LAME is optional and only needed for `mp3` and `b64_json`; without it, `wav`, `flac`, `opus`, and `pcm` remain available.
 
 ```bash
-sudo apt-get update && sudo apt-get install -y espeak-ng libmp3lame0
+sudo apt-get update
+sudo apt-get install -y espeak-ng
+sudo apt-get install -y libmp3lame0   # optional: MP3 + b64_json
 ```
 
-The server also includes a **Linux auto-healing system**: on startup it automatically detects and fixes common native library symlink issues for `libespeak-ng.so` and `libmp3lame`, which are particularly common in containerized environments.
+Tsubaki detects these native libraries at startup and reports which audio formats are available.
 
 ## Bare-Metal Linux (CUDA GPU) — Not Recommended
 
@@ -836,17 +793,19 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 ## Text Processing
 
-- **`ChunkerSettings`** — Controls sentence-level safety chunking for Piper. Normal input is first split at sentence boundaries; `MaxChunkLength` is only used when a single sentence is unusually long. Such sentences are force-split at a natural pause mark when possible, then at whitespace, and finally at a safe character boundary. The shipped `200`-character limit protects Piper from oversized single-sentence inference inputs without cutting ordinary sentences into fixed-size blocks.
+- **`ChunkerSettings`** — Controls sentence chunking and the optional low-latency first split. Normal text is split at sentence boundaries; `MaxChunkLength` is only an emergency cap for unusually long single sentences.
 
 ```json
 "ChunkerSettings": {
   "MaxChunkLength": 200,
+  "EarlySplit": true,
   "SentencePauseSeconds": 0.3
 }
 ```
 
-- **`MaxChunkLength`** — emergency safety cap for one already-detected sentence, measured in text characters. It does not mean that normal input is blindly cut every 200 characters.
-- **`SentencePauseSeconds`** — configurable pause inserted between generated text chunks. Adjust it to match the pacing of your model and use case.
+- **`MaxChunkLength`** — emergency cap for one already-detected sentence. Long sentences prefer a natural pause mark, then whitespace, then a safe character boundary.
+- **`EarlySplit`** — allows one conservative clause-level split before the first audio chunk to reduce time to first audio; normal sentence chunking resumes immediately afterward. `/tsbk/audio/speech` can override it per request with `early_split`.
+- **`SentencePauseSeconds`** — pause added only after real sentence boundaries. Early and emergency continuation chunks do not receive this artificial sentence pause.
 
 ---
 
@@ -892,7 +851,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 
 - **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter), server-wide default pitch and volume, and a fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
 
-- **`ClonerSettings`** — Controls voice blending and OpenVoice conversion stability. `CloneIntensity`: `0.0` = base Piper voice, `0.5` = equal base/target blend, `1.0` = target voice at standard strength, values above `1.0` exaggerate target-vs-base differences. `ToneTemperature`: `1.0` = standard OpenVoice behavior, values below `1.0` are more conservative/stable, values above `1.0` introduce more latent variation and may become unstable. Tsubaki ships with `ToneTemperature: 0.7`.
+- **`ClonerSettings`** — Server defaults for cloning strength, OpenVoice conversion stability, and reference-audio loudness normalization. See *Fine-Tuning Cloning Behavior* and *Cloned Voice Volume* above.
 - **`EnableCloning`** — Enables or disables OpenVoice voice cloning. Leave it `true` to use voices stored in the `Voices/` folder; when enabled, those voices are discovered automatically at server startup and appear in the Web Dashboard voice list.
 
 ---
