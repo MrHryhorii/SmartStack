@@ -644,10 +644,24 @@ public partial class OpenVoiceRunner : IDisposable
             var dummyDestFingerprint = Enumerable.Range(0, channels)
                 .Select(_ => (float)(rng.NextDouble() * 0.1))
                 .ToArray();
-            // Perform multiple passes to ensure all parts of the model are warmed up, including any dynamic graph optimizations.
-            for (int pass = 0; pass < 2; pass++)
+            // Warm every resident pooled session at least once. ApplyToneColor dequeues the
+            // next session and enqueues it again after inference, so a full pool-sized cycle
+            // touches each session exactly once and restores the original queue order.
+            // Keep the historical two-pass warmup for shared/single-session execution.
+            int warmupPasses = _isUsingColorPool
+                ? Math.Max(2, ColorConcurrencyCapacity)
+                : 2;
+
+            for (int pass = 0; pass < warmupPasses; pass++)
             {
-                var result = ApplyToneColor(dummySpectrogram, frames, bins, dummySrcFingerprint, dummyDestFingerprint, 1.0f);
+                var result = ApplyToneColor(
+                    dummySpectrogram,
+                    frames,
+                    bins,
+                    dummySrcFingerprint,
+                    dummyDestFingerprint,
+                    1.0f);
+
                 ArrayPool<float>.Shared.Return(result.Buffer);
             }
             // If we reach this point without exceptions, the warmup is successful.

@@ -26,7 +26,6 @@ public class AudioStreamManager : IDisposable
     private readonly Stream? _audioWriter;
     private readonly LameMp3Encoder? _lameEncoder;
     private readonly AudioFormat _format;
-    private readonly RequestDiagnostics? _diagnostics;
 
     private readonly IOpusEncoder? _opusEncoder;
     private readonly OggOpusMuxer? _oggMuxer;
@@ -40,7 +39,6 @@ public class AudioStreamManager : IDisposable
     private int _opusBufferCount;
     private long _opusEncodedGranule48k;
     private long _samplesWritten;
-    private bool _encoderInputMarked;
     private bool _finalized;
     private bool _opusBuffersReturned;
 
@@ -58,7 +56,6 @@ public class AudioStreamManager : IDisposable
     {
         _format = format;
         _baseStream = targetStream;
-        _diagnostics = RequestLogContext.Current;
 
         if (_format == AudioFormat.Mp3 || _format == AudioFormat.B64Json)
         {
@@ -152,15 +149,6 @@ public class AudioStreamManager : IDisposable
         try
         {
             ConvertFloatToPcm16(samples, shortSamples);
-
-            // Mark only the first PCM block entering the codec/output writer.
-            // This lets BridgingStream distinguish constructor/header bytes
-            // from the first audio-bearing bytes.
-            if (!_encoderInputMarked)
-            {
-                _diagnostics?.MarkEncoderInput();
-                _encoderInputMarked = true;
-            }
 
             if (_format == AudioFormat.Mp3 || _format == AudioFormat.B64Json)
             {

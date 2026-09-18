@@ -1,7 +1,6 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using NAudio.Wave;
-using NAudio.Lame;
 using ONNX_Runner.Models;
 using System.Buffers;
 using System.Numerics;
@@ -385,63 +384,6 @@ public partial class PiperRunner : IDisposable
                 }
 
                 // Process the remaining samples (the "tail") that didn't fit into a SIMD vector.
-                for (; i < audioSamples.Length; i++)
-                {
-                    float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;
-                    short shortSample = (short)sample;
-                    buffer[i * 2] = (byte)(shortSample & 0xFF);
-                    buffer[i * 2 + 1] = (byte)((shortSample >> 8) & 0xFF);
-                }
-
-                writer.Write(buffer, 0, requiredBytes);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(buffer);
-            }
-        }
-
-        return memoryStream.ToArray();
-    }
-
-    /// <summary>
-    /// Encodes float samples into high-quality MP3 using the LAME encoder and SIMD scaling.
-    /// </summary>
-    public byte[] ConvertToMp3(ReadOnlySpan<float> audioSamples, int sampleRate)
-    {
-        using var memoryStream = new MemoryStream();
-        var waveFormat = new WaveFormat(sampleRate, 16, 1);
-
-        using (var writer = new LameMP3FileWriter(memoryStream, waveFormat, LAMEPreset.VBR_90))
-        {
-            int requiredBytes = audioSamples.Length * 2;
-            byte[] buffer = ArrayPool<byte>.Shared.Rent(requiredBytes);
-
-            try
-            {
-                // Identical SIMD logic to ConvertToWav to ensure maximum performance 
-                // when converting floats to the shorts expected by the MP3 encoder.
-                int vectorSize = Vector<float>.Count;
-                int i = 0;
-                var minVec = new Vector<float>(-1f);
-                var maxVec = new Vector<float>(1f);
-                var multVec = new Vector<float>(32767f);
-
-                for (; i <= audioSamples.Length - vectorSize; i += vectorSize)
-                {
-                    var vSamples = new Vector<float>(audioSamples[i..]);
-                    var vClamped = Vector.Max(minVec, Vector.Min(maxVec, vSamples));
-                    var vScaled = vClamped * multVec;
-
-                    for (int k = 0; k < vectorSize; k++)
-                    {
-                        short shortSample = (short)vScaled[k];
-                        int bufferIndex = (i + k) * 2;
-                        buffer[bufferIndex] = (byte)(shortSample & 0xFF);
-                        buffer[bufferIndex + 1] = (byte)((shortSample >> 8) & 0xFF);
-                    }
-                }
-
                 for (; i < audioSamples.Length; i++)
                 {
                     float sample = Math.Clamp(audioSamples[i], -1f, 1f) * 32767f;

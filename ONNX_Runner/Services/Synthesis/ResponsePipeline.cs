@@ -48,7 +48,7 @@ internal static class ResponsePipeline
     /// </summary>
     internal struct State
     {
-        public Channel<(byte[] Buffer, int Length, bool ContainsAudio)>? NetworkChannel;
+        public Channel<(byte[] Buffer, int Length)>? NetworkChannel;
         public Task? NetworkSenderTask;
         public Stream? RawStream;
         public Stream? TargetStream;
@@ -96,7 +96,7 @@ internal static class ResponsePipeline
             FullMode = BoundedChannelFullMode.Wait
         };
 
-        state.NetworkChannel = Channel.CreateBounded<(byte[] Buffer, int Length, bool ContainsAudio)>(channelOptions);
+        state.NetworkChannel = Channel.CreateBounded<(byte[] Buffer, int Length)>(channelOptions);
 
         int chunkSize = streamConfig.MinChunkSizeKb * 1024;
         state.RawStream = new BridgingStream(state.NetworkChannel.Writer, chunkSize);
@@ -142,7 +142,6 @@ internal static class ResponsePipeline
         state.NetworkSenderTask = SendToNetworkAsync(
             state.NetworkChannel,
             httpContext.Response.Body,
-            RequestLogContext.Current,
             cancellationToken);
     }
 
@@ -334,13 +333,10 @@ internal static class ResponsePipeline
     }
 
     private static async Task SendToNetworkAsync(
-        Channel<(byte[] Buffer, int Length, bool ContainsAudio)> channel,
+        Channel<(byte[] Buffer, int Length)> channel,
         Stream responseBody,
-        RequestDiagnostics? diagnostics,
         CancellationToken cancellationToken)
     {
-        bool httpAudioTimingMarked = false;
-
         try
         {
             await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
@@ -355,12 +351,6 @@ internal static class ResponsePipeline
                         cancellationToken);
 
                     await responseBody.FlushAsync(cancellationToken);
-
-                    if (chunk.ContainsAudio && !httpAudioTimingMarked)
-                    {
-                        diagnostics?.MarkHttpAudioFlushed();
-                        httpAudioTimingMarked = true;
-                    }
                 }
                 finally
                 {
@@ -388,7 +378,7 @@ internal static class ResponsePipeline
     }
 
     private static void DrainQueuedBuffers(
-        ChannelReader<(byte[] Buffer, int Length, bool ContainsAudio)> reader)
+        ChannelReader<(byte[] Buffer, int Length)> reader)
     {
         while (reader.TryRead(out var chunk))
         {

@@ -12,7 +12,7 @@ namespace ONNX_Runner.Services;
 /// different endpoints exist. Endpoints and adapters should never call the generation
 /// pipeline or touch the semaphore directly; they should only ever call SynthesizeAsync.
 /// </summary>
-public class SpeechSynthesisService(
+public partial class SpeechSynthesisService(
     SemaphoreSlim gpuSemaphore,
     IServiceProvider services,
     NativeAudioDependencies nativeAudioDependencies,
@@ -32,21 +32,21 @@ public class SpeechSynthesisService(
         long requestId = Interlocked.Increment(ref s_requestSequence);
         long requestStartedTimestamp = Stopwatch.GetTimestamp();
 
-        using var requestLogContext =
-            RequestLogContext.Push(requestId, requestStartedTimestamp);
-
-        RequestDiagnostics diagnostics = requestLogContext.Diagnostics;
+        using var requestLogContext = RequestLogContext.Push(requestId);
 
         string requestedVoice = string.IsNullOrWhiteSpace(request.Voice)
             ? "piper_base"
             : request.Voice;
 
-        logger.LogInformation(
-            "Request received | chars={CharacterCount} | voice={Voice} | format={Format} | stream={Stream}",
-            request.Input.Length,
-            requestedVoice,
-            request.Format,
-            request.Stream?.ToString() ?? "default");
+        if (logger.IsEnabled(LogLevel.Information))
+        {
+            LogRequestReceived(
+                logger,
+                request.Input.Length,
+                requestedVoice,
+                request.Format,
+                request.Stream?.ToString() ?? "default");
+        }
 
         // =================================================================
         // REQUEST VALIDATION
@@ -187,7 +187,6 @@ public class SpeechSynthesisService(
 
             generationStarted = true;
             generationStartedTimestamp = Stopwatch.GetTimestamp();
-            diagnostics.StartGeneration(generationStartedTimestamp);
 
             // =================================================================
             // ASYNCHRONOUS AUDIO GENERATION (PRODUCER-CONSUMER PATTERN)
@@ -222,66 +221,25 @@ public class SpeechSynthesisService(
             TimeSpan totalElapsed =
                 Stopwatch.GetElapsedTime(requestStartedTimestamp);
 
-            double audioSeconds = generationResult.AudioSeconds;
-            double generationSeconds = generationElapsed.TotalSeconds;
-            double rtf = audioSeconds > 0.0
-                ? generationSeconds / audioSeconds
-                : 0.0;
-            double realtimeSpeed = generationSeconds > 0.0
-                ? audioSeconds / generationSeconds
-                : 0.0;
-
-            double? ttfaMs = diagnostics.TtfaMs;
-
-            if (ttfaMs.HasValue)
+            if (logger.IsEnabled(LogLevel.Information))
             {
-                logger.LogInformation(
-                    "Generation completed | audio={AudioSeconds:F3} s | generation={GenerationSeconds:F3} s | TTFA={TtfaMs:F1} ms | RTF={Rtf:F3} | speed={Speed:F2}x | queue={QueueMs:F1} ms | total={TotalSeconds:F3} s",
-                    audioSeconds,
-                    generationSeconds,
-                    ttfaMs.Value,
-                    rtf,
-                    realtimeSpeed,
-                    queueElapsed.TotalMilliseconds,
-                    totalElapsed.TotalSeconds);
-            }
-            else
-            {
-                logger.LogInformation(
-                    "Generation completed | audio={AudioSeconds:F3} s | generation={GenerationSeconds:F3} s | TTFA=n/a | RTF={Rtf:F3} | speed={Speed:F2}x | queue={QueueMs:F1} ms | total={TotalSeconds:F3} s",
+                double audioSeconds = generationResult.AudioSeconds;
+                double generationSeconds = generationElapsed.TotalSeconds;
+                double rtf = audioSeconds > 0.0
+                    ? generationSeconds / audioSeconds
+                    : 0.0;
+                double realtimeSpeed = generationSeconds > 0.0
+                    ? audioSeconds / generationSeconds
+                    : 0.0;
+
+                LogGenerationCompleted(
+                    logger,
                     audioSeconds,
                     generationSeconds,
                     rtf,
                     realtimeSpeed,
                     queueElapsed.TotalMilliseconds,
                     totalElapsed.TotalSeconds);
-            }
-
-            if (logger.IsEnabled(LogLevel.Debug))
-            {
-                if (ctx.CanClone)
-                {
-                    logger.LogDebug(
-                        "First audio timing | piper={PiperMs:F1} ms | clone={CloneMs:F1} ms | processed={ProcessedMs:F1} ms | encoder_in={EncoderInputMs:F1} ms | encoded={EncodedMs:F1} ms | transport={TransportMs:F1} ms | http={HttpMs:F1} ms",
-                        diagnostics.PiperMs ?? double.NaN,
-                        diagnostics.CloneMs ?? double.NaN,
-                        diagnostics.ProcessedMs ?? double.NaN,
-                        diagnostics.EncoderInputMs ?? double.NaN,
-                        diagnostics.EncodedAudioMs ?? double.NaN,
-                        diagnostics.TransportQueuedMs ?? double.NaN,
-                        diagnostics.HttpAudioMs ?? double.NaN);
-                }
-                else
-                {
-                    logger.LogDebug(
-                        "First audio timing | piper={PiperMs:F1} ms | processed={ProcessedMs:F1} ms | encoder_in={EncoderInputMs:F1} ms | encoded={EncodedMs:F1} ms | transport={TransportMs:F1} ms | http={HttpMs:F1} ms",
-                        diagnostics.PiperMs ?? double.NaN,
-                        diagnostics.ProcessedMs ?? double.NaN,
-                        diagnostics.EncoderInputMs ?? double.NaN,
-                        diagnostics.EncodedAudioMs ?? double.NaN,
-                        diagnostics.TransportQueuedMs ?? double.NaN,
-                        diagnostics.HttpAudioMs ?? double.NaN);
-                }
             }
 
             return result;
@@ -352,6 +310,30 @@ public class SpeechSynthesisService(
             }
         }
     }
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Request received | chars={CharacterCount} | voice={Voice} | format={Format} | stream={Stream}",
+        SkipEnabledCheck = true)]
+    private static partial void LogRequestReceived(
+        ILogger logger,
+        int characterCount,
+        string voice,
+        AudioFormat format,
+        string stream);
+
+    [LoggerMessage(
+        Level = LogLevel.Information,
+        Message = "Generation completed | audio={AudioSeconds:F3} s | generation={GenerationSeconds:F3} s | RTF={Rtf:F3} | speed={Speed:F2}x | queue={QueueMs:F1} ms | total={TotalSeconds:F3} s",
+        SkipEnabledCheck = true)]
+    private static partial void LogGenerationCompleted(
+        ILogger logger,
+        double audioSeconds,
+        double generationSeconds,
+        double rtf,
+        double speed,
+        double queueMs,
+        double totalSeconds);
 
     private static string GetStage(bool semaphoreAcquired, bool generationStarted)
     {

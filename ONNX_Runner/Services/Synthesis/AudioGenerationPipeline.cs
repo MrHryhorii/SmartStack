@@ -33,8 +33,6 @@ internal static class AudioGenerationPipeline
     {
         var request = ctx.Request;
         var textChunks = ctx.TextChunker.Split(request.Input);
-        RequestDiagnostics? diagnostics = RequestLogContext.Current;
-
         float[]? targetFingerprint = null;
         float[]? sourceFingerprint = null;
 
@@ -151,7 +149,6 @@ internal static class AudioGenerationPipeline
                 // LOCAL STATE: Tracks sentence continuation across chunks within the same request.
                 // Defaults to true, assuming the very first chunk is the start of a new thought.
                 bool previousChunkWasFinished = true;
-                bool piperTimingMarked = false;
 
                 foreach (var chunk in textChunks)
                 {
@@ -237,12 +234,6 @@ internal static class AudioGenerationPipeline
 
                     // Pass the streaming flags to the generator
                     var rawResult = ctx.PiperRunner.SynthesizeAudioRaw(phonemes, isContinuation, isFinished, request.Speed, request.NoiseScale, request.NoiseW);
-                    if (!piperTimingMarked)
-                    {
-                        diagnostics?.MarkPiperReady();
-                        piperTimingMarked = true;
-                    }
-
                     // NOTE: Volume is intentionally NOT applied here. It's applied in the
                     // consumer task, after voice cloning (if active), so the cloning model
                     // always sees Piper's natural, un-boosted waveform.
@@ -341,9 +332,6 @@ internal static class AudioGenerationPipeline
         {
             try
             {
-                bool cloneTimingMarked = false;
-                bool processedTimingMarked = false;
-
                 await foreach (var chunk in channel.Reader.ReadAllAsync(cancellationToken))
                 {
                     float[]? rentedBuffer1 = null;
@@ -388,6 +376,7 @@ internal static class AudioGenerationPipeline
                                 try
                                 {
                                     float tau = request.ToneTemperature ?? ctx.ClonerConfig.ToneTemperature;
+
                                     var rClone = ctx.OpenVoice!.ApplyToneColor(
                                         specChunk.Buffer,
                                         specChunk.Frames,
@@ -412,12 +401,6 @@ internal static class AudioGenerationPipeline
                             }
                         }
 
-                        if (ctx.CanClone && !cloneTimingMarked)
-                        {
-                            diagnostics?.MarkCloneReady();
-                            cloneTimingMarked = true;
-                        }
-
                         // Applies target volume post-cloning to protect OpenVoice from boosted input levels.
                         // Acts as unified gain staging for both cloned and base Piper outputs.
                         if (useVolumeShift)
@@ -439,12 +422,6 @@ internal static class AudioGenerationPipeline
 
                         // Apply spatial acoustics AFTER character effects
                         spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
-                        if (!processedTimingMarked)
-                        {
-                            diagnostics?.MarkProcessedReady();
-                            processedTimingMarked = true;
-                        }
-
                         streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
                         // Append a brief pause (silence) between sentences for natural pacing
