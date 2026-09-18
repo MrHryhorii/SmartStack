@@ -92,7 +92,7 @@ public partial class OpenVoiceRunner : IDisposable
     private static (InferenceSession? ExtractSession, InferenceSession? SharedColorSession, ConcurrentQueue<InferenceSession>? ColorSessionPool, bool IsUsingColorPool, int Capacity) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<OpenVoiceRunner> logger)
     {
         // ====================================================================
-        // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
+        // GPU ACCELERATION BLOCK (Compiled when USE_CUDA, USE_DML, or USE_WEBGPU is set)
         // ====================================================================
 #if USE_CUDA || USE_DML || USE_WEBGPU
         // Protection against negative numbers in config
@@ -124,7 +124,7 @@ public partial class OpenVoiceRunner : IDisposable
                 var extract = new InferenceSession(extractPath, gpuOptions);
                 var color = new InferenceSession(colorPath, gpuOptions);
 
-                LogCudaLoaded(logger, deviceId);
+                OnnxHardwareDiagnostics.LogCudaDevice(logger, "OpenVoice Models", deviceId);
                 return (extract, color, null, false, int.MaxValue);
 #elif USE_DML
                 // DirectML crashes on concurrent execution.
@@ -158,7 +158,7 @@ public partial class OpenVoiceRunner : IDisposable
                     throw;
                 }
 
-                LogDmlLoaded(logger, deviceId);
+                OnnxHardwareDiagnostics.LogDirectMlDevice(logger, "OpenVoice Models", deviceId);
                 return (extract, null, colorPool, true, poolSize);
 #elif USE_WEBGPU
                 // WebGPU is provided as a plugin Execution Provider.
@@ -285,12 +285,11 @@ public partial class OpenVoiceRunner : IDisposable
                     throw;
                 }
 
-                logger.LogInformation(
-                    "[HARDWARE] OpenVoice Models loaded on GPU " +
-                    "(WebGPU, Adapter: {AdapterIndex}, Vendor: {Vendor}, DeviceId: {HardwareDeviceId})",
+                OnnxHardwareDiagnostics.LogWebGpuDevice(
+                    logger,
+                    "OpenVoice Models",
                     deviceId,
-                    webGpuDevice.HardwareDevice.Vendor,
-                    webGpuDevice.HardwareDevice.DeviceId);
+                    webGpuDevice);
 
                 return (
                     extract,
@@ -329,7 +328,7 @@ public partial class OpenVoiceRunner : IDisposable
         var cpuExtract = new InferenceSession(extractPath, cpuOptions);
         var cpuColor = new InferenceSession(colorPath, cpuOptions);
 
-        logger.LogInformation("[HARDWARE] OpenVoice Models loaded on CPU.");
+        OnnxHardwareDiagnostics.LogCpuDevice(logger, "OpenVoice Models");
 
         // CPU supports concurrent execution on a single session.
         return (cpuExtract, cpuColor, null, false, int.MaxValue);

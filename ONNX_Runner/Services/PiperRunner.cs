@@ -110,7 +110,7 @@ public partial class PiperRunner : IDisposable
     private static (InferenceSession? SharedSession, ConcurrentQueue<InferenceSession>? SessionPool, bool IsUsingGPU, bool IsUsingPool, int Capacity) InitializeSession(string modelPath, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<PiperRunner> logger)
     {
         // ====================================================================
-        // GPU ACCELERATION BLOCK (Compiled ONLY if USE_CUDA or USE_DML is set)
+        // GPU ACCELERATION BLOCK (Compiled when USE_CUDA, USE_DML, or USE_WEBGPU is set)
         // ====================================================================
 #if USE_CUDA || USE_DML || USE_WEBGPU
         if (hwSettings.ForcePiperToCpu)
@@ -145,8 +145,8 @@ public partial class PiperRunner : IDisposable
                     gpuOptions.AppendExecutionProvider_CUDA(deviceId);
                     var session = new InferenceSession(modelPath, gpuOptions);
                     
-                    LogCudaLoaded(logger, deviceId); 
-                    
+                    OnnxHardwareDiagnostics.LogCudaDevice(logger, "Piper Model", deviceId);
+
                     return (session, null, true, false, int.MaxValue);
 #elif USE_DML
                     // DirectML crashes on concurrent execution. We create a fixed-size Object Pool.
@@ -172,7 +172,7 @@ public partial class PiperRunner : IDisposable
                         throw;
                     }
 
-                    LogDmlLoaded(logger, deviceId);
+                    OnnxHardwareDiagnostics.LogDirectMlDevice(logger, "Piper Model", deviceId);
                     return (null, pool, true, true, poolSize);
 #elif USE_WEBGPU
                     // [HYBRID ARCHITECTURE] 
@@ -195,7 +195,9 @@ public partial class PiperRunner : IDisposable
                     onnxSettings.Cpu.ApplyTo(hybridCpuOptions);
                     var session = new InferenceSession(modelPath, hybridCpuOptions);
 
-                    // IsUsingGPU = false ensures Program.cs strictly applies MaxConcurrentCpuRequests 
+                    OnnxHardwareDiagnostics.LogCpuDevice(logger, "Piper Model");
+
+                    // IsUsingGPU = false ensures Program.cs strictly applies MaxConcurrentCpuRequests
                     // for the global pipeline semaphore.
                     return (session, null, false, false, int.MaxValue);
 #endif
@@ -227,7 +229,7 @@ public partial class PiperRunner : IDisposable
         onnxSettings.Cpu.ApplyTo(cpuOptions);
 
         var fallbackSession = new InferenceSession(modelPath, cpuOptions);
-        logger.LogInformation("[HARDWARE] Piper Model loaded successfully on CPU.");
+        OnnxHardwareDiagnostics.LogCpuDevice(logger, "Piper Model");
 
         // CPU supports concurrent execution on a single session.
         return (fallbackSession, null, false, false, int.MaxValue);
