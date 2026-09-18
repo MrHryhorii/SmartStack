@@ -41,6 +41,7 @@ public static class TsubakiRequestAdapter
             Voice = dto.Voice,
             Speed = dto.Speed,
             Stream = dto.Stream,
+            EarlySplit = dto.EarlySplit,
             NoiseScale = dto.NoiseScale,
             NoiseW = dto.NoiseW,
             Effect = dto.Effect,

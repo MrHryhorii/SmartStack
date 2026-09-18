@@ -72,6 +72,13 @@ public class TsubakiSpeechRequest
     public bool? Stream { get; set; }
 
     /// <summary>
+    /// Allows one conservative punctuation split before the first generated audio chunk.
+    /// Normal sentence chunking is used afterward. Overrides the server default when provided.
+    /// </summary>
+    [JsonPropertyName("early_split")]
+    public bool? EarlySplit { get; set; }
+
+    /// <summary>
     /// Variance of pitch/intonation (Expression). Typically ranges from 0.0 to 1.0.
     /// </summary>
     private float? _noiseScale;

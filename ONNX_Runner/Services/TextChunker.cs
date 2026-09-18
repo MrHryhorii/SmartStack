@@ -151,17 +151,14 @@ public class TextChunker(ChunkerSettings settings)
     // A hyphen signals a soft, continuous break to the TTS engine rather than a hard pause.
     private const string EmergencyGlue = "-";
 
-    // Additional pause marks that often indicate natural break points in sentences, even if they aren't full terminators.
-    // These are NOT sentence terminators — they signal a softer pause used by SplitLongSentence for emergency splitting.
-    private static readonly char[] PauseMarks =
+    // Punctuation groups are composed once at type initialization. EarlySplit uses only
+    // conservative clause boundaries; emergency splitting keeps the complete legacy set.
+    private static readonly char[] ClausePunctuation =
     [
-        // Common soft boundaries
+        // Common clause boundaries
         ',', // U+002C  COMMA
         ';', // U+003B  SEMICOLON
         ':', // U+003A  COLON
-        '-', // U+002D  HYPHEN-MINUS
-        '–', // U+2013  EN DASH
-        '—', // U+2014  EM DASH
 
         // Greek
         '·', // U+0387  GREEK ANO TELEIA
@@ -185,37 +182,17 @@ public class TextChunker(ChunkerSettings settings)
         '܈', // U+0708  SYRIAC SUPRALINEAR COLON SKEWED LEFT
         '܉', // U+0709  SYRIAC SUBLINEAR COLON SKEWED RIGHT
 
-        // Tibetan shad-family marks are structural/phrase boundaries rather than a reliable
-        // one-to-one equivalent of Western sentence endings, so use them only as soft split points.
-        '།', // U+0F0D  TIBETAN MARK SHAD
-        '༎', // U+0F0E  TIBETAN MARK NYIS SHAD
-        '༏', // U+0F0F  TIBETAN MARK TSHEG SHAD
-        '༐', // U+0F10  TIBETAN MARK NYIS TSHEG SHAD
-        '༑', // U+0F11  TIBETAN MARK RIN CHEN SPUNGS SHAD
-        '༒', // U+0F12  TIBETAN MARK RGYA GRAM SHAD
-        '༔', // U+0F14  TIBETAN MARK GTER TSHEG
-
-        // Ethiopic soft punctuation
+        // Ethiopic
         '፣', // U+1363  ETHIOPIC COMMA
         '፤', // U+1364  ETHIOPIC SEMICOLON
         '፥', // U+1365  ETHIOPIC COLON
         '፦', // U+1366  ETHIOPIC PREFACE COLON
 
-        // Myanmar clause separator
+        // Myanmar
         '၊', // U+104A  MYANMAR SIGN LITTLE SECTION
 
         // Khmer
         '៖', // U+17D6  KHMER SIGN CAMNUC PII KUUH
-
-        // Tai Tham structural punctuation
-        '᪨', // U+1AA8  TAI THAM SIGN KAAN
-        '᪩', // U+1AA9  TAI THAM SIGN KAANKUU
-        '᪪', // U+1AAA  TAI THAM SIGN SATKAAN
-        '᪫', // U+1AAB  TAI THAM SIGN SATKAANKUU
-
-        // Balinese / Javanese clause separators
-        '᭞', // U+1B5E  BALINESE CARIK SIKI
-        '꧈', // U+A9C8  JAVANESE PADA LINGSA
 
         // East Asian punctuation
         '，', // U+FF0C  FULLWIDTH COMMA
@@ -231,18 +208,64 @@ public class TextChunker(ChunkerSettings settings)
         '︓', // U+FE13  PRESENTATION FORM FOR VERTICAL COLON
         '︔', // U+FE14  PRESENTATION FORM FOR VERTICAL SEMICOLON
 
-        // Runic structural punctuation
-        '᛫', // U+16EB  RUNIC SINGLE PUNCTUATION
-        '᛬', // U+16EC  RUNIC MULTIPLE PUNCTUATION
-        '᛭', // U+16ED  RUNIC CROSS PUNCTUATION
-
         // Mongolian
         '᠂', // U+1802  MONGOLIAN COMMA
         '᠄', // U+1804  MONGOLIAN COLON
         '᠈', // U+1808  MONGOLIAN MANCHU COMMA
     ];
 
-    // Cached because the expanded multilingual set is searched repeatedly on the hot path.
+    private static readonly char[] DashPunctuation =
+    [
+        '-', // U+002D  HYPHEN-MINUS
+        '–', // U+2013  EN DASH
+        '—', // U+2014  EM DASH
+    ];
+
+    private static readonly char[] StructuralPunctuation =
+    [
+        // Tibetan shad-family marks
+        '།', // U+0F0D  TIBETAN MARK SHAD
+        '༎', // U+0F0E  TIBETAN MARK NYIS SHAD
+        '༏', // U+0F0F  TIBETAN MARK TSHEG SHAD
+        '༐', // U+0F10  TIBETAN MARK NYIS TSHEG SHAD
+        '༑', // U+0F11  TIBETAN MARK RIN CHEN SPUNGS SHAD
+        '༒', // U+0F12  TIBETAN MARK RGYA GRAM SHAD
+        '༔', // U+0F14  TIBETAN MARK GTER TSHEG
+
+        // Tai Tham structural punctuation
+        '᪨', // U+1AA8  TAI THAM SIGN KAAN
+        '᪩', // U+1AA9  TAI THAM SIGN KAANKUU
+        '᪪', // U+1AAA  TAI THAM SIGN SATKAAN
+        '᪫', // U+1AAB  TAI THAM SIGN SATKAANKUU
+
+        // Balinese / Javanese structural punctuation
+        '᭞', // U+1B5E  BALINESE CARIK SIKI
+        '꧈', // U+A9C8  JAVANESE PADA LINGSA
+
+        // Runic structural punctuation
+        '᛫', // U+16EB  RUNIC SINGLE PUNCTUATION
+        '᛬', // U+16EC  RUNIC MULTIPLE PUNCTUATION
+        '᛭', // U+16ED  RUNIC CROSS PUNCTUATION
+    ];
+
+    // Conservative set used only for the optional one-time EarlySplit.
+    private static readonly char[] EarlySplitPunctuation =
+    [
+        .. ClausePunctuation,
+    ];
+
+    // Full legacy set used by emergency MaxChunkLength splitting and abbreviation checks.
+    private static readonly char[] PauseMarks =
+    [
+        .. ClausePunctuation,
+        .. DashPunctuation,
+        .. StructuralPunctuation,
+    ];
+
+    // SearchValues are built once and reused on the hot path.
+    private static readonly System.Buffers.SearchValues<char> s_earlySplitPunctuation =
+        System.Buffers.SearchValues.Create(EarlySplitPunctuation);
+
     private static readonly System.Buffers.SearchValues<char> s_pauseMarks =
         System.Buffers.SearchValues.Create(PauseMarks);
 
@@ -281,229 +304,149 @@ public class TextChunker(ChunkerSettings settings)
     /// </summary>
     public static readonly HashSet<string> CommonTitles = new(StringComparer.OrdinalIgnoreCase)
     {
+        // ================= SHARED / CROSS-LANGUAGE =================
+        "dr", "prof", "fr", "mgr", "mag",
+        "gen", "cap", "st", "ste", "av",
+
         // ================= ENGLISH =================
-        "mr", "mrs", "ms", "mx", "messrs", "mmes", "msgr", "esq", "hon", "rev", "fr", "prof", "dr", "sr", "jr",
-        "rep", "sen", "gov", "pres", "amb", "sec", "min", "cmdr", "cllr", "ald", "mag", "jud",
-        "gen", "col", "maj", "capt", "lieut", "lt", "sgt", "cpl", "pvt", "adm", "brig", "cmdr", "comm",
-        "ceo", "cfo", "cto", "vp", "dir", "mgr", "asst", "assoc",
-        "mt", "ft", "st", "ave", "blvd", "rd", "hwy", "bldg", "ste", "apt", "vs", "etc",
-        
+        "mr", "mrs", "ms", "mx", "messrs", "mmes", "msgr", "esq", "hon", "rev", "sr", "jr",
+        "rep", "sen", "gov", "pres", "amb", "sec", "min", "cmdr", "cllr", "ald", "jud",
+        "col", "maj", "capt", "lieut", "lt", "sgt", "cpl", "pvt", "adm", "brig", "comm",
+        "ceo", "cfo", "cto", "vp", "dir", "asst", "assoc",
+        "mt", "ft", "ave", "blvd", "rd", "hwy", "bldg", "apt", "vs", "etc",
+
         // ================= SPANISH / PORTUGUESE =================
-        "srta", "sra", "don", "doña", "dra", "profa", "ldo", "lda", "arq", "gral", "cap", "sto", "sta", "av", "pza", "prof",
-        
+        "srta", "sra", "don", "doña", "dra", "profa",
+        "ldo", "lda", "arq", "gral", "sto", "sta", "pza",
+
         // ================= FRENCH =================
-        "mme", "mlle", "mgr", "pr", "me", "vve", "ste", "st", "bd", "av",
-        
+        "mme", "mlle", "pr", "me", "vve", "bd",
+
         // ================= ITALIAN =================
-        "sig", "sigra", "dott", "dottssa", "avv", "arch", "geom", "rag", "prof", "profssa", "mons", "ten", "cap", "gen",
-        
+        "sig", "sigra", "dott", "dottssa", "avv",
+        "arch", "geom", "rag", "profssa", "mons", "ten",
+
         // ================= GERMAN / DUTCH =================
-        "herr", "frau", "ing", "frl", "mag", "dipl", "med", "dhr", "mevr", "mej", "ir", "drs", "ds", "prof", "univ", "bakk",
-        
+        "herr", "frau", "ing", "frl", "dipl", "med",
+        "dhr", "mevr", "mej", "ir", "drs", "ds", "univ", "bakk",
+
         // ================= NORDIC =================
-        "hr", "fr", "fru", "frk", "kapt", "prof", "dr",
-        
+        "hr", "fru", "frk", "kapt",
+
         // ================= POLISH / CZECH / SLOVAK =================
-        "doc", "inż", "mec", "dyr", "św", "bł", "bc", "mgr", "mudr", "mvdr", "judr", "phdr", "rndr", "inž", "prof", "pan", "pani",
-        
-        // ================= UKRAINIAN / KYRILLIC =================
-        "проф", "доц", "акад", "гр", "тов", "пан", "пані", "дир", "інж", "зав", "заст", "пом", "д-р", "ст", "мол",
-        "вул", "пров", "просп", "бул", "обл", "пл", "ім", "буд", "кв", "мкр", "р-н", "пт", "сел", "смт", "рис", "табл", "див", "пор", "напр",
+        "doc", "inż", "mec", "dyr", "św", "bł", "bc",
+        "mudr", "mvdr", "judr", "phdr", "rndr", "inž", "pan", "pani",
+
+        // ================= SHARED UKRAINIAN / RUSSIAN =================
+        "проф", "доц", "акад", "гр", "тов", "пом", "д-р",
+        "бул", "обл", "пл", "кв", "р-н", "рис", "табл", "напр",
+
+        // ================= UKRAINIAN =================
+        "пан", "пані", "дир", "інж", "зав", "заст", "ст", "мол",
+        "вул", "пров", "просп", "ім", "буд", "мкр", "пт",
+        "сел", "смт", "див", "пор",
 
         // ================= RUSSIAN =================
-        "г", "гр", "д-р", "доц", "акад", "проф", "тов", "ул", "пр", "пер", "бул", "пл", "наб", "ш", "пос", "дер",
-        "обл", "р-н", "кв", "стр", "корп", "пом", "рис", "табл", "см", "ср", "напр", "т", "д", "п", "тп", "св",
+        "г", "ул", "пр", "пер", "наб", "ш", "пос", "дер",
+        "стр", "корп", "см", "ср", "т", "д", "п", "тп", "св",
 
         // ================= TURKISH =================
-        "dr", "prof", "doç", "yrd", "uzm", "öğr", "mh", "sk", "cd", "bul", "sok",
-
-        // ================= JAPANESE (Romaji titles used in multilingual contexts) =================
-        "dr", "prof",
-
-        // ================= ARABIC (Latin transliterations commonly used in multilingual AI output) =================
-        "dr", "prof", "st",
+        "doç", "yrd", "uzm", "öğr", "mh", "sk", "cd", "bul", "sok",
 
         // ================= HEBREW =================
-        "דר", "פרופ", "עו"
+        "דר", "פרופ", "עו",
+
+        // ================= THAI =================
+        // Academic / professional
+        "ดร", "ผศ", "รศ",
+
+        // Medical
+        "นพ", "พญ", "ทพ", "ทพญ", "ภก", "ภญ",
+
+        // ================= VIETNAMESE =================
+        "ts", "ths", "gs", "pgs",
+
+        // ================= ROMANIAN =================
+        "dl", "dna", "dv", "dvs", "intr", "șos", "nr",
+
+        // ================= HUNGARIAN =================
+        "id", "ifj", "özv", "gr", "hg", "ig", "igh", "mb", "okl",
+
+        // ================= INDONESIAN =================
+        "hj", "kh",
     };
 
     /// <summary>
-    /// Chunks the text into sentences while respecting linguistic rules.
+    /// One text chunk plus the boundary information already known by the chunker.
     /// </summary>
-    public List<string> Split(string text)
+    public readonly record struct TextChunk(string Text, bool IsSentenceFinished);
+
+    /// <summary>
+    /// Chunks text while respecting sentence rules. When EarlySplit is enabled, only the
+    /// first non-empty synthesis chunk may end early at conservative clause punctuation.
+    /// All following text uses normal sentence chunking and emergency MaxChunkLength splitting.
+    /// </summary>
+    public List<TextChunk> Split(string text, bool earlySplit = false)
     {
-        var result = new List<string>();
+        var result = new List<TextChunk>();
         if (string.IsNullOrWhiteSpace(text)) return result;
 
-        // ZERO-ALLOCATION: ReadOnlySpan allows us to slice the text without creating thousands of small string objects.
         ReadOnlySpan<char> textSpan = text.AsSpan();
         int currentIndex = 0;
 
+        // EarlySplit is handled before the normal loop so disabled/consumed requests pay
+        // no additional branch or punctuation search for subsequent sentences.
+        if (earlySplit)
+        {
+            while (currentIndex < textSpan.Length)
+            {
+                int firstEndIndex = FindSentenceEnd(textSpan, currentIndex, out bool firstSentenceFinished);
+                ReadOnlySpan<char> firstSpan = textSpan[currentIndex..firstEndIndex].Trim();
+
+                // Ignore empty leading boundaries without consuming the one allowed EarlySplit.
+                if (firstSpan.IsEmpty)
+                {
+                    currentIndex = firstEndIndex;
+                    continue;
+                }
+
+                // MaxChunkLength remains the hard upper bound. If no conservative punctuation
+                // exists before it, the normal emergency splitter handles the first sentence.
+                int earlySearchEnd = Math.Min(firstEndIndex, currentIndex + _maxLength);
+                int relativeSplit = textSpan[currentIndex..earlySearchEnd].IndexOfAny(s_earlySplitPunctuation);
+
+                if (relativeSplit >= 0)
+                {
+                    int earlyEndIndex = currentIndex + relativeSplit + 1;
+
+                    // Keep an immediately following closing quote/bracket with the first chunk.
+                    while (earlyEndIndex < firstEndIndex && s_closingPunctuation.Contains(textSpan[earlyEndIndex]))
+                    {
+                        earlyEndIndex++;
+                    }
+
+                    ReadOnlySpan<char> earlyChunk = textSpan[currentIndex..earlyEndIndex].Trim();
+                    if (!earlyChunk.IsEmpty)
+                    {
+                        result.Add(new TextChunk(earlyChunk.ToString(), false));
+                    }
+
+                    currentIndex = earlyEndIndex;
+                }
+                else
+                {
+                    AddSentence(textSpan[currentIndex..firstEndIndex], firstSentenceFinished, result);
+                    currentIndex = firstEndIndex;
+                }
+
+                break;
+            }
+        }
+
         while (currentIndex < textSpan.Length)
         {
-            int nextTerminator = currentIndex;
-            bool foundValidTerminator = false;
-
-            while (nextTerminator < textSpan.Length)
-            {
-                // Find the next potential terminator using hardware-accelerated SearchValues
-                int offset = textSpan[nextTerminator..].IndexOfAny(s_sentenceTerminators);
-                if (offset == -1)
-                {
-                    nextTerminator = -1;
-                    break;
-                }
-
-                nextTerminator += offset;
-
-                if (nextTerminator + 1 >= textSpan.Length)
-                {
-                    foundValidTerminator = true;
-                    break;
-                }
-
-                char currentTerminator = textSpan[nextTerminator];
-
-                // ====================================================================
-                // ASIAN & GLOBAL TERMINATOR LOGIC
-                // Symbols like '。' or '؟' are 100% sentence endings. 
-                // They don't have abbreviations or "middle names" associated with them.
-                // ====================================================================
-                if (currentTerminator != '.')
-                {
-                    foundValidTerminator = true;
-                    break;
-                }
-
-                // If the terminator is a standard period ('.'), apply smart abbreviation logic.
-                char nextChar = textSpan[nextTerminator + 1];
-
-                // ====================================================================
-                // CLOSING PUNCTUATION SKIP
-                // Skip past any closing quotes or brackets (e.g., ".)" or ".”") to find the true 
-                // next character, ensuring periods inside quotes aren't treated as abbreviations.
-                // ====================================================================
-                int afterClosingIdx = nextTerminator + 1;
-                while (afterClosingIdx < textSpan.Length && s_closingPunctuation.Contains(textSpan[afterClosingIdx]))
-                {
-                    afterClosingIdx++;
-                }
-                char charAfterClosing = afterClosingIdx < textSpan.Length ? textSpan[afterClosingIdx] : ' ';
-
-                // Check if the character after the closing punctuation is a valid sentence boundary.
-                bool boundaryAfterClosing = afterClosingIdx >= textSpan.Length
-                    || char.IsWhiteSpace(charAfterClosing)
-                    || s_sentenceTerminators.Contains(charAfterClosing)
-                    || s_pauseMarks.Contains(charAfterClosing);
-
-                if (char.IsWhiteSpace(nextChar) || s_sentenceTerminators.Contains(nextChar) || s_pauseMarks.Contains(nextChar)
-                    || (afterClosingIdx > nextTerminator + 1 && boundaryAfterClosing))
-                {
-                    int nextVisibleCharIdx = afterClosingIdx;
-                    while (nextVisibleCharIdx < textSpan.Length && char.IsWhiteSpace(textSpan[nextVisibleCharIdx]))
-                    {
-                        nextVisibleCharIdx++;
-                    }
-
-                    // Logic: If the next word starts with a lowercase letter, the period is likely an abbreviation.
-                    bool isNextLower = nextVisibleCharIdx < textSpan.Length && char.IsLower(textSpan[nextVisibleCharIdx]);
-
-                    int wordStart = nextTerminator - 1;
-                    while (wordStart >= 0 && !char.IsWhiteSpace(textSpan[wordStart]))
-                    {
-                        wordStart--;
-                    }
-                    wordStart++;
-
-                    ReadOnlySpan<char> wordBeforeDot = textSpan[wordStart..nextTerminator];
-
-                    // Clean the word from leading punctuation (e.g., opening brackets or quotes like "(Mr" or "«Dr")
-                    ReadOnlySpan<char> cleanWord = wordBeforeDot;
-                    while (cleanWord.Length > 0 && char.IsPunctuation(cleanWord[0]))
-                    {
-                        cleanWord = cleanWord[1..];
-                    }
-
-                    bool isAbbreviation = false;
-
-                    // ABBREVIATION DETECTION RULES:
-                    // 1. Single character initials (e.g., "A. Smith").
-                    if (cleanWord.Length == 1 && char.IsLetter(cleanWord[0]))
-                    {
-                        isAbbreviation = true;
-                    }
-                    // 2. Next word is lowercase (e.g., "He lived on St. john street").
-                    else if (isNextLower)
-                    {
-                        isAbbreviation = true;
-                    }
-                    // 3. Mixed segments check (Distinguishes "U.S.A." from a URL like "site.com").
-                    else if (cleanWord.IndexOf('.') != -1)
-                    {
-                        int maxSegmentLength = 0;
-                        int currentSegmentLength = 0;
-
-                        for (int i = 0; i < cleanWord.Length; i++)
-                        {
-                            if (cleanWord[i] == '.')
-                            {
-                                if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
-                                currentSegmentLength = 0;
-                            }
-                            else
-                            {
-                                currentSegmentLength++;
-                            }
-                        }
-                        if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
-
-                        // Abbreviations typically have short segments (e.g., "i.e.").
-                        if (maxSegmentLength <= 3) isAbbreviation = true;
-                    }
-                    // 4. Global Titles Dictionary check. (Zero-allocation using .NET 8+ alternate lookup)
-                    else
-                    {
-                        if (CommonTitles.GetAlternateLookup<ReadOnlySpan<char>>().Contains(cleanWord))
-                        {
-                            isAbbreviation = true;
-                        }
-                    }
-
-                    if (!isAbbreviation)
-                    {
-                        foundValidTerminator = true;
-                        break;
-                    }
-                }
-
-                nextTerminator++; // Period found was an abbreviation, continue searching.
-            }
-
-            int endIndex;
-            if (!foundValidTerminator || nextTerminator == -1)
-            {
-                endIndex = textSpan.Length;
-            }
-            else
-            {
-                endIndex = nextTerminator + 1;
-
-                // Capture any closing quotes/brackets immediately after the terminator.
-                while (endIndex < textSpan.Length && s_closingPunctuation.Contains(textSpan[endIndex])) endIndex++;
-
-                // Capture trailing terminators (e.g., "Wait!!!" -> captures all three exclamation marks).
-                while (endIndex < textSpan.Length && s_sentenceTerminators.Contains(textSpan[endIndex])) endIndex++;
-            }
-
-            string sentence = textSpan[currentIndex..endIndex].Trim().ToString();
-
-            if (!string.IsNullOrWhiteSpace(sentence))
-            {
-                // If a sentence is unusually long, we perform an emergency split to keep the engine stable.
-                if (sentence.Length <= _maxLength) result.Add(sentence);
-                else result.AddRange(SplitLongSentence(sentence));
-            }
-
+            int endIndex = FindSentenceEnd(textSpan, currentIndex, out bool isSentenceFinished);
+            AddSentence(textSpan[currentIndex..endIndex], isSentenceFinished, result);
             currentIndex = endIndex;
         }
 
@@ -511,31 +454,190 @@ public class TextChunker(ChunkerSettings settings)
     }
 
     /// <summary>
-    /// Breaks down extremely long sentences into smaller chunks at logical pause points (commas, colons, etc.).
+    /// Finds the next real sentence boundary while preserving the existing abbreviation rules.
     /// </summary>
-    private List<string> SplitLongSentence(string sentence)
+    private static int FindSentenceEnd(ReadOnlySpan<char> textSpan, int currentIndex, out bool isSentenceFinished)
     {
-        var result = new List<string>();
+        int nextTerminator = currentIndex;
+        bool foundValidTerminator = false;
+
+        while (nextTerminator < textSpan.Length)
+        {
+            int offset = textSpan[nextTerminator..].IndexOfAny(s_sentenceTerminators);
+            if (offset == -1)
+            {
+                nextTerminator = -1;
+                break;
+            }
+
+            nextTerminator += offset;
+
+            if (nextTerminator + 1 >= textSpan.Length)
+            {
+                foundValidTerminator = true;
+                break;
+            }
+
+            char currentTerminator = textSpan[nextTerminator];
+
+            // Non-ASCII-period terminators are unambiguous sentence endings here.
+            if (currentTerminator != '.')
+            {
+                foundValidTerminator = true;
+                break;
+            }
+
+            char nextChar = textSpan[nextTerminator + 1];
+
+            // Look through closing quotes/brackets after a period before deciding whether
+            // the period belongs to an abbreviation or to the end of a sentence.
+            int afterClosingIdx = nextTerminator + 1;
+            while (afterClosingIdx < textSpan.Length && s_closingPunctuation.Contains(textSpan[afterClosingIdx]))
+            {
+                afterClosingIdx++;
+            }
+
+            char charAfterClosing = afterClosingIdx < textSpan.Length ? textSpan[afterClosingIdx] : ' ';
+            bool boundaryAfterClosing = afterClosingIdx >= textSpan.Length
+                || char.IsWhiteSpace(charAfterClosing)
+                || s_sentenceTerminators.Contains(charAfterClosing)
+                || s_pauseMarks.Contains(charAfterClosing);
+
+            if (char.IsWhiteSpace(nextChar) || s_sentenceTerminators.Contains(nextChar) || s_pauseMarks.Contains(nextChar)
+                || (afterClosingIdx > nextTerminator + 1 && boundaryAfterClosing))
+            {
+                int nextVisibleCharIdx = afterClosingIdx;
+                while (nextVisibleCharIdx < textSpan.Length && char.IsWhiteSpace(textSpan[nextVisibleCharIdx]))
+                {
+                    nextVisibleCharIdx++;
+                }
+
+                bool isNextLower = nextVisibleCharIdx < textSpan.Length && char.IsLower(textSpan[nextVisibleCharIdx]);
+
+                int wordStart = nextTerminator - 1;
+                while (wordStart >= 0 && !char.IsWhiteSpace(textSpan[wordStart]))
+                {
+                    wordStart--;
+                }
+                wordStart++;
+
+                ReadOnlySpan<char> cleanWord = textSpan[wordStart..nextTerminator];
+                while (cleanWord.Length > 0 && char.IsPunctuation(cleanWord[0]))
+                {
+                    cleanWord = cleanWord[1..];
+                }
+
+                bool isAbbreviation = false;
+
+                if (cleanWord.Length == 1 && char.IsLetter(cleanWord[0]))
+                {
+                    isAbbreviation = true;
+                }
+                else if (isNextLower)
+                {
+                    isAbbreviation = true;
+                }
+                else if (cleanWord.IndexOf('.') != -1)
+                {
+                    int maxSegmentLength = 0;
+                    int currentSegmentLength = 0;
+
+                    for (int i = 0; i < cleanWord.Length; i++)
+                    {
+                        if (cleanWord[i] == '.')
+                        {
+                            if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
+                            currentSegmentLength = 0;
+                        }
+                        else
+                        {
+                            currentSegmentLength++;
+                        }
+                    }
+
+                    if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
+                    if (maxSegmentLength <= 3) isAbbreviation = true;
+                }
+                else if (CommonTitles.GetAlternateLookup<ReadOnlySpan<char>>().Contains(cleanWord))
+                {
+                    isAbbreviation = true;
+                }
+
+                if (!isAbbreviation)
+                {
+                    foundValidTerminator = true;
+                    break;
+                }
+            }
+
+            nextTerminator++;
+        }
+
+        if (!foundValidTerminator || nextTerminator == -1)
+        {
+            isSentenceFinished = false;
+            return textSpan.Length;
+        }
+
+        int endIndex = nextTerminator + 1;
+
+        while (endIndex < textSpan.Length && s_closingPunctuation.Contains(textSpan[endIndex]))
+        {
+            endIndex++;
+        }
+
+        while (endIndex < textSpan.Length && s_sentenceTerminators.Contains(textSpan[endIndex]))
+        {
+            endIndex++;
+        }
+
+        isSentenceFinished = true;
+        return endIndex;
+    }
+
+    /// <summary>
+    /// Adds one normal sentence or routes an oversized sentence through emergency splitting.
+    /// </summary>
+    private void AddSentence(ReadOnlySpan<char> sentenceSpan, bool isSentenceFinished, List<TextChunk> result)
+    {
+        sentenceSpan = sentenceSpan.Trim();
+        if (sentenceSpan.IsEmpty) return;
+
+        if (sentenceSpan.Length <= _maxLength)
+        {
+            result.Add(new TextChunk(sentenceSpan.ToString(), isSentenceFinished));
+            return;
+        }
+
+        SplitLongSentence(sentenceSpan, isSentenceFinished, result);
+    }
+
+    /// <summary>
+    /// Splits an oversized sentence using the complete pause-mark set. Intermediate chunks
+    /// are continuations; only the final chunk inherits the real sentence boundary.
+    /// </summary>
+    private void SplitLongSentence(ReadOnlySpan<char> sentenceSpan, bool isSentenceFinished, List<TextChunk> result)
+    {
         int currentIndex = 0;
-        ReadOnlySpan<char> sentenceSpan = sentence.AsSpan();
 
         while (currentIndex < sentenceSpan.Length)
         {
             int remainingLength = sentenceSpan.Length - currentIndex;
             if (remainingLength <= _maxLength)
             {
-                result.Add(sentenceSpan[currentIndex..].Trim().ToString());
+                ReadOnlySpan<char> finalSpan = sentenceSpan[currentIndex..].Trim();
+                if (!finalSpan.IsEmpty)
+                {
+                    result.Add(new TextChunk(finalSpan.ToString(), isSentenceFinished));
+                }
                 break;
             }
 
             int windowEnd = currentIndex + _maxLength;
-
-            // Search for the last pause mark within the current chunk window.
             int splitIndex = FindLastOccurrence(sentenceSpan, currentIndex, windowEnd, s_pauseMarks);
 
             if (splitIndex == -1)
             {
-                // FALLBACK: Search for the last space character if no punctuation pause marks are found.
                 for (int i = windowEnd - 1; i >= currentIndex; i--)
                 {
                     if (char.IsWhiteSpace(sentenceSpan[i]))
@@ -548,15 +650,11 @@ public class TextChunker(ChunkerSettings settings)
 
             if (splitIndex == -1 || splitIndex < currentIndex)
             {
-                // Final fallback for unbroken text (long URLs, hashes, CJK/emoji runs without
-                // recognized punctuation, etc.). Never split inside an extended grapheme cluster:
-                // this preserves surrogate pairs, combining sequences, variation selectors, and
-                // emoji ZWJ sequences even if one text element has to slightly exceed MaxChunkLength.
                 splitIndex = FindSafeTextElementBoundary(sentenceSpan, currentIndex, windowEnd);
             }
             else
             {
-                splitIndex++; // Include the found punctuation/space in the current chunk.
+                splitIndex++;
             }
 
             ReadOnlySpan<char> chunkSpan = sentenceSpan[currentIndex..splitIndex].Trim();
@@ -566,22 +664,18 @@ public class TextChunker(ChunkerSettings settings)
                 char lastChar = chunkSpan[^1];
                 string finalChunk = chunkSpan.ToString();
 
-                // If we split in a way that left the chunk without a proper ending, add an emergency 
-                // marker to signal the TTS engine to handle it gracefully.
+                // Preserve the existing emergency glue behavior for hard/whitespace splits.
                 if (!char.IsPunctuation(lastChar))
                 {
                     finalChunk += EmergencyGlue;
                 }
 
-                result.Add(finalChunk);
+                result.Add(new TextChunk(finalChunk, false));
             }
 
             currentIndex = splitIndex;
         }
-
-        return result;
     }
-
 
     /// <summary>
     /// Finds the furthest extended-grapheme boundary that does not exceed preferredEnd.

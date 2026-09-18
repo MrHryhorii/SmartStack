@@ -54,6 +54,7 @@
     
     <None Update="PiperNative\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
 
     <None Update="PHOIBLE\**\*.*">

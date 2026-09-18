@@ -40,6 +40,12 @@ public class SynthesisRequest
     public bool? Stream { get; set; }
 
     /// <summary>
+    /// Overrides the server EarlySplit setting for this request.
+    /// When true, only the first generated chunk may end early at conservative punctuation.
+    /// </summary>
+    public bool? EarlySplit { get; set; }
+
+    /// <summary>
     /// Variance of pitch/intonation (Expression). Typically ranges from 0.0 to 1.0.
     /// </summary>
     public float? NoiseScale { get; set; }

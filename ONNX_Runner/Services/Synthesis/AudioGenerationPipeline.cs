@@ -32,7 +32,8 @@ internal static class AudioGenerationPipeline
         CancellationToken cancellationToken)
     {
         var request = ctx.Request;
-        var textChunks = ctx.TextChunker.Split(request.Input);
+        bool earlySplit = request.EarlySplit ?? ctx.ChunkerConfig.EarlySplit;
+        var textChunks = ctx.TextChunker.Split(request.Input, earlySplit);
         float[]? targetFingerprint = null;
         float[]? sourceFingerprint = null;
 
@@ -129,7 +130,7 @@ internal static class AudioGenerationPipeline
         }
 
         // Internal channel for passing raw audio chunks between the Generator and the DSP Processor
-        var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length)>(10);
+        var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length, bool IsSentenceFinished)>(10);
 
         // Deadlock guard: Channel<T> lacks a native reader-abort signal. If the consumer faults while
         // the producer waits on WriteAsync (bounded capacity), the producer would hang forever and
@@ -150,10 +151,11 @@ internal static class AudioGenerationPipeline
                 // Defaults to true, assuming the very first chunk is the start of a new thought.
                 bool previousChunkWasFinished = true;
 
-                foreach (var chunk in textChunks)
+                foreach (var textChunk in textChunks)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
 
+                    string chunk = textChunk.Text;
                     ReadOnlySpan<char> cleanChunk = chunk.AsSpan().Trim();
 
                     // =========================================================
@@ -170,7 +172,7 @@ internal static class AudioGenerationPipeline
                     // MULTILINGUAL SMART CONTEXT DETECTION FOR STREAMING
                     // =========================================================
                     bool isContinuation = false;
-                    bool isFinished;
+                    bool isFinished = textChunk.IsSentenceFinished;
 
                     // Ignore leading punctuation (e.g., quotes, dashes) to find the first actual
                     // content character (letter OR digit). Stopping at a digit rather than skipping
@@ -202,18 +204,8 @@ internal static class AudioGenerationPipeline
                         isContinuation = char.IsLower(cleanChunk[firstLetterIdx]);
                     }
 
-                    // Check if the chunk ends with a known sentence terminator. TextChunker.Split()
-                    // deliberately folds trailing closing quotes/brackets into the chunk (e.g. a
-                    // sentence ending in `."` for quoted dialogue), so checking cleanChunk[^1] alone
-                    // would wrongly call a complete sentence "unfinished" just because it ends in a
-                    // quote mark. Walk back past any such closing punctuation to find the real
-                    // terminator underneath, mirroring how TextChunker itself looks past it.
-                    int lastRealCharIdx = cleanChunk.Length - 1;
-                    while (lastRealCharIdx > 0 && TextChunker.ClosingPunctuation.AsSpan().Contains(cleanChunk[lastRealCharIdx]))
-                    {
-                        lastRealCharIdx--;
-                    }
-                    isFinished = TextChunker.SentenceTerminators.AsSpan().Contains(cleanChunk[lastRealCharIdx]);
+                    // Sentence completion is determined once by TextChunker. This avoids
+                    // rescanning trailing punctuation here and keeps emergency splits as continuations.
 
                     // Generate the base voice phonemes first. A non-empty text chunk can become
                     // empty after normalization (for example, a standalone closing quote).
@@ -262,7 +254,7 @@ internal static class AudioGenerationPipeline
                                 segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
                                 accumulatedLength += segment.Count;
                             }
-                            // Flush internal WSOLA buffers immediately for THIS sentence
+                            // Flush internal WSOLA buffers immediately for THIS chunk
                             foreach (var segment in pitchShifter!.Flush())
                             {
                                 if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
@@ -276,8 +268,8 @@ internal static class AudioGenerationPipeline
                                 accumulatedLength += segment.Count;
                             }
 
-                            // Send the fully reassembled sentence to the Consumer
-                            await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength), producerToken);
+                            // Send the fully reassembled chunk to the Consumer
+                            await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength, isFinished), producerToken);
                             handedOff = true; // Ownership successfully transferred to the Consumer
                         }
                         finally
@@ -298,7 +290,7 @@ internal static class AudioGenerationPipeline
                         try
                         {
                             // If Pitch is exactly 1.0, bypass DSP and send the original raw audio chunk directly
-                            await channel.Writer.WriteAsync(rawResult, producerToken);
+                            await channel.Writer.WriteAsync((rawResult.Buffer, rawResult.Length, isFinished), producerToken);
                             handedOff = true;
                         }
                         finally
@@ -424,16 +416,20 @@ internal static class AudioGenerationPipeline
                         spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
                         streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
 
-                        // Append a brief pause (silence) between sentences for natural pacing
-                        Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
+                        // SentencePauseSeconds belongs only to real sentence boundaries.
+                        // EarlySplit and emergency chunks already carry their own punctuation/context.
+                        if (chunk.IsSentenceFinished)
+                        {
+                            Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
 
-                        // Apply character effects to silence (e.g. tape hiss continues during pauses)
-                        effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
+                            // Keep character/spatial tails active during the sentence pause.
+                            effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
+                            spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
+                            streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
+                        }
 
-                        // Apply spatial acoustics to silence so reverb tails ring out naturally
-                        spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
-                        streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
-
+                        // Keep flushing every generated chunk so an EarlySplit chunk reaches the client
+                        // immediately. The setting name is retained for configuration compatibility.
                         if (flushAfterEachSentence)
                         {
                             targetStream.Flush();
