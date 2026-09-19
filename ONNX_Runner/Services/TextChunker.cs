@@ -4,24 +4,26 @@ using ONNX_Runner.Models;
 namespace ONNX_Runner.Services;
 
 /// <summary>
-/// High-performance text processing module responsible for splitting input text into manageable chunks.
-/// It uses "Smart Splitting" logic to identify sentence boundaries while protecting abbreviations, 
-/// titles, and initials from being accidentally sliced.
+/// High-performance multilingual text chunker for TTS synthesis.
+/// Detects semantic sentence boundaries while protecting abbreviations, initials,
+/// technical tokens, contextual ellipses, punctuation clusters, and script-specific
+/// sentence terminators.
 /// </summary>
 public class TextChunker(ChunkerSettings settings)
 {
     // =========================================================================================
-    // SINGLE SOURCE OF TRUTH: Global multilingual array of sentence terminators.
+    // SINGLE SOURCE OF TRUTH: Global multilingual array of sentence-boundary candidates.
     // Made PUBLIC so the synthesis pipeline can use it for smart context detection without duplicating data.
     // =========================================================================================
     public static readonly char[] SentenceTerminators =
     [
         // Common punctuation and explicit line/paragraph boundaries
         '.', '!', '?',
+        '\u2024',               // ONE DOT LEADER — period-like compatibility form
         '\n', '\r', '\u0085',  // LF, CR, NEXT LINE
         '\u2028', '\u2029',    // LINE SEPARATOR, PARAGRAPH SEPARATOR
 
-        // Ellipsis variants — semantically equivalent to ASCII "..." for sentence chunking
+        // Ellipsis variants — contextual candidates: they may mark hesitation inside a sentence
         '…',  // U+2026  HORIZONTAL ELLIPSIS
         '‥',  // U+2025  TWO DOT LEADER
         '⋯',  // U+22EF  MIDLINE HORIZONTAL ELLIPSIS
@@ -142,6 +144,30 @@ public class TextChunker(ChunkerSettings settings)
 
     // High-performance search values dynamically created from the array above to prevent duplication.
     private static readonly System.Buffers.SearchValues<char> s_sentenceTerminators = System.Buffers.SearchValues.Create(SentenceTerminators);
+
+    // Period-like characters share the same ambiguity rules as ASCII '.': abbreviations,
+    // initials, decimal/version/domain separators, and compatibility-width text.
+    private static readonly char[] PeriodLikeMarks =
+    [
+        '.',       // U+002E FULL STOP
+        '\u2024', // U+2024 ONE DOT LEADER
+        '﹒',      // U+FE52 SMALL FULL STOP
+        '．',      // U+FF0E FULLWIDTH FULL STOP
+    ];
+
+    private static readonly System.Buffers.SearchValues<char> s_periodLikeMarks =
+        System.Buffers.SearchValues.Create(PeriodLikeMarks);
+
+    private static readonly char[] EllipsisMarks =
+    [
+        '…', // U+2026 HORIZONTAL ELLIPSIS
+        '‥', // U+2025 TWO DOT LEADER
+        '⋯', // U+22EF MIDLINE HORIZONTAL ELLIPSIS
+        '᠅', // U+1805 MONGOLIAN FOUR DOTS
+    ];
+
+    private static readonly System.Buffers.SearchValues<char> s_ellipsisMarks =
+        System.Buffers.SearchValues.Create(EllipsisMarks);
 
     // Limits the length of a single audio generation task to prevent GPU timeouts.
     private readonly int _maxLength = settings.MaxChunkLength > 50 ? settings.MaxChunkLength : 250;
@@ -299,8 +325,9 @@ public class TextChunker(ChunkerSettings settings)
         System.Buffers.SearchValues.Create(ClosingPunctuation);
 
     /// <summary>
-    /// A comprehensive list of global abbreviations and titles that should NOT trigger a sentence split.
-    /// Includes titles from English, Spanish, French, German, and Slavic languages.
+    /// Contextual abbreviation hints used to distinguish in-sentence periods from real
+    /// sentence endings. An abbreviation may still terminate a sentence when its
+    /// surrounding context indicates a new sentence.
     /// </summary>
     public static readonly HashSet<string> CommonAbbreviations = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -313,7 +340,7 @@ public class TextChunker(ChunkerSettings settings)
         "rep", "sen", "gov", "pres", "amb", "sec", "min", "cmdr", "cllr", "ald", "jud",
         "col", "maj", "capt", "lieut", "lt", "sgt", "cpl", "pvt", "adm", "brig", "comm",
         "ceo", "cfo", "cto", "vp", "dir", "asst", "assoc",
-        "mt", "ft", "ave", "blvd", "rd", "hwy", "bldg", "apt", "vs", "etc",
+        "mt", "ft", "ave", "blvd", "rd", "hwy", "bldg", "apt", "vs", "etc", "approx",
 
         // ================= SPANISH / PORTUGUESE =================
         "srta", "sra", "don", "doña", "dra", "profa",
@@ -377,14 +404,47 @@ public class TextChunker(ChunkerSettings settings)
     };
 
     /// <summary>
+    /// Abbreviations that normally introduce a following name/title rather than ending a sentence.
+    /// For scripts with case, the source token must actually be capitalized before this stronger
+    /// no-break rule is used. This keeps lowercase units such as "ms." from behaving like "Ms.".
+    /// </summary>
+    private static readonly HashSet<string> PrefixAbbreviations = new(StringComparer.OrdinalIgnoreCase)
+    {
+        // Shared / English
+        "dr", "prof", "fr", "mgr", "mag",
+        "mr", "mrs", "ms", "mx", "messrs", "mmes", "msgr", "hon", "rev",
+        "gen", "cap", "cmdr", "col", "maj", "capt", "lieut", "lt", "sgt", "cpl",
+        "pvt", "adm", "brig", "comm", "rep", "sen", "gov", "pres", "amb",
+
+        // Spanish / Portuguese
+        "srta", "sra", "don", "doña", "dra", "profa", "ldo", "lda", "arq", "gral",
+
+        // French / Italian / German / Dutch / Nordic
+        "mme", "mlle", "pr", "me",
+        "sig", "sigra", "dott", "dottssa", "avv", "arch", "profssa", "mons",
+        "herr", "frau", "frl", "dhr", "mevr", "mej",
+        "hr", "fru", "frk", "kapt",
+
+        // Central / Eastern European
+        "doc", "inż", "mec", "mudr", "mvdr", "judr", "phdr", "rndr", "inž",
+        "проф", "доц", "акад", "тов", "пан", "пані",
+
+        // Turkish / Hebrew / Thai
+        "doç", "yrd", "uzm",
+        "דר", "פרופ",
+        "ดร", "ผศ", "รศ", "นพ", "พญ", "ทพ", "ทพญ", "ภก", "ภญ",
+    };
+
+    /// <summary>
     /// One text chunk plus the boundary information already known by the chunker.
     /// </summary>
     public readonly record struct TextChunk(string Text, bool IsSentenceFinished);
 
     /// <summary>
-    /// Chunks text while respecting sentence rules. When EarlySplit is enabled, only the
-    /// first non-empty synthesis chunk may end early at conservative clause punctuation.
-    /// All following text uses normal sentence chunking and emergency MaxChunkLength splitting.
+    /// Chunks text while respecting semantic sentence boundaries. When EarlySplit is enabled,
+    /// only the first non-empty semantic sentence gets one opportunity to end early at a
+    /// conservative clause boundary. All following text uses normal sentence chunking and
+    /// emergency MaxChunkLength splitting.
     /// </summary>
     public List<TextChunk> Split(string text, bool earlySplit = false)
     {
@@ -410,21 +470,15 @@ public class TextChunker(ChunkerSettings settings)
                     continue;
                 }
 
-                // MaxChunkLength remains the hard upper bound. If no conservative punctuation
-                // exists before it, the normal emergency splitter handles the first sentence.
+                // MaxChunkLength is the normal synthesis upper bound. EarlySplit candidates are
+                // validated contextually so punctuation embedded in technical text (https://,
+                // foo:bar, etc.) is not treated as a clause boundary merely because the symbol
+                // itself is present.
                 int earlySearchEnd = Math.Min(firstEndIndex, currentIndex + _maxLength);
-                int relativeSplit = textSpan[currentIndex..earlySearchEnd].IndexOfAny(s_earlySplitPunctuation);
+                int earlyEndIndex = FindEarlySplitEnd(textSpan, currentIndex, earlySearchEnd, firstEndIndex);
 
-                if (relativeSplit >= 0)
+                if (earlyEndIndex >= 0)
                 {
-                    int earlyEndIndex = currentIndex + relativeSplit + 1;
-
-                    // Keep an immediately following closing quote/bracket with the first chunk.
-                    while (earlyEndIndex < firstEndIndex && s_closingPunctuation.Contains(textSpan[earlyEndIndex]))
-                    {
-                        earlyEndIndex++;
-                    }
-
                     ReadOnlySpan<char> earlyChunk = textSpan[currentIndex..earlyEndIndex].Trim();
                     if (!earlyChunk.IsEmpty)
                     {
@@ -454,145 +508,743 @@ public class TextChunker(ChunkerSettings settings)
     }
 
     /// <summary>
-    /// Finds the next real sentence boundary while preserving the existing abbreviation rules.
+    /// Finds the next semantic sentence boundary. Characters in SentenceTerminators are candidates;
+    /// ambiguous period-like marks, ellipses, and technical-token punctuation are validated in context.
     /// </summary>
     private static int FindSentenceEnd(ReadOnlySpan<char> textSpan, int currentIndex, out bool isSentenceFinished)
     {
-        int nextTerminator = currentIndex;
-        bool foundValidTerminator = false;
+        int searchIndex = currentIndex;
 
-        while (nextTerminator < textSpan.Length)
+        while (searchIndex < textSpan.Length)
         {
-            int offset = textSpan[nextTerminator..].IndexOfAny(s_sentenceTerminators);
-            if (offset == -1)
+            int offset = textSpan[searchIndex..].IndexOfAny(s_sentenceTerminators);
+            if (offset < 0)
             {
-                nextTerminator = -1;
+                isSentenceFinished = false;
+                return textSpan.Length;
+            }
+
+            int candidateIndex = searchIndex + offset;
+
+            if (!IsRealSentenceBoundary(textSpan, candidateIndex))
+            {
+                searchIndex = candidateIndex + 1;
+                continue;
+            }
+
+            isSentenceFinished = true;
+            return ConsumeBoundarySuffix(textSpan, candidateIndex);
+        }
+
+        isSentenceFinished = false;
+        return textSpan.Length;
+    }
+
+    /// <summary>
+    /// Validates one candidate terminator without assuming a particular language.
+    /// </summary>
+    private static bool IsRealSentenceBoundary(ReadOnlySpan<char> text, int index)
+    {
+        char terminator = text[index];
+
+        // Explicit text/paragraph separators are always semantic boundaries.
+        if (IsLineBoundary(terminator))
+        {
+            return true;
+        }
+
+        if (s_periodLikeMarks.Contains(terminator))
+        {
+            return IsRealPeriodBoundary(text, index);
+        }
+
+        if (s_ellipsisMarks.Contains(terminator))
+        {
+            return IsRealEllipsisBoundary(text, index, index + 1);
+        }
+
+        // A quoted terminal can still belong to the same grammatical sentence when a
+        // lowercase reporting clause follows: "Really?!" she asked.
+        if (IsQuotedReportingContinuation(text, index))
+        {
+            return false;
+        }
+
+        // Ambiguous Western terminal marks are accepted only after the complete attached
+        // terminal/closing cluster reaches a real boundary. This protects code-like constructs
+        // such as foo?.Bar(), while still accepting What?! Next and "Stop!" Then continue.
+        // Script-specific hard terminators intentionally do not require whitespace because many
+        // writing systems do not separate sentences with spaces.
+        if (RequiresBoundarySeparation(terminator) && !HasBoundarySeparationAfterTerminalCluster(text, index))
+        {
+            return false;
+        }
+
+        // ASCII ? and ! may legally occur inside URLs / URI queries / technical tokens.
+        // This remains as a structural safeguard even though the boundary-separation rule above
+        // already rejects the common no-whitespace forms.
+        if (terminator is '?' or '!' && IsEmbeddedTechnicalTerminator(text, index))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Handles '.', U+2024, U+FE52 and U+FF0E using one shared contextual rule set.
+    /// </summary>
+    private static bool IsRealPeriodBoundary(ReadOnlySpan<char> text, int index)
+    {
+        // Consecutive period-like marks are an ASCII/compatibility ellipsis rather than an
+        // abbreviation separator. Treat the complete run using ellipsis context rules.
+        int runEnd = index + 1;
+        while (runEnd < text.Length && s_periodLikeMarks.Contains(text[runEnd]))
+        {
+            runEnd++;
+        }
+
+        if (runEnd - index >= 2)
+        {
+            return IsRealEllipsisBoundary(text, index, runEnd);
+        }
+
+        // A period directly embedded between token characters is never a sentence boundary:
+        // S.T.A.L.K.E.R, 3.14, v1.2.3, example.com, user.name@example.com, etc.
+        if (index + 1 < text.Length && IsWordLikeAfterPeriod(text[index + 1]))
+        {
+            return false;
+        }
+
+        int afterClosing = SkipClosingPunctuation(text, index + 1);
+
+        // Period-like marks follow the same boundary-separation principle as the ambiguous
+        // Western ?/! family. If text continues immediately after the complete period/closing
+        // suffix, keep it in the same semantic sentence. A following terminal mark is allowed
+        // to extend the terminal cluster and is validated below as one unit.
+        if (afterClosing < text.Length &&
+            !char.IsWhiteSpace(text[afterClosing]) &&
+            !IsBoundaryFormatControl(text[afterClosing]) &&
+            !s_sentenceTerminators.Contains(text[afterClosing]))
+        {
+            return false;
+        }
+
+        int nextVisible = SkipBoundarySpacing(text, afterClosing, out bool crossedLineBoundary);
+
+        if (crossedLineBoundary)
+        {
+            return true;
+        }
+
+        // End-of-input makes the period a real sentence ending even when the final token is
+        // itself an abbreviation. There is no following sentence fragment to protect.
+        if (nextVisible >= text.Length)
+        {
+            return true;
+        }
+
+        char next = text[nextVisible];
+
+        // A following terminal cluster (?, !, another hard full stop, etc.) belongs to the
+        // same sentence. Validate the boundary only after the complete attached cluster rather
+        // than committing on its first character.
+        if (s_sentenceTerminators.Contains(next) && !s_periodLikeMarks.Contains(next))
+        {
+            return HasBoundarySeparationAfterTerminalCluster(text, index);
+        }
+
+        ReadOnlySpan<char> token = GetTokenBefore(text, index);
+        ReadOnlySpan<char> cleanToken = TrimLeadingTokenPunctuation(token);
+
+        if (cleanToken.IsEmpty)
+        {
+            return true;
+        }
+
+        // Abbreviations can be followed by clause punctuation before the actual continuation:
+        // "e.g., this", "etc.; however", and similar multilingual constructions. Look through
+        // that punctuation only for abbreviation/context classification; it is not swallowed here.
+        int continuationIndex = nextVisible;
+        if (s_pauseMarks.Contains(next))
+        {
+            while (continuationIndex < text.Length && s_pauseMarks.Contains(text[continuationIndex]))
+            {
+                continuationIndex++;
+            }
+
+            continuationIndex = SkipClosingPunctuation(text, continuationIndex);
+            continuationIndex = SkipBoundarySpacing(text, continuationIndex, out bool pauseCrossedLineBoundary);
+
+            if (pauseCrossedLineBoundary || continuationIndex >= text.Length)
+            {
+                return true;
+            }
+
+            next = text[continuationIndex];
+        }
+
+        bool nextIsLower = char.IsLower(next);
+        bool nextIsUpper = char.IsUpper(next);
+        bool nextIsDigit = char.IsDigit(next);
+        bool nextIsLetterOrDigit = char.IsLetterOrDigit(next);
+
+        // A single-letter token before a period is very commonly an initial (A. Smith).
+        // This remains intentionally conservative because "John A. Smith" and
+        // "Plan A. Tomorrow..." are structurally indistinguishable without lexical semantics.
+        if (cleanToken.Length == 1 &&
+            char.IsLetter(cleanToken[0]) &&
+            nextIsLetterOrDigit)
+        {
+            return false;
+        }
+
+        bool knownAbbreviation = CommonAbbreviations
+            .GetAlternateLookup<ReadOnlySpan<char>>()
+            .Contains(cleanToken);
+
+        if (knownAbbreviation && nextIsLetterOrDigit)
+        {
+            // Lowercase and numeric continuations strongly favor an in-sentence abbreviation:
+            // "etc. before", "approx. 25.4", "no. 12".
+            if (nextIsLower || nextIsDigit)
+            {
+                return false;
+            }
+
+            // Honorifics/ranks normally bind to a following proper name even though it starts
+            // uppercase: "Dr. Smith", "Capt. Jones", "Проф. Іваненко". For cased scripts,
+            // require the source abbreviation itself to be capitalized so lowercase "ms."
+            // (milliseconds) can still end a sentence before "Capt.".
+            if (nextIsUpper && IsCapitalizedPrefixAbbreviation(cleanToken))
+            {
+                return false;
+            }
+
+            // A general abbreviation followed by an uppercase token may legitimately end a
+            // sentence: "etc. Next...", "ms. Capt...".
+            return true;
+        }
+
+        bool dottedAbbreviation = LooksLikeDottedAbbreviation(cleanToken);
+        if (dottedAbbreviation && nextIsLetterOrDigit)
+        {
+            if (nextIsLower || nextIsDigit)
+            {
+                return false;
+            }
+
+            // Uppercase dotted initialisms such as U.S. Army or S.T.A.L.K.E.R. remain intact.
+            // Lowercase dotted forms such as p.m. followed by an uppercase token are allowed
+            // to terminate the sentence.
+            if (nextIsUpper && ContainsUppercaseLetter(cleanToken))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        // Unicode-style abbreviation protection: a period followed by a lowercase continuation
+        // is usually not a sentence break. Unlike the previous implementation, this rule is
+        // reached only after internal-token/abbreviation checks and no longer drives all logic.
+        if (nextIsLower)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsCapitalizedPrefixAbbreviation(ReadOnlySpan<char> token)
+    {
+        if (!PrefixAbbreviations
+            .GetAlternateLookup<ReadOnlySpan<char>>()
+            .Contains(token))
+        {
+            return false;
+        }
+
+        bool hasCasedLetter = false;
+
+        for (int i = 0; i < token.Length; i++)
+        {
+            char value = token[i];
+            if (!char.IsLetter(value))
+            {
+                continue;
+            }
+
+            if (char.IsUpper(value))
+            {
+                return true;
+            }
+
+            if (char.IsLower(value))
+            {
+                hasCasedLetter = true;
                 break;
             }
+        }
 
-            nextTerminator += offset;
+        // Scripts without upper/lower case cannot satisfy a capitalization test; the curated
+        // prefix list itself is therefore the strongest available signal for them.
+        return !hasCasedLetter;
+    }
 
-            if (nextTerminator + 1 >= textSpan.Length)
+    private static bool ContainsUppercaseLetter(ReadOnlySpan<char> token)
+    {
+        for (int i = 0; i < token.Length; i++)
+        {
+            if (char.IsUpper(token[i]))
             {
-                foundValidTerminator = true;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Detects constructions such as "Really?!" she asked. The closing quote/bracket is required;
+    /// punctuation followed directly by lowercase text remains a normal sentence boundary so that
+    /// malformed casing does not silently merge unrelated sentences.
+    /// </summary>
+    private static bool IsQuotedReportingContinuation(ReadOnlySpan<char> text, int boundaryIndex)
+    {
+        int index = boundaryIndex + 1;
+        bool sawClosing = false;
+
+        // A terminal cluster may come before the closing quote: ?!", !!!"), etc.
+        while (index < text.Length)
+        {
+            bool advanced = false;
+
+            while (index < text.Length &&
+                   s_sentenceTerminators.Contains(text[index]) &&
+                   !IsLineBoundary(text[index]))
+            {
+                index++;
+                advanced = true;
+            }
+
+            while (index < text.Length && s_closingPunctuation.Contains(text[index]))
+            {
+                sawClosing = true;
+                index++;
+                advanced = true;
+            }
+
+            if (!advanced)
+            {
                 break;
             }
+        }
 
-            char currentTerminator = textSpan[nextTerminator];
+        if (!sawClosing)
+        {
+            return false;
+        }
 
-            // Non-ASCII-period terminators are unambiguous sentence endings here.
-            if (currentTerminator != '.')
+        int nextVisible = SkipBoundarySpacing(text, index, out bool crossedLineBoundary);
+        if (crossedLineBoundary || nextVisible >= text.Length)
+        {
+            return false;
+        }
+
+        return char.IsLower(text[nextVisible]);
+    }
+
+    /// <summary>
+    /// Ellipsis can express hesitation inside a sentence. It is terminal at end-of-input,
+    /// across an explicit line boundary, before another terminal suffix, or before a clearly
+    /// new uppercase sentence; otherwise it remains a continuation.
+    /// </summary>
+    private static bool IsRealEllipsisBoundary(ReadOnlySpan<char> text, int start, int runEnd)
+    {
+        // Merge adjacent ellipsis symbols / period-like dots into one semantic run.
+        while (runEnd < text.Length &&
+               (s_ellipsisMarks.Contains(text[runEnd]) || s_periodLikeMarks.Contains(text[runEnd])))
+        {
+            runEnd++;
+        }
+
+        int afterClosing = SkipClosingPunctuation(text, runEnd);
+        int nextVisible = SkipBoundarySpacing(text, afterClosing, out bool crossedLineBoundary);
+
+        if (crossedLineBoundary || nextVisible >= text.Length)
+        {
+            return true;
+        }
+
+        char next = text[nextVisible];
+
+        // "Wait…!" / "Really…?" are terminal clusters. Validate the end of the whole
+        // attached cluster so constructs without a real boundary do not split on its first mark.
+        if (s_sentenceTerminators.Contains(next) &&
+            !s_ellipsisMarks.Contains(next) &&
+            !s_periodLikeMarks.Contains(next))
+        {
+            return HasBoundarySeparationAfterTerminalCluster(text, start);
+        }
+
+        // Without whitespace, ellipsis almost always connects the same thought, especially
+        // in scripts without case distinctions (Japanese, Chinese, Thai, etc.).
+        bool hadSpacing = nextVisible > afterClosing;
+        if (!hadSpacing)
+        {
+            return false;
+        }
+
+        // With spacing, an uppercase letter is a useful language-independent signal of a
+        // fresh sentence in bicameral scripts. Lowercase and uncased scripts stay continuous.
+        return char.IsUpper(next);
+    }
+
+    /// <summary>
+    /// Finds the first valid one-time EarlySplit boundary inside the first semantic sentence.
+    /// ASCII clause marks (, ; :) require a real boundary after the complete attached punctuation
+    /// cluster. Non-ASCII clause marks keep script-native behavior because many writing systems do
+    /// not use spaces between clauses.
+    /// </summary>
+    private static int FindEarlySplitEnd(
+        ReadOnlySpan<char> text,
+        int start,
+        int searchEnd,
+        int sentenceEnd)
+    {
+        int searchIndex = start;
+
+        while (searchIndex < searchEnd)
+        {
+            int offset = text[searchIndex..searchEnd].IndexOfAny(s_earlySplitPunctuation);
+            if (offset < 0)
             {
-                foundValidTerminator = true;
+                return -1;
+            }
+
+            int candidateIndex = searchIndex + offset;
+            int clusterEnd = ConsumeAttachedPunctuationCluster(text, candidateIndex, sentenceEnd);
+
+            if (IsValidEarlySplitBoundary(text, candidateIndex, clusterEnd, sentenceEnd))
+            {
+                return clusterEnd;
+            }
+
+            searchIndex = candidateIndex + 1;
+        }
+
+        return -1;
+    }
+
+    private static bool IsValidEarlySplitBoundary(
+        ReadOnlySpan<char> text,
+        int candidateIndex,
+        int clusterEnd,
+        int sentenceEnd)
+    {
+        char candidate = text[candidateIndex];
+
+        // Non-ASCII clause punctuation is allowed to follow script-native spacing rules.
+        // Examples: Chinese/Japanese fullwidth punctuation, Arabic, Myanmar, Khmer, etc.
+        if (candidate > 0x7F)
+        {
+            return true;
+        }
+
+        // For ASCII comma/semicolon/colon, absence of a separator after the complete attached
+        // punctuation cluster is strong evidence that the mark is inside a token or construct:
+        // https://host, foo:bar, x,y, and similar technical text.
+        if (clusterEnd >= sentenceEnd || clusterEnd >= text.Length)
+        {
+            return true;
+        }
+
+        char next = text[clusterEnd];
+        return char.IsWhiteSpace(next) || IsBoundaryFormatControl(next);
+    }
+
+    /// <summary>
+    /// Consumes directly attached punctuation as one cluster. This is intentionally broader than
+    /// sentence terminators because EarlySplit candidates may sit inside constructs such as ://.
+    /// Whitespace always ends the cluster.
+    /// </summary>
+    private static int ConsumeAttachedPunctuationCluster(ReadOnlySpan<char> text, int index, int limit)
+    {
+        int end = index;
+        int max = Math.Min(limit, text.Length);
+
+        while (end < max && IsPunctuationClusterChar(text[end]))
+        {
+            end++;
+        }
+
+        return end;
+    }
+
+    private static bool IsPunctuationClusterChar(char value)
+    {
+        UnicodeCategory category = char.GetUnicodeCategory(value);
+        return category is UnicodeCategory.ConnectorPunctuation
+            or UnicodeCategory.DashPunctuation
+            or UnicodeCategory.OpenPunctuation
+            or UnicodeCategory.ClosePunctuation
+            or UnicodeCategory.InitialQuotePunctuation
+            or UnicodeCategory.FinalQuotePunctuation
+            or UnicodeCategory.OtherPunctuation;
+    }
+
+    /// <summary>
+    /// Western question/exclamation marks are ambiguous when immediately glued to following text.
+    /// Script-specific hard terminators remain spacing-independent.
+    /// </summary>
+    private static bool RequiresBoundarySeparation(char value)
+    {
+        return value is '!' or '?' or '‼' or '‽' or '⁇' or '⁈' or '⁉';
+    }
+
+    private static bool HasBoundarySeparationAfterTerminalCluster(ReadOnlySpan<char> text, int boundaryIndex)
+    {
+        int clusterEnd = ConsumeTerminalCluster(text, boundaryIndex, out bool crossedLineBoundary);
+
+        if (crossedLineBoundary || clusterEnd >= text.Length)
+        {
+            return true;
+        }
+
+        char next = text[clusterEnd];
+        return char.IsWhiteSpace(next) || IsBoundaryFormatControl(next);
+    }
+
+    /// <summary>
+    /// Consumes a complete sentence-terminal/closing cluster, e.g. ?!, ...?!" or !").
+    /// </summary>
+    private static int ConsumeTerminalCluster(
+        ReadOnlySpan<char> text,
+        int boundaryIndex,
+        out bool crossedLineBoundary)
+    {
+        int index = boundaryIndex;
+        crossedLineBoundary = false;
+
+        while (index < text.Length)
+        {
+            int before = index;
+
+            while (index < text.Length && s_sentenceTerminators.Contains(text[index]))
+            {
+                if (IsLineBoundary(text[index]))
+                {
+                    crossedLineBoundary = true;
+                }
+
+                index++;
+            }
+
+            while (index < text.Length && s_closingPunctuation.Contains(text[index]))
+            {
+                index++;
+            }
+
+            if (index == before)
+            {
                 break;
             }
+        }
 
-            char nextChar = textSpan[nextTerminator + 1];
+        return index;
+    }
 
-            // Look through closing quotes/brackets after a period before deciding whether
-            // the period belongs to an abbreviation or to the end of a sentence.
-            int afterClosingIdx = nextTerminator + 1;
-            while (afterClosingIdx < textSpan.Length && s_closingPunctuation.Contains(textSpan[afterClosingIdx]))
+    /// <summary>
+    /// Protects sentence-like punctuation occurring inside a technical token. This intentionally
+    /// recognizes structure rather than a language: URI schemes, www/domain paths, query strings,
+    /// relative URLs, and email-like tokens.
+    /// </summary>
+    private static bool IsEmbeddedTechnicalTerminator(ReadOnlySpan<char> text, int index)
+    {
+        if (index <= 0 || index + 1 >= text.Length)
+        {
+            return false;
+        }
+
+        char after = text[index + 1];
+        if (char.IsWhiteSpace(after) || s_closingPunctuation.Contains(after))
+        {
+            return false;
+        }
+
+        int tokenStart = index - 1;
+        while (tokenStart >= 0 && !char.IsWhiteSpace(text[tokenStart]))
+        {
+            tokenStart--;
+        }
+        tokenStart++;
+
+        ReadOnlySpan<char> prefix = text[tokenStart..index];
+        if (prefix.IsEmpty)
+        {
+            return false;
+        }
+
+        if (prefix.IndexOf("://".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            prefix.StartsWith("www.".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
+            prefix.IndexOf('@') >= 0)
+        {
+            return true;
+        }
+
+        // Relative paths/query-like tokens such as /search?q=x or api/v1?x=1.
+        bool hasPathMarker = prefix.IndexOf('/') >= 0 || prefix.IndexOf('\\') >= 0;
+        bool hasTechnicalMarker = prefix.IndexOfAny(".@=&#".AsSpan()) >= 0;
+
+        return hasPathMarker || hasTechnicalMarker;
+    }
+
+    private static bool IsLineBoundary(char value)
+    {
+        return value is '\n' or '\r' or '\u0085' or '\u2028' or '\u2029';
+    }
+
+    private static bool IsWordLikeAfterPeriod(char value)
+    {
+        return char.IsLetterOrDigit(value) ||
+               char.GetUnicodeCategory(value) is UnicodeCategory.NonSpacingMark
+                   or UnicodeCategory.SpacingCombiningMark
+                   or UnicodeCategory.EnclosingMark;
+    }
+
+    private static int SkipClosingPunctuation(ReadOnlySpan<char> text, int index)
+    {
+        while (index < text.Length && s_closingPunctuation.Contains(text[index]))
+        {
+            index++;
+        }
+
+        return index;
+    }
+
+    /// <summary>
+    /// Skips ordinary spacing/format controls while preserving whether an explicit line boundary
+    /// was crossed. Line separators themselves are semantic sentence evidence, not mere whitespace.
+    /// </summary>
+    private static int SkipBoundarySpacing(ReadOnlySpan<char> text, int index, out bool crossedLineBoundary)
+    {
+        crossedLineBoundary = false;
+
+        while (index < text.Length)
+        {
+            char value = text[index];
+
+            if (IsLineBoundary(value))
             {
-                afterClosingIdx++;
+                crossedLineBoundary = true;
+                index++;
+                continue;
             }
 
-            char charAfterClosing = afterClosingIdx < textSpan.Length ? textSpan[afterClosingIdx] : ' ';
-            bool boundaryAfterClosing = afterClosingIdx >= textSpan.Length
-                || char.IsWhiteSpace(charAfterClosing)
-                || s_sentenceTerminators.Contains(charAfterClosing)
-                || s_pauseMarks.Contains(charAfterClosing);
-
-            if (char.IsWhiteSpace(nextChar) || s_sentenceTerminators.Contains(nextChar) || s_pauseMarks.Contains(nextChar)
-                || (afterClosingIdx > nextTerminator + 1 && boundaryAfterClosing))
+            if (char.IsWhiteSpace(value) || IsBoundaryFormatControl(value))
             {
-                int nextVisibleCharIdx = afterClosingIdx;
-                while (nextVisibleCharIdx < textSpan.Length && char.IsWhiteSpace(textSpan[nextVisibleCharIdx]))
-                {
-                    nextVisibleCharIdx++;
-                }
-
-                bool isNextLower = nextVisibleCharIdx < textSpan.Length && char.IsLower(textSpan[nextVisibleCharIdx]);
-
-                int wordStart = nextTerminator - 1;
-                while (wordStart >= 0 && !char.IsWhiteSpace(textSpan[wordStart]))
-                {
-                    wordStart--;
-                }
-                wordStart++;
-
-                ReadOnlySpan<char> cleanWord = textSpan[wordStart..nextTerminator];
-                while (cleanWord.Length > 0 && char.IsPunctuation(cleanWord[0]))
-                {
-                    cleanWord = cleanWord[1..];
-                }
-
-                bool isAbbreviation = false;
-
-                if (cleanWord.Length == 1 && char.IsLetter(cleanWord[0]))
-                {
-                    isAbbreviation = true;
-                }
-                else if (isNextLower)
-                {
-                    isAbbreviation = true;
-                }
-                else if (cleanWord.IndexOf('.') != -1)
-                {
-                    int maxSegmentLength = 0;
-                    int currentSegmentLength = 0;
-
-                    for (int i = 0; i < cleanWord.Length; i++)
-                    {
-                        if (cleanWord[i] == '.')
-                        {
-                            if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
-                            currentSegmentLength = 0;
-                        }
-                        else
-                        {
-                            currentSegmentLength++;
-                        }
-                    }
-
-                    if (currentSegmentLength > maxSegmentLength) maxSegmentLength = currentSegmentLength;
-                    if (maxSegmentLength <= 3) isAbbreviation = true;
-                }
-                else if (CommonAbbreviations.GetAlternateLookup<ReadOnlySpan<char>>().Contains(cleanWord))
-                {
-                    isAbbreviation = true;
-                }
-
-                if (!isAbbreviation)
-                {
-                    foundValidTerminator = true;
-                    break;
-                }
+                index++;
+                continue;
             }
 
-            nextTerminator++;
+            break;
         }
 
-        if (!foundValidTerminator || nextTerminator == -1)
+        return index;
+    }
+
+    private static bool IsBoundaryFormatControl(char value)
+    {
+        return value is '\u061C' or '\u200E' or '\u200F' or '\uFEFF'
+            || (value >= '\u2066' && value <= '\u2069');
+    }
+
+    private static ReadOnlySpan<char> GetTokenBefore(ReadOnlySpan<char> text, int endExclusive)
+    {
+        int start = endExclusive - 1;
+        while (start >= 0 && !char.IsWhiteSpace(text[start]))
         {
-            isSentenceFinished = false;
-            return textSpan.Length;
+            start--;
         }
 
-        int endIndex = nextTerminator + 1;
+        return text[(start + 1)..endExclusive];
+    }
 
-        while (endIndex < textSpan.Length && s_closingPunctuation.Contains(textSpan[endIndex]))
+    private static ReadOnlySpan<char> TrimLeadingTokenPunctuation(ReadOnlySpan<char> token)
+    {
+        int start = 0;
+        while (start < token.Length &&
+               char.IsPunctuation(token[start]) &&
+               !s_periodLikeMarks.Contains(token[start]))
         {
-            endIndex++;
+            start++;
         }
 
-        while (endIndex < textSpan.Length && s_sentenceTerminators.Contains(textSpan[endIndex]))
+        return token[start..];
+    }
+
+    private static bool LooksLikeDottedAbbreviation(ReadOnlySpan<char> token)
+    {
+        int separatorCount = 0;
+        int segmentLength = 0;
+        int maxSegmentLength = 0;
+        int minSegmentLength = int.MaxValue;
+
+        for (int i = 0; i < token.Length; i++)
         {
-            endIndex++;
+            if (s_periodLikeMarks.Contains(token[i]))
+            {
+                if (segmentLength == 0)
+                {
+                    return false;
+                }
+
+                separatorCount++;
+                maxSegmentLength = Math.Max(maxSegmentLength, segmentLength);
+                minSegmentLength = Math.Min(minSegmentLength, segmentLength);
+                segmentLength = 0;
+                continue;
+            }
+
+            // Dotted acronyms/abbreviations are alphabetic. Numeric/mixed forms such as
+            // 127.0.0.1 and v1.2.3 are technical tokens, not abbreviation evidence.
+            if (!char.IsLetter(token[i]))
+            {
+                return false;
+            }
+
+            segmentLength++;
         }
 
-        isSentenceFinished = true;
-        return endIndex;
+        if (separatorCount == 0 || segmentLength == 0)
+        {
+            return false;
+        }
+
+        maxSegmentLength = Math.Max(maxSegmentLength, segmentLength);
+        minSegmentLength = Math.Min(minSegmentLength, segmentLength);
+
+        // Strong generic forms: U.S / i.e / p.m (single-letter segments), or longer chains
+        // such as S.T.A.L.K.E.R where multiple short alphabetic segments are unmistakably
+        // acronym-like. Avoid treating short domains such as x.ai or co.uk as abbreviations.
+        if (maxSegmentLength == 1)
+        {
+            return true;
+        }
+
+        return separatorCount >= 2 &&
+               minSegmentLength > 0 &&
+               maxSegmentLength <= 3;
+    }
+
+    /// <summary>
+    /// Consumes a complete terminal suffix such as ?!", ...), or mixed full-width terminal clusters.
+    /// Terminators and closing punctuation may alternate; none should leak into the next sentence.
+    /// </summary>
+    private static int ConsumeBoundarySuffix(ReadOnlySpan<char> text, int boundaryIndex)
+    {
+        return ConsumeTerminalCluster(text, boundaryIndex, out _);
     }
 
     /// <summary>
@@ -662,13 +1314,11 @@ public class TextChunker(ChunkerSettings settings)
             if (!chunkSpan.IsEmpty)
             {
                 char lastChar = chunkSpan[^1];
-                string finalChunk = chunkSpan.ToString();
 
                 // Preserve the existing emergency glue behavior for hard/whitespace splits.
-                if (!char.IsPunctuation(lastChar))
-                {
-                    finalChunk += EmergencyGlue;
-                }
+                string finalChunk = char.IsPunctuation(lastChar)
+                                    ? chunkSpan.ToString()
+                                    : string.Concat(chunkSpan, EmergencyGlue);
 
                 result.Add(new TextChunk(finalChunk, false));
             }
