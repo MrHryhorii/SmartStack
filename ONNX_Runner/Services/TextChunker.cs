@@ -19,7 +19,7 @@ public class TextChunker(ChunkerSettings settings)
     [
         // Common punctuation and explicit line/paragraph boundaries
         '.', '!', '?',
-        '\u2024',               // ONE DOT LEADER — period-like compatibility form
+        '\u2024',              // ONE DOT LEADER — period-like compatibility form
         '\n', '\r', '\u0085',  // LF, CR, NEXT LINE
         '\u2028', '\u2029',    // LINE SEPARATOR, PARAGRAPH SEPARATOR
 
@@ -72,7 +72,7 @@ public class TextChunker(ChunkerSettings settings)
         '෴',  // U+0DF4  SINHALA PUNCTUATION KUNDDALIYA
 
         // Thai (traditional paragraph/text endings)
-        '๚',  // U+0E5A  THAI CHARACTER ANGKHANKHU
+        '๚',   // U+0E5A  THAI CHARACTER ANGKHANKHU
         '๛',  // U+0E5B  THAI CHARACTER KHOMUT
 
         // Armenian
@@ -84,8 +84,8 @@ public class TextChunker(ChunkerSettings settings)
         ';',  // U+037E  GREEK QUESTION MARK
 
         // Ethiopic (Amharic, Tigrinya)
-        '።',  // U+1362  ETHIOPIC FULL STOP
-        '፧',  // U+1367  ETHIOPIC QUESTION MARK
+        '።',   // U+1362  ETHIOPIC FULL STOP
+        '፧',   // U+1367  ETHIOPIC QUESTION MARK
         '፨',  // U+1368  ETHIOPIC PARAGRAPH SEPARATOR
 
         // Myanmar (Burmese)
@@ -116,7 +116,7 @@ public class TextChunker(ChunkerSettings settings)
         '᙮',  // U+166E  CANADIAN SYLLABICS FULL STOP
 
         // Vai
-        '꘎',  // U+A60E  VAI FULL STOP
+        '꘎',   // U+A60E  VAI FULL STOP
         '꘏',  // U+A60F  VAI QUESTION MARK
 
         // Bamum
@@ -134,7 +134,7 @@ public class TextChunker(ChunkerSettings settings)
         '꧉',  // U+A9C9  JAVANESE PADA LUNGSI
 
         // Cham
-        '꩝',  // U+AA5D  CHAM PUNCTUATION DANDA
+        '꩝',   // U+AA5D  CHAM PUNCTUATION DANDA
         '꩞',  // U+AA5E  CHAM PUNCTUATION DOUBLE DANDA
         '꩟',  // U+AA5F  CHAM PUNCTUATION TRIPLE DANDA
 
@@ -150,7 +150,7 @@ public class TextChunker(ChunkerSettings settings)
     private static readonly char[] PeriodLikeMarks =
     [
         '.',       // U+002E FULL STOP
-        '\u2024', // U+2024 ONE DOT LEADER
+        '\u2024',  // U+2024 ONE DOT LEADER
         '﹒',      // U+FE52 SMALL FULL STOP
         '．',      // U+FF0E FULLWIDTH FULL STOP
     ];

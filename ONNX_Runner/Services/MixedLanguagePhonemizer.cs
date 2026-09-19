@@ -19,7 +19,8 @@ public record TextChunk
     public string Script { get; init; } = "None";
     public IReadOnlyList<string> RawTop5 { get; init; } = Array.Empty<string>();
 
-    // True if the text is a pre-formatted IPA transcription (e.g., [hɛˈloʊ]).
+    // True if the text is a pre-formatted raw phoneme block. Explicit [[...]] blocks always
+    // qualify; ambiguous [...] and /.../ forms are admitted only after IPA validation upstream.
     // Skips language detection and eSpeak, going straight to fallback validation.
     public bool IsRawPhonemes { get; init; }
 }
@@ -34,17 +35,21 @@ public partial class MixedLanguagePhonemizer
 {
     // Tokenizer classification is intentionally implemented with a single ReadOnlySpan<char>
     // scan instead of Regex.Matches(). This removes MatchCollection / Match / match.Value
-    // allocations from the hot path while preserving the original three logical groups:
-    // 1. Punctuation/Dashes
-    // 2. Words (letters, decimal digits, marks, internal apostrophes, periods, and lexical hyphens)
-    // 3. Unrecognized garbage/symbols
+    // allocations from the hot path while keeping structural roles explicit: protected technical
+    // spans, silent quote boundaries, soft punctuation, lexical words, and neutral symbols/spaces.
     //
     // Lexical hyphens are accepted only when surrounded by word characters because they are part
     // of the word itself (e.g., "state-of-the-art", "будь-який", Hebrew maqaf compounds).
     // Typographic dashes (figure/en/em/horizontal bar) remain punctuation even without spaces,
-    // so constructions such as "word—word" still create a hard phrase boundary.
+    // so constructions such as "word—word" still create a soft language-boundary candidate.
     private static readonly SearchValues<char> LexicalHyphens =
         SearchValues.Create("-\u2010\u2011\u058A\u05BE\u30A0");
+
+    // Quotes are structural boundaries for language analysis, but never phonetic content.
+    // Apostrophes inside words are consumed by the lexical-token path before they can reach
+    // this set, so contractions such as "don't" remain untouched.
+    private static readonly SearchValues<char> VisualQuotes =
+        SearchValues.Create("\"“”„‟«»‹›「」『』〝〞〟❝❞❛❜‘’‚‛'");
 
     // Diagnostic collections are immutable-by-contract and cached once for the entire process.
     // Production requests therefore do not allocate tiny List<string> instances for metadata.
@@ -59,6 +64,9 @@ public partial class MixedLanguagePhonemizer
 
     private static readonly IReadOnlyList<string> ScriptCapabilityRouteDiagnostic =
         ["script capability route"];
+
+    private static readonly IReadOnlyList<string> TechnicalContextDiagnostic =
+        ["technical context"];
 
     public enum ScriptType
     {
@@ -88,6 +96,14 @@ public partial class MixedLanguagePhonemizer
         Myanmar,
         Other
     }
+
+    // One sentence-wide language verdict used only as context for short sub-phrases.
+    // The statistical detector is still allowed to fall back to chunk-level analysis when this
+    // verdict is weak, while incompatible writing systems always bypass it.
+    private readonly record struct SentenceLanguageContext(
+        Language Language,
+        string EspeakCode,
+        double Confidence);
 
     // Ultimate script-level emergency fallback for when both Lingua and strong script-language hints
     // find ZERO signal (e.g. Cyrillic text on a server with only Latin models loaded). 
@@ -358,11 +374,10 @@ public partial class MixedLanguagePhonemizer
     private readonly string[] _modelEspeakParts;
 
     private readonly Language? _modelLinguaLang;
-    private readonly string? _modelContextOverrideCode;
 
     // Primary writing system of the loaded model language. This is cached once and used only
-    // as a guard against impossible sentence-context overrides / native-language bonuses.
-    // It does not choose the language of a foreign chunk; normal detection and fallbacks still do that.
+    // to gate the short-text bonus toward the model language. Sentence-wide context now carries
+    // its own detected language and performs an independent script-compatibility check.
     private readonly ScriptType _modelScript;
 
     // Cache for dynamic bonus multiplier settings
@@ -373,6 +388,12 @@ public partial class MixedLanguagePhonemizer
     // Cache for sentence-context override settings
     private readonly double _overrideThreshold;
     private readonly int _minSentenceLength;
+
+    // Local Lingua evidence is authoritative only when the winner has both a majority-level
+    // probability and a meaningful lead over the runner-up. Ambiguous tiny fragments can still
+    // inherit sentence/model context; convincing short foreign inserts are protected from it.
+    private const double LocalWinnerProbabilityFloor = 0.50;
+    private const double LocalWinnerMarginFloor = 0.08;
 
     // logger
     private readonly ILogger<MixedLanguagePhonemizer> _logger;
@@ -395,9 +416,6 @@ public partial class MixedLanguagePhonemizer
 
         // Pass the base code to the mapper to get the strongly-typed Lingua Enum
         _modelLinguaLang = _mapper.GetLinguaLanguage(baseFamily);
-        _modelContextOverrideCode = _modelLinguaLang.HasValue
-            ? _mapper.MapBackToEspeak(_modelLinguaLang.Value, _modelEspeakCode)
-            : null;
         _modelScript = GetPrimaryScriptForLanguage(_modelLinguaLang);
 
         // Load bonus configuration (or fallback to safe defaults)
@@ -999,6 +1017,324 @@ public partial class MixedLanguagePhonemizer
         return 1;
     }
 
+    // Returns true for period-like forms that may terminate a written abbreviation.
+    private static bool IsPeriodLike(char value)
+    {
+        return value is '.' or '\u2024' or '﹒' or '．';
+    }
+
+    // Protects titles, initials, and dotted abbreviations from becoming independent language chunks.
+    // Sentence boundaries were already resolved by TextChunker, so within this layer a recognized
+    // abbreviation followed by more text belongs to the same language-detection phrase.
+    private static bool ShouldKeepAbbreviationPeriod(ReadOnlySpan<char> text, int periodIndex)
+    {
+        if (periodIndex <= 0 || periodIndex >= text.Length || !IsPeriodLike(text[periodIndex]))
+        {
+            return false;
+        }
+
+        int nextIndex = periodIndex + 1;
+
+        // Clause punctuation may follow an abbreviation before its continuation: "e.g., this".
+        while (nextIndex < text.Length && text[nextIndex] is ',' or ';' or ':')
+        {
+            nextIndex++;
+        }
+
+        while (nextIndex < text.Length && char.IsWhiteSpace(text[nextIndex]))
+        {
+            nextIndex++;
+        }
+
+        if (nextIndex >= text.Length)
+        {
+            return false;
+        }
+
+        int nextLength = DecodeRune(text[nextIndex..], out Rune nextRune);
+        _ = nextLength;
+
+        UnicodeCategory nextCategory = Rune.GetUnicodeCategory(nextRune);
+        bool nextIsWord = IsLetterRune(nextRune) ||
+                          nextCategory == UnicodeCategory.DecimalDigitNumber;
+
+        if (!nextIsWord)
+        {
+            return false;
+        }
+
+        int start = periodIndex - 1;
+        while (start >= 0)
+        {
+            char value = text[start];
+
+            if (char.IsLetterOrDigit(value) ||
+                IsPeriodLike(value) ||
+                value is '\'' or '’' ||
+                IsLexicalHyphen(value))
+            {
+                start--;
+                continue;
+            }
+
+            break;
+        }
+
+        ReadOnlySpan<char> token = text[(start + 1)..periodIndex];
+        if (token.IsEmpty)
+        {
+            return false;
+        }
+
+        if (token.Length == 1 && char.IsLetter(token[0]))
+        {
+            return true;
+        }
+
+        if (TextChunker.CommonAbbreviations
+            .GetAlternateLookup<ReadOnlySpan<char>>()
+            .Contains(token))
+        {
+            return true;
+        }
+
+        return LooksLikeDottedAbbreviationForSegmentation(token);
+    }
+
+    // Recognizes conservative dotted initialisms such as U.S, p.m and S.T.A.L.K.E.R without
+    // classifying short domains such as x.ai or co.uk as abbreviations.
+    private static bool LooksLikeDottedAbbreviationForSegmentation(ReadOnlySpan<char> token)
+    {
+        int separatorCount = 0;
+        int segmentLength = 0;
+        int minSegmentLength = int.MaxValue;
+        int maxSegmentLength = 0;
+
+        for (int i = 0; i < token.Length; i++)
+        {
+            if (IsPeriodLike(token[i]))
+            {
+                if (segmentLength == 0)
+                {
+                    return false;
+                }
+
+                separatorCount++;
+                minSegmentLength = Math.Min(minSegmentLength, segmentLength);
+                maxSegmentLength = Math.Max(maxSegmentLength, segmentLength);
+                segmentLength = 0;
+                continue;
+            }
+
+            if (!char.IsLetter(token[i]))
+            {
+                return false;
+            }
+
+            segmentLength++;
+        }
+
+        if (separatorCount == 0 || segmentLength == 0)
+        {
+            return false;
+        }
+
+        minSegmentLength = Math.Min(minSegmentLength, segmentLength);
+        maxSegmentLength = Math.Max(maxSegmentLength, segmentLength);
+
+        if (maxSegmentLength == 1)
+        {
+            return true;
+        }
+
+        return separatorCount >= 2 &&
+               minSegmentLength > 0 &&
+               maxSegmentLength <= 3;
+    }
+
+    // Finds a non-whitespace technical token whose internal punctuation must not become language
+    // boundaries. The rule is deliberately structural rather than product/domain specific.
+    private static bool TryGetProtectedTechnicalSpanLength(
+        ReadOnlySpan<char> text,
+        int startIndex,
+        out int length)
+    {
+        length = 0;
+
+        if ((uint)startIndex >= (uint)text.Length || char.IsWhiteSpace(text[startIndex]))
+        {
+            return false;
+        }
+
+        int end = startIndex;
+        while (end < text.Length && !char.IsWhiteSpace(text[end]))
+        {
+            end++;
+        }
+
+        ReadOnlySpan<char> candidate = text[startIndex..end];
+        int protectedLength = candidate.Length;
+
+        // Keep a sentence/clause delimiter available to the ordinary soft-boundary tokenizer.
+        // Internal punctuation remains protected, while a trailing comma in "https://x, then"
+        // still offers a useful language-switch candidate after the URL.
+        while (protectedLength > 0 &&
+               (candidate[protectedLength - 1] is ',' or ';' or ':' or '!' or '?' ||
+                VisualQuotes.Contains(candidate[protectedLength - 1])))
+        {
+            protectedLength--;
+        }
+
+        // A final sentence period after a dotted technical token is not part of the token itself.
+        // Keep internal dots protected while leaving the terminator available to the punctuation path.
+        if (protectedLength > 1 && candidate[protectedLength - 1] == '.')
+        {
+            ReadOnlySpan<char> withoutFinalPeriod = candidate[..(protectedLength - 1)];
+            if (LooksLikeProtectedTechnicalSpan(withoutFinalPeriod))
+            {
+                protectedLength--;
+            }
+        }
+
+        if (protectedLength <= 0)
+        {
+            return false;
+        }
+
+        ReadOnlySpan<char> token = candidate[..protectedLength];
+        if (!LooksLikeProtectedTechnicalSpan(token))
+        {
+            return false;
+        }
+
+        length = protectedLength;
+        return true;
+    }
+
+    private static bool LooksLikeProtectedTechnicalSpan(ReadOnlySpan<char> token)
+    {
+        bool dottedCall = token.IndexOf('.') >= 0 &&
+                          token.IndexOf('(') >= 0 &&
+                          token.IndexOf(')') > token.IndexOf('(');
+
+        if (token.IndexOf("://".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            token.StartsWith("www.".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
+            token.IndexOf('@') >= 0 ||
+            token.IndexOf('/') >= 0 ||
+            token.IndexOf('\\') >= 0 ||
+            token.IndexOf('=') >= 0 ||
+            token.IndexOf('&') >= 0 ||
+            token.IndexOf('#') >= 0 ||
+            token.IndexOf("?.".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            token.IndexOf("::".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            token.IndexOf("->".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            token.IndexOf("=>".AsSpan(), StringComparison.Ordinal) >= 0 ||
+            dottedCall ||
+            LooksLikeDottedTechnicalSpan(token))
+        {
+            return true;
+        }
+
+        // A glued colon between token characters is structural rather than a natural clause
+        // separator in this layer: 10:30, host:port, key:value, etc. A spaced colon remains soft.
+        int colonIndex = token.IndexOf(':');
+        return colonIndex > 0 &&
+               colonIndex + 1 < token.Length &&
+               char.IsLetterOrDigit(token[colonIndex - 1]) &&
+               char.IsLetterOrDigit(token[colonIndex + 1]);
+    }
+
+    // Dotted identifiers/domains/files are technical structure, not natural-language punctuation.
+    // Known abbreviations and all-numeric decimals remain on their existing lexical paths.
+    private static bool LooksLikeDottedTechnicalSpan(ReadOnlySpan<char> token)
+    {
+        if (token.IndexOf('.') < 0 || token.IsEmpty)
+        {
+            return false;
+        }
+
+        if (TextChunker.CommonAbbreviations
+            .GetAlternateLookup<ReadOnlySpan<char>>()
+            .Contains(token) ||
+            LooksLikeDottedAbbreviationForSegmentation(token))
+        {
+            return false;
+        }
+
+        bool hasLetter = false;
+        int segmentLength = 0;
+        int separators = 0;
+
+        for (int i = 0; i < token.Length; i++)
+        {
+            char value = token[i];
+
+            if (value == '.')
+            {
+                if (segmentLength == 0)
+                {
+                    return false;
+                }
+
+                separators++;
+                segmentLength = 0;
+                continue;
+            }
+
+            if (char.IsLetter(value))
+            {
+                hasLetter = true;
+                segmentLength++;
+                continue;
+            }
+
+            if (char.IsDigit(value) || value is '_' or '-')
+            {
+                segmentLength++;
+                continue;
+            }
+
+            return false;
+        }
+
+        return separators > 0 && segmentLength > 0 && hasLetter;
+    }
+
+    // Quotes are analysis boundaries but never output punctuation.
+    private static bool IsVisualQuote(Rune rune)
+    {
+        return rune.Value <= char.MaxValue &&
+               VisualQuotes.Contains((char)rune.Value);
+    }
+
+    // Checks whether a sentence-wide language verdict can safely apply to this script.
+    private static bool IsLanguageScriptCompatible(Language language, ScriptType chunkScript)
+    {
+        if (chunkScript is ScriptType.None or ScriptType.Other)
+        {
+            return true;
+        }
+
+        if (language == Language.Japanese)
+        {
+            return chunkScript is ScriptType.Han or ScriptType.Hiragana or ScriptType.Katakana;
+        }
+
+        if (language == Language.Serbian)
+        {
+            return chunkScript is ScriptType.Cyrillic or ScriptType.Latin;
+        }
+
+        ScriptType languageScript = GetPrimaryScriptForLanguage(language);
+        if (languageScript is ScriptType.None or ScriptType.Other)
+        {
+            return true;
+        }
+
+        return languageScript == chunkScript ||
+               (IsJapaneseKanaScript(languageScript) && IsJapaneseKanaScript(chunkScript));
+    }
+
     // Checks whether a character is an apostrophe, period, or lexical hyphen allowed inside a word.
     private static bool IsWordConnector(char value)
     {
@@ -1006,13 +1342,16 @@ public partial class MixedLanguagePhonemizer
             || IsLexicalHyphen(value);
     }
 
-    // Returns true for punctuation that forms a hard phrase boundary.
-    private static bool IsHardPunctuation(Rune rune)
+    // Returns true for punctuation that may form a soft language-detection boundary.
+    private static bool IsBoundaryPunctuation(Rune rune)
     {
-        // After DynamicPunctuationMapper normalizes an orthographic segment, the selected
-        // model-native punctuation may come from any writing system. Classifying by Unicode
-        // category keeps tokenization symmetric for Western, CJK, Arabic, Indic, and other
-        // punctuation without maintaining a second hard-coded symbol catalog here.
+        // Quotes are handled separately as silent hard analysis boundaries. All remaining
+        // punctuation stays audible/structural and becomes a soft language-detection boundary.
+        if (IsVisualQuote(rune))
+        {
+            return false;
+        }
+
         UnicodeCategory category = Rune.GetUnicodeCategory(rune);
 
         return category is UnicodeCategory.DashPunctuation
@@ -1111,8 +1450,8 @@ public partial class MixedLanguagePhonemizer
     }
 
     /// <summary>
-    /// Chunks the text into segments based on punctuation and script changes, 
-    /// returning a sequence of tokens ready for language prediction.
+    /// Chunks one semantic sentence into language-detection candidates. Script changes are hard
+    /// boundaries; punctuation is a soft candidate unless protected as lexical/technical syntax.
     /// 
     /// If a forced language is provided:
     /// - Bypasses the heavy Lingua statistical detector entirely to save CPU resources.
@@ -1143,28 +1482,44 @@ public partial class MixedLanguagePhonemizer
         }
 
         // SENTENCE-LEVEL CONTEXT DETECTOR
-        // We only run the heavy Lingua statistical analysis if we ARE NOT forcing a language.
-        double? sentenceConfidence = null;
+        // One heavy Lingua pass determines the strongest language of the complete semantic sentence.
+        // A confident verdict lets short same-script fragments inherit sentence context without paying
+        // for additional statistical detection; weak sentences fall through to chunk-level analysis.
+        SentenceLanguageContext? sentenceContext = null;
         if (resolvedForcedCode == null &&
-            _modelLinguaLang.HasValue &&
             CountLetters(text.AsSpan()) >= _minSentenceLength)
         {
-            _detector
-                .ComputeLanguageConfidenceValues(text)
-                .TryGetValue(_modelLinguaLang.Value, out double conf);
+            var sentenceConfidences = _detector.ComputeLanguageConfidenceValues(text);
+            Language bestSentenceLanguage = Language.Unknown;
+            double bestSentenceConfidence = -1;
 
-            sentenceConfidence = conf;
-
-            // Log only failed sentence overrides to avoid duplicating the existing
-            // [SENTENCE OVERRIDE] diagnostics for successful cases.
-            if (_logger.IsEnabled(LogLevel.Debug) &&
-                conf < _overrideThreshold)
+            foreach (var confidence in sentenceConfidences)
             {
-                _logger.LogDebug(
-                    "[LANG-DEBUG] Sentence context → {Code} | conf={Conf:0.0000} < threshold={Threshold:0.0000}; using chunk detection",
-                    _modelContextOverrideCode ?? _modelEspeakCode,
-                    conf,
-                    _overrideThreshold);
+                if (confidence.Value <= bestSentenceConfidence)
+                {
+                    continue;
+                }
+
+                bestSentenceLanguage = confidence.Key;
+                bestSentenceConfidence = confidence.Value;
+            }
+
+            if (bestSentenceLanguage != Language.Unknown && bestSentenceConfidence >= 0)
+            {
+                sentenceContext = new SentenceLanguageContext(
+                    bestSentenceLanguage,
+                    _mapper.MapBackToEspeak(bestSentenceLanguage, _modelEspeakCode),
+                    bestSentenceConfidence);
+
+                if (_logger.IsEnabled(LogLevel.Debug) &&
+                    bestSentenceConfidence < _overrideThreshold)
+                {
+                    _logger.LogDebug(
+                        "[LANG-DEBUG] Sentence context → {Code} | conf={Conf:0.0000} < threshold={Threshold:0.0000}; using chunk detection",
+                        sentenceContext.Value.EspeakCode,
+                        bestSentenceConfidence,
+                        _overrideThreshold);
+                }
             }
         }
 
@@ -1175,6 +1530,8 @@ public partial class MixedLanguagePhonemizer
         ScriptType currentScript = ScriptType.None;
         bool hasLetters = false;
         bool hasSpeakableContent = false;
+        bool insideQuote = false;
+        int analysisBoundaryIndex = 0;
 
         // Helper function to process accumulated content before moving to punctuation or script changes
         void FlushPhrase()
@@ -1210,7 +1567,7 @@ public partial class MixedLanguagePhonemizer
                         phrase,
                         currentScript,
                         result,
-                        sentenceConfidence);
+                        insideQuote ? null : sentenceContext);
                 }
             }
             else if (hasSpeakableContent)
@@ -1335,9 +1692,242 @@ public partial class MixedLanguagePhonemizer
             AppendScriptRun(word[runStart..], runScript);
         }
 
-        // Preserves the original tokenizer behavior for punctuation that becomes a real boundary.
-        // The separator itself remains a universal punctuation token between language runs.
-        void AppendUniversalPunctuation(ReadOnlySpan<char> punctuation)
+        // Technical spans are structurally protected but language-neutral. They never run an
+        // independent Lingua vote: a trusted sentence/neighbor context wins, otherwise a compatible
+        // model language is safer than a random statistical guess over code, URLs, paths, or domains.
+        void AppendTechnicalRun(ReadOnlySpan<char> run, ScriptType runScript)
+        {
+            if (run.IsEmpty)
+            {
+                return;
+            }
+
+            FlushPhrase();
+
+            string code;
+            double probability;
+            bool reliable;
+
+            if (resolvedForcedCode != null)
+            {
+                code = resolvedForcedCode;
+                probability = 1.0;
+                reliable = true;
+            }
+            else
+            {
+                string? capabilityCode = runScript switch
+                {
+                    ScriptType.Han => "cmn",
+                    ScriptType.Hiragana or ScriptType.Katakana => "ja",
+                    _ => null
+                };
+
+                if (capabilityCode != null)
+                {
+                    code = capabilityCode;
+                    probability = 1.0;
+                    reliable = true;
+                }
+                else if (!insideQuote &&
+                         sentenceContext is { } context &&
+                         context.Confidence >= _overrideThreshold &&
+                         IsLanguageScriptCompatible(context.Language, runScript))
+                {
+                    code = context.EspeakCode;
+                    probability = context.Confidence;
+                    reliable = true;
+                }
+                else if (TryGetPreviousTechnicalContext(runScript, out TextChunk previous))
+                {
+                    code = previous.DetectedLanguage;
+                    probability = previous.Probability;
+                    reliable = previous.IsReliable;
+                }
+                else if (IsModelScriptCompatible(runScript))
+                {
+                    code = _modelEspeakCode;
+                    probability = 1.0;
+                    reliable = true;
+                }
+                else
+                {
+                    string? fallbackCode = null;
+
+                    if (StrongLanguageHintsByScript.TryGetValue(runScript, out var hints))
+                    {
+                        int hitIndex = run.IndexOfAny(hints.Chars);
+                        if (hitIndex >= 0 && hints.Map.TryGetValue(run[hitIndex], out string? hinted))
+                        {
+                            fallbackCode = hinted;
+                        }
+                    }
+
+                    fallbackCode ??= ScriptFallbackLanguage.TryGetValue(runScript, out string? byScript)
+                        ? byScript
+                        : null;
+
+                    code = fallbackCode ?? _modelEspeakCode;
+                    probability = 0;
+                    reliable = false;
+                }
+            }
+
+            string runText = run.ToString();
+
+            result.Add(new TextChunk
+            {
+                Text = runText,
+                DetectedLanguage = code,
+                Probability = probability,
+                IsReliable = reliable,
+                IsPunctuationOrSpace = false,
+                Script = GetScriptName(runScript),
+                RawTop5 = TechnicalContextDiagnostic
+            });
+
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug(
+                    "[LANG-DEBUG] \"{Text}\" — technical context → {Code}",
+                    runText,
+                    code);
+            }
+        }
+
+        bool TryGetPreviousTechnicalContext(ScriptType runScript, out TextChunk previous)
+        {
+            string scriptName = GetScriptName(runScript);
+
+            for (int i = result.Count - 1; i >= analysisBoundaryIndex; i--)
+            {
+                TextChunk candidate = result[i];
+
+                if (candidate.IsPunctuationOrSpace)
+                {
+                    continue;
+                }
+
+                if (candidate.IsRawPhonemes ||
+                    !candidate.Script.Equals(scriptName, StringComparison.Ordinal))
+                {
+                    break;
+                }
+
+                if (candidate.IsReliable &&
+                    !candidate.DetectedLanguage.Equals("universal", StringComparison.OrdinalIgnoreCase) &&
+                    !candidate.DetectedLanguage.Equals("raw", StringComparison.OrdinalIgnoreCase))
+                {
+                    previous = candidate;
+                    return true;
+                }
+
+                break;
+            }
+
+            previous = null!;
+            return false;
+        }
+
+        void AppendTechnicalSpan(ReadOnlySpan<char> span)
+        {
+            if (span.IsEmpty)
+            {
+                return;
+            }
+
+            AnalyzeSpeakableContent(
+                span,
+                out bool fragmentHasLetters,
+                out _);
+
+            if (!fragmentHasLetters)
+            {
+                AppendTechnicalRun(span, ScriptType.None);
+                return;
+            }
+
+            int runStart = 0;
+            int scanIndex = 0;
+            ScriptType runScript = ScriptType.None;
+
+            while (scanIndex < span.Length)
+            {
+                int runeLength = DecodeRune(span[scanIndex..], out Rune rune);
+
+                if (IsLetterRune(rune))
+                {
+                    ScriptType script = DetectScript(rune);
+
+                    if (script != ScriptType.Other)
+                    {
+                        if (runScript == ScriptType.None)
+                        {
+                            runScript = script;
+                        }
+                        else if (!AreScriptsCompatible(runScript, script))
+                        {
+                            AppendTechnicalRun(span[runStart..scanIndex], runScript);
+                            runStart = scanIndex;
+                            runScript = script;
+                        }
+                    }
+                }
+
+                scanIndex += runeLength;
+            }
+
+            AppendTechnicalRun(
+                span[runStart..],
+                runScript == ScriptType.None ? ScriptType.Other : runScript);
+        }
+
+        // Quotes are hard boundaries for language analysis but silent in the phoneme stream.
+        // If removing one would directly glue two word cores together, preserve exactly one
+        // ordinary separator; otherwise do not invent any pause.
+        void AppendSilentQuoteBoundary(ReadOnlySpan<char> fullText, int quoteIndex, int quoteLength)
+        {
+            FlushPhrase();
+
+            bool needsSeparator = false;
+            int nextIndex = quoteIndex + quoteLength;
+
+            if (quoteIndex > 0 && nextIndex < fullText.Length)
+            {
+                OperationStatus leftStatus = Rune.DecodeLastFromUtf16(
+                    fullText[..quoteIndex],
+                    out Rune leftRune,
+                    out _);
+
+                int rightLength = DecodeRune(fullText[nextIndex..], out Rune rightRune);
+                _ = rightLength;
+
+                needsSeparator = leftStatus == OperationStatus.Done &&
+                                 IsWordCoreRune(leftRune) &&
+                                 IsWordCoreRune(rightRune);
+            }
+
+            if (needsSeparator)
+            {
+                result.Add(new TextChunk
+                {
+                    Text = " ",
+                    DetectedLanguage = "universal",
+                    Probability = 1.0,
+                    IsReliable = true,
+                    IsPunctuationOrSpace = true,
+                    Script = "None"
+                });
+            }
+
+            analysisBoundaryIndex = result.Count;
+            insideQuote = !insideQuote;
+        }
+
+        // Punctuation is a SOFT language-boundary candidate: it ends the current detection phrase
+        // but remains a universal token. Script transitions are the only unconditional language
+        // boundaries; sentence context can later assign the same language on both sides.
+        void AppendSoftPunctuation(ReadOnlySpan<char> punctuation)
         {
             FlushPhrase();
 
@@ -1378,7 +1968,7 @@ public partial class MixedLanguagePhonemizer
                 if (ShouldSplitAtLexicalHyphen(word, hyphenIndex))
                 {
                     AppendWord(word[fragmentStart..hyphenIndex]);
-                    AppendUniversalPunctuation(word.Slice(hyphenIndex, 1));
+                    AppendSoftPunctuation(word.Slice(hyphenIndex, 1));
                     fragmentStart = hyphenIndex + 1;
                 }
 
@@ -1395,8 +1985,36 @@ public partial class MixedLanguagePhonemizer
         {
             int currentLength = DecodeRune(input[index..], out Rune currentRune);
 
-            // GROUP 1: Punctuation and dashes.
-            if (IsHardPunctuation(currentRune))
+            // PROTECTED TECHNICAL SPAN: preserve URL/email/path/query/code punctuation as one
+            // structural token, but do not let code-like text cast an independent Lingua vote.
+            if (TryGetProtectedTechnicalSpanLength(input, index, out int technicalLength))
+            {
+                AppendTechnicalSpan(input.Slice(index, technicalLength));
+                index += technicalLength;
+                continue;
+            }
+
+            // Visual quotes split language-analysis context but are not phonetic punctuation.
+            if (IsVisualQuote(currentRune))
+            {
+                AppendSilentQuoteBoundary(input, index, currentLength);
+                index += currentLength;
+                continue;
+            }
+
+            // A period after a recognized abbreviation/initial belongs to the surrounding language
+            // phrase instead of creating a tiny independent chunk such as "Dr" + "." + "Smith".
+            if (currentRune.Value <= char.MaxValue &&
+                IsPeriodLike((char)currentRune.Value) &&
+                ShouldKeepAbbreviationPeriod(input, index))
+            {
+                currentSubPhrase.Append(input.Slice(index, currentLength));
+                index += currentLength;
+                continue;
+            }
+
+            // GROUP 1: punctuation/dashes are soft language-boundary candidates.
+            if (IsBoundaryPunctuation(currentRune))
             {
                 int start = index;
                 index += currentLength;
@@ -1407,7 +2025,7 @@ public partial class MixedLanguagePhonemizer
                         input[index..],
                         out Rune punctuationRune);
 
-                    if (!IsHardPunctuation(punctuationRune))
+                    if (!IsBoundaryPunctuation(punctuationRune))
                     {
                         break;
                     }
@@ -1415,7 +2033,7 @@ public partial class MixedLanguagePhonemizer
                     index += punctuationLength;
                 }
 
-                AppendUniversalPunctuation(input[start..index]);
+                AppendSoftPunctuation(input[start..index]);
                 continue;
             }
 
@@ -1474,9 +2092,9 @@ public partial class MixedLanguagePhonemizer
                     input[index..],
                     out Rune nextRune);
 
-                bool isHardPunctuation = IsHardPunctuation(nextRune);
+                bool isBoundaryPunctuation = IsBoundaryPunctuation(nextRune);
 
-                if (isHardPunctuation || IsWordCoreRune(nextRune))
+                if (isBoundaryPunctuation || IsVisualQuote(nextRune) || IsWordCoreRune(nextRune))
                 {
                     break;
                 }
@@ -1487,16 +2105,22 @@ public partial class MixedLanguagePhonemizer
             currentSubPhrase.Append(input[garbageStart..index]);
         }
 
-        // Flush anything left at the end of the text
+        // Flush anything left at the end of the text. Punctuation intentionally remains as
+        // separate universal tokens; voice caching downstream removes redundant SetVoice calls
+        // without sacrificing pauses or sentence-level prosody.
         FlushPhrase();
         return result;
     }
 
     /// <summary>
-    /// Analyzes a chunk of text to determine its language, applying statistical confidence 
-    /// weighting to prevent random language switching on short, ambiguous words.
+    /// Analyzes a chunk of text with local detector evidence first. Sentence context and the
+    /// loaded-model bias are used only to stabilize short fragments whose local verdict is ambiguous.
     /// </summary>
-    private void ProcessSubPhrase(string text, ScriptType script, List<TextChunk> result, double? sentenceConfidence)
+    private void ProcessSubPhrase(
+        string text,
+        ScriptType script,
+        List<TextChunk> result,
+        SentenceLanguageContext? sentenceContext)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
 
@@ -1540,46 +2164,117 @@ public partial class MixedLanguagePhonemizer
         }
 
         bool canFavorModelLanguage = IsModelScriptCompatible(script);
+        bool debugEnabled = _logger.IsEnabled(LogLevel.Debug);
 
-        // SENTENCE-CONTEXT OVERRIDE: a confidently single-language sentence may win only when
-        // the chunk uses a writing system compatible with the loaded model language. A clear
-        // script mismatch (e.g. Cyrillic inside an English/Latin sentence) must continue through
-        // normal detection and fallback instead of being forcibly assigned to the model language.
-        if (canFavorModelLanguage &&
-            letterCount < _maxLimit &&
-            sentenceConfidence >= _overrideThreshold &&
-            _modelContextOverrideCode != null)
+        // LOCAL DETECTOR FIRST:
+        // Always inspect the actual chunk before applying sentence/model context. Keeping the
+        // runner-up matters: 0.53 / 0.44 is qualitatively different from a near tie such as
+        // 0.51 / 0.49 even though both winners are above 0.5.
+        var confidences = _detector.ComputeLanguageConfidenceValues(cleanText);
+
+        IReadOnlyList<string> rawTop5 = debugEnabled
+            ? BuildTopDiagnostics(confidences)
+            : Array.Empty<string>();
+
+        Language rawBestLanguage = Language.Unknown;
+        double rawBestProbability = -1;
+        double rawSecondProbability = -1;
+
+        foreach (var kvp in confidences)
         {
-            string overrideCode = _modelContextOverrideCode;
+            double probability = kvp.Value;
+
+            if (probability > rawBestProbability)
+            {
+                rawSecondProbability = rawBestProbability;
+                rawBestProbability = probability;
+                rawBestLanguage = kvp.Key;
+            }
+            else if (probability > rawSecondProbability)
+            {
+                rawSecondProbability = probability;
+            }
+        }
+
+        double rawMargin = rawBestProbability - Math.Max(0.0, rawSecondProbability);
+        bool hasConvincingLocalWinner =
+            rawBestLanguage != Language.Unknown &&
+            rawBestProbability >= LocalWinnerProbabilityFloor &&
+            rawMargin >= LocalWinnerMarginFloor;
+
+        // A convincing local verdict is authoritative. Sentence context and the loaded model
+        // are not allowed to swallow a real short code-switch such as "pero" or "d'accord".
+        if (hasConvincingLocalWinner)
+        {
+            string localCode = _mapper.MapBackToEspeak(rawBestLanguage, _modelEspeakCode);
 
             result.Add(new TextChunk
             {
                 Text = text,
-                DetectedLanguage = overrideCode,
-                Probability = sentenceConfidence.Value,
+                DetectedLanguage = localCode,
+                Probability = rawBestProbability,
                 IsReliable = true,
                 IsPunctuationOrSpace = false,
-                Script = GetScriptName(script)
+                Script = GetScriptName(script),
+                RawTop5 = rawTop5
             });
 
-            if (_logger.IsEnabled(LogLevel.Debug))
+            if (debugEnabled)
             {
-                _logger.LogDebug("[LANG-DEBUG] \"{Text}\" ({LetterCount} letters) → {Code} [SENTENCE OVERRIDE, conf={Conf:0.0000}]",
-                    text, letterCount, overrideCode, sentenceConfidence.Value);
+                _logger.LogDebug(
+                    "[LANG-DEBUG] \"{Text}\" ({LetterCount} letters) → {Code} [LOCAL DETECTOR, conf={Conf:0.0000}, margin={Margin:0.0000}] | raw: {Raw}",
+                    text,
+                    letterCount,
+                    localCode,
+                    rawBestProbability,
+                    rawMargin,
+                    string.Join(", ", rawTop5));
             }
 
             return;
         }
 
-        // --- DYNAMIC CONFIDENCE MULTIPLIER ---
-        // Problem: Short words (e.g., "no", "да", "hi") are statistically ambiguous and often misidentified by Lingua.
-        // Solution: We apply an artificial confidence bonus to the base TTS model's language depending on the word length.
-        // Short text gets max bonus. Long text gets zero bonus (trusting the detector completely).
+        // SENTENCE-CONTEXT OVERRIDE:
+        // Short-fragment inheritance still works, but only after local evidence has been inspected
+        // and found ambiguous. This keeps the original stabilization behaviour without suppressing
+        // a convincing foreign insert in an otherwise dominant sentence.
+        if (sentenceContext is { } context &&
+            letterCount < _maxLimit &&
+            context.Confidence >= _overrideThreshold &&
+            IsLanguageScriptCompatible(context.Language, script))
+        {
+            result.Add(new TextChunk
+            {
+                Text = text,
+                DetectedLanguage = context.EspeakCode,
+                Probability = context.Confidence,
+                IsReliable = true,
+                IsPunctuationOrSpace = false,
+                Script = GetScriptName(script),
+                RawTop5 = rawTop5
+            });
+
+            if (debugEnabled)
+            {
+                _logger.LogDebug(
+                    "[LANG-DEBUG] \"{Text}\" ({LetterCount} letters) → {Code} [SENTENCE OVERRIDE after local, conf={Conf:0.0000}, local={LocalConf:0.0000}, margin={Margin:0.0000}] | raw: {Raw}",
+                    text,
+                    letterCount,
+                    context.EspeakCode,
+                    context.Confidence,
+                    Math.Max(0.0, rawBestProbability),
+                    Math.Max(0.0, rawMargin),
+                    string.Join(", ", rawTop5));
+            }
+
+            return;
+        }
+
+        // DYNAMIC MODEL-LANGUAGE BONUS:
+        // Only ambiguous local results reach this point. The old short-text bias remains, but it
+        // now resolves uncertainty instead of being able to overturn a convincing raw detector vote.
         double currentMultiplier = 1.0;
 
-        // Do not bias a short chunk toward the model language when its script is clearly
-        // incompatible. This lets the detector return zero naturally and activates the existing
-        // diagnostic-letter / script fallback path when no configured language can match it.
         if (canFavorModelLanguage)
         {
             if (letterCount <= _minLimit)
@@ -1588,18 +2283,10 @@ public partial class MixedLanguagePhonemizer
             }
             else if (letterCount < _maxLimit)
             {
-                // Linear interpolation from (1.0 + MaxBonus) down to 1.0
                 double ratio = (double)(_maxLimit - letterCount) / (_maxLimit - _minLimit);
                 currentMultiplier = 1.0 + (_maxBonus * ratio);
             }
         }
-        // Get statistical confidences from the ML detector
-        var confidences = _detector.ComputeLanguageConfidenceValues(cleanText);
-
-        bool debugEnabled = _logger.IsEnabled(LogLevel.Debug);
-        IReadOnlyList<string> rawTop5 = debugEnabled
-            ? BuildTopDiagnostics(confidences)
-            : Array.Empty<string>();
 
         Language bestLinguaLang = Language.Unknown;
         double bestAdjustedScore = -1;
@@ -1610,7 +2297,6 @@ public partial class MixedLanguagePhonemizer
             Language lang = kvp.Key;
             double score = kvp.Value;
 
-            // BONUS: Favor the model's native language only when the chunk script is compatible.
             if (canFavorModelLanguage &&
                 _modelLinguaLang.HasValue &&
                 lang == _modelLinguaLang.Value)
@@ -1626,9 +2312,8 @@ public partial class MixedLanguagePhonemizer
             }
         }
 
-        // EMERGENCY FALLBACK: every candidate scored zero, so "the winner" above is arbitrary
-        // dictionary order, not a real detection. Try a strong script-language hint first
-        // (narrower, e.g. Ukrainian over generic Cyrillic), then the coarse script default.
+        // EMERGENCY FALLBACK: every candidate scored zero, so the adjusted winner is arbitrary.
+        // Try a strong script-language hint first, then the coarse script default.
         if (bestAdjustedScore <= 0)
         {
             string? fallbackCode = null;
@@ -1663,15 +2348,17 @@ public partial class MixedLanguagePhonemizer
 
                 if (debugEnabled)
                 {
-                    _logger.LogDebug("[LANG-DEBUG] \"{Text}\" — no language matched, using {Tier} fallback → {Code}",
-                        text, tier, fallbackCode);
+                    _logger.LogDebug(
+                        "[LANG-DEBUG] \"{Text}\" — no language matched, using {Tier} fallback → {Code}",
+                        text,
+                        tier,
+                        fallbackCode);
                 }
 
                 return;
             }
         }
 
-        // REVERSE MAPPING: Convert the detected Lingua Enum back to an eSpeak string code
         string finalEspeakCode = _modelEspeakCode;
         if (bestLinguaLang != Language.Unknown)
         {
@@ -1691,8 +2378,13 @@ public partial class MixedLanguagePhonemizer
 
         if (debugEnabled)
         {
-            _logger.LogDebug("[LANG-DEBUG] \"{Text}\" ({LetterCount} letters, x{Multiplier:0.000}) → {Code} | raw: {Raw}",
-                text, letterCount, currentMultiplier, finalEspeakCode, string.Join(", ", rawTop5));
+            _logger.LogDebug(
+                "[LANG-DEBUG] \"{Text}\" ({LetterCount} letters, x{Multiplier:0.000}) → {Code} [AMBIGUOUS LOCAL] | raw: {Raw}",
+                text,
+                letterCount,
+                currentMultiplier,
+                finalEspeakCode,
+                string.Join(", ", rawTop5));
         }
     }
 

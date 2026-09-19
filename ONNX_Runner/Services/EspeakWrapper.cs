@@ -18,6 +18,12 @@ public partial class EspeakWrapper : IDisposable
     // under parallel requests from AI agents or multi-threaded pipelines.
     private static readonly Lock _espeakLock = new();
 
+    // eSpeak keeps the selected voice in process-wide native state. This cache is therefore
+    // static as well and is read/written only while _espeakLock is held. It lets repeated
+    // same-language chunks skip redundant espeak_SetVoiceByName calls without introducing
+    // per-instance state that could become stale under concurrent requests.
+    private static string? _currentNativeVoice;
+
     // Windows-specific API to convert long paths to short 8.3 format, ensuring compatibility with older C++ libraries that may not handle long paths well.
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
@@ -55,77 +61,154 @@ public partial class EspeakWrapper : IDisposable
             }
         }
 
-        int initResult = espeak_Initialize(2, 0, dataDirectory, 0);
-        if (initResult < 0)
+        // Initialization and initial voice selection both mutate process-wide eSpeak state,
+        // so they must participate in the same synchronization domain as runtime phonemization.
+        lock (_espeakLock)
         {
-            throw new Exception($"Failed to initialize espeak-ng. Error code: {initResult}");
-        }
+            int initResult = espeak_Initialize(2, 0, dataDirectory, 0);
+            if (initResult < 0)
+            {
+                throw new Exception($"Failed to initialize espeak-ng. Error code: {initResult}");
+            }
 
-        int voiceResult = espeak_SetVoiceByName(voice);
-        if (voiceResult != 0)
-        {
-            Console.WriteLine($"[WARNING] Failed to set espeak voice to '{voice}'.");
+            // A fresh initialization may reset native state, so invalidate any previous cache.
+            _currentNativeVoice = null;
+
+            if (!TrySelectVoiceLocked(voice))
+            {
+                // Preserve the constructor's historical behavior: warn, but do not fail startup.
+                _currentNativeVoice = null;
+            }
         }
     }
 
     /// <summary>
-    /// Allows dynamic language/voice switching just before transcription.
-    /// Essential for multi-language or mixed-language TTS generation.
+    /// Allows dynamic language/voice switching for callers that need explicit state changes.
+    /// The main mixed-language pipeline should prefer TryGetIpaPhonemes(text, voice), which keeps
+    /// voice selection and transcription atomic under the same native-state lock.
     /// </summary>
     public void SetVoice(string voice)
     {
-        // Note: Voice switching also touches native states, so we protect it with the lock as well.
         lock (_espeakLock)
         {
-            int voiceResult = espeak_SetVoiceByName(voice);
-            if (voiceResult != 0)
+            if (!TrySelectVoiceLocked(voice))
             {
-                Console.WriteLine($"[WARNING] Failed to set espeak voice to '{voice}'.");
-
-                // Throw an exception so the higher-level fallback mechanism 
-                // (e.g., PhonemeFallbackMapper) can intercept it and take over.
+                // Preserve the existing public API contract so external callers that rely on
+                // SetVoice exceptions continue to behave exactly as before.
                 throw new Exception("Voice not found");
             }
         }
     }
 
     /// <summary>
-    /// Converts raw text into IPA (International Phonetic Alphabet) phonemes using the native espeak-ng engine.
-    /// Carefully manages unmanaged memory allocations to prevent memory leaks during heavy server load.
+    /// Converts raw text into IPA using the currently selected native eSpeak voice.
+    /// This method remains for compatibility. When language switching is involved, prefer the
+    /// atomic TryGetIpaPhonemes(text, voice) overload below.
     /// </summary>
     public string GetIpaPhonemes(string text)
     {
-        // Allocate unmanaged memory for the UTF-8 string to pass it to the C++ library
+        if (string.IsNullOrEmpty(text))
+        {
+            return string.Empty;
+        }
+
         IntPtr textPtr = Marshal.StringToCoTaskMemUTF8(text);
         IntPtr currentPtr = textPtr;
         var sb = new System.Text.StringBuilder();
 
         try
         {
-            // Thread synchronization guard for non-thread-safe native C++ execution
             lock (_espeakLock)
             {
-                while (currentPtr != IntPtr.Zero)
-                {
-                    // 1 = textmode (UTF8), 2 = phonememode (IPA)
-                    IntPtr resultPtr = espeak_TextToPhonemes(ref currentPtr, 1, 2);
-
-                    if (resultPtr != IntPtr.Zero)
-                    {
-                        string part = Marshal.PtrToStringUTF8(resultPtr) ?? string.Empty;
-                        sb.Append(part);
-                    }
-                }
+                PhonemizeLocked(ref currentPtr, sb);
             }
 
-            // Return the clean, concatenated IPA result
             return sb.ToString().Trim();
         }
         finally
         {
-            // CRITICAL: Always free the unmanaged memory to prevent severe memory leaks.
-            // If this is missed, the server's RAM usage will grow infinitely with each request.
             Marshal.FreeCoTaskMem(textPtr);
+        }
+    }
+
+    /// <summary>
+    /// Atomically selects the requested eSpeak voice and converts text to IPA while holding the
+    /// same lock for the entire native operation. Returns false only when the requested voice
+    /// cannot be selected; native transcription failures still propagate to the caller.
+    /// </summary>
+    public bool TryGetIpaPhonemes(string text, string voice, out string phonemes)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            phonemes = string.Empty;
+            return true;
+        }
+
+        IntPtr textPtr = Marshal.StringToCoTaskMemUTF8(text);
+        IntPtr currentPtr = textPtr;
+        var sb = new System.Text.StringBuilder();
+
+        try
+        {
+            lock (_espeakLock)
+            {
+                if (!TrySelectVoiceLocked(voice))
+                {
+                    phonemes = string.Empty;
+                    return false;
+                }
+
+                PhonemizeLocked(ref currentPtr, sb);
+            }
+
+            phonemes = sb.ToString().Trim();
+            return true;
+        }
+        finally
+        {
+            Marshal.FreeCoTaskMem(textPtr);
+        }
+    }
+
+    // Must be called only while _espeakLock is held.
+    private static bool TrySelectVoiceLocked(string voice)
+    {
+        if (string.Equals(_currentNativeVoice, voice, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        int voiceResult = espeak_SetVoiceByName(voice);
+        if (voiceResult != 0)
+        {
+            // Do not trust the cached state after a failed native transition. Even though
+            // eSpeak normally leaves the previous voice intact, invalidating the cache makes
+            // the next successful call explicitly re-establish the requested native state.
+            _currentNativeVoice = null;
+            Console.WriteLine($"[WARNING] Failed to set espeak voice to '{voice}'.");
+            return false;
+        }
+
+        _currentNativeVoice = voice;
+        return true;
+    }
+
+    // Must be called only while _espeakLock is held. eSpeak advances currentPtr internally
+    // until the complete UTF-8 input has been consumed.
+    private static void PhonemizeLocked(
+        ref IntPtr currentPtr,
+        System.Text.StringBuilder output)
+    {
+        while (currentPtr != IntPtr.Zero)
+        {
+            // 1 = textmode (UTF8), 2 = phonememode (IPA)
+            IntPtr resultPtr = espeak_TextToPhonemes(ref currentPtr, 1, 2);
+
+            if (resultPtr != IntPtr.Zero)
+            {
+                string part = Marshal.PtrToStringUTF8(resultPtr) ?? string.Empty;
+                output.Append(part);
+            }
         }
     }
 
