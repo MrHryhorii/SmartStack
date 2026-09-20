@@ -35,7 +35,7 @@ public class TsubakiSpeechRequest
 
     /// <summary>
     /// The format of the returned audio. 
-    /// Supported formats: "wav", "mp3", "opus", "flac", "pcm", "b64_json". Defaults to "mp3".
+    /// Supported formats: "wav", "mp3", "opus", "aac", "flac", "pcm", "b64_json". Defaults to "mp3".
     /// </summary>
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "mp3";

@@ -395,6 +395,7 @@ internal static class ResponsePipeline
             AudioFormat.Mp3 => "mp3",
             AudioFormat.Wav => "wav",
             AudioFormat.Opus => "opus",
+            AudioFormat.Aac => "aac",
             AudioFormat.Flac => "flac",
             _ => format.ToString().ToLowerInvariant()
         };

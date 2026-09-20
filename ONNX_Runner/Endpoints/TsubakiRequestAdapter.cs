@@ -20,7 +20,7 @@ public static class TsubakiRequestAdapter
         }
         else if (!Enum.TryParse(formatStr, true, out format))
         {
-            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, flac, pcm, b64_json.");
+            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, aac, flac, pcm, b64_json.");
         }
 
         // dto.Instructions is intentionally accepted but ignored.

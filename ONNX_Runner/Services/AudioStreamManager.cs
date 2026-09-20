@@ -9,7 +9,7 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Manages the encoding, formatting, and routing of generated audio streams.
-/// Supports dynamic format switching (WAV, MP3, OPUS, FLAC, PCM) and handles both
+/// Supports dynamic format switching (WAV, MP3, OPUS, AAC, FLAC, PCM) and handles both
 /// in-memory buffering and real-time chunked network streaming.
 ///
 /// Ogg/Opus is muxed internally instead of using Concentus.OggFile.
@@ -30,6 +30,7 @@ public class AudioStreamManager : IDisposable
     private readonly IOpusEncoder? _opusEncoder;
     private readonly OggOpusMuxer? _oggMuxer;
     private readonly FlacStreamEncoder? _flacEncoder;
+    private readonly AacStreamEncoder? _aacEncoder;
     private readonly short[]? _opusFrameBuffer;
     private readonly byte[]? _opusPacketBuffer;
     private readonly int _opusFrameSize;
@@ -113,6 +114,16 @@ public class AudioStreamManager : IDisposable
             return;
         }
 
+        if (_format == AudioFormat.Aac)
+        {
+            _aacEncoder = new AacStreamEncoder(
+                _baseStream,
+                sampleRate,
+                96);
+
+            return;
+        }
+
         if (_format == AudioFormat.Flac)
         {
             _flacEncoder = new FlacStreamEncoder(_baseStream, sampleRate);
@@ -142,6 +153,15 @@ public class AudioStreamManager : IDisposable
             {
                 samples[i] = filter.Transform(samples[i]);
             }
+        }
+
+        // Managed AAC accepts normalized float PCM directly. Keep it before the shared
+        // PCM16 conversion so AAC adds neither a temporary short[] nor an extra pass.
+        if (_format == AudioFormat.Aac)
+        {
+            _aacEncoder!.WriteSamples(samples);
+            _samplesWritten += samples.Length;
+            return;
         }
 
         short[] shortSamples = ArrayPool<short>.Shared.Rent(samples.Length);
@@ -420,6 +440,12 @@ public class AudioStreamManager : IDisposable
                 return;
             }
 
+            if (_format == AudioFormat.Aac)
+            {
+                _aacEncoder?.Dispose();
+                return;
+            }
+
             if (_format == AudioFormat.Flac)
             {
                 _flacEncoder?.Dispose();
@@ -480,6 +506,7 @@ public class AudioStreamManager : IDisposable
         {
             AudioFormat.Mp3 => "audio/mpeg",
             AudioFormat.Opus => "audio/ogg; codecs=opus",
+            AudioFormat.Aac => "audio/aac",
             AudioFormat.Flac => "audio/flac",
             AudioFormat.Pcm => "audio/pcm",
             AudioFormat.B64Json => "application/json",
@@ -496,6 +523,7 @@ public class AudioStreamManager : IDisposable
         {
             AudioFormat.Mp3 => "speech.mp3",
             AudioFormat.Opus => "speech.opus",
+            AudioFormat.Aac => "speech.aac",
             AudioFormat.Flac => "speech.flac",
             AudioFormat.Pcm => "speech.pcm",
             AudioFormat.B64Json => "speech.json",

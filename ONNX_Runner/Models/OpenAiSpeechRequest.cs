@@ -36,8 +36,8 @@ public class OpenAiSpeechRequest
 
     /// <summary>
     /// The requested response representation.
-    /// Tsubaki currently supports "wav", "mp3", "opus", "flac", "pcm", and the optional
-    /// Tsubaki extension "b64_json". AAC is not implemented yet.
+    /// Tsubaki supports "wav", "mp3", "opus", "aac", "flac", "pcm", and the optional
+    /// Tsubaki extension "b64_json".
     /// </summary>
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "mp3";

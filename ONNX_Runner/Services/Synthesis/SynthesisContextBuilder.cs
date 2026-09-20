@@ -10,6 +10,8 @@ namespace ONNX_Runner.Services.Synthesis;
 internal static class SynthesisContextBuilder
 {
     private static readonly int[] ValidOpusRates = [8000, 12000, 16000, 24000, 48000];
+    private static readonly int[] ValidAacRates =
+        [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000];
 
     public static SynthesisContext Build(
         SynthesisRequest request,
@@ -47,6 +49,11 @@ internal static class SynthesisContextBuilder
             // Ogg Opus strictly requires specific sample rates (e.g., 24kHz, 48kHz).
             finalSampleRate = GetNearestOpusSampleRate(outSampleRate);
         }
+        else if (audioFormat == AudioFormat.Aac)
+        {
+            // AAC-LC uses a fixed set of sampling-frequency indices in ADTS/AudioSpecificConfig.
+            finalSampleRate = GetNearestSampleRate(outSampleRate, ValidAacRates);
+        }
 
         int displaySampleRate = audioFormat == AudioFormat.Opus ? 48000 : finalSampleRate;
 
@@ -83,12 +90,19 @@ internal static class SynthesisContextBuilder
 
     private static int GetNearestOpusSampleRate(int sampleRate)
     {
-        int nearest = ValidOpusRates[0];
+        return GetNearestSampleRate(sampleRate, ValidOpusRates);
+    }
+
+    private static int GetNearestSampleRate(
+        int sampleRate,
+        ReadOnlySpan<int> validRates)
+    {
+        int nearest = validRates[0];
         int nearestDistance = Math.Abs(nearest - sampleRate);
 
-        for (int i = 1; i < ValidOpusRates.Length; i++)
+        for (int i = 1; i < validRates.Length; i++)
         {
-            int candidate = ValidOpusRates[i];
+            int candidate = validRates[i];
             int distance = Math.Abs(candidate - sampleRate);
 
             if (distance >= nearestDistance)

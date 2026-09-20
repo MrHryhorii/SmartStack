@@ -24,7 +24,7 @@ public static class OpenAiRequestAdapter
             return (
                 null,
                 $"Unsupported response_format: '{dto.ResponseFormat}'. " +
-                "Supported formats are: wav, mp3, opus, flac, pcm, b64_json.");
+                "Supported formats are: wav, mp3, opus, aac, flac, pcm, b64_json.");
         }
 
         string? streamFormat = dto.StreamFormat?.Trim().ToLowerInvariant();

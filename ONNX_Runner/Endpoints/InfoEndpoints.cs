@@ -208,6 +208,7 @@ public static class InfoEndpoints
                 wav = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Wav),
                 mp3 = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Mp3),
                 opus = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Opus),
+                aac = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Aac),
                 flac = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Flac),
                 pcm = nativeAudioDependencies.IsFormatAvailable(AudioFormat.Pcm),
                 b64_json = nativeAudioDependencies.IsFormatAvailable(AudioFormat.B64Json)
