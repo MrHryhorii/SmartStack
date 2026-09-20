@@ -2,11 +2,9 @@
 
 Production-grade local Text-to-Speech engine for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
-Piper is fast, lightweight, and easy to run, but its voices are tied to the model you choose. Tsubaki is a standalone engine built around **Piper (VITS) voice models** that keeps the efficiency of Piper while adding the missing layer: **voice freedom and audio control**.
+Piper is fast, lightweight, and easy to run, but its voices are tied to the model you choose. Tsubaki is a standalone engine built around **Piper (VITS) voice models** that keeps Piper's efficiency while adding the missing layer: **voice freedom, cross-language pronunciation, and audio control**.
 
-Use standard Piper models locally, then add zero-shot voice cloning, interchangeable voices, pitch and volume control, DSP effects, spatial environments, streaming, and per-request audio control.
-
-A single-language Piper voice can also pronounce text in other configured languages, adapting the pronunciation to the sounds the active model is capable of producing.
+Use standard Piper models locally, then add zero-shot voice cloning, interchangeable voices, pitch and volume control, DSP effects, spatial environments, streaming, and per-request audio control. Even a single-language Piper voice can pronounce text in other configured languages: Tsubaki detects or follows the requested language, generates the appropriate phonemes, and adapts sounds the model does not support to the closest ones it can produce.
 
 Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Windows and Linux with CPU or GPU acceleration.
 
