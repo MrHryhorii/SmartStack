@@ -6,10 +6,13 @@ Piper is fast, lightweight, and easy to run, but its voices are tied to the mode
 
 Use standard Piper models locally, then add zero-shot voice cloning, interchangeable voices, pitch and volume control, DSP effects, spatial environments, streaming, and per-request audio control.
 
+A single-language Piper voice can also pronounce text in other configured languages, adapting the pronunciation to the sounds the active model is capable of producing.
+
 Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Windows and Linux with CPU or GPU acceleration.
 
 - Piper model engine — run standard Piper models locally
 - Voice Freedom — use different voices without replacing the underlying Piper model
+- Cross-Language Pronunciation — use one Piper voice to approximate speech in other configured languages without replacing the base model
 - Zero-shot voice cloning via OpenVoice V2
 - OpenAI-compatible API — works with existing OpenAI TTS clients and tools
 - Dedicated Tsubaki API for detailed audio control
@@ -77,7 +80,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | OpenAI API Compatible      | Exposes a `/v1/audio/speech` endpoint compatible with the official OpenAI API. Compatible with SillyTavern, LangChain, AutoGen, and other clients that use the standard OpenAI TTS request fields. |
 | Zero-Shot Voice Cloning    | Integrated with the OpenVoice V2 architecture. Clone any voice instantly by dropping a clean 10-second `.wav` file into the `Voices` folder.                       |
-| Foreign Word Pronunciation | Offline language detection via Lingua. Detects foreign words and applies phoneme approximation for natural accented pronunciation.                                 |
+| Cross-Language Pronunciation | Detects configured languages automatically or follows an explicit language override, then adapts their pronunciation to the phoneme inventory of the active Piper model. This enables accented cross-language speech without requiring a multilingual base model. |
 | Studio-Grade DSP Effects   | Real-time audio effects (Telephone, Overdrive, Reverb, etc.), pitch and volume shifting.                                                                           |
 | Real-Time Streaming        | Supports Chunked Transfer Encoding — listen to audio before generation is complete.                                                                                |
 | Built-in Web Dashboard     | Sleek, user-friendly web interface available out-of-the-box for testing voices and effects.                                                                        |
@@ -429,7 +432,7 @@ curl http://localhost:5045/tsbk/audio/speech \
 | Parameter     | Type   | Description |
 | ------------- | ------ | ----------- |
 | `language`    | string | Forces an eSpeak language/dialect code (e.g. `"uk"`, `"fr-ca"`). Use `"auto"` or omit it for automatic detection and fallback routing. |
-| `early_split` | bool   | Lets only the first synthesis chunk end at conservative clause punctuation to reduce time to first audio; normal sentence chunking resumes afterward. Overrides `ChunkerSettings.EarlySplit`. |
+| `early_split` | bool   | Lets only the first synthesis chunk end at conservative clause punctuation to reduce time to first audio; normal sentence chunking resumes afterward. This can slightly change the rhythm or intonation of the first sentence and is mainly useful for latency-sensitive or streaming output. Overrides `ChunkerSettings.EarlySplit`. |
 | `pitch`       | float  | Pitch multiplier. `1.0` is unchanged. |
 | `volume`      | float  | Output volume multiplier with soft-knee limiting. `1.0` is unchanged. |
 | `noise_scale` | float  | Pronunciation/intonation variance. Default: `0.667`. |
@@ -749,7 +752,46 @@ The `appsettings.json` file is completely pre-configured and ready to use out-of
 
 ## Phonemizer & Language Settings
 
-The `PhonemizerSettings` block controls how the server handles text outside your base model's own language, using offline language detection via Lingua (see Credits below). `SupportedLanguages` is the list of languages the engine will actively try to recognize and adapt the model's own phonemes toward — the result is an accented approximation, not native pronunciation, if the target language is phonetically far from your base model. Leaving it empty doesn't turn detection off — the base model's language is always added to the candidate pool regardless, so an empty list just leaves the detector with nothing else to compare against, and it never switches. It still loads and runs on every chunk; to actually disable language detection and its memory/CPU cost, set `UseLanguageDetector: false` instead.
+### Cross-Language Pronunciation
+
+Tsubaki does not turn a monolingual Piper model into a true multilingual model. Instead, it allows the active voice to **approximate other languages using the sounds that model already knows how to produce**.
+
+When automatic language detection is enabled, Tsubaki can recognize languages listed in `SupportedLanguages` and phonemize each detected part of the text using the appropriate eSpeak language rules. The same behavior can be requested explicitly with the per-request `language` parameter when the language of the text is already known.
+
+The resulting phonemes are checked against the active Piper model. If a sound is not available in that model's phoneme inventory, Tsubaki maps it to the closest supported alternative. This allows foreign-language speech to remain understandable while naturally retaining some accent or losing distinctions that the base model cannot represent.
+
+In simplified form:
+
+`text → language selection → target-language phonemes → model phoneme adaptation → Piper`
+
+For the most reliable automatic switching, keep the languages you actually expect in `SupportedLanguages`. If the language is already known, passing `language` directly avoids the need to infer it.
+
+### Inline Phoneme Input
+
+Tsubaki can also accept phonemes directly inside normal input text.
+
+- **`[[...]]` is an explicit raw-phoneme block.** Its contents are always treated as phonemes and bypass normal text phonemization and language detection. The phonemes are still validated against the active Piper model, so sounds that the model does not support are adapted to the closest available alternatives.
+- **`[...]` and `/.../` are compatibility forms rather than strict commands.** Tsubaki treats them as phoneme input only when their contents actually contain recognizable IPA-style phonetic symbols. Otherwise they remain ordinary text.
+
+For example:
+
+```text
+The word is [[həˈloʊ]].
+```
+
+explicitly supplies phonemes, while:
+
+```text
+The word is [hello].
+```
+
+does not automatically bypass normal text pronunciation merely because brackets were used.
+
+This softer handling of single brackets and slashes is intentionally a compatibility safety net for applications or text formats that already use conventional pronunciation notation. Use `[[...]]` when raw phoneme input is intentional and unambiguous.
+
+### Language Detection Configuration
+
+The `PhonemizerSettings` block controls how the server handles text outside your base model's own language, using offline language detection via Lingua (see Credits below). `SupportedLanguages` is the list of languages the engine will actively try to recognize. The base model's language is always added to the candidate pool, so leaving `SupportedLanguages` empty does not disable detection — it simply leaves the detector with no additional languages to switch to. To disable language detection and its memory/CPU cost entirely, set `UseLanguageDetector: false`.
 
 ```json
 "PhonemizerSettings": {
@@ -804,7 +846,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 ```
 
 - **`MaxChunkLength`** — emergency cap for one already-detected sentence. Long sentences prefer a natural pause mark, then whitespace, then a safe character boundary.
-- **`EarlySplit`** — allows one conservative clause-level split before the first audio chunk to reduce time to first audio; normal sentence chunking resumes immediately afterward. `/tsbk/audio/speech` can override it per request with `early_split`.
+- **`EarlySplit`** — allows one conservative clause-level split before the first audio chunk to reduce time to first audio; normal sentence chunking resumes immediately afterward. This can slightly change the rhythm or intonation of the first sentence. It is mainly useful when low latency matters; for non-streaming output there is usually little benefit to enabling it. `/tsbk/audio/speech` can override it per request with `early_split`.
 - **`SentencePauseSeconds`** — pause added only after real sentence boundaries. Early and emergency continuation chunks do not receive this artificial sentence pause.
 
 ---

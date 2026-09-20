@@ -314,6 +314,7 @@ async function bootEngine() {
             response_format: document.getElementById('formatSelect').value,
             speed: parseFloat(document.getElementById('speedNum').value),
             stream: document.getElementById('streamToggle').checked,
+            early_split: document.getElementById('earlySplitToggle').checked,
             language: document.getElementById('languageSelect').value
         };
 

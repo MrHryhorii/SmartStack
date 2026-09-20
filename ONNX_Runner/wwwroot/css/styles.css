@@ -647,3 +647,99 @@ textarea, .log {
     scrollbar-width: thin;
     scrollbar-color: var(--border) transparent;
 }
+
+/* ==========================================================================
+   15. CONTEXT HELP
+   Compact in-place help for people who do not want to open the full README.
+========================================================================== */
+.help-tooltip {
+    position: relative;
+    cursor: help;
+}
+
+.help-tooltip::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    z-index: 1000;
+    top: calc(100% + 7px);
+    left: 0;
+    width: max-content;
+    max-width: min(380px, calc(100vw - 32px));
+    padding: 9px 11px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--input-bg);
+    color: var(--text-main);
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.22);
+    font-size: 0.78rem;
+    font-weight: 400;
+    line-height: 1.45;
+    letter-spacing: normal;
+    text-transform: none;
+    white-space: normal;
+    text-align: left;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-2px);
+    transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
+    pointer-events: none;
+}
+
+.help-tooltip:hover::after,
+.help-tooltip:focus-visible::after,
+.help-tooltip:focus-within::after,
+.help-tooltip:active::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.tooltip-right::after {
+    left: auto;
+    right: 0;
+}
+
+.tooltip-wide::after {
+    max-width: min(460px, calc(100vw - 32px));
+}
+
+.tooltip-up::after {
+    top: auto;
+    bottom: calc(100% + 7px);
+}
+
+.help-mark {
+    margin-left: 3px;
+    color: var(--accent);
+    font-size: 0.78em;
+    font-weight: 700;
+    opacity: 0.8;
+    pointer-events: none;
+}
+
+.toggle-label-help {
+    display: inline-flex;
+    align-items: center;
+    width: fit-content;
+}
+
+.toggle-label-help label {
+    margin: 0;
+}
+
+.sub-control-label {
+    width: fit-content;
+    margin-top: 8px;
+    margin-bottom: 3px;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+@media (max-width: 560px) {
+    .help-tooltip::after,
+    .tooltip-wide::after {
+        max-width: min(300px, calc(100vw - 24px));
+    }
+}
