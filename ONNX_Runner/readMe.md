@@ -188,7 +188,7 @@ curl http://localhost:5045/v1/audio/speech \
 | `model`           | string        | Any value (e.g. `"tts-1"`) — accepted for compatibility; the locally loaded Piper model is used. |
 | `input`           | string        | Text to synthesize. |
 | `voice`           | string/object | Local voice ID such as `"piper_base"` or `"John"`. `/v1` also accepts the OpenAI-style `{ "id": "John" }` object. |
-| `response_format` | string        | `mp3`, `wav`, `opus`, `flac`, `pcm`, or Tsubaki's `b64_json` representation. |
+| `response_format` | string        | `mp3`, `wav`, `opus`, `flac`, `aac`, `pcm`, or Tsubaki's `b64_json` representation. |
 | `instructions`    | string        | Accepted for OpenAI compatibility but intentionally ignored; Piper/OpenVoice has no equivalent natural-language style-control input. |
 | `speed`           | float         | Speech speed multiplier. `1.0` is default. |
 | `stream_format`   | string        | `audio` is supported. `sse` is recognized but currently rejected because SSE framing is not implemented. |

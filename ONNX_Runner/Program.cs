@@ -8,13 +8,11 @@ using Microsoft.Extensions.Logging.Console;
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
 var builder = WebApplication.CreateBuilder(args);
-
 // Logging must never become backpressure for synthesis. The built-in console provider already
 // formats/enqueues on the caller and drains output on its own worker thread; use a bounded
 // non-blocking queue so a stalled terminal cannot stall TTS requests. Under an extreme log burst,
 // new log messages are dropped once the queue is full instead of blocking request threads.
 const int ConsoleLogQueueCapacity = 4096;
-
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole(options =>
 {
@@ -23,7 +21,6 @@ builder.Logging.AddConsole(options =>
     options.QueueFullMode = ConsoleLoggerQueueFullMode.DropWrite;
 });
 builder.Logging.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
-
 // PiperRunner, OpenVoiceRunner, and PiperPhonemizer are constructed directly with 'new'
 // below, before the DI container exists, so they can't resolve ILogger<T> the normal
 // way yet. This factory is a small bootstrap bridge: same console provider the rest of
@@ -31,7 +28,6 @@ builder.Logging.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptio
 using var bootstrapLoggerFactory = LoggerFactory.Create(lb =>
 {
     lb.AddConfiguration(builder.Configuration.GetSection("Logging"));
-
     lb.AddConsole(options =>
     {
         options.FormatterName = "clean";
@@ -46,7 +42,6 @@ NativeLibraryResolver.Initialize();
 
 var nativeAudioDependencies =
     NativeAudioDependencies.Detect();
-
 if (nativeAudioDependencies.EspeakAvailable)
 {
     Console.WriteLine(
@@ -59,7 +54,6 @@ else
         "[ERROR] eSpeak NG was not found. TTS cannot initialize until the system library is installed.");
     Console.ResetColor();
 }
-
 if (nativeAudioDependencies.Mp3Available)
 {
     Console.WriteLine(
@@ -69,12 +63,11 @@ else
 {
     Console.ForegroundColor = ConsoleColor.Yellow;
     Console.WriteLine(
-        "[WARNING] LAME was not found. MP3 and b64_json are disabled; WAV, FLAC, Opus, and PCM remain available.");
+        "[WARNING] LAME was not found. MP3 and b64_json are disabled; WAV, Opus, AAC, FLAC, and PCM remain available.");
     Console.WriteLine(
         "[WARNING] Install your distribution's libmp3lame runtime package or set TSUBAKI_LAME_LIBRARY.");
     Console.ResetColor();
 }
-
 // Add Swagger support for API documentation and easy testing
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
@@ -82,14 +75,12 @@ builder.Services.AddOpenApi();
 // Read the model directory configuration BEFORE attempting to load the model.
 // This prevents CrashLoopBackOff in Docker if the folder doesn't exist yet.
 var modelConfig = builder.Configuration.GetSection("ModelSettings").Get<ModelSettings>() ?? new ModelSettings();
-
 // =================================================================
 // MODEL LOADING & LOGGING
 // =================================================================
 string modelDirectory = modelConfig.ModelDirectory;
 PiperConfig? piperConfig = null;
 string? piperModelPath = null;
-
 try
 {
     // Graceful initialization: create directory if missing and warn the user,
@@ -104,7 +95,6 @@ try
         var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelConfig);
         piperModelPath = onnxPath;
         piperConfig = config;
-
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("=========================================");
         Console.WriteLine("        MODEL LOADED SUCCESSFULLY        ");
@@ -126,7 +116,6 @@ catch (Exception ex)
     Console.WriteLine($"[ERROR] Failed to load model: {ex.Message}");
     Console.ResetColor();
 }
-
 // Read configuration sections from appsettings.json
 var apiConfig = builder.Configuration.GetSection("ApiSettings").Get<ApiSettings>() ?? new ApiSettings();
 var corsConfig = builder.Configuration.GetSection("CorsSettings").Get<CorsSettings>() ?? new CorsSettings();
@@ -139,7 +128,6 @@ var onnxConfig = builder.Configuration.GetSection("OnnxSettings").Get<OnnxSettin
 var effectsConfig = builder.Configuration.GetSection("EffectsSettings").Get<EffectsSettings>() ?? new EffectsSettings();
 var clonerConfig = builder.Configuration.GetSection("ClonerSettings").Get<ClonerSettings>() ?? new ClonerSettings();
 var rateLimitConfig = builder.Configuration.GetSection("RateLimitSettings").Get<RateLimitSettings>() ?? new RateLimitSettings();
-
 // =================================================================
 // SERVICE REGISTRATION (Dependency Injection)
 // =================================================================
@@ -155,7 +143,6 @@ builder.Services.AddSingleton(dspConfig);
 builder.Services.AddSingleton(rateLimitConfig);
 builder.Services.AddSingleton(phonemizerConfig);
 builder.Services.AddSingleton(nativeAudioDependencies);
-
 // Only wire up the heavy services if the base Piper model was successfully loaded
 if (piperConfig != null && piperModelPath != null)
 {
@@ -165,7 +152,6 @@ if (piperConfig != null && piperModelPath != null)
             "eSpeak NG is required by the phonemizer but its native library was not found. " +
             "Install eSpeak NG using your system package manager or set TSUBAKI_ESPEAK_LIBRARY.");
     }
-
     builder.Services.AddSingleton(piperConfig); // Make Piper config globally available
 
     var phonemizer = new PiperPhonemizer(piperConfig, bootstrapLoggerFactory.CreateLogger<PiperPhonemizer>());
@@ -173,7 +159,6 @@ if (piperConfig != null && piperModelPath != null)
 
     var textChunker = new TextChunker(chunkerConfig);
     builder.Services.AddSingleton(textChunker);
-
     var runner = new PiperRunner(
      piperModelPath,
      piperConfig,
@@ -186,17 +171,14 @@ if (piperConfig != null && piperModelPath != null)
 
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig);
     builder.Services.AddSingleton(punctuationMapper);
-
     string dataPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PiperNative"));
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
     builder.Services.AddSingleton(mixedEspeak);
-
     // =================================================================
     // OPENVOICE (CLONER) CHECK & AUTO-DOWNLOAD
     // =================================================================
     string clonerDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Cloner"));
     string voicesDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "Voices"));
-
     string extractPath = Path.Combine(clonerDirectory, "tone_extract.onnx");
     string colorPath = Path.Combine(clonerDirectory, "tone_color.onnx");
     string toneJsonPath = Path.Combine(clonerDirectory, "tone_config.json");
@@ -205,7 +187,6 @@ if (piperConfig != null && piperModelPath != null)
     {
         Directory.CreateDirectory(clonerDirectory);
     }
-
     // Auto-fetch missing OpenVoice models from Hugging Face
     if (!File.Exists(extractPath) || !File.Exists(colorPath) || !File.Exists(toneJsonPath))
     {
@@ -213,7 +194,6 @@ if (piperConfig != null && piperModelPath != null)
         Console.WriteLine("\n[INFO] Missing Voice Cloner models (OpenVoice) detected locally.");
         Console.WriteLine("[INFO] Initiating automatic download from Hugging Face...");
         Console.ResetColor();
-
         string baseUrl = "https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2/resolve/main/";
         string desc = "Voice Cloner";
 
@@ -222,11 +202,9 @@ if (piperConfig != null && piperModelPath != null)
 
         if (!File.Exists(colorPath))
             await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_color.onnx", colorPath, "tone_color.onnx", desc);
-
         if (!File.Exists(toneJsonPath))
             await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_config.json", toneJsonPath, "tone_config.json", desc);
     }
-
     // If models are present, load them into memory and process cached voices
     if (File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
     {
@@ -234,14 +212,12 @@ if (piperConfig != null && piperModelPath != null)
         {
             string toneJsonContent = File.ReadAllText(toneJsonPath);
             var toneConfig = System.Text.Json.JsonSerializer.Deserialize<ToneConfig>(toneJsonContent);
-
             if (toneConfig != null)
             {
                 var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig, hardwareConfig, bootstrapLoggerFactory.CreateLogger<OpenVoiceRunner>());
                 var audioProc = new AudioProcessor(toneConfig);
 
                 if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
-
                 // PASS 1 (Generation): Scan for .wav files and generate missing .voice fingerprints.
                 // This pass strictly writes to disk; it does not load data into the VoiceLibrary.
                 var wavFiles = Directory.GetFiles(voicesDirectory, "*.wav");
@@ -249,7 +225,6 @@ if (piperConfig != null && piperModelPath != null)
                 {
                     string voiceName = Path.GetFileNameWithoutExtension(wavPath);
                     string fingerprintPath = Path.Combine(voicesDirectory, voiceName + ".voice");
-
                     if (File.Exists(fingerprintPath))
                     {
                         // Already fingerprinted on a previous run — nothing to do here.
@@ -260,7 +235,6 @@ if (piperConfig != null && piperModelPath != null)
                     Console.ForegroundColor = ConsoleColor.DarkYellow;
                     Console.WriteLine($"\n[VOICE] processing: {voiceName}...");
                     Console.ResetColor();
-
                     int targetRate = toneConfig.Data.SamplingRate;
                     var normalizedAudio = audioProc.LoadAndNormalizeWav(wavPath, targetRate);
 
@@ -269,10 +243,8 @@ if (piperConfig != null && piperModelPath != null)
                         System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
                         continue;
                     }
-
                     // Normalizes loudness before extraction to keep tone embeddings level-invariant.
                     audioProc.NormalizeLufs(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length), targetRate, clonerConfig.ReferenceAudioTargetLufs);
-
                     float[,] spec;
                     try
                     {
@@ -288,7 +260,6 @@ if (piperConfig != null && piperModelPath != null)
                         // Always return rented arrays to the shared pool to prevent memory leaks
                         System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
                     }
-
                     int frames = spec.GetLength(0);
                     if (frames == 0) continue;
 
@@ -299,9 +270,8 @@ if (piperConfig != null && piperModelPath != null)
                     Console.WriteLine($"   [SUCCESS] Fingerprint saved: {voiceName}.voice");
                     Console.ResetColor();
                 }
-
                 // PASS 2 (Loading): Populate the VoiceLibrary directly from .voice files.
-                // Decoupling the load step from .wav discovery allows users to safely delete 
+                // Decoupling the load step from .wav discovery allows users to safely delete
                 // the original reference audio once the fingerprint is cached.
                 var voiceFiles = Directory.GetFiles(voicesDirectory, "*.voice");
                 foreach (var voiceFilePath in voiceFiles)
@@ -311,7 +281,6 @@ if (piperConfig != null && piperModelPath != null)
                     {
                         var fingerprint = openVoice.LoadVoiceFingerprint(voiceFilePath);
                         openVoice.VoiceLibrary[voiceName] = fingerprint;
-
                         Console.ForegroundColor = ConsoleColor.DarkGreen;
                         Console.WriteLine($"[VOICE] Loaded: {voiceName}");
                         Console.ResetColor();
@@ -325,7 +294,6 @@ if (piperConfig != null && piperModelPath != null)
                         Console.ResetColor();
                     }
                 }
-
                 // Register cloner services
                 builder.Services.AddSingleton(openVoice);
                 builder.Services.AddSingleton(audioProc);
@@ -343,7 +311,6 @@ if (piperConfig != null && piperModelPath != null)
         Console.WriteLine("[ERROR] Voice Cloner models are missing. OpenVoice features will be unavailable.");
         Console.ResetColor();
     }
-
     // =================================================================
     // PHONEMIZER & LANGUAGE DETECTION SETUP
     // =================================================================
@@ -354,7 +321,6 @@ if (piperConfig != null && piperModelPath != null)
     {
         string phoibleDirectory = "PHOIBLE";
         string phoiblePath = Path.Combine(phoibleDirectory, "phoible.csv");
-
         if (!Directory.Exists(phoibleDirectory))
         {
             Directory.CreateDirectory(phoibleDirectory);
@@ -362,7 +328,6 @@ if (piperConfig != null && piperModelPath != null)
 
         fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
         builder.Services.AddSingleton(fallbackMapper);
-
         mixedPhonemizer = new MixedLanguagePhonemizer(
             phonemizerConfig,
             piperConfig.Espeak.Voice ?? "en",
@@ -374,7 +339,6 @@ if (piperConfig != null && piperModelPath != null)
     var unifiedPhonemizer = new UnifiedPhonemizer(mixedEspeak, punctuationMapper, piperConfig, mixedPhonemizer, fallbackMapper);
     builder.Services.AddSingleton(unifiedPhonemizer);
 }
-
 // =================================================================
 // CORS & RATE LIMITING SETUP
 // =================================================================
@@ -394,7 +358,6 @@ builder.Services.AddCors(options =>
         }
     });
 });
-
 // Protect the API from spam and DDoS attacks using IP-based limits
 builder.Services.AddRateLimiter(options =>
 {
@@ -411,7 +374,6 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = rateLimitConfig.QueueLimit
             }));
 });
-
 // =================================================================
 // DYNAMIC REQUEST QUEUE (SMART SEMAPHORE IN DI)
 // =================================================================
@@ -422,12 +384,11 @@ builder.Services.AddSingleton(sp =>
     var hwConfig = sp.GetRequiredService<HardwareSettings>();
     var piperSvc = sp.GetService<PiperRunner>();
     int cr = 1;
-
     if (piperSvc != null)
     {
         if (piperSvc.IsUsingGPU)
         {
-            // GPU: Combines the engine's technical concurrency limit (Capacity) 
+            // GPU: Combines the engine's technical concurrency limit (Capacity)
             // with the user-defined concurrency limit from config (Policy) to prevent OOM.
             cr = Math.Min(piperSvc.ConcurrencyCapacity, Math.Max(1, hwConfig.MaxConcurrentGpuRequests));
             Console.WriteLine($"[SYSTEM] Running on GPU. Explicit Limit applied: {cr} concurrent tasks.");
@@ -437,7 +398,6 @@ builder.Services.AddSingleton(sp =>
             // CPU
             int totalCores = Environment.ProcessorCount;
             int requestedCpuLimit = hwConfig.MaxConcurrentCpuRequests;
-
             if (requestedCpuLimit <= 0)
             {
                 // Negative value protection and default behavior for 0
@@ -454,14 +414,12 @@ builder.Services.AddSingleton(sp =>
     }
     return new SemaphoreSlim(cr, cr);
 });
-
 // SpeechSynthesisService is the single shared entry point for every TTS-producing endpoint
 // (OpenAI-compatible, Tsubaki's extended one, and any future ones). It's safe to register
 // unconditionally here, even if the model failed to load above: it only resolves PiperRunner
 // and friends lazily, inside SynthesizeAsync, at request time — the same graceful "model not
 // loaded" 500 response that already existed continues to work exactly as before.
 builder.Services.AddSingleton<SpeechSynthesisService>();
-
 var app = builder.Build();
 
 // =================================================================
@@ -470,23 +428,20 @@ var app = builder.Build();
 // These middlewares allow ASP.NET to serve index.html from the 'wwwroot' folder
 app.UseDefaultFiles();
 app.UseStaticFiles();
-
 if (app.Environment.IsDevelopment())
 {
-    // Serve the OpenAPI spec at /openapi/v1.json instead of the default /swagger/v1/swagger.json 
+    // Serve the OpenAPI spec at /openapi/v1.json instead of the default /swagger/v1/swagger.json
     // for better consistency with our API versioning and cleaner URLs.
     app.MapOpenApi();
     app.UseSwaggerUI(options =>
     {
-        // Point Swagger UI to the custom OpenAPI endpoint that we serve, 
+        // Point Swagger UI to the custom OpenAPI endpoint that we serve,
         // which is more intuitive and consistent with our API versioning.
         options.SwaggerEndpoint("/openapi/v1.json", "Tsubaki API v1");
     });
 }
-
 app.UseCors("DynamicCorsPolicy");
 app.UseRateLimiter();
-
 // =================================================================
 // AUTOMATIC BASE FINGERPRINT GENERATION
 // =================================================================
@@ -499,7 +454,6 @@ using (var scope = app.Services.CreateScope())
     var unifiedPhonemizerSvc = scope.ServiceProvider.GetService<UnifiedPhonemizer>();
     var piperRunnerSvc = scope.ServiceProvider.GetService<PiperRunner>();
     var pipConfig = scope.ServiceProvider.GetService<PiperConfig>();
-
     if (openVoiceSvc != null && audioProcSvc != null && unifiedPhonemizerSvc != null && piperRunnerSvc != null && pipConfig != null)
     {
         var baseGenerator = new BaseVoiceGenerator(unifiedPhonemizerSvc, piperRunnerSvc, audioProcSvc, openVoiceSvc, pipConfig, clonerConfig);
@@ -507,7 +461,6 @@ using (var scope = app.Services.CreateScope())
 
         // Free up memory since extraction is only needed once at startup
         openVoiceSvc.UnloadExtractor();
-
         // Pre-warm the color converter with the base fingerprint to reduce latency on the first cloning request
         openVoiceSvc.WarmUpColorConverter();
     }
@@ -520,7 +473,6 @@ using (var scope = app.Services.CreateScope())
 app.MapPost("/v1/audio/speech", SpeechEndpoint.HandleOpenAiRequest)
    .WithName("GetSpeech")
    .RequireRateLimiting("ip_limit");
-
 app.MapPost("/tsbk/audio/speech", SpeechEndpoint.HandleTsubakiRequest)
    .WithName("GetSpeechExtended")
    .RequireRateLimiting("ip_limit");
@@ -528,12 +480,10 @@ app.MapPost("/tsbk/audio/speech", SpeechEndpoint.HandleTsubakiRequest)
 app.MapPost("/tsbk/audio/phonemize", PhonemizeEndpoint.HandlePhonemizeRequest)
    .WithName("GetPhonemes")
    .RequireRateLimiting("ip_limit");
-
 app.MapGet("/health", InfoEndpoints.GetHealth)
    .WithName("GetHealth");
 // No rate limit here on purpose — monitoring/load-balancer health probes need reliable,
 // frequent access; a 429 on a health check could wrongly mark a healthy instance as down.
-
 // With limited access for security,
 // these endpoints are designed for local dashboard integration and should not be exposed publicly.
 app.MapGet("/tsbk/audio/voices", InfoEndpoints.GetVoices)
@@ -545,7 +495,6 @@ app.MapGet("/tsbk/audio/effects", InfoEndpoints.GetEffects)
    .WithName("GetEffects")
    .RequireRateLimiting("ip_limit");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
-
 app.MapGet("/tsbk/audio/environments", InfoEndpoints.GetEnvironments)
    .WithName("GetEnvironments")
    .RequireRateLimiting("ip_limit");
@@ -555,7 +504,6 @@ app.MapGet("/tsbk/server/status", InfoEndpoints.GetServerStatus)
    .WithName("GetServerStatus")
    .RequireRateLimiting("ip_limit");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
-
 // Endpoints to imitate OpenAI's model listing for better compatibility with existing tools and dashboards that expect this format.
 app.MapGet("/v1/models", InfoEndpoints.GetModels)
    .WithName("GetModels")
@@ -565,14 +513,12 @@ app.MapGet("/v1/models/{id}", InfoEndpoints.GetModelById)
    .RequireRateLimiting("ip_limit");
 app.MapGet("/v1/health", InfoEndpoints.GetHealth)
    .WithName("GetV1Health");
-
 // =================================================================
 // PIPELINE WARM-UP & AUTO-OPEN BROWSER
 // =================================================================
 
 // Start the server in the background so Kestrel begins listening for requests
 await app.StartAsync();
-
 string? url = app.Urls.FirstOrDefault(u => u.StartsWith("http://"));
 if (!string.IsNullOrEmpty(url))
 {
@@ -587,10 +533,8 @@ if (!string.IsNullOrEmpty(url))
         Console.ForegroundColor = ConsoleColor.DarkGray;
         Console.WriteLine("\n[SYSTEM] Initiating pipeline warm-up sequence...");
         Console.ResetColor();
-
         using var client = new HttpClient();
-
-        // Hit the Tsubaki endpoint with a maximized parameter payload to trigger 
+        // Hit the Tsubaki endpoint with a maximized parameter payload to trigger
         // the full middleware, JSON deserializers, DSP effects, and routing pipeline.
         var warmupRequest = new
         {
@@ -615,7 +559,6 @@ if (!string.IsNullOrEmpty(url))
             clone_intensity = 1.0f,
             tone_temperature = 0.7f
         };
-
         var content = new StringContent(
             System.Text.Json.JsonSerializer.Serialize(warmupRequest),
             System.Text.Encoding.UTF8,
@@ -624,12 +567,10 @@ if (!string.IsNullOrEmpty(url))
 
         // Dispatch the request to the local instance
         var response = await client.PostAsync($"{baseUrl}/tsbk/audio/speech", content);
-
         if (response.IsSuccessStatusCode)
         {
             // Read the byte array to ensure the server streams the response, then immediately discard it for GC
             _ = await response.Content.ReadAsByteArrayAsync();
-
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine("[SYSTEM] Pipeline is fully operational. JIT and Shaders cached.");
             Console.ResetColor();
@@ -642,7 +583,6 @@ if (!string.IsNullOrEmpty(url))
         Console.WriteLine($"[WARNING] Warm-up sequence skipped: {ex.Message}");
         Console.ResetColor();
     }
-
     // Draw the ready banner and open the browser only after the pipeline is primed
     Console.WriteLine();
     Console.ForegroundColor = ConsoleColor.Cyan;
@@ -650,14 +590,12 @@ if (!string.IsNullOrEmpty(url))
     Console.WriteLine("  ║             TSUBAKI TTS ENGINE IS READY             ║");
     Console.WriteLine("  ╚═════════════════════════════════════════════════════╝");
     Console.ResetColor();
-
     Console.WriteLine($"    [Web Dashboard]       {baseUrl}");
     Console.WriteLine($"    [OpenAI Base URL]     {baseUrl}/v1");
     Console.WriteLine($"    [Speech Endpoint]     {baseUrl}/v1/audio/speech");
     Console.WriteLine($"    [Tsubaki Base URL]    {baseUrl}/tsbk");
     Console.WriteLine($"    [Extended Endpoint]   {baseUrl}/tsbk/audio/speech");
     Console.WriteLine();
-
     try
     {
         if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
@@ -680,6 +618,5 @@ if (!string.IsNullOrEmpty(url))
         Console.ResetColor();
     }
 }
-
 // Block the main thread so the server continues running until interrupted
 await app.WaitForShutdownAsync();
