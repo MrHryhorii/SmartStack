@@ -712,12 +712,12 @@ docker-compose up --build -d
 
 ## Bare-Metal Linux (CPU)
 
-For bare-metal Linux, **eSpeak NG is required** for phonemization. LAME is optional and only needed for `mp3` and `b64_json`; without it, `wav`, `flac`, `opus`, and `pcm` remain available.
+For bare-metal Linux, **eSpeak NG is required** for phonemization. LAME is optional and only needed for `mp3` and `b64_json`; without it, `wav`, `flac`, `opus`, `aac`, and `pcm` remain available.
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y espeak-ng
-sudo apt-get install -y libmp3lame0   # optional: MP3 + b64_json
+sudo apt-get install -y libmp3lame0   # optional, but recommended for MP3 client compatibility
 ```
 
 Tsubaki detects these native libraries at startup and reports which audio formats are available.
@@ -726,19 +726,21 @@ Tsubaki detects these native libraries at startup and reports which audio format
 
 Tsubaki supports NVIDIA GPU acceleration on Linux, but we **strongly advise against using it** unless absolutely necessary.
 
-For TTS tasks, the performance gain over a modern CPU is often negligible, while the downsides are significant:
+For TTS workloads, the performance gain over a modern CPU is often small, while the downsides are significant:
 
 - **Massive Build Size:** The CUDA build is over 1.5 GB larger.
-- **High Power Consumption:** Keeps the GPU active and draws significantly more power.
-- **Dependency Hell:** You must manually install and strictly match exact versions of proprietary NVIDIA libraries.
+- **High Power Consumption:** GPU execution consumes significantly more power.
+- **Dependency Hell:** CUDA requires a compatible system-level NVIDIA stack that is not bundled with Tsubaki.
 
-If you still want to proceed, your host system must have the following installed and correctly added to `$PATH`:
+If you still want to proceed, the host system must provide:
 
-- Proprietary NVIDIA Linux Drivers
-- NVIDIA CUDA Toolkit (v12.x compatible)
-- NVIDIA cuDNN (v9.x)
+- NVIDIA Linux driver with CUDA 13.x support
+- NVIDIA CUDA 13.x runtime libraries / CUDA Toolkit 13.x
+- NVIDIA cuDNN 9.x for CUDA 13
 
-> If any of these are missing or mismatched, the ONNX runtime will crash with `libcudnn.so.9: cannot open shared object file` and gracefully fall back to CPU execution anyway.
+CUDA and cuDNN libraries must also be discoverable by the Linux dynamic linker, typically through the system library path or `LD_LIBRARY_PATH`.
+
+> If CUDA or cuDNN is missing, incompatible, or cannot be loaded, the ONNX Runtime CUDA provider may fail to initialize and Tsubaki will fall back to CPU execution.
 
 ---
 
