@@ -1,7 +1,7 @@
 import {
     resolveStreamHandler,
     addWavHeader
-} from './codecs/index.js';
+} from './codecs/index.js?v=aac2';
 
 const DEFAULT_SAMPLE_RATE = 22050;
 
@@ -509,6 +509,7 @@ export const AudioEngine = {
             format === 'mp3' ||
             format === 'opus' ||
             format === 'ogg' ||
+            format === 'aac' ||
             format === 'flac' ||
             format === 'pcm'
         );

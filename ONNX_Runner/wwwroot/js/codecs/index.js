@@ -21,6 +21,10 @@ import {
     streamFLAC
 } from './flac.js';
 
+import {
+    streamAAC
+} from './aac.js?v=aac2';
+
 // Resolves a streaming backend for the requested response format.
 export function resolveStreamHandler(
     format,
@@ -57,6 +61,12 @@ export function resolveStreamHandler(
         // );
 
         return streamOggOpus;
+    }
+
+    if (format === 'aac') {
+        // Tsubaki emits MPEG-4 AAC-LC in ADTS framing. WebCodecs consumes
+        // individual ADTS frames directly; unsupported browsers buffer for replay.
+        return streamAAC;
     }
 
     if (format === 'flac') {

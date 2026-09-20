@@ -1,6 +1,6 @@
 import { initTheme } from './theme.js';
 import { getVoices, getEffects, getEnvironments, synthesizeSpeech } from './api.js';
-import { AudioEngine } from './audio.js';
+import { AudioEngine } from './audio.js?v=aac2';
 import { SUPPORTED_LANGUAGES } from './languages.js';
 import { receiveBase64Json } from './b64-json.js';
 
