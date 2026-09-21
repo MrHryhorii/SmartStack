@@ -1,7 +1,6 @@
 using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Endpoints;
-
 /// <summary>
 /// Translates an incoming OpenAI-shaped request into the engine's wire-agnostic
 /// SynthesisRequest. Wire-specific compatibility and validation stay here so the
@@ -14,7 +13,6 @@ public static class OpenAiRequestAdapter
     {
         AudioFormat format;
         string formatStr = dto.ResponseFormat?.Trim().ToLowerInvariant() ?? "mp3";
-
         if (formatStr == "b64_json")
         {
             format = AudioFormat.B64Json;
@@ -27,21 +25,11 @@ public static class OpenAiRequestAdapter
                 "Supported formats are: wav, mp3, opus, aac, flac, pcm, b64_json.");
         }
 
-        string? streamFormat = dto.StreamFormat?.Trim().ToLowerInvariant();
-
-        if (!string.IsNullOrEmpty(streamFormat) && streamFormat != "audio")
+        if (!SpeechStreamFormatParser.TryParse(dto.StreamFormat, out SpeechStreamFormat streamFormat))
         {
-            if (streamFormat == "sse")
-            {
-                return (
-                    null,
-                    "Unsupported stream_format: 'sse'. " +
-                    "Tsubaki currently supports only 'audio'; SSE event streaming is not implemented.");
-            }
-
             return (
                 null,
-                $"Unsupported stream_format: '{dto.StreamFormat}'. Supported value is: audio.");
+                $"Unsupported stream_format: '{dto.StreamFormat}'. Supported values are: audio, sse.");
         }
 
         string voice = string.IsNullOrWhiteSpace(dto.Voice?.Id)
@@ -50,13 +38,13 @@ public static class OpenAiRequestAdapter
 
         // dto.Instructions is intentionally accepted but ignored.
         // Piper/OpenVoice do not expose an equivalent natural-language style-control input.
-
         return (new SynthesisRequest
         {
             Input = dto.Input,
             Format = format,
             Voice = voice,
             Speed = dto.Speed,
+            StreamFormat = streamFormat,
             Stream = dto.Stream
 
             // DSP effects and cloning tuning are Tsubaki-specific extensions, not

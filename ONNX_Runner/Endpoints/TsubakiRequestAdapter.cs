@@ -1,7 +1,6 @@
 using ONNX_Runner.Models;
 
 namespace ONNX_Runner.Endpoints;
-
 /// <summary>
 /// Translates a request to Tsubaki's own extended endpoint into the engine's wire-agnostic
 /// SynthesisRequest. Nearly a 1:1 field copy, since SynthesisRequest was modeled directly
@@ -9,11 +8,10 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class TsubakiRequestAdapter
 {
-    public static (SynthesisRequest? Request, string? FormatError) ToSynthesisRequest(TsubakiSpeechRequest dto)
+    public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(TsubakiSpeechRequest dto)
     {
         AudioFormat format;
         string formatStr = dto.ResponseFormat?.Trim().ToLowerInvariant() ?? "mp3";
-
         if (formatStr == "b64_json")
         {
             format = AudioFormat.B64Json;
@@ -23,9 +21,13 @@ public static class TsubakiRequestAdapter
             return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, aac, flac, pcm, b64_json.");
         }
 
+        if (!SpeechStreamFormatParser.TryParse(dto.StreamFormat, out SpeechStreamFormat streamFormat))
+        {
+            return (null, $"Unsupported stream_format: '{dto.StreamFormat}'. Supported values are: audio, sse.");
+        }
+
         // dto.Instructions is intentionally accepted but ignored.
         // It is a wire-compatibility field only and must not enter SynthesisRequest.
-
         string? cleanLanguage = dto.Language?.Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(cleanLanguage) || cleanLanguage == "auto")
         {
@@ -33,13 +35,13 @@ public static class TsubakiRequestAdapter
             // Then the backend will understand that it is necessary to enable Lingua detection or the default model.
             cleanLanguage = null;
         }
-
         return (new SynthesisRequest
         {
             Input = dto.Input,
             Format = format,
             Voice = dto.Voice,
             Speed = dto.Speed,
+            StreamFormat = streamFormat,
             Stream = dto.Stream,
             EarlySplit = dto.EarlySplit,
             NoiseScale = dto.NoiseScale,

@@ -42,6 +42,7 @@ public partial class SpeechSynthesisService(
                 request.Input.Length,
                 requestedVoice,
                 request.Format,
+                request.StreamFormat,
                 request.Stream?.ToString() ?? "default");
         }
         // =================================================================
@@ -62,7 +63,7 @@ public partial class SpeechSynthesisService(
                 detail:
                     $"'{formatName}' requires the native LAME MP3 library, " +
                     "which was not found on this system. Install your distribution's " +
-                    "libmp3lame runtime package or request wav, opus, aac, flac, or pcm.",
+                    "libmp3lame runtime package or request wav, flac, opus, aac, or pcm.",
                 statusCode: StatusCodes.Status503ServiceUnavailable);
         }
         // =================================================================
@@ -119,15 +120,14 @@ public partial class SpeechSynthesisService(
             // =================================================================
             // RESPONSE PREPARATION
             // =================================================================
-            // Resolve how the response must be represented and delivered. The plan is a small
-            // value type, so selecting raw audio vs Base64 JSON and buffered vs streaming output
-            // does not require allocating formatter/transport/factory objects per request.
+            // Resolve payload format, response framing, and delivery timing independently.
+            // The plan is a small value type, so adding SSE does not allocate formatter/factory
+            // objects or leak transport conditions into the actual generation pipeline.
             responsePlan = ResponsePipeline.Resolve(request, ctx, streamConfig);
             responsePlanResolved = true;
             ResponsePipeline.CreateTransport(
                 ref response,
-                responsePlan,
-                streamConfig);
+                responsePlan);
 
             ResponsePipeline.ConfigureHeaders(
                 responsePlan,
@@ -140,12 +140,13 @@ public partial class SpeechSynthesisService(
                 await httpContext.Response.StartAsync(cancellationToken);
                 ResponsePipeline.StartNetworkSender(
                     ref response,
+                    responsePlan,
                     httpContext,
                     cancellationToken);
             }
-            // Wrap the transport only when the external response format requires it.
-            // Normal audio writes directly to the raw stream; B64Json inserts a lightweight
-            // Base64EncodingStream while the generation pipeline remains completely unaware.
+            // Wrap the transport only when the selected payload/framing combination requires it.
+            // Normal audio writes directly to the raw stream; B64Json uses its existing
+            // Base64EncodingStream for normal responses, while SSE owns Base64 event framing.
             ResponsePipeline.OpenPayload(
                 ref response,
                 responsePlan);
@@ -155,10 +156,11 @@ public partial class SpeechSynthesisService(
                 string effectiveEffect = request.Effect ?? ctx.EffectsConfig.DefaultEffect;
                 string effectiveEnvironment = request.Environment ?? ctx.EffectsConfig.DefaultEnvironment;
                 logger.LogDebug(
-                    "Generation started | queue={QueueMs:F1} ms | clone={Clone} | stream={Stream} | speed={SpeechSpeed:F2} | pitch={Pitch:F2} | effect={Effect} | environment={Environment} | sample_rate={SampleRate} Hz",
+                    "Generation started | queue={QueueMs:F1} ms | clone={Clone} | stream={Stream} | stream_format={StreamFormat} | speed={SpeechSpeed:F2} | pitch={Pitch:F2} | effect={Effect} | environment={Environment} | sample_rate={SampleRate} Hz",
                     queueElapsed.TotalMilliseconds,
                     ctx.CanClone ? "yes" : "no",
                     responsePlan.UseStreaming ? "yes" : "no",
+                    responsePlan.StreamFormat,
                     request.Speed,
                     effectivePitch,
                     effectiveEffect,
@@ -184,15 +186,17 @@ public partial class SpeechSynthesisService(
             // =================================================================
             // RESPONSE FINALIZATION
             // =================================================================
-            // Finalize only the external payload framing. For B64Json this flushes Base64
-            // padding and appends the closing JSON suffix; ordinary audio is a no-op here.
+            // Finalize only external payload framing. Normal B64Json finalizes its continuous
+            // Base64 JSON object here; SSE framing is finalized by its network sender instead.
             ResponsePipeline.ClosePayload(
                 ref response,
                 responsePlan);
             IResult result = await ResponsePipeline.CompleteAsync(
                 response,
                 responsePlan,
-                request);
+                request,
+                httpContext,
+                cancellationToken);
 
             TimeSpan totalElapsed =
                 Stopwatch.GetElapsedTime(requestStartedTimestamp);
@@ -280,13 +284,14 @@ public partial class SpeechSynthesisService(
     }
     [LoggerMessage(
         Level = LogLevel.Information,
-        Message = "Request received | chars={CharacterCount} | voice={Voice} | format={Format} | stream={Stream}",
+        Message = "Request received | chars={CharacterCount} | voice={Voice} | format={Format} | stream_format={StreamFormat} | stream={Stream}",
         SkipEnabledCheck = true)]
     private static partial void LogRequestReceived(
         ILogger logger,
         int characterCount,
         string voice,
         AudioFormat format,
+        SpeechStreamFormat streamFormat,
         string stream);
     [LoggerMessage(
         Level = LogLevel.Information,

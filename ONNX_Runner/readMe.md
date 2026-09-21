@@ -14,7 +14,7 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 - Zero-shot voice cloning via OpenVoice V2
 - OpenAI-compatible API — works with existing OpenAI TTS clients and tools
 - Dedicated Tsubaki API for detailed audio control
-- Real-time streaming (Chunked Transfer Encoding)
+- Real-time streaming (Chunked Transfer Encoding and SSE)
 - Studio-grade DSP effects and spatial environments
 - No Python, no CUDA dependency hell
 - Windows and Linux support
@@ -80,7 +80,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 | Zero-Shot Voice Cloning    | Integrated with the OpenVoice V2 architecture. Clone any voice instantly by dropping a clean 10-second `.wav` file into the `Voices` folder.                       |
 | Cross-Language Pronunciation | Detects configured languages automatically or follows an explicit language override, then adapts their pronunciation to the phoneme inventory of the active Piper model. This enables accented cross-language speech without requiring a multilingual base model. |
 | Studio-Grade DSP Effects   | Real-time audio effects (Telephone, Overdrive, Reverb, etc.), pitch and volume shifting.                                                                           |
-| Real-Time Streaming        | Supports Chunked Transfer Encoding — listen to audio before generation is complete.                                                                                |
+| Real-Time Streaming        | Supports Chunked Transfer Encoding and SSE — listen to audio before generation is complete.                                                                        |
 | Built-in Web Dashboard     | Sleek, user-friendly web interface available out-of-the-box for testing voices and effects.                                                                        |
 | OOM Guard                  | Built-in queueing and semaphore system that prevents VRAM/RAM crashes under heavy load.                                                                            |
 | No Python Required         | Pure C# and ONNX Runtime. Automatically detects GPU or falls back to CPU.                                                                                          |
@@ -191,7 +191,7 @@ curl http://localhost:5045/v1/audio/speech \
 | `response_format` | string        | `mp3`, `wav`, `opus`, `flac`, `aac`, `pcm`, or Tsubaki's `b64_json` representation. |
 | `instructions`    | string        | Accepted for OpenAI compatibility but intentionally ignored; Piper/OpenVoice has no equivalent natural-language style-control input. |
 | `speed`           | float         | Speech speed multiplier. `1.0` is default. |
-| `stream_format`   | string        | `audio` is supported. `sse` is recognized but currently rejected because SSE framing is not implemented. |
+| `stream_format`   | string        | `audio` (default) returns the normal audio/JSON response body; `sse` frames the response as Server-Sent Events. |
 | `stream`          | bool          | Tsubaki extension that overrides the server's chunked-streaming default for this request. |
 
 The Tsubaki endpoint reuses the same core fields and output formats where applicable, so they are not repeated below. Use `/tsbk/audio/speech` when you need Tsubaki-specific per-request controls.
@@ -207,13 +207,21 @@ Set `"response_format": "b64_json"` when a client needs audio embedded in JSON i
 }
 ```
 
-`b64_json` is a response representation, not a separate audio codec: Tsubaki generates MP3 audio and Base64-encodes those bytes into the `audioContent` field. It works with both `"stream": false` and `"stream": true`. In streaming mode the JSON/Base64 payload is emitted progressively as audio becomes available, although clients that use a normal whole-document JSON parser will still need the closing JSON suffix before parsing the complete object.
+`b64_json` is a response representation, not a separate audio codec: Tsubaki generates MP3 audio and Base64-encodes those bytes into the `audioContent` field. It works with both `"stream": false` and `"stream": true`. With the default `"stream_format": "audio"`, streaming emits one continuous JSON/Base64 response progressively as audio becomes available, although clients that use a normal whole-document JSON parser still need the closing JSON suffix before parsing the complete object.
+
+With `"stream_format": "sse"`, `b64_json` uses SSE events instead of one continuous JSON document. Each `speech.audio.delta` event contains an independently Base64-encoded MP3 chunk in `audioContent`:
+
+```text
+data: {"type":"speech.audio.delta","audioContent":"<base64-encoded MP3 chunk>"}
+```
+
+Clients should Base64-decode each `audioContent` value separately and concatenate the decoded MP3 bytes; the Base64 strings themselves should not be concatenated. `"stream": true` sends these delta events progressively during synthesis, while `"stream": false` generates the complete audio first and then returns it using the same SSE framing.
 
 ---
 
 # Real-Time Streaming
 
-Tsubaki supports HTTP chunked streaming. Audio playback can begin before the full synthesis finishes — useful for AI companions, streaming agent pipelines, and real-time conversations.
+Tsubaki supports HTTP chunked streaming and Server-Sent Events (SSE). Audio playback can begin before the full synthesis finishes — useful for AI companions, streaming agent pipelines, and real-time conversations.
 
 Enable streaming per request:
 
@@ -222,6 +230,17 @@ Enable streaming per request:
   "stream": true
 }
 ```
+
+To use SSE framing:
+
+```json
+{
+  "stream": true,
+  "stream_format": "sse"
+}
+```
+
+`stream_format` controls how the HTTP response is framed: `"audio"` keeps the normal response body, while `"sse"` emits `speech.audio.delta` events followed by `speech.audio.done`. The `stream` flag controls delivery timing independently: `true` sends available deltas progressively during synthesis, while `false` generates the complete audio first and then returns it using the selected framing.
 
 Recommended server-side streaming configuration in `appsettings.json`:
 
@@ -235,7 +254,7 @@ Recommended server-side streaming configuration in `appsettings.json`:
 
 `FlushAfterEachSentence: true` flushes each completed internal audio chunk immediately, including an `EarlySplit` first chunk. The setting name is retained for compatibility. This is recommended for AI companions and other latency-sensitive clients.
 
-> WAV does not support true chunked streaming because its header requires the final file size upfront. `mp3`, `opus`, `flac`, `pcm`, and `b64_json` can stream progressively.
+> WAV does not support true chunked streaming because its header requires the final file size upfront. `mp3`, `opus`, `flac`, `aac`, `pcm`, and `b64_json` can stream progressively.
 
 ---
 
@@ -360,6 +379,7 @@ curl http://localhost:5045/tsbk/audio/speech \
     "response_format": "mp3",
     "speed": 1.0,
     "stream": true,
+    "stream_format": "audio",
     "early_split": true,
     "language": "auto",
 

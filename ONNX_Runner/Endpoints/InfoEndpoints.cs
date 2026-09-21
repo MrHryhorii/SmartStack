@@ -3,7 +3,6 @@ using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
 namespace ONNX_Runner.Endpoints;
-
 /// <summary>
 /// Security filter that restricts endpoint access exclusively to the local machine (localhost).
 /// Prevents external exposure of administrative or informational endpoints.
@@ -13,7 +12,6 @@ public class LocalHostOnlyFilter : IEndpointFilter
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
         var remoteIp = context.HttpContext.Connection.RemoteIpAddress;
-
         if (remoteIp == null || !IPAddress.IsLoopback(remoteIp))
         {
             return Results.Problem("Access Denied: This endpoint is restricted to local server access only.", statusCode: 403);
@@ -22,13 +20,13 @@ public class LocalHostOnlyFilter : IEndpointFilter
         return await next(context);
     }
 }
-
 /// <summary>
 /// Provides informational endpoints for auto-discovery of available server resources (voices, effects).
 /// Designed for local dashboard/UI integration.
 /// </summary>
 public static class InfoEndpoints
 {
+    private static readonly string[] SupportedStreamFormats = ["audio", "sse"];
     /// <summary>
     /// Dynamically scans the 'Voices' directory and returns all available voice fingerprints.
     /// Supports real-time discovery (e.g., when Docker volumes are updated).
@@ -45,7 +43,6 @@ public static class InfoEndpoints
             return Results.Problem($"Failed to read voices directory: {ex.Message}", statusCode: 500);
         }
     }
-
     /// <summary>
     /// Shared by GetVoices and GetServerStatus so both report the exact same voice list from
     /// a single source of truth instead of two independent directory scans drifting apart.
@@ -55,7 +52,6 @@ public static class InfoEndpoints
         var voices = new List<string> { "piper_base" };
         // The 'Voices' directory is expected to be in the same location as the server executable.
         string voicesDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Voices");
-
         if (Directory.Exists(voicesDirectory))
         {
             // Read all files with the .voice extension directly from the disk
@@ -69,7 +65,6 @@ public static class InfoEndpoints
         // Distinct() removes potential duplicates, OrderBy() sorts alphabetically
         return voices.Distinct().OrderBy(v => v);
     }
-
     /// <summary>
     /// Retrieves all available audio effects dynamically from the system enumeration.
     /// </summary>
@@ -80,7 +75,6 @@ public static class InfoEndpoints
 
         return Results.Ok(new { effects });
     }
-
     /// <summary>
     /// Retrieves all available spatial environments dynamically from the system enumeration.
     /// </summary>
@@ -89,7 +83,6 @@ public static class InfoEndpoints
         var environments = Enum.GetNames<SpatialEnvironment>();
         return Results.Ok(new { environments });
     }
-
     /// <summary>
     /// Simulates an OpenAI-style models endpoint for compatibility with clients that expect to query available TTS models.
     /// </summary>
@@ -100,8 +93,8 @@ public static class InfoEndpoints
             @object = "list",
             data = new[]
             {
-                // Since our API is designed to mimic OpenAI's TTS endpoint, 
-                // we return a single "model" in the list for compatibility 
+                // Since our API is designed to mimic OpenAI's TTS endpoint,
+                // we return a single "model" in the list for compatibility
                 // with clients that expect to query available models.
                 new {
                     id = "tts-1",
@@ -112,7 +105,6 @@ public static class InfoEndpoints
             }
         });
     }
-
     /// <summary>
     /// Simulates an OpenAI-style model details endpoint for compatibility with clients that expect to query specific TTS model information.
     /// </summary>
@@ -123,7 +115,6 @@ public static class InfoEndpoints
         {
             return Results.NotFound();
         }
-
         return Results.Ok(new
         {
             id = "tts-1",
@@ -132,7 +123,6 @@ public static class InfoEndpoints
             owned_by = "system"
         });
     }
-
     /// <summary>
     /// Reports what's enabled server-side and its configured defaults, so a frontend can
     /// tailor its own UI (e.g. hide cloning controls entirely when ClonerSettings.EnableCloning
@@ -155,7 +145,6 @@ public static class InfoEndpoints
         // PiperConfig is only registered if a base model loaded successfully at startup —
         // resolved manually so a missing model reports null here instead of throwing.
         var piperConfig = services.GetService<PiperConfig>();
-
         return Results.Ok(new
         {
             model = piperConfig == null ? null : new
@@ -201,7 +190,8 @@ public static class InfoEndpoints
             {
                 enabled = stream.EnableStreaming,
                 flushAfterEachSentence = stream.FlushAfterEachSentence,
-                minChunkSizeKb = stream.MinChunkSizeKb
+                minChunkSizeKb = stream.MinChunkSizeKb,
+                formats = SupportedStreamFormats
             },
             formats = new
             {
@@ -237,7 +227,6 @@ public static class InfoEndpoints
             availableVoices = GetAvailableVoiceNames()
         });
     }
-
     /// <summary>
     /// Health check endpoint to verify that the server is running and responsive.
     /// </summary>

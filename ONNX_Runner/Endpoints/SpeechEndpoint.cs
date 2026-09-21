@@ -3,7 +3,6 @@ using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
 namespace ONNX_Runner.Endpoints;
-
 /// <summary>
 /// Thin HTTP endpoint handlers. Each one only validates the wire-specific request shape,
 /// adapts it into a SynthesisRequest, and delegates the actual work to
@@ -25,7 +24,6 @@ public static class SpeechEndpoint
         // =================================================================
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.BadRequest(new { error = "Input text cannot be empty." });
-
         var (synthesisRequest, validationError) =
             OpenAiRequestAdapter.ToSynthesisRequest(request);
 
@@ -37,7 +35,6 @@ public static class SpeechEndpoint
             httpContext,
             cancellationToken);
     }
-
     public static async Task<IResult> HandleTsubakiRequest(
         HttpContext httpContext,
         [FromBody] TsubakiSpeechRequest request,
@@ -49,12 +46,11 @@ public static class SpeechEndpoint
         // =================================================================
         if (string.IsNullOrWhiteSpace(request.Input))
             return Results.BadRequest(new { error = "Input text cannot be empty." });
-
-        var (synthesisRequest, formatError) =
+        var (synthesisRequest, validationError) =
             TsubakiRequestAdapter.ToSynthesisRequest(request);
 
-        if (formatError != null)
-            return Results.BadRequest(new { error = formatError });
+        if (validationError != null)
+            return Results.BadRequest(new { error = validationError });
 
         return await synthesisService.SynthesizeAsync(
             synthesisRequest!,
