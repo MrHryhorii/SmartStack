@@ -384,6 +384,7 @@ public partial class MixedLanguagePhonemizer
     private readonly double _maxBonus;
     private readonly int _minLimit;
     private readonly int _maxLimit;
+    private readonly int _foreignValidationMaxLetters;
 
     // Cache for sentence-context override settings
     private readonly double _overrideThreshold;
@@ -422,6 +423,7 @@ public partial class MixedLanguagePhonemizer
         _maxBonus = settings?.MaxBonusMultiplier ?? 0.60;
         _minLimit = settings?.BonusMinLetterCount ?? 8;
         _maxLimit = settings?.BonusMaxLetterCount ?? 32;
+        _foreignValidationMaxLetters = Math.Max(0, settings?.ForeignValidationMaxLetters ?? 5);
         _overrideThreshold = settings?.MixedLanguageOverrideThreshold ?? 0.85;
         _minSentenceLength = settings?.MinSentenceLengthForOverride ?? 20;
 
@@ -2179,10 +2181,16 @@ public partial class MixedLanguagePhonemizer
         Language rawBestLanguage = Language.Unknown;
         double rawBestProbability = -1;
         double rawSecondProbability = -1;
+        double rawModelProbability = 0;
 
         foreach (var kvp in confidences)
         {
             double probability = kvp.Value;
+
+            if (_modelLinguaLang.HasValue && kvp.Key == _modelLinguaLang.Value)
+            {
+                rawModelProbability = probability;
+            }
 
             if (probability > rawBestProbability)
             {
@@ -2196,14 +2204,47 @@ public partial class MixedLanguagePhonemizer
             }
         }
 
+        // Compute the existing native-language prior before accepting a short foreign winner.
+        // This does not replace confidence/margin; it only prevents tiny fragments from bypassing
+        // the configured short-text bonus before that bonus gets a chance to participate.
+        double currentMultiplier = 1.0;
+
+        if (canFavorModelLanguage)
+        {
+            if (letterCount <= _minLimit)
+            {
+                currentMultiplier = 1.0 + _maxBonus;
+            }
+            else if (letterCount < _maxLimit)
+            {
+                double ratio = (double)(_maxLimit - letterCount) / (_maxLimit - _minLimit);
+                currentMultiplier = 1.0 + (_maxBonus * ratio);
+            }
+        }
+
         double rawMargin = rawBestProbability - Math.Max(0.0, rawSecondProbability);
+
+        bool requiresForeignValidation =
+            canFavorModelLanguage &&
+            _foreignValidationMaxLetters > 0 &&
+            letterCount <= _foreignValidationMaxLetters &&
+            _modelLinguaLang.HasValue &&
+            rawBestLanguage != Language.Unknown &&
+            rawBestLanguage != _modelLinguaLang.Value;
+
+        bool survivesModelPrior =
+            !requiresForeignValidation ||
+            rawBestProbability > rawModelProbability * currentMultiplier;
+
         bool hasConvincingLocalWinner =
             rawBestLanguage != Language.Unknown &&
             rawBestProbability >= LocalWinnerProbabilityFloor &&
-            rawMargin >= LocalWinnerMarginFloor;
+            rawMargin >= LocalWinnerMarginFloor &&
+            survivesModelPrior;
 
         // A convincing local verdict is authoritative. Sentence context and the loaded model
         // are not allowed to swallow a real short code-switch such as "pero" or "d'accord".
+        // Very short foreign winners must additionally survive the configured native-language prior.
         if (hasConvincingLocalWinner)
         {
             string localCode = _mapper.MapBackToEspeak(rawBestLanguage, _modelEspeakCode);
@@ -2271,23 +2312,8 @@ public partial class MixedLanguagePhonemizer
         }
 
         // DYNAMIC MODEL-LANGUAGE BONUS:
-        // Only ambiguous local results reach this point. The old short-text bias remains, but it
-        // now resolves uncertainty instead of being able to overturn a convincing raw detector vote.
-        double currentMultiplier = 1.0;
-
-        if (canFavorModelLanguage)
-        {
-            if (letterCount <= _minLimit)
-            {
-                currentMultiplier = 1.0 + _maxBonus;
-            }
-            else if (letterCount < _maxLimit)
-            {
-                double ratio = (double)(_maxLimit - letterCount) / (_maxLimit - _minLimit);
-                currentMultiplier = 1.0 + (_maxBonus * ratio);
-            }
-        }
-
+        // Only ambiguous local results reach this point. Reuse the multiplier already calculated
+        // above so short foreign validation and final scoring share exactly the same prior.
         Language bestLinguaLang = Language.Unknown;
         double bestAdjustedScore = -1;
         double originalProbabilityOfBest = 0;

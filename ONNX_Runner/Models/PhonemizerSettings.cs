@@ -18,13 +18,20 @@ public class PhonemizerSettings
     // to the TTS model's native language to prevent it from randomly switching accents on short words (e.g., "OK", "hi").
 
     /// <summary>Maximum confidence multiplier applied to short words (e.g., 0.50 = +50% bonus).</summary>
-    public double MaxBonusMultiplier { get; set; } = 0.50;
+    public double MaxBonusMultiplier { get; set; } = 0.60;
 
     /// <summary>Words with this many letters or fewer receive the maximum bonus.</summary>
     public int BonusMinLetterCount { get; set; } = 8;
 
     /// <summary>Words longer than this receive 0% bonus, trusting the ML detector completely.</summary>
     public int BonusMaxLetterCount { get; set; } = 32;
+
+    /// <summary>
+    /// Foreign-language winners with this many letters or fewer must also beat the model-language
+    /// short-text bonus before they can be accepted as authoritative local detections.
+    /// Set to 0 to disable this additional validation.
+    /// </summary>
+    public int ForeignValidationMaxLetters { get; set; } = 5;
 
     // --- Sentence-Context Override Parameters ---
     // A short/ambiguous word (e.g. a name like "Hermes") can still lose to a rival language 

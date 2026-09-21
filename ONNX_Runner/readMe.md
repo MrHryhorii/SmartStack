@@ -817,6 +817,7 @@ The `PhonemizerSettings` block controls how the server handles text outside your
 "PhonemizerSettings": {
   "SupportedLanguages": ["en", "uk", "fr"],
   "UseLanguageDetector": true,
+  "ForeignValidationMaxLetters": 5,
   "MaxBonusMultiplier": 0.60,
   "BonusMinLetterCount": 8,
   "BonusMaxLetterCount": 32,
@@ -831,6 +832,7 @@ A different *script* (Cyrillic hitting an English model, for example) is a hard 
 
 | Parameters | What they do |
 | ----------- | -------------- |
+| `ForeignValidationMaxLetters` | For foreign-language winners at or below this length, requires the foreign result to also beat the base-model language after its short-text bonus is applied. `0` disables this extra validation. |
 | `MaxBonusMultiplier`, `BonusMinLetterCount`, `BonusMaxLetterCount` | Boosts the model's own language for short, statistically ambiguous chunks — full bonus at or below `BonusMinLetterCount` letters, none at or above `BonusMaxLetterCount`, interpolated between. *Example: "Hi" (2 letters) got the full ×1.6 bonus and read English; "I am Alejandro" (12 letters) got a smaller ×1.5 bonus — not enough to beat a strongly Spanish-leaning raw score, so it read with Spanish pronunciation (arguably correct for a Spanish name).* |
 | `MixedLanguageOverrideThreshold`, `MinSentenceLengthForOverride` | The bonus above has a hard ceiling it sometimes can't overcome. This override instead checks the model language's confidence across the **whole sentence** once, and applies it to any chunk under `BonusMaxLetterCount` letters — but only if the sentence has at least `MinSentenceLengthForOverride` letters, and its confidence clears `MixedLanguageOverrideThreshold`. *Example: "Yes, I am Hermes, an AI model created by Anthropic." — "Hermes" alone reads as French (`ɛʁmˈɛs`); with the override, the confidently-English sentence around it corrects this to `hˈɜːmiːz`.* |
 
