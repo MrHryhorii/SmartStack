@@ -14,7 +14,7 @@ namespace ONNX_Runner.Services.Synthesis;
 internal static class ResponsePipeline
 {
     private const int NetworkChannelCapacity = 50;
-    private const int BufferedResponseInitialCapacity = 1024 * 1024;
+    private const int BufferedResponseInitialCapacity = 64 * 1024;
     // Cached once for the entire process. The original monolith allocated these arrays for
     // every B64Json request even though the prefix and suffix never change.
     private static readonly byte[] Base64JsonPrefix = Encoding.UTF8.GetBytes("{\n  \"audioContent\": \"");
@@ -94,7 +94,7 @@ internal static class ResponsePipeline
     {
         if (!plan.UseStreaming)
         {
-            // Pre-allocate 1 MB exactly like the original monolith for non-streaming requests.
+            // Start below the LOH threshold. MemoryStream grows only when a larger buffered response actually needs it.
             state.RawStream = new MemoryStream(BufferedResponseInitialCapacity);
             return;
         }

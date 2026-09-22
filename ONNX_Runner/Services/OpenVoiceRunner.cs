@@ -40,8 +40,8 @@ public partial class OpenVoiceRunner : IDisposable
     private readonly bool _isUsingColorPool;
 
     // Blocking gate sized to match the color pool. Under normal operation this should
-    // never actually block, since the caller (SpeechEndpoint) already limits overall
-    // concurrency via its own gpuSemaphore before cloning is even known to be needed.
+    // never actually block, since the caller (SpeechSynthesisService) already limits overall
+    // concurrency via the outer request gate before cloning is even known to be needed.
     // It exists as a cheap safety net in case that external limit ever drifts out of
     // sync with this pool's size.
     private readonly SemaphoreSlim? _colorGate;

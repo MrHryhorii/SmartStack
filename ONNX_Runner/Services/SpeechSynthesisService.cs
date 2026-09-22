@@ -7,12 +7,12 @@ namespace ONNX_Runner.Services;
 /// Shared core synthesis pipeline. Every external API shape (OpenAI, Tsubaki's own
 /// extended endpoint, and any future ones) funnels through this single service after its
 /// own adapter translates the wire request into a SynthesisRequest — so there is exactly
-/// one place where the GPU/CPU semaphore is acquired and released, no matter how many
+/// one place where the request concurrency gate is acquired and released, no matter how many
 /// different endpoints exist. Endpoints and adapters should never call the generation
-/// pipeline or touch the semaphore directly; they should only ever call SynthesizeAsync.
+/// pipeline or touch the request gate directly; they should only ever call SynthesizeAsync.
 /// </summary>
 public partial class SpeechSynthesisService(
-    SemaphoreSlim gpuSemaphore,
+    SemaphoreSlim requestGate,
     IServiceProvider services,
     NativeAudioDependencies nativeAudioDependencies,
     ILogger<SpeechSynthesisService> logger)
@@ -93,7 +93,7 @@ public partial class SpeechSynthesisService(
         ResponsePipeline.State response = default;
         ResponsePipeline.Plan responsePlan = default;
         bool responsePlanResolved = false;
-        bool semaphoreAcquired = false;
+        bool gateAcquired = false;
         bool generationStarted = false;
 
         long generationStartedTimestamp = 0;
@@ -106,10 +106,10 @@ public partial class SpeechSynthesisService(
             // Measure only time actually spent waiting for a concurrency slot. Request parsing,
             // validation, and response setup are deliberately excluded from this queue metric.
             long queueStartedTimestamp = Stopwatch.GetTimestamp();
-            await gpuSemaphore.WaitAsync(cancellationToken);
+            await requestGate.WaitAsync(cancellationToken);
 
             queueElapsed = Stopwatch.GetElapsedTime(queueStartedTimestamp);
-            semaphoreAcquired = true;
+            gateAcquired = true;
             // =================================================================
             // REQUEST CONTEXT
             // =================================================================
@@ -239,7 +239,7 @@ public partial class SpeechSynthesisService(
 
             logger.LogWarning(
                 "Request canceled | stage={Stage} | total={TotalSeconds:F3} s",
-                GetStage(semaphoreAcquired, generationStarted),
+                GetStage(gateAcquired, generationStarted),
                 totalElapsed.TotalSeconds);
             return Results.Empty;
         }
@@ -259,7 +259,7 @@ public partial class SpeechSynthesisService(
             logger.LogError(
                 ex,
                 "Request failed | stage={Stage} | total={TotalSeconds:F3} s",
-                GetStage(semaphoreAcquired, generationStarted),
+                GetStage(gateAcquired, generationStarted),
                 totalElapsed.TotalSeconds);
             if (httpContext.Response.HasStarted)
             {
@@ -274,11 +274,11 @@ public partial class SpeechSynthesisService(
         {
             ResponsePipeline.Dispose(ref response);
 
-            // CRITICAL: Only release the semaphore if WaitAsync actually acquired it.
-            // A cancellation while still waiting must never increment the semaphore count.
-            if (semaphoreAcquired)
+            // CRITICAL: Only release the request gate if WaitAsync actually acquired it.
+            // A cancellation while still waiting must never increment the request gate count.
+            if (gateAcquired)
             {
-                gpuSemaphore.Release();
+                requestGate.Release();
             }
         }
     }
@@ -305,9 +305,9 @@ public partial class SpeechSynthesisService(
         double speed,
         double queueMs,
         double totalSeconds);
-    private static string GetStage(bool semaphoreAcquired, bool generationStarted)
+    private static string GetStage(bool gateAcquired, bool generationStarted)
     {
-        if (!semaphoreAcquired)
+        if (!gateAcquired)
         {
             return "queue";
         }

@@ -41,8 +41,6 @@ internal static class AudioGenerationPipeline
             ctx.OpenVoice.VoiceLibrary.TryGetValue("piper_base", out sourceFingerprint);
         }
 
-        var effectsEngine = new AudioEffectsEngine(ctx.EffectsConfig, ctx.FinalSampleRate);
-        var spatialEngine = new SpatialEffectsEngine(ctx.FinalSampleRate);
         // =================================================================
         // DSP MODIFIERS SETUP (PITCH, VOLUME & EFFECTS)
         // =================================================================
@@ -56,6 +54,25 @@ internal static class AudioGenerationPipeline
             envType = SpatialEnvironment.None;
         }
         float envIntensity = Math.Clamp(request.EnvironmentIntensity ?? ctx.EffectsConfig.DefaultEnvironmentIntensity, 0f, 1f);
+
+        // Avoid constructing stateful DSP engines when the request will never use them.
+        // SpatialEffectsEngine owns several delay/reverb buffers, so this also removes the
+        // largest avoidable per-request allocation from the clean-voice path.
+        bool useEffect =
+            ctx.EffectsConfig.EnableGlobalEffects &&
+            effectType != VoiceEffectType.None &&
+            effectAmount > 0.001f;
+        bool useEnvironment =
+            envType != SpatialEnvironment.None &&
+            envIntensity > 0.001f;
+
+        AudioEffectsEngine? effectsEngine = useEffect
+            ? new AudioEffectsEngine(ctx.EffectsConfig, ctx.FinalSampleRate)
+            : null;
+        SpatialEffectsEngine? spatialEngine = useEnvironment
+            ? new SpatialEffectsEngine(ctx.FinalSampleRate)
+            : null;
+
         // Pitch Priority: explicit request value → server default from config → fallback 1.0 (no shift)
         float targetPitch = request.Pitch ?? ctx.DspConfig.DefaultPitch;
         bool usePitchShift = Math.Abs(targetPitch - 1.0f) > 0.001f;
@@ -64,10 +81,20 @@ internal static class AudioGenerationPipeline
             ? new PitchShifter(ctx.PiperConfig.Audio.SampleRate)
             : null;
 
-        if (pitchShifter != null)
-        {
-            pitchShifter.SetPitch(targetPitch);
-        }
+        pitchShifter?.SetPitch(targetPitch);
+
+        // Runtime resamplers are request-local and reused for every chunk. They deliberately
+        // reset their DSP state per chunk to preserve the existing boundary semantics while
+        // avoiding repeated provider/resampler construction in the consumer hot path.
+        var cloneResampler =
+            ctx.CanClone && ctx.PiperConfig.Audio.SampleRate != ctx.OutSampleRate
+                ? new AudioResampler(ctx.PiperConfig.Audio.SampleRate, ctx.OutSampleRate)
+                : null;
+        var finalResampler =
+            ctx.OutSampleRate != ctx.FinalSampleRate
+                ? new AudioResampler(ctx.OutSampleRate, ctx.FinalSampleRate)
+                : null;
+
         // Volume Priority: explicit request value → server default from config → fallback 1.0 (no change)
         float requestedVolume = request.Volume ?? ctx.DspConfig.DefaultVolume;
         // Converts VolumeBoosterDb from dB to linear gain and merges it with requestedVolume.
@@ -114,11 +141,19 @@ internal static class AudioGenerationPipeline
             // result allocation; avoid allocating and immediately discarding a second array here.
             blendedTarget = Slerp(sourceFingerprint, targetFingerprint, intensity);
         }
-        // Internal channel for passing raw audio chunks between the Generator and the DSP Processor
-        var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length, bool IsSentenceFinished)>(10);
+        // Internal channel for passing raw audio chunks between the Generator and the DSP Processor.
+        // Capacity stays intentionally generous for local use; SingleReader/SingleWriter let the
+        // channel skip synchronization paths that this one-producer/one-consumer pipeline never needs.
+        var channelOptions = new System.Threading.Channels.BoundedChannelOptions(10)
+        {
+            FullMode = System.Threading.Channels.BoundedChannelFullMode.Wait,
+            SingleReader = true,
+            SingleWriter = true
+        };
+        var channel = System.Threading.Channels.Channel.CreateBounded<(float[] Buffer, int Length, bool IsSentenceFinished)>(channelOptions);
         // Deadlock guard: Channel<T> lacks a native reader-abort signal. If the consumer faults while
         // the producer waits on WriteAsync (bounded capacity), the producer would hang forever and
-        // leak the GPU semaphore. The consumer catch block cancels this linked token to unstick it.
+        // leak the request gate. The consumer catch block cancels this linked token to unstick it.
         using var producerUnstickCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         CancellationToken producerToken = producerUnstickCts.Token;
         // Preserves the root-cause consumer exception, preventing it from being masked by
@@ -132,6 +167,7 @@ internal static class AudioGenerationPipeline
                 // LOCAL STATE: Tracks sentence continuation across chunks within the same request.
                 // Defaults to true, assuming the very first chunk is the start of a new thought.
                 bool previousChunkWasFinished = true;
+                bool pitchPending = false;
                 foreach (var textChunk in textChunks)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
@@ -202,54 +238,49 @@ internal static class AudioGenerationPipeline
                     // NOTE: Volume is intentionally NOT applied here. It's applied in the
                     // consumer task, after voice cloning (if active), so the cloning model
                     // always sees Piper's natural, un-boosted waveform.
-                    // Apply Pitch Shifting if requested
+                    // Apply Pitch Shifting if requested.
+                    // SoundTouch stays continuous across generated chunks.
+                    // A finished sentence only means its buffered tail must be flushed
+                    // before the consumer inserts the configured sentence pause.
                     if (usePitchShift)
                     {
-                        // ZERO-ALLOCATION ACCUMULATOR:
-                        int estimatedSize = (int)(rawResult.Length * 1.5);
+                        bool flushPitch = isFinished;
+                        pitchPending = !flushPitch;
+                        int estimatedSize = Math.Max(rawResult.Length, 1024);
                         float[] accumulatedBuffer = ArrayPool<float>.Shared.Rent(estimatedSize);
                         int accumulatedLength = 0;
                         bool handedOff = false;
                         try
                         {
-                            // Process the main audio
-                            foreach (var segment in pitchShifter!.ProcessChunk(rawResult.Buffer, rawResult.Length))
+                            pitchShifter!.ProcessChunk(rawResult.Buffer, rawResult.Length);
+                            DrainPitch(pitchShifter, ref accumulatedBuffer, ref accumulatedLength);
+
+                            if (flushPitch)
                             {
-                                if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
-                                {
-                                    float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
-                                    Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
-                                    ArrayPool<float>.Shared.Return(accumulatedBuffer);
-                                    accumulatedBuffer = newBuffer;
-                                }
-                                segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
-                                accumulatedLength += segment.Count;
+                                pitchShifter.Flush();
+                                DrainPitch(pitchShifter, ref accumulatedBuffer, ref accumulatedLength);
+                                pitchShifter.Reset();
                             }
-                            // Flush internal WSOLA buffers immediately for THIS chunk
-                            foreach (var segment in pitchShifter!.Flush())
+
+                            // SoundTouch may legitimately have no ready output after a very short
+                            // continuation chunk. In that case, keep the samples buffered internally;
+                            // a later chunk (or Flush at the sentence/request end) will release them.
+                            if (accumulatedLength > 0)
                             {
-                                if (accumulatedLength + segment.Count > accumulatedBuffer.Length)
-                                {
-                                    float[] newBuffer = ArrayPool<float>.Shared.Rent(accumulatedBuffer.Length * 2);
-                                    Array.Copy(accumulatedBuffer, newBuffer, accumulatedLength);
-                                    ArrayPool<float>.Shared.Return(accumulatedBuffer);
-                                    accumulatedBuffer = newBuffer;
-                                }
-                                segment.AsSpan().CopyTo(accumulatedBuffer.AsSpan(accumulatedLength));
-                                accumulatedLength += segment.Count;
+                                await channel.Writer.WriteAsync(
+                                    (accumulatedBuffer, accumulatedLength, isFinished),
+                                    producerToken);
+                                handedOff = true;
                             }
-                            // Send the fully reassembled chunk to the Consumer
-                            await channel.Writer.WriteAsync((accumulatedBuffer, accumulatedLength, isFinished), producerToken);
-                            handedOff = true; // Ownership successfully transferred to the Consumer
                         }
                         finally
                         {
-                            // Only return accumulatedBuffer ourselves if the handoff never happened
                             if (!handedOff)
                             {
                                 ArrayPool<float>.Shared.Return(accumulatedBuffer);
                             }
-                            // rawResult.Buffer is NEVER handed off in this branch — it's always ours to return
+
+                            // rawResult.Buffer is never handed off when pitch shifting is active.
                             ArrayPool<float>.Shared.Return(rawResult.Buffer);
                         }
                     }
@@ -269,6 +300,35 @@ internal static class AudioGenerationPipeline
                             {
                                 ArrayPool<float>.Shared.Return(rawResult.Buffer);
                             }
+                        }
+                    }
+                }
+
+                // Flush any pitch tail still pending when the request ends without a sentence boundary.
+                // Keep IsSentenceFinished=false so the consumer does not add a sentence pause.
+                if (usePitchShift && pitchPending)
+                {
+                    float[] tailBuffer = ArrayPool<float>.Shared.Rent(1024);
+                    int tailLength = 0;
+                    bool handedOff = false;
+                    try
+                    {
+                        pitchShifter!.Flush();
+                        DrainPitch(pitchShifter, ref tailBuffer, ref tailLength);
+
+                        if (tailLength > 0)
+                        {
+                            await channel.Writer.WriteAsync(
+                                (tailBuffer, tailLength, false),
+                                producerToken);
+                            handedOff = true;
+                        }
+                    }
+                    finally
+                    {
+                        if (!handedOff)
+                        {
+                            ArrayPool<float>.Shared.Return(tailBuffer);
                         }
                     }
                 }
@@ -309,13 +369,9 @@ internal static class AudioGenerationPipeline
                             // sentence into a second pooled buffer when Piper already produces that rate.
                             float[] cloneInputBuffer = currentBuffer;
                             int cloneInputLength = currentLength;
-                            if (ctx.PiperConfig.Audio.SampleRate != ctx.OutSampleRate)
+                            if (cloneResampler != null)
                             {
-                                var r1 = ctx.AudioProc!.Resample(
-                                    currentBuffer,
-                                    currentLength,
-                                    ctx.PiperConfig.Audio.SampleRate,
-                                    ctx.OutSampleRate);
+                                var r1 = cloneResampler.Resample(currentBuffer, currentLength);
                                 rentedBuffer1 = r1.Buffer;
                                 cloneInputBuffer = rentedBuffer1;
                                 cloneInputLength = r1.Length;
@@ -352,26 +408,29 @@ internal static class AudioGenerationPipeline
                                 currentLength = cloneInputLength;
                             }
                         }
-                        // Applies target volume post-cloning to protect OpenVoice from boosted input levels.
-                        // Acts as unified gain staging for both cloned and base Piper outputs.
-                        if (useVolumeShift)
-                        {
-                            VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume);
-                        }
                         // Final resampling to match codec-supported output rates.
                         // Opus and AAC both require one of their defined sample rates.
-                        if (ctx.OutSampleRate != ctx.FinalSampleRate)
+                        if (finalResampler != null)
                         {
-                            var r2 = ctx.AudioProc!.Resample(currentBuffer, currentLength, ctx.OutSampleRate, ctx.FinalSampleRate);
+                            var r2 = finalResampler.Resample(currentBuffer, currentLength);
                             rentedBuffer2 = r2.Buffer;
                             currentBuffer = rentedBuffer2;
                             currentLength = r2.Length;
                         }
                         // Apply character effects FIRST (Overdrive, Telephone, LoFiTape, etc.)
-                        effectsEngine.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
+                        effectsEngine?.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
 
-                        // Apply spatial acoustics AFTER character effects
-                        spatialEngine.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
+                        // Apply spatial acoustics AFTER character effects.
+                        spatialEngine?.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
+
+                        // Apply final output gain AFTER all DSP. This keeps effect drive, compression,
+                        // generated noise and spatial tails independent from the user's volume setting.
+                        // VolumeShifter also acts as the final soft limiter before encoding.
+                        if (useVolumeShift)
+                        {
+                            VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume);
+                        }
+
                         streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
                         // SentencePauseSeconds belongs only to real sentence boundaries.
                         // EarlySplit and emergency chunks already carry their own punctuation/context.
@@ -379,8 +438,15 @@ internal static class AudioGenerationPipeline
                         {
                             Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
                             // Keep character/spatial tails active during the sentence pause.
-                            effectsEngine.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
-                            spatialEngine.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
+                            effectsEngine?.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
+                            spatialEngine?.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
+
+                            // Keep the generated DSP tail at the same final output gain as the main audio.
+                            if (useVolumeShift)
+                            {
+                                VolumeShifter.ApplyVolume(absoluteSilence.AsSpan(), targetVolume);
+                            }
+
                             streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
                         }
                         // Keep flushing every generated chunk so an EarlySplit chunk reaches the client
@@ -407,7 +473,7 @@ internal static class AudioGenerationPipeline
                 // Strictly spatial-only: excludes character effects to avoid spinning on static noise floors.
                 // Priority: request.ExtendReverbTail -> ctx.EffectsConfig.ExtendReverbTailOnFinish.
                 bool extendTail = request.ExtendReverbTail ?? ctx.EffectsConfig.ExtendReverbTailOnFinish;
-                if (extendTail && envType != SpatialEnvironment.None)
+                if (extendTail && spatialEngine != null)
                 {
                     float silenceFloor = ctx.EffectsConfig.ReverbTailSilenceFloor;     // perceptual silence threshold
                     const float maxTailSeconds = 4.0f;          // safety cap for environments that never fully settle
@@ -426,6 +492,13 @@ internal static class AudioGenerationPipeline
                             var probeSpan = tailProbe.AsSpan(0, probeSamples);
                             // effectsEngine intentionally NOT applied here — see note above.
                             spatialEngine.ApplyEnvironment(probeSpan, envType, envIntensity);
+
+                            // Apply the same final master gain to the reverb tail.
+                            if (useVolumeShift)
+                            {
+                                VolumeShifter.ApplyVolume(probeSpan, targetVolume);
+                            }
+
                             streamManager.WriteChunk(probeSpan, filter);
                             written += probeSamples;
                             float peak = 0f;
@@ -474,6 +547,37 @@ internal static class AudioGenerationPipeline
         return new GenerationResult(
             streamManager.SamplesWritten,
             ctx.FinalSampleRate);
+    }
+
+    /// <summary>
+    /// Drains ready SoundTouch output directly into the pooled destination buffer.
+    /// This avoids the extra 8K intermediate receive buffer and per-segment copy used by
+    /// the previous implementation. The buffer grows only when SoundTouch has more ready
+    /// output than the current pooled array can hold.
+    /// </summary>
+    private static void DrainPitch(
+        PitchShifter pitchShifter,
+        ref float[] buffer,
+        ref int length)
+    {
+        while (true)
+        {
+            if (length == buffer.Length)
+            {
+                float[] expanded = ArrayPool<float>.Shared.Rent(buffer.Length * 2);
+                buffer.AsSpan(0, length).CopyTo(expanded);
+                ArrayPool<float>.Shared.Return(buffer);
+                buffer = expanded;
+            }
+
+            int received = pitchShifter.Drain(buffer.AsSpan(length));
+            if (received <= 0)
+            {
+                return;
+            }
+
+            length += received;
+        }
     }
 
     // Auxiliary interpolation method

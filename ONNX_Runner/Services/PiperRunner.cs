@@ -197,7 +197,7 @@ public partial class PiperRunner : IDisposable
                     OnnxHardwareDiagnostics.LogCpuDevice(logger, "Piper Model");
 
                     // IsUsingGPU = false ensures Program.cs strictly applies MaxConcurrentCpuRequests
-                    // for the global pipeline semaphore.
+                    // for the global request gate.
                     return (session, null, false, false, int.MaxValue);
 #endif
                 }
@@ -278,7 +278,7 @@ public partial class PiperRunner : IDisposable
         {
             // DirectML Object Pool
             if (!_isolatedSessionPool!.TryDequeue(out activeSession!))
-                throw new InvalidOperationException("DirectML Session Pool is exhausted. Check your global Semaphore limits.");
+                throw new InvalidOperationException("DirectML Session Pool is exhausted. Check your request gate limits.");
 
             returnToPool = true;
         }

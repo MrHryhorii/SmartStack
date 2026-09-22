@@ -328,12 +328,10 @@ public class BaseVoiceGenerator(
             throw new InvalidDataException("Piper base reference contains no PCM samples.");
 
         // 4. Resample from the actual WAV rate to the OpenVoice extractor rate.
+        // AudioResampler is the single PCM resampling implementation used by Tsubaki.
         int openVoiceRate = _openVoice.GetTargetSamplingRate();
-        var resampled = _audioProcessor.Resample(
-            samples,
-            samplesRead,
-            reader.WaveFormat.SampleRate,
-            openVoiceRate);
+        var resampler = new AudioResampler(reader.WaveFormat.SampleRate, openVoiceRate);
+        var resampled = resampler.Resample(samples, samplesRead);
 
         try
         {

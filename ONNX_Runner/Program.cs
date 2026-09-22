@@ -375,7 +375,7 @@ builder.Services.AddRateLimiter(options =>
             }));
 });
 // =================================================================
-// DYNAMIC REQUEST QUEUE (SMART SEMAPHORE IN DI)
+// DYNAMIC REQUEST QUEUE (REQUEST CONCURRENCY GATE)
 // =================================================================
 // Calculates the maximum number of concurrent generation tasks based on available hardware.
 // Prevents Out-Of-Memory (OOM) errors on GPUs and avoids heavy thread-blocking on CPUs.
@@ -395,20 +395,33 @@ builder.Services.AddSingleton(sp =>
         }
         else
         {
-            // CPU
-            int totalCores = Environment.ProcessorCount;
+            // CPU request admission. Environment.ProcessorCount reports logical processors.
+            // In auto mode, account for the ONNX intra-op thread budget consumed by each request
+            // instead of assuming one request equals one hardware thread.
+            int logicalProcessors = Math.Max(1, Environment.ProcessorCount);
             int requestedCpuLimit = hwConfig.MaxConcurrentCpuRequests;
             if (requestedCpuLimit <= 0)
             {
-                // Negative value protection and default behavior for 0
-                cr = Math.Min(piperSvc.ConcurrencyCapacity, totalCores);
-                Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Auto-Limit applied: {cr} concurrent tasks.");
+                int configuredIntraThreads = onnxConfig.Cpu.IntraOpNumThreads;
+                int effectiveIntraThreads = configuredIntraThreads > 0
+                    ? Math.Clamp(configuredIntraThreads, 1, logicalProcessors)
+                    : logicalProcessors;
+
+                int autoRequestLimit = Math.Max(1, logicalProcessors / effectiveIntraThreads);
+                cr = Math.Min(piperSvc.ConcurrencyCapacity, autoRequestLimit);
+                Console.WriteLine(
+                    $"[SYSTEM] Running on CPU ({logicalProcessors} logical processors, " +
+                    $"{effectiveIntraThreads} intra-op threads/request). Auto-Limit applied: {cr} concurrent tasks.");
             }
             else
             {
-                // Protection against entering a number greater than the number of physical cores
-                cr = Math.Min(piperSvc.ConcurrencyCapacity, Math.Clamp(requestedCpuLimit, 1, totalCores));
-                Console.WriteLine($"[SYSTEM] Running on CPU ({totalCores} cores). Custom Limit applied: {cr} concurrent tasks.");
+                // Explicit values remain user policy; only clamp impossible values to the
+                // number of logical processors and the engine's technical capacity.
+                cr = Math.Min(
+                    piperSvc.ConcurrencyCapacity,
+                    Math.Clamp(requestedCpuLimit, 1, logicalProcessors));
+                Console.WriteLine(
+                    $"[SYSTEM] Running on CPU ({logicalProcessors} logical processors). Custom Limit applied: {cr} concurrent tasks.");
             }
         }
     }

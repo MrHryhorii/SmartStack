@@ -16,7 +16,8 @@ public class HardwareSettings
     public int MaxConcurrentGpuRequests { get; set; } = 3;
 
     /// <summary>
-    /// Limits parallel requests for the CPU (0 = auto-calculate based on physical cores).
+    /// Limits parallel requests for the CPU. A value of 0 enables automatic sizing from the
+    /// available logical processors and the configured ONNX intra-op thread count per request.
     /// CPU execution uses a single shared session, so this limits thread contention, not memory.
     /// </summary>
     public int MaxConcurrentCpuRequests { get; set; } = 2;

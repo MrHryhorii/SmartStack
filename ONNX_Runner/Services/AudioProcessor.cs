@@ -50,19 +50,18 @@ public class AudioProcessor
     }
 
     /// <summary>
-    /// Reads a WAV file, enforces Mono channel mapping, matches the target sample rate, 
-    /// and streams the normalized data directly into a rented memory pool buffer.
+    /// Reads a WAV file, enforces mono channel mapping, and returns pooled PCM
+    /// at the requested sample rate. All sample-rate conversion is delegated to AudioResampler.
     /// </summary>
     public (float[] Buffer, int Length) LoadAndNormalizeWav(string path, int targetSampleRate)
     {
         using var reader = new AudioFileReader(path);
         ISampleProvider provider = reader;
 
-        // --- STEREO TO MONO DOWNMIXING ---
         if (reader.WaveFormat.Channels == 2)
         {
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"      [INFO] Stereo file detected. Downmixing to mono (50% L / 50% R)...");
+            Console.WriteLine("      [INFO] Stereo file detected. Downmixing to mono (50% L / 50% R)...");
             Console.ResetColor();
             provider = new StereoToMonoSampleProvider(provider)
             {
@@ -72,145 +71,61 @@ public class AudioProcessor
         }
         else if (reader.WaveFormat.Channels > 2)
         {
-            provider = provider.ToMono(); // Handle 5.1 / 7.1 surround formats
+            provider = provider.ToMono();
         }
 
-        // --- RESAMPLING ---
-        if (provider.WaveFormat.SampleRate != targetSampleRate)
-        {
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"      [INFO] Resampling from {provider.WaveFormat.SampleRate}Hz to {targetSampleRate}Hz...");
-            Console.ResetColor();
-            provider = new WdlResamplingSampleProvider(provider, targetSampleRate);
-        }
-
-        // --- ZERO-ALLOCATION READING ---
-        // Pre-allocate a large buffer (e.g., 30 seconds of audio) from the shared memory pool
-        int initialSize = targetSampleRate * 30;
-        float[] buffer = ArrayPool<float>.Shared.Rent(initialSize);
-
+        int sourceRate = provider.WaveFormat.SampleRate;
+        int initialSize = checked(sourceRate * 30);
+        float[] sourceBuffer = ArrayPool<float>.Shared.Rent(initialSize);
+        float[] chunk = ArrayPool<float>.Shared.Rent(sourceRate);
         int totalRead = 0;
-        int read;
 
-        // Read in 1-second chunks to maintain low active memory footprint
-        float[] chunk = ArrayPool<float>.Shared.Rent(targetSampleRate);
         try
         {
+            int read;
             while ((read = provider.Read(chunk, 0, chunk.Length)) > 0)
             {
-                // Dynamic resizing: If the audio is longer than the current buffer, 
-                // rent a larger one, copy the data, and return the old one to the pool.
-                if (totalRead + read > buffer.Length)
+                int required = checked(totalRead + read);
+                if (required > sourceBuffer.Length)
                 {
-                    float[] newBuffer = ArrayPool<float>.Shared.Rent(buffer.Length * 2);
-                    Array.Copy(buffer, newBuffer, totalRead);
-                    ArrayPool<float>.Shared.Return(buffer); // Release the old buffer immediately
-                    buffer = newBuffer;
+                    int newSize = Math.Max(required, checked(sourceBuffer.Length * 2));
+                    float[] grown = ArrayPool<float>.Shared.Rent(newSize);
+                    sourceBuffer.AsSpan(0, totalRead).CopyTo(grown);
+                    ArrayPool<float>.Shared.Return(sourceBuffer);
+                    sourceBuffer = grown;
                 }
 
-                Array.Copy(chunk, 0, buffer, totalRead, read);
+                chunk.AsSpan(0, read).CopyTo(sourceBuffer.AsSpan(totalRead));
                 totalRead += read;
             }
-        }
-        finally
-        {
-            // CRITICAL: Always return the temporary chunk array to the pool to prevent memory leaks
-            ArrayPool<float>.Shared.Return(chunk);
-        }
-
-        return (buffer, totalRead);
-    }
-
-    /// <summary>
-    /// Specialized internal WaveProvider that restricts reading strictly to the 'validLength' boundary 
-    /// of a rented array. Since pooled arrays often contain trailing garbage data from previous uses, 
-    /// this safety boundary is critical.
-    /// </summary>
-    private sealed class FloatArrayWaveProvider(float[] samples, int validLength, int sampleRate) : IWaveProvider
-    {
-        private readonly float[] _samples = samples;
-        private readonly int _validLength = validLength;
-        private int _position;
-        public WaveFormat WaveFormat { get; } = WaveFormat.CreateIeeeFloatWaveFormat(sampleRate, 1);
-
-        /// <summary>
-        /// Copies available float samples into the requested byte buffer.
-        /// </summary>
-        public int Read(byte[] buffer, int offset, int count)
-        {
-            int floatsRequired = count / 4;
-            // Respect the valid length boundary, ignoring trailing rented array garbage
-            int floatsAvailable = _validLength - _position;
-            int floatsToRead = Math.Min(floatsRequired, floatsAvailable);
-
-            if (floatsToRead > 0)
-            {
-                Buffer.BlockCopy(_samples, _position * 4, buffer, offset, floatsToRead * 4);
-                _position += floatsToRead;
-            }
-            return floatsToRead * 4;
-        }
-    }
-
-    /// <summary>
-    /// Resamples an audio buffer in memory. Strictly adheres to the rule: 
-    /// "Resample ALWAYS returns a freshly rented array from the ArrayPool".
-    ///
-    /// SAFETY NOTES:
-    ///   - The output buffer is sized via expectedLength, which scales its safety margin
-    ///     relative to targetRate (rather than a fixed sample count) so the margin stays
-    ///     proportionally correct whether resampling down to 8kHz or up to 96kHz+.
-    ///   - The resampling loop is wrapped in try/finally: if WdlResamplingSampleProvider
-    ///     throws mid-read (e.g. malformed source audio), the rented buffer is still
-    ///     returned to the pool instead of leaking, preserving the Zero-Allocation contract
-    ///     even on the error path.
-    /// </summary>
-    public (float[] Buffer, int Length) Resample(float[] samples, int length, int sourceRate, int targetRate)
-    {
-        if (sourceRate == targetRate)
-        {
-            // Even if rates match, we clone into a rented array to maintain a predictable lifecycle
-            // for the caller (who expects to return the result to the pool).
-            float[] cloneBuffer = ArrayPool<float>.Shared.Rent(length);
-            Array.Copy(samples, cloneBuffer, length);
-            return (cloneBuffer, length);
-        }
-
-        var provider = new FloatArrayWaveProvider(samples, length, sourceRate);
-        var resampler = new WdlResamplingSampleProvider(provider.ToSampleProvider(), targetRate);
-
-        // Safety margin scales with targetRate: a fixed sample-count margin (e.g. +2000)
-        // would be a generous ~250ms at 8kHz but a thin ~21ms at 96kHz. Using a relative
-        // margin (5% of the expected length, floored at 256 samples) keeps the buffer
-        // adequately sized across the full range of TTS sample rates.
-        int rawExpectedLength = (int)Math.Ceiling((double)length * targetRate / sourceRate);
-        int safetyMargin = Math.Max(256, rawExpectedLength / 20); // 5% margin, 256-sample floor
-        int expectedLength = rawExpectedLength + safetyMargin;
-
-        // Rent memory for the output
-        float[] buffer = ArrayPool<float>.Shared.Rent(expectedLength);
-
-        try
-        {
-            int totalRead = 0;
-            int read;
-
-            // Read resampled audio directly into the rented output buffer
-            while ((read = resampler.Read(buffer, totalRead, buffer.Length - totalRead)) > 0)
-            {
-                totalRead += read;
-                if (totalRead >= buffer.Length) break;
-            }
-
-            return (buffer, totalRead);
         }
         catch
         {
-            // Preserve the Zero-Allocation contract on the error path: return the
-            // rented buffer before propagating, so a malformed source file or an
-            // internal resampler fault never leaks pooled memory.
-            ArrayPool<float>.Shared.Return(buffer);
+            ArrayPool<float>.Shared.Return(sourceBuffer);
             throw;
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(chunk);
+        }
+
+        if (sourceRate == targetSampleRate)
+        {
+            return (sourceBuffer, totalRead);
+        }
+
+        Console.ForegroundColor = ConsoleColor.Cyan;
+        Console.WriteLine($"      [INFO] Resampling from {sourceRate}Hz to {targetSampleRate}Hz...");
+        Console.ResetColor();
+
+        var resampler = new AudioResampler(sourceRate, targetSampleRate);
+        try
+        {
+            return resampler.Resample(sourceBuffer, totalRead);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(sourceBuffer);
         }
     }
 

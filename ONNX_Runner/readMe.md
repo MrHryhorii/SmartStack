@@ -355,7 +355,7 @@ If the cloned voice is still too quiet, compensate using `DefaultVolume` or `Vol
 }
 ```
 
-The volume adjustment is applied as a final gain stage with soft-knee limiting **after cloning and before encoding**. The cloning model itself always works from the natural, un-boosted waveform.
+The volume adjustment is applied as a final gain stage with soft-knee limiting **after character and spatial effects, before encoding**. The cloning model itself always works from the natural, un-boosted waveform.
 
 ---
 
@@ -417,18 +417,18 @@ curl http://localhost:5045/tsbk/audio/speech \
 | Value           | Description                                                                                  |
 | --------------- | -------------------------------------------------------------------------------------------- |
 | `None`          | Bypass — clean audio                                                                         |
-| `Telephone`     | Lo-Fi equalization with hard transistor clipping                                             |
+| `Telephone`     | Vintage telephone filtering, line noise, and asymmetric saturation                           |
 | `Overdrive`     | Warm tube saturation and cubic waveshaping distortion                                        |
-| `Bitcrusher`    | Retro 8-bit / Arcade style sample rate decimation                                            |
+| `Bitcrusher`    | Bit-depth and sample-rate reduction for retro digital distortion                             |
 | `RingModulator` | Classic Robot / Dalek metallic effect                                                        |
 | `Flanger`       | Modulated short delay with heavy feedback                                                    |
 | `Chorus`        | Thick, multi-voice ensemble effect                                                           |
-| `LoFiTape`      | Simulates the warmth and coloration of an analog cassette tape                               |
+| `LoFiTape`      | Analog cassette-style saturation, wow/flutter, and tape hiss                                 |
 | `DecoderGlitch` | Repeats short audio fragments to simulate a digital decoder glitch                           |
 | `TacticalRadio` | CVSD codec simulation with heavy compression and slope-overload distortion                   |
 | `FmRadio`       | Handheld FM radio effect with an amplitude limiter and signal-dependent noise floor          |
-| `G711MuLaw`     | Classic North American digital telephony codec (μ-law) with 8-bit companding distortion      |
-| `G711ALaw`      | European standard digital telephony codec (A-law) with characteristic quantization artifacts |
+| `G711MuLaw`     | G.711 μ-law digital telephony codec simulation                                               |
+| `G711ALaw`      | G.711 A-law digital telephony codec simulation                                               |
 
 ### Available Environments
 
@@ -546,7 +546,7 @@ Server-wide volume multiplier with soft-knee limiting: `1.0` is unchanged, `0.5`
 
 Applies a fixed gain correction in decibels underneath `DefaultVolume`/`volume`. It is intended as a baseline calibration for the engine's output rather than a per-request volume preference. A value of `0` disables the correction.
 
-The booster and resolved `volume` are combined into a single gain stage before the final audio processing. It is not an additional audio-processing pass. `VolumeBoosterDb` is server-only; clients that need a different playback level should use `volume`. A client that needs an *exact* absolute level can discover the current combined value via `GET /tsbk/server/status` → `dsp.volumeBoosterDb` / `dsp.defaultTotalGainDb`.
+The booster and resolved `volume` are combined into a single final gain stage after character and spatial effects, before encoding. It is not an additional audio-processing pass. `VolumeBoosterDb` is server-only; clients that need a different playback level should use `volume`. A client that needs an *exact* absolute level can discover the current combined value via `GET /tsbk/server/status` → `dsp.volumeBoosterDb` / `dsp.defaultTotalGainDb`.
 
 ---
 
@@ -811,7 +811,7 @@ This softer handling of single brackets and slashes is intentionally a compatibi
 
 ### Language Detection Configuration
 
-The `PhonemizerSettings` block controls how the server handles text outside your base model's own language, using offline language detection via Lingua (see Credits below). `SupportedLanguages` is the list of languages the engine will actively try to recognize. The base model's language is always added to the candidate pool, so leaving `SupportedLanguages` empty does not disable detection — it simply leaves the detector with no additional languages to switch to. To disable language detection and its memory/CPU cost entirely, set `UseLanguageDetector: false`.
+`PhonemizerSettings` controls how Tsubaki detects and routes text outside the active Piper model's own language. The model language is always included automatically; `SupportedLanguages` only adds languages that Tsubaki should actively consider switching to.
 
 ```json
 "PhonemizerSettings": {
@@ -826,22 +826,94 @@ The `PhonemizerSettings` block controls how the server handles text outside your
 }
 ```
 
-A different *script* (Cyrillic hitting an English model, for example) is a hard boundary: Tsubaki can identify the writing system reliably and use a script-specific fallback when language detection cannot determine a language.
+For normal use, keep the defaults and list only the **2–3 additional languages** most likely to appear in your text. Fewer candidates improve both detection reliability and performance.
 
-> **Recommendation:** To completely disable statistical detection and save RAM, you can set `UseLanguageDetector: false`. **However, we strongly recommend keeping it `true` even if you empty the `SupportedLanguages` list.** Tsubaki includes a lightweight, zero-allocation script router with negligible CPU overhead. Keeping the detector enabled allows this router to catch entirely different alphabets (e.g., Cyrillic text hitting a Latin model) and use diagnostic letters and script-level fallbacks to give foreign text a closer phonetic approximation, reducing the chance that it will be pronounced letter-by-letter. Words in the *same* script as your model (French vs. English vs. Spanish, all Latin) are the hard case: the engine has to statistically guess, evaluating **chunks** — one script run between two punctuation marks — rather than single words, since more context gives a far more reliable answer. A foreign word with no punctuation around it gets evaluated together with its neighbors, which can pull the result either way.
+- `UseLanguageDetector: true` enables automatic language detection and script-aware fallback behavior.
+- `UseLanguageDetector: false` disables statistical language detection and its memory/CPU cost.
+- Leaving `SupportedLanguages` empty does **not** disable detection; it simply leaves no additional languages beyond the active model language.
+- Language values may use base codes such as `"en"`, `"uk"`, `"de"`, `"fr"`, `"cmn"`, or extended eSpeak tags such as `"en-us"`, `"fr-ca"`, and `"en-gb-x-rp"`.
 
-| Parameters | What they do |
-| ----------- | -------------- |
-| `ForeignValidationMaxLetters` | For foreign-language winners at or below this length, requires the foreign result to also beat the base-model language after its short-text bonus is applied. `0` disables this extra validation. |
-| `MaxBonusMultiplier`, `BonusMinLetterCount`, `BonusMaxLetterCount` | Boosts the model's own language for short, statistically ambiguous chunks — full bonus at or below `BonusMinLetterCount` letters, none at or above `BonusMaxLetterCount`, interpolated between. *Example: "Hi" (2 letters) got the full ×1.6 bonus and read English; "I am Alejandro" (12 letters) got a smaller ×1.5 bonus — not enough to beat a strongly Spanish-leaning raw score, so it read with Spanish pronunciation (arguably correct for a Spanish name).* |
-| `MixedLanguageOverrideThreshold`, `MinSentenceLengthForOverride` | The bonus above has a hard ceiling it sometimes can't overcome. This override instead checks the model language's confidence across the **whole sentence** once, and applies it to any chunk under `BonusMaxLetterCount` letters — but only if the sentence has at least `MinSentenceLengthForOverride` letters, and its confidence clears `MixedLanguageOverrideThreshold`. *Example: "Yes, I am Hermes, an AI model created by Anthropic." — "Hermes" alone reads as French (`ɛʁmˈɛs`); with the override, the confidently-English sentence around it corrects this to `hˈɜːmiːz`.* |
+> **Recommendation:** Leave the advanced values unchanged unless automatic detection produces unwanted language switches or fails to preserve the base model's accent.
 
-> **Trade-off:** the override can't tell an accidental misread apart from a deliberate foreign phrase, and punctuation isolation doesn't exempt a chunk from it — *"...and whispered: c'est la vie."* still read in English despite being comma/colon-separated, because the surrounding sentence measured `0.9666` confidence in English, comfortably above the default `0.85` threshold. Raising `MixedLanguageOverrideThreshold` above that (or writing a shorter sentence that falls under `MinSentenceLengthForOverride`) would have left "c'est la vie" to the bonus table above instead — which, being a 9-letter phrase with no strong pull toward English, would most likely have read in French. For language-learning content or quoted foreign phrases, raise the threshold toward `1.0`, or above `1.0` to disable the override entirely (confidence never exceeds `1.0`).
+<details>
+<summary><strong>Advanced: How language detection works and how to tune it</strong></summary>
 
-None of this is unique to Tsubaki — identifying a language from a handful of characters is a hard problem for any detector, including the much heavier neural models commercial systems use. The parameters above bias that inherent uncertainty toward whichever outcome fits your case, they don't remove it: keep `SupportedLanguages` narrow (fewer rival candidates means fewer ways for an ambiguous word to lose), and raise the bonus/override values for a stable, unbroken accent, or lower them if foreign words should switch pronunciation more readily.
+#### 1. Script routing comes first
 
-- **Format:** Supports standard base language codes (`"en"`, `"uk"`, `"de"`, `"fr"`, `"cmn"`, etc.) as well as extended eSpeak dialect and pronunciation tags (`"en-us"`, `"fr-ca"`, `"en-gb-x-rp"`). While eSpeak applies the requested dialect rules, the result is still constrained by the active Piper model's phonetic inventory — missing foreign phonemes are approximated by the fallback mapper, producing an accented delivery rather than a native acoustic profile.
-- **Performance Warning:** Each added language increases memory consumption and slows down detection. Keep this to **2–3 languages** most likely to appear in your texts.
+A different writing system is the easiest case. If Cyrillic text reaches a Latin-script model, for example, Tsubaki can identify the script reliably and use diagnostic letters and script-level fallbacks when statistical language detection is uncertain. This reduces the chance that foreign text will be pronounced letter-by-letter.
+
+Keeping `UseLanguageDetector: true` also keeps this automatic routing path available. If you only need the base language plus script-level handling of clearly different alphabets, `SupportedLanguages` can remain empty.
+
+#### 2. Same-script languages require statistical detection
+
+Languages that share a script are harder to distinguish. English, French, and Spanish all use Latin characters, so Tsubaki uses Lingua to estimate the most likely language.
+
+Detection is performed on **chunks** — a script run between punctuation boundaries — rather than isolated words. A foreign word without punctuation around it is therefore evaluated together with its neighbors, which usually provides more context but can also pull an ambiguous word toward the surrounding language.
+
+#### 3. Short chunks receive a base-language bonus
+
+Very short text is statistically ambiguous, so Tsubaki can bias it toward the active Piper model's language.
+
+| Parameter | Behavior |
+| --------- | -------- |
+| `MaxBonusMultiplier` | Maximum bonus applied to the base-model language. `0.60` means up to ×1.6. |
+| `BonusMinLetterCount` | Chunks at or below this length receive the full bonus. |
+| `BonusMaxLetterCount` | Chunks at or above this length receive no bonus. Between the two limits, the bonus is reduced gradually. |
+
+Example: `"Hi"` receives the full short-text bonus and stays English. `"I am Alejandro"` is longer, so the bonus is weaker and a strongly Spanish result can still win.
+
+#### 4. Very short foreign results can be validated again
+
+`ForeignValidationMaxLetters` adds an extra safeguard for short chunks that were classified as foreign. At or below this length, the foreign result must still beat the base-model language after the short-text bonus is applied.
+
+Set it to `0` to disable this extra validation.
+
+#### 5. Whole-sentence confidence can override an ambiguous chunk
+
+The short-text bonus has a limit. For longer sentences, Tsubaki can also measure the active model language across the **whole sentence** and use that context to correct short ambiguous chunks.
+
+| Parameter | Behavior |
+| --------- | -------- |
+| `MixedLanguageOverrideThreshold` | Minimum whole-sentence confidence required before the base-model language can override a short chunk. Default: `0.85`. |
+| `MinSentenceLengthForOverride` | Minimum sentence length in letters before this override is allowed. Default: `20`. |
+
+Only chunks shorter than `BonusMaxLetterCount` are eligible for this correction.
+
+Example: in `"Yes, I am Hermes, an AI model created by Anthropic."`, `"Hermes"` alone may be detected as French. A confidently English surrounding sentence can override that result and keep the English pronunciation.
+
+#### 6. The sentence override is intentionally conservative, not semantic
+
+The override only knows the surrounding sentence's language confidence. It cannot know whether a foreign phrase is accidental or intentional.
+
+For example, in:
+
+```text
+...and whispered: c'est la vie.
+```
+
+the surrounding sentence can be confident enough in English to override the French phrase despite the punctuation. With the default threshold of `0.85`, a measured English confidence of `0.9666` is sufficient.
+
+If deliberate foreign phrases should switch languages more freely:
+
+- raise `MixedLanguageOverrideThreshold` toward `1.0`;
+- set it above `1.0` to disable the sentence-level override entirely;
+- or reduce the amount of surrounding base-language context.
+
+#### 7. Practical tuning
+
+| Goal | What to change |
+| ---- | -------------- |
+| Reduce accidental switches on short text | Increase `MaxBonusMultiplier` and/or `ForeignValidationMaxLetters`. |
+| Let deliberate foreign phrases switch more freely | Raise `MixedLanguageOverrideThreshold` toward `1.0`, or above `1.0` to disable the sentence-level override. |
+| Reduce ambiguity between similar same-script languages | Keep `SupportedLanguages` limited to languages you actually expect. |
+| Disable statistical detection and save RAM | Set `UseLanguageDetector: false`. |
+| Keep automatic handling without adding extra same-script languages | Keep `UseLanguageDetector: true` and leave `SupportedLanguages` empty. |
+
+Language detection from a few characters is inherently uncertain. These settings bias that uncertainty toward the behavior that best fits your use case; they cannot make every short name, acronym, or mixed-language phrase unambiguous.
+
+Finally, language routing controls **pronunciation rules**, not the acoustic identity of the Piper model. eSpeak can apply another language or dialect's phonetic rules, but sounds missing from the active Piper model are still mapped to the closest available phonemes. Cross-language speech therefore keeps the base voice and may retain an accent rather than becoming fully native speech.
+
+</details>
 
 ---
 
@@ -890,7 +962,7 @@ None of this is unique to Tsubaki — identifying a language from a handful of c
 | Parameter                 | Description                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is primarily a concurrency throttle** — concurrent requests share the same loaded model rather than requiring one full model copy per request. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled. |
-| `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value auto-detects and uses all available physical cores.                                                                                                                                                                                                                                                                                |
+| `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value automatically derives a safe limit from the available logical processors and `OnnxSettings.Cpu.IntraOpNumThreads`. If `IntraOpNumThreads` is also automatic (`0`), Tsubaki uses one concurrent CPU request. |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
 | `OpenVoiceGpuDeviceId`     | Hardware index of the GPU used to execute the OpenVoice Tone Color Converter. Can be assigned a different ID in multi-GPU setups to split the computational load. |
 | `ForcePiperToCpu`          | Forces the base Piper model to execute on the CPU regardless of GPU presence. When `true` (Hybrid Routing), the CPU handles parallel Piper text-to-speech generation while the GPU is reserved exclusively for the computationally heavy OpenVoice cloning passes. This keeps CPU synthesis independent from the GPU voice-conversion stage, allowing the CPU to prepare additional requests while the GPU processes a cloned voice. |
@@ -946,7 +1018,7 @@ This section provides low-level control over the internal MLAS (Microsoft Linear
 
 | Parameter             | Description                                                                                                                                                                                                                                                                                                                        |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IntraOpNumThreads`   | Threads used for matrix math within a single neural network node. `0` enables smart auto-detection of all available physical cores. The `Cpu` profile defaults to a fixed, moderate value (`4`) to balance per-request throughput with concurrent requests; the `Gpu` profile defaults to `1`, since the heavy lifting already happens on the GPU itself. |
+| `IntraOpNumThreads`   | Threads used for matrix math within a single neural network node. `0` lets ONNX Runtime choose the thread count automatically. The `Cpu` profile defaults to `4` to balance per-request throughput with concurrent requests; the `Gpu` profile defaults to `1`. |
 | `InterOpNumThreads`   | Parallelization across different graph nodes. For TTS (which is strictly sequential), this must **always be `1`**. Higher values cause thread thrashing and micro-stutters.                                                                                                                                                       |
 | `EnableMemoryPattern` | Pre-allocates memory blocks during model load rather than dynamically during inference. Decreases latency per request by 5–10%.                                                                                                                                                                                                    |
 | `EnableCpuMemArena`   | Utilizes an isolated memory arena for ONNX tensors. **Critical for .NET:** Bypasses the C# Garbage Collector entirely during audio generation, eliminating GC-induced freezes on long texts. Disabled by default in the `Gpu` profile, since this optimization targets CPU-resident memory and doesn't apply to tensors that live in VRAM. |
@@ -954,17 +1026,17 @@ This section provides low-level control over the internal MLAS (Microsoft Linear
 
 ## Concurrency & CPU Bottlenecks
 
-The TTS engine and API are fully thread-safe and natively support concurrent HTTP requests. Two independent settings control how the CPU handles load, and they pull in opposite directions if left uncoordinated:
+The TTS engine and API are fully thread-safe and natively support concurrent HTTP requests. Two settings control CPU concurrency:
 
-- `OnnxSettings.Cpu.IntraOpNumThreads` controls how many cores **a single request** can use. `0` lets one request spread across every physical core — fastest for that one request, but leaves nothing for anyone else. A fixed value like `4` caps each request to a controlled portion of the CPU on purpose, so it doesn't crowd out other concurrent requests.
-- `HardwareSettings.MaxConcurrentCpuRequests` controls how many requests are allowed to run **in parallel** at all. `0` (or a negative value) auto-detects and allows up to one request per physical core; a fixed value caps it directly.
+- `OnnxSettings.Cpu.IntraOpNumThreads` controls the thread budget used by one inference request. `0` lets ONNX Runtime choose automatically.
+- `HardwareSettings.MaxConcurrentCpuRequests` controls how many CPU generation requests may run at once. A fixed value is an explicit cap. `0` or a negative value lets Tsubaki derive the limit from the available logical processors and the configured `IntraOpNumThreads`; when `IntraOpNumThreads` is `0`, the automatic request limit is conservatively `1`.
 
-If both are left at `0` under real concurrent load, every incoming request tries to claim every core at once — severe CPU context-switching, and generation speed scales down linearly per simultaneous user. The shipped defaults (`IntraOpNumThreads: 4`, `MaxConcurrentCpuRequests: 2`) are a middle-ground compromise for home use, tuned to give each active request a reasonable amount of CPU while preventing too many requests from competing for the same cores.
+The shipped defaults (`IntraOpNumThreads: 4`, `MaxConcurrentCpuRequests: 2`) are intended as a balanced home-use configuration.
 
 **Handling High-Load Environments:**
 
-- **Option A (Lowest Latency, single user):** Set `IntraOpNumThreads: 0` so each request can use every core, and keep `MaxConcurrentCpuRequests: 1` so requests queue one at a time via `RateLimitSettings` or a message queue (e.g., RabbitMQ, Redis) instead of competing for cores.
-- **Option B (Maximum Concurrency, many simultaneous users):** Lower `IntraOpNumThreads` to `1` or `2` so each request claims only a slice of the CPU, and raise `MaxConcurrentCpuRequests` — or set it to `0` to auto-match your physical core count — so many smaller-footprint requests can run side by side without thread thrashing.
+- **Option A (Lowest Latency, single user):** Keep `MaxConcurrentCpuRequests: 1` and tune `IntraOpNumThreads` for the best single-request latency.
+- **Option B (More simultaneous users):** Lower `IntraOpNumThreads` to `1` or `2` and raise `MaxConcurrentCpuRequests`, or set `MaxConcurrentCpuRequests: 0` to let Tsubaki derive a concurrency limit automatically.
 
 Both settings only affect the CPU execution path — GPU threading and concurrency are controlled independently via `OnnxSettings.Gpu` and `HardwareSettings.MaxConcurrentGpuRequests`.
 

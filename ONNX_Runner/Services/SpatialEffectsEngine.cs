@@ -239,13 +239,34 @@ public class SpatialEffectsEngine
         float curvedMix = mix * mix;
         float inverseSquareMix = 1f - (1f - mix) * (1f - mix);
 
+        // Equal-power gains are constant for the whole buffer. Compute only the pair
+        // used by the selected environment to avoid MathF.Sqrt in the sample loop.
+        float curvedDryGain = 1f;
+        float curvedWetGain = 0f;
+        float inverseDryGain = 1f;
+        float inverseWetGain = 0f;
+
+        if (env is SpatialEnvironment.LivingRoom
+            or SpatialEnvironment.Stage
+            or SpatialEnvironment.ConcreteHall
+            or SpatialEnvironment.Dungeon
+            or SpatialEnvironment.Cave
+            or SpatialEnvironment.Forest)
+        {
+            Dsp.EqualPowerGains(curvedMix, out curvedDryGain, out curvedWetGain);
+        }
+        else if (env == SpatialEnvironment.Underwater)
+        {
+            Dsp.EqualPowerGains(inverseSquareMix, out inverseDryGain, out inverseWetGain);
+        }
+
         switch (env)
         {
             case SpatialEnvironment.LivingRoom:
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, AlgorithmicReverb(dry), curvedMix));
+                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, AlgorithmicReverb(dry), curvedDryGain, curvedWetGain));
                 }
                 break;
 
@@ -255,7 +276,7 @@ public class SpatialEffectsEngine
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, StageReverb(dry, hasStageEq, hasMod), curvedMix));
+                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, StageReverb(dry, hasStageEq, hasMod), curvedDryGain, curvedWetGain));
                 }
                 break;
 
@@ -264,7 +285,7 @@ public class SpatialEffectsEngine
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, ConcreteHallReverb(dry, hasHallEq), curvedMix));
+                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, ConcreteHallReverb(dry, hasHallEq), curvedDryGain, curvedWetGain));
                 }
                 break;
 
@@ -273,7 +294,7 @@ public class SpatialEffectsEngine
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, DungeonReverb(dry, hasDungeonEq), curvedMix));
+                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, DungeonReverb(dry, hasDungeonEq), curvedDryGain, curvedWetGain));
                 }
                 break;
 
@@ -282,7 +303,7 @@ public class SpatialEffectsEngine
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, CaveReverb(dry, hasCaveEq), curvedMix));
+                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, CaveReverb(dry, hasCaveEq), curvedDryGain, curvedWetGain));
                 }
                 break;
 
@@ -291,7 +312,7 @@ public class SpatialEffectsEngine
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, ForestEcho(dry, hasForestEq), curvedMix));
+                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, ForestEcho(dry, hasForestEq), curvedDryGain, curvedWetGain));
                 }
                 break;
 
@@ -332,7 +353,7 @@ public class SpatialEffectsEngine
                         wet = _environmentEq!.Transform(wet);
                         wet = _environmentEq2!.Transform(wet);
                     }
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, wet, inverseSquareMix));
+                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, wet, inverseDryGain, inverseWetGain));
                 }
                 break;
 

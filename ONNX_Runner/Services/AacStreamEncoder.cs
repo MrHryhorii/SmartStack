@@ -1023,7 +1023,7 @@ internal sealed class AacStreamEncoder : IDisposable
     private static ushort[] BuildFftBitReverse()
     {
         var table = new ushort[FftSize];
-        int bits = BitOperations.Log2((uint)FftSize);
+        int bits = BitOperations.Log2(FftSize);
 
         for (int value = 0; value < FftSize; value++)
         {

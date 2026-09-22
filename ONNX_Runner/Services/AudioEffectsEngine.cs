@@ -13,13 +13,14 @@ namespace ONNX_Runner.Services;
 ///   - Zero-Allocation: DSP loop generates zero garbage. String parsing is offloaded to the caller.
 ///
 /// DSP ROUTING MANIFESTO:
-///   - Parallel Crossfade: Dsp.EqualPowerCrossfade(dry, wet, amount) -> Spectral effects.
+///   - Parallel Crossfade: equal-power gains are prepared once per buffer -> Spectral effects.
 ///   - Parallel Add: Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * headroom), amount) -> Safe summation.
 ///   - Strict Insert: wet -> Complete signal chain transformations. Mathematically neutral at amount=0.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 ///   - Filtered Crossfade: Blends EQ input and wet output both proportionally to amount.
-///     At amount=0: codec receives clean dry, crossfade returns dry. Fully transparent.
-///     At amount=1: codec receives fully band-limited signal, crossfade returns full wet.
+///     Used by radio-style effects where the filter character itself morphs with intensity.
+///   - Codec Crossfade: Processes a fully band-limited codec signal, then linearly blends dry/wet.
+///     This keeps codec intensity predictable and avoids correlated-signal loudness buildup.
 /// </summary>
 ///
 /// DESIGN PHILOSOPHY:
@@ -31,11 +32,11 @@ namespace ONNX_Runner.Services;
 ///   - perceptual authenticity over physical simulation.
 ///
 /// OPTIMIZATION STRATEGY:
-///   - All MathF.Exp, MathF.Sqrt, MathF.Log calls are confined to Setup() and constructor.
+///   - Constant MathF.Exp/MathF.Sqrt work is hoisted out of sample loops where practical.
+///   - Equal-power wet/dry gains are computed once per buffer, not once per sample.
 ///   - LFO phase increments (2pi * f / fs) are pre-computed per effect and stored in state structs.
 ///   - The ms-to-samples conversion factor is stored as a readonly field.
-///   - TacticalRadio: sqrt(amount) is hoisted above the sample loop in ApplyEffect.
-///   - The sample loop contains only multiply, add, and table lookups (tanh via MathF.Tanh).
+///   - G.711 uses integer segmented companding/expanding: no Log/Exp/Pow in the codec hot path.
 public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 {
     private readonly EffectsSettings _config = config;
@@ -59,7 +60,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         ParallelAdd,
         StrictInsert,
         StrictCrossfade,
-        FilteredCrossfade
+        FilteredCrossfade,
+        CodecCrossfade
     }
 
     // =========================================================================
@@ -90,17 +92,39 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         public BiQuadFilter? PreHp;
         public float LofiPhase;
+        public float LofiPhase2;
         public float FlutterPhase;
         public float PreState;
         public float DeState;
+        public float HissLowState;
         public float HissState;
+        public float FlutterNoiseState;
         public float PreCoeff;
         public float DeCoeff;
+        public float HissLowCoeff;
         public float HissCoeff;
+        public float FlutterNoiseCoeff;
+
+        // Per-buffer constants derived from amount. Prepared once in ApplyEffect so the
+        // tape hot path avoids repeated divisions and invariant arithmetic per sample.
+        public float PreEmphScale;
+        public float SatDrive;
+        public float SatCompensation;
+        public float CompThreshold;
+        public float CompMakeup;
+        public float DelayMs;
+        public float HfCutScale;
+        public float AzimuthMix;
+        public float BiasGrainScale;
+        public float HissAmount;
+        public float FlutterNoiseScale;
+        public float SpeakerMix;
+        public float PerceptualTrim;
 
         // Pre-computed LFO phase increments: eliminates per-sample 2pi*f/fs multiply.
-        public float LofiPhaseInc;     // 0.4 Hz  (wow)
-        public float FlutterPhaseInc;  // 8.5 Hz  (flutter)
+        public float LofiPhaseInc;     // 0.4 Hz   (primary wow)
+        public float LofiPhaseInc2;    // 0.124 Hz (secondary wow)
+        public float FlutterPhaseInc;  // 8.5 Hz   (flutter)
         public float AzimuthPhaseInc;  // 0.37 Hz (azimuth drift)
 
         public TapeDropout DropOut;
@@ -207,6 +231,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private GlitchState _glitch;
     private RadioState _radio;
 
+    // Per-buffer constants for Overdrive. Recomputed only when ApplyEffect is called.
+    private float _overdriveDrive = 1f;
+    private float _overdriveTrim = 1f;
+    private float _overdriveBiasScale;
+
     // =========================================================================
     // PUBLIC API
     // =========================================================================
@@ -241,10 +270,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _tape.DropOut.Reset();
         _tape.Compressor.Reset();
         _tape.LofiPhase = 0f;
+        _tape.LofiPhase2 = 0f;
         _tape.FlutterPhase = 0f;
         _tape.PreState = 0f;
         _tape.DeState = 0f;
+        _tape.HissLowState = 0f;
         _tape.HissState = 0f;
+        _tape.FlutterNoiseState = 0f;
 
         _azimuth = default;
 
@@ -285,9 +317,37 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
-        // Micro-optimization
+        float equalPowerDryGain = 1f;
+        float equalPowerWetGain = 0f;
+        if (mode is RoutingMode.ParallelCrossfade or RoutingMode.FilteredCrossfade)
+            Dsp.EqualPowerGains(amount, out equalPowerDryGain, out equalPowerWetGain);
+
+        // Per-buffer constants used by effect hot paths.
         switch (type)
         {
+            case VoiceEffectType.Overdrive:
+                _overdriveDrive = 1f + amount * 4.0f;
+                _overdriveTrim = 1f / MathF.Sqrt(_overdriveDrive);
+                _overdriveBiasScale = 0.06f * amount;
+                break;
+
+            case VoiceEffectType.LoFiTape:
+                float amountSq = amount * amount;
+                _tape.PreEmphScale = 0.8f * amount;
+                _tape.SatDrive = 1f + 2.0f * amount;
+                _tape.SatCompensation = 1f / (1f + 0.35f * amount);
+                _tape.CompThreshold = Dsp.Lerp(1.0f, 0.38f, amount);
+                _tape.CompMakeup = Dsp.Lerp(1f, 0.90f, amount);
+                _tape.DelayMs = 0.1f + 1.3f * amount;
+                _tape.HfCutScale = 0.50f * amount;
+                _tape.AzimuthMix = amountSq * 0.45f;
+                _tape.BiasGrainScale = 0.0020f * amount;
+                _tape.HissAmount = 0.0025f * amount + 0.0075f * amountSq;
+                _tape.FlutterNoiseScale = 0.50f * amount;
+                _tape.SpeakerMix = amountSq;
+                _tape.PerceptualTrim = 1f - 0.25f * amountSq;
+                break;
+
             case VoiceEffectType.TacticalRadio:
                 // Hoist sqrt(amount) above the sample loop for TacticalRadio.
                 // MathF.Sqrt is called once per buffer instead of once per sample.
@@ -326,7 +386,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             switch (mode)
             {
                 case RoutingMode.ParallelCrossfade:
-                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, amount);
+                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, equalPowerDryGain, equalPowerWetGain);
                     break;
 
                 case RoutingMode.ParallelAdd:
@@ -342,7 +402,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     break;
 
                 case RoutingMode.FilteredCrossfade:
-                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, amount);
+                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, equalPowerDryGain, equalPowerWetGain);
+                    break;
+
+                case RoutingMode.CodecCrossfade:
+                    // Codec dry/wet signals remain strongly correlated. Linear interpolation keeps
+                    // perceived level stable instead of creating an equal-power gain hump around 50%.
+                    buffer[i] = Dsp.Lerp(dry, wet, amount);
                     break;
             }
         }
@@ -365,15 +431,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
         VoiceEffectType.TacticalRadio => RoutingMode.FilteredCrossfade,
         VoiceEffectType.FmRadio => RoutingMode.FilteredCrossfade,
-        VoiceEffectType.G711MuLaw => RoutingMode.FilteredCrossfade,
-        VoiceEffectType.G711ALaw => RoutingMode.FilteredCrossfade,
+        VoiceEffectType.G711MuLaw => RoutingMode.CodecCrossfade,
+        VoiceEffectType.G711ALaw => RoutingMode.CodecCrossfade,
         _ => RoutingMode.StrictInsert
     };
 
     /// <summary>
-    /// Configures all effect-specific filters and pre-computes every coefficient that
-    /// would otherwise require MathF.Exp, MathF.Sqrt, or division in the sample loop.
-    /// Called once per effect-type change — never in the hot path.
+    /// Configures effect-specific filters and coefficients that remain constant for the effect type.
+    /// Per-buffer constants that depend on amount are prepared in ApplyEffect before the sample loop.
     /// </summary>
     private void Setup(VoiceEffectType type)
     {
@@ -422,12 +487,25 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             case VoiceEffectType.LoFiTape:
                 _tape.PreHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(80f), 0.707f);
 
-                // IEC 60094-1 tape pre/de-emphasis time constant (1326 Hz corner frequency).
+                // Approximate Type-I cassette HF EQ corner derived from the 120 us time constant
+                // (~1326 Hz). This is a perceptual pre/de-emphasis stage, not a full IEC replay curve.
                 float iecFc = 1326f;
                 _tape.PreCoeff = 1f - MathF.Exp(-2f * MathF.PI * iecFc / _sampleRate);
                 _tape.DeCoeff = _tape.PreCoeff;
-                _tape.HissCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(6000f) / _sampleRate);
-                _tape.PreState = _tape.DeState = _tape.HissState = 0f;
+
+                // Cassette hiss is concentrated toward the upper spectrum rather than being
+                // full-band white noise. Remove low-frequency noise below ~1.4 kHz, then
+                // gently roll off the extreme top above ~9 kHz to keep the hiss analog/soft.
+                _tape.HissLowCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(1400f) / _sampleRate);
+                _tape.HissCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(9000f) / _sampleRate);
+
+                // Band-limit the random component of flutter so delay modulation changes
+                // smoothly instead of jumping independently on every sample.
+                _tape.FlutterNoiseCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(35f) / _sampleRate);
+
+                _tape.PreState = _tape.DeState = 0f;
+                _tape.HissLowState = _tape.HissState = 0f;
+                _tape.FlutterNoiseState = 0f;
 
                 _tape.DropOut.Reset();
                 _tape.Compressor.Reset();
@@ -443,8 +521,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _tape.BoomboxHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(70f), 0.707f);
                 _tape.BoomboxLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(7500f), 0.707f);
 
-                // Pre-compute LFO phase increments for wow, flutter, and azimuth modulation.
+                // Pre-compute independent LFO phase increments for both wow components,
+                // flutter, and azimuth modulation. The secondary wow oscillator needs its own
+                // continuously wrapped phase; deriving it from the wrapped primary phase would
+                // introduce a discontinuity every primary LFO cycle.
                 _tape.LofiPhaseInc = PhaseInc(0.4f);
+                _tape.LofiPhaseInc2 = PhaseInc(0.124f);
                 _tape.FlutterPhaseInc = PhaseInc(8.5f);
                 _tape.AzimuthPhaseInc = PhaseInc(0.37f);
                 break;
@@ -548,17 +630,17 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     private float Overdrive(float x, float amount)
     {
-        float bias = _thermal.State * 0.06f * amount;
-        float drive = 1f + amount * 4.0f;
-        float wet = Dsp.AsymmetricSaturation((x * drive) + bias);
-        float trim = 1f / MathF.Sqrt(drive);
-        return wet * trim;
+        float bias = _thermal.State * _overdriveBiasScale;
+        float wet = Dsp.AsymmetricSaturation((x * _overdriveDrive) + bias);
+        return wet * _overdriveTrim;
     }
 
     /// <summary>
     /// Simulates the true aliasing and quantization artifacts of a lo-fi bitcrusher.
     /// Strictly relies on Zero-Order Hold (decimation) and amplitude quantization.
     /// The metallic character arises naturally from foldover frequencies and staircase waveforms.
+    /// Preserves the original bitcrusher behavior, but uses signed PCM-style quantization so
+    /// silence remains exactly zero and maximum intensity reaches a true 4-bit / 16-level signal.
     /// </summary>
     private float Bitcrusher(float x, float amount)
     {
@@ -571,9 +653,18 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (_bc.Phase >= 1f)
         {
             _bc.Phase -= 1f;
-            int bits = Math.Clamp((int)MathF.Round(16f - (amount * 12f)), 2, 16);
-            float levels = 1 << bits;
-            _bc.Hold = MathF.Round(x * levels) / levels;
+
+            int bits = Math.Clamp((int)MathF.Round(16f - (amount * 12f)), 4, 16);
+            int scale = 1 << (bits - 1);
+            int minValue = -scale;
+            int maxValue = scale - 1;
+
+            int quantized = Math.Clamp(
+                (int)MathF.Round(Math.Clamp(x, -1f, 1f) * scale),
+                minValue,
+                maxValue);
+
+            _bc.Hold = (float)quantized / scale;
         }
 
         return _bc.Hold;
@@ -647,38 +738,43 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Muted to 0.8 to act as a natural de-esser for synthesized voices.
         _tape.PreState += _tape.PreCoeff * (input - _tape.PreState);
         _tape.PreState = Dsp.KillDenormal(_tape.PreState);
-        float preEmph = input + (input - _tape.PreState) * (0.8f * amount);
+        float preEmph = input + (input - _tape.PreState) * _tape.PreEmphScale;
 
         // Tape saturation: magnetic oxide overdrive.
-        float drive = 1f + 2.0f * amount;
-        float sat = Dsp.SoftClip(preEmph * drive);
-        float satCompensation = 1f / (1f + 0.35f * amount);
-        float saturated = Dsp.Lerp(preEmph, sat * satCompensation, amount);
+        float sat = Dsp.SoftClip(preEmph * _tape.SatDrive);
+        float saturated = Dsp.Lerp(preEmph, sat * _tape.SatCompensation, amount);
 
-        // Tape compression: Dolby NR-style dynamics.
-        float compThreshold = Dsp.Lerp(1.0f, 0.35f, amount);
-        float comp = _tape.Compressor.Process(saturated, compThreshold, 3.5f,
+        // Tape/record-level compression: broadband dynamics for cassette-like density.
+        // This is not a Dolby noise-reduction encoder/decoder model.
+        float comp = _tape.Compressor.Process(saturated, _tape.CompThreshold, 3.5f,
                                   _tape.CompAttackCoeff, _tape.CompReleaseCoeff);
 
-        // Deliberate attenuation to 0.85x so voice sits inside tape noise floor
-        // without causing volume buildup on dense TTS signals.
-        float compMakeup = Dsp.Lerp(1f, 0.85f, amount);
-        float recorded = Dsp.Lerp(saturated, comp * compMakeup, amount);
+        // Mild record-stage makeup keeps the cassette character audible without making
+        // the entire effect feel artificially quieter than the clean voice.
+        float recorded = Dsp.Lerp(saturated, comp * _tape.CompMakeup, amount);
 
         _delay.Write(recorded);
 
         // Wow and Flutter: pitch instability from motor defect and tape friction.
         // Phase advanced by pre-computed increments: no per-sample division.
         _tape.LofiPhase += _tape.LofiPhaseInc;
+        _tape.LofiPhase2 += _tape.LofiPhaseInc2;
         _tape.FlutterPhase += _tape.FlutterPhaseInc;
         if (_tape.LofiPhase >= 2f * MathF.PI) _tape.LofiPhase -= 2f * MathF.PI;
+        if (_tape.LofiPhase2 >= 2f * MathF.PI) _tape.LofiPhase2 -= 2f * MathF.PI;
         if (_tape.FlutterPhase >= 2f * MathF.PI) _tape.FlutterPhase -= 2f * MathF.PI;
 
-        float wow = (Dsp.Sine(_tape.LofiPhase) * 0.8f + Dsp.Sine(_tape.LofiPhase * 0.31f) * 0.4f) * amount;
-        float flutter = (Dsp.Sine(_tape.FlutterPhase) * 0.15f + _noise.NextWhite() * 0.03f) * amount;
+        float wow = (Dsp.Sine(_tape.LofiPhase) * 0.8f + Dsp.Sine(_tape.LofiPhase2) * 0.4f) * amount;
 
-        float delayMs = 0.1f + 1.3f * amount;
-        float pitchWarped = _delay.Read((delayMs + wow + flutter) * _msToSamples);
+        float flutterNoise = _noise.NextWhite();
+        _tape.FlutterNoiseState += _tape.FlutterNoiseCoeff * (flutterNoise - _tape.FlutterNoiseState);
+        _tape.FlutterNoiseState = Dsp.KillDenormal(_tape.FlutterNoiseState);
+
+        float flutter = Dsp.Sine(_tape.FlutterPhase) * (0.15f * amount)
+                      + _tape.FlutterNoiseState * _tape.FlutterNoiseScale;
+
+        float modulatedDelayMs = MathF.Max(0f, _tape.DelayMs + wow + flutter);
+        float pitchWarped = _delay.Read(modulatedDelayMs * _msToSamples);
 
         // Dropout: stochastic volume dip simulating oxide shedding.
         float dropped = _tape.DropOut.Process(pitchWarped, amount, ref _noise, _sampleRate, _tapeSlew);
@@ -686,7 +782,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // De-emphasis: restores spectral balance after playback head.
         _tape.DeState += _tape.DeCoeff * (dropped - _tape.DeState);
         _tape.DeState = Dsp.KillDenormal(_tape.DeState);
-        float hfCut = (dropped - _tape.DeState) * (0.50f * amount);
+        float hfCut = (dropped - _tape.DeState) * _tape.HfCutScale;
         float deEmph = dropped - hfCut;
 
         // Azimuth drift: dynamic HF loss from head misalignment.
@@ -699,14 +795,19 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _azimuth.FilterState += currentAzimuthCoeff * (deEmph - _azimuth.FilterState);
         _azimuth.FilterState = Dsp.KillDenormal(_azimuth.FilterState);
 
-        float azimuthMix = amount * amount * 0.4f;
-        float azimuthSignal = Dsp.Lerp(deEmph, _azimuth.FilterState, azimuthMix);
+        float azimuthSignal = Dsp.Lerp(deEmph, _azimuth.FilterState, _tape.AzimuthMix);
 
-        // Bias grain and hiss: tape grain + playback amplifier noise floor.
-        float biasGrain = _noise.NextWhite() * 0.0015f * amount;
-        float hissAmount = 0.0025f * amount + 0.0075f * amount * amount;
-        float rawHiss = _noise.NextWhite() * (hissAmount + _thermal.State * 0.003f);
-        _tape.HissState += _tape.HissCoeff * (rawHiss - _tape.HissState);
+        // Bias grain and hiss: intentionally audible cassette/playback-amplifier noise floor.
+        // Hiss is shaped into an upper-band "shhh" rather than full-band digital white noise.
+        float biasGrain = _noise.NextWhite() * _tape.BiasGrainScale;
+        float rawHiss = _noise.NextWhite() * (_tape.HissAmount + _thermal.State * 0.003f);
+
+        _tape.HissLowState += _tape.HissLowCoeff * (rawHiss - _tape.HissLowState);
+        _tape.HissLowState = Dsp.KillDenormal(_tape.HissLowState);
+        float highPassedHiss = rawHiss - _tape.HissLowState;
+
+        _tape.HissState += _tape.HissCoeff * (highPassedHiss - _tape.HissState);
+        _tape.HissState = Dsp.KillDenormal(_tape.HissState);
 
         float tapeSignal = azimuthSignal + biasGrain + _tape.HissState;
 
@@ -715,11 +816,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             float bumped = _tape.BoomboxBump.Transform(tapeSignal);
             float filtered = _tape.BoomboxLp.Transform(_tape.BoomboxHp.Transform(bumped));
-            tapeSignal = Dsp.Lerp(tapeSignal, filtered, amount * amount);
+            tapeSignal = Dsp.Lerp(tapeSignal, filtered, _tape.SpeakerMix);
         }
 
-        float perceptualTrim = 1f - (0.38f * amount * amount);
-        return Dsp.SoftClip(tapeSignal * perceptualTrim);
+        float trimmed = tapeSignal * _tape.PerceptualTrim;
+        return Dsp.Lerp(trimmed, Dsp.SoftClip(trimmed), amount);
     }
 
     /// <summary>
@@ -946,64 +1047,162 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>
-    /// G.711 PCM Codec (ITU-T G.711, 1972).
-    /// Implements both mu-law (North America/Japan) and A-law (Europe/International) companding.
-    /// Faithfully reproduces 8-bit quantization error and nonlinear distortion of vintage PSTN.
-    /// Intensity is handled entirely by FilteredCrossfade routing: no per-sample branching on amount.
+    /// ITU-T G.711 PCM codec simulation.
+    /// Converts normalized float PCM to signed 16-bit linear PCM, runs a real 8-bit
+    /// segmented mu-law or A-law encode/decode round-trip, then converts back to float.
+    /// The 300-3400 Hz telephone bandwidth is applied by Setup before this stage.
+    /// Intensity is handled exclusively by CodecCrossfade, so the codec itself always
+    /// has the same transfer characteristic and does not act as a volume control.
     /// </summary>
     private float G711Codec(float x, float amount)
     {
-        _ = amount; // intensity fully handled by FilteredCrossfade routing
+        _ = amount;
 
         float input = Math.Clamp(x, -1.0f, 1.0f);
-        float decoded;
 
-        if (!_radio.G711ALaw)
+        // Preserve the full signed PCM16 range: -1.0 -> -32768, +1.0 -> +32767.
+        int pcmInt = input >= 0f
+            ? (int)MathF.Round(input * 32767f)
+            : (int)MathF.Round(input * 32768f);
+
+        short pcm = (short)Math.Clamp(pcmInt, short.MinValue, short.MaxValue);
+        short decoded = _radio.G711ALaw
+            ? DecodeALaw(EncodeALaw(pcm))
+            : DecodeMuLaw(EncodeMuLaw(pcm));
+
+        // Standard signed PCM16 normalization. No makeup gain or extra saturation here:
+        // final server volume/limiting is intentionally handled later in the DSP pipeline.
+        return decoded / 32768f;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int FindALawSegment(int value)
+    {
+        if (value <= 0x01F) return 0;
+        if (value <= 0x03F) return 1;
+        if (value <= 0x07F) return 2;
+        if (value <= 0x0FF) return 3;
+        if (value <= 0x1FF) return 4;
+        if (value <= 0x3FF) return 5;
+        if (value <= 0x7FF) return 6;
+        if (value <= 0xFFF) return 7;
+        return 8;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int FindMuLawSegment(int value)
+    {
+        if (value <= 0x03F) return 0;
+        if (value <= 0x07F) return 1;
+        if (value <= 0x0FF) return 2;
+        if (value <= 0x1FF) return 3;
+        if (value <= 0x3FF) return 4;
+        if (value <= 0x7FF) return 5;
+        if (value <= 0xFFF) return 6;
+        if (value <= 0x1FFF) return 7;
+        return 8;
+    }
+
+    /// <summary>Encode 16-bit linear PCM to an 8-bit ITU-T G.711 A-law codeword.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static byte EncodeALaw(short pcmValue)
+    {
+        int pcm = pcmValue >> 3;
+        int mask;
+
+        if (pcm >= 0)
         {
-            // mu-law (ITU-T G.711 para 3.3, mu = 255)
-            const float Mu = 255f;
-            const float LogMu = 5.5451774445f; // ln(1 + 255)
-
-            float sign = input >= 0f ? 1f : -1f;
-            float absIn = MathF.Abs(input);
-
-            float companded = sign * MathF.Log(1f + Mu * absIn) / LogMu;
-            int codeword = Math.Clamp((int)MathF.Round(companded * 127.5f + 127.5f), 0, 255);
-
-            float cNorm = (codeword - 127.5f) / 127.5f;
-            float signD = cNorm >= 0f ? 1f : -1f;
-            decoded = signD * (MathF.Pow(1f + Mu, MathF.Abs(cNorm)) - 1f) / Mu;
+            mask = 0xD5;
         }
         else
         {
-            // A-law (ITU-T G.711 para 3.2, A = 87.6)
-            const float A = 87.6f;
-            const float OnePlusLnA = 5.47267f;  // 1 + ln(87.6)
-            const float InvA = 0.011416f;       // 1 / 87.6
-
-            float sign = input >= 0f ? 1f : -1f;
-            float absIn = MathF.Abs(input);
-
-            float companded = absIn < InvA
-                ? A * absIn / OnePlusLnA
-                : (1f + MathF.Log(A * absIn)) / OnePlusLnA;
-
-            companded *= sign;
-
-            int codeword = Math.Clamp((int)MathF.Round(companded * 127.5f + 127.5f), 0, 255);
-            float cNorm = (codeword - 127.5f) / 127.5f;
-            float signD = cNorm >= 0f ? 1f : -1f;
-            float absC = MathF.Abs(cNorm);
-
-            decoded = absC < InvA * A / OnePlusLnA
-                ? absC * OnePlusLnA / A
-                : MathF.Exp(absC * OnePlusLnA - 1f) / A;
-
-            decoded *= signD;
+            mask = 0x55;
+            pcm = -pcm - 1;
         }
 
-        // Makeup gain restores presence lost to companding-induced transient flattening.
-        const float makeupGain = 1.25f;
-        return Dsp.SoftClip(decoded * makeupGain);
+        int segment = FindALawSegment(pcm);
+        if (segment >= 8)
+            return (byte)(0x7F ^ mask);
+
+        int value = segment << 4;
+        value |= segment < 2
+            ? (pcm >> 1) & 0x0F
+            : (pcm >> segment) & 0x0F;
+
+        return (byte)(value ^ mask);
     }
+
+    /// <summary>Decode an 8-bit ITU-T G.711 A-law codeword to 16-bit linear PCM.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static short DecodeALaw(byte value)
+    {
+        int a = value ^ 0x55;
+        int t = (a & 0x0F) << 4;
+        int segment = (a & 0x70) >> 4;
+
+        switch (segment)
+        {
+            case 0:
+                t += 8;
+                break;
+            case 1:
+                t += 0x108;
+                break;
+            default:
+                t += 0x108;
+                t <<= segment - 1;
+                break;
+        }
+
+        return (short)((a & 0x80) != 0 ? t : -t);
+    }
+
+    /// <summary>Encode 16-bit linear PCM to an 8-bit ITU-T G.711 mu-law codeword.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static byte EncodeMuLaw(short pcmValue)
+    {
+        const int Bias = 0x84;
+        const int Clip = 8159;
+
+        int pcm = pcmValue >> 2;
+        int mask;
+
+        if (pcm < 0)
+        {
+            pcm = -pcm;
+            mask = 0x7F;
+        }
+        else
+        {
+            mask = 0xFF;
+        }
+
+        if (pcm > Clip)
+            pcm = Clip;
+
+        pcm += Bias >> 2;
+
+        int segment = FindMuLawSegment(pcm);
+        if (segment >= 8)
+            return (byte)(0x7F ^ mask);
+
+        int value = (segment << 4) | ((pcm >> (segment + 1)) & 0x0F);
+        return (byte)(value ^ mask);
+    }
+
+    /// <summary>Decode an 8-bit ITU-T G.711 mu-law codeword to 16-bit linear PCM.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static short DecodeMuLaw(byte value)
+    {
+        const int Bias = 0x84;
+
+        int u = (~value) & 0xFF;
+        int t = ((u & 0x0F) << 3) + Bias;
+        t <<= (u & 0x70) >> 4;
+
+        return (short)((u & 0x80) != 0
+            ? Bias - t
+            : t - Bias);
+    }
+
 }

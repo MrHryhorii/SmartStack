@@ -22,17 +22,33 @@ public static class Dsp
     public static float Lerp(float a, float b, float t) => a + (b - a) * t;
 
     /// <summary>
-    /// Equal-Power (Constant-Power) crossfade using sqrt-of-complementary-gains.
-    /// Preserves constant RMS energy at all mix positions — the correct choice for
-    /// perceptually smooth wet/dry blending of uncorrelated audio signals.
-    /// At t=0.5: dryGain = wetGain = sqrt(0.5) ≈ 0.707 (-3dB each, 0dB combined).
+    /// Computes complementary equal-power gains for a fixed wet/dry mix.
+    /// Call once per buffer when the mix is constant to avoid MathF.Sqrt in the sample loop.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void EqualPowerGains(float t, out float dryGain, out float wetGain)
+    {
+        dryGain = MathF.Sqrt(1f - t);
+        wetGain = MathF.Sqrt(t);
+    }
+
+    /// <summary>
+    /// Equal-Power (Constant-Power) crossfade using pre-computed gains.
+    /// At t=0.5 the gains are both sqrt(0.5) ≈ 0.707 (-3 dB each).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float EqualPowerCrossfade(float dry, float wet, float dryGain, float wetGain)
+        => dry * dryGain + wet * wetGain;
+
+    /// <summary>
+    /// Convenience overload for non-hot-path use. When processing a buffer with a fixed mix,
+    /// prefer pre-computing the gains once with EqualPowerGains and using the four-argument overload.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float EqualPowerCrossfade(float dry, float wet, float t)
     {
-        float dryGain = MathF.Sqrt(1f - t);
-        float wetGain = MathF.Sqrt(t);
-        return dry * dryGain + wet * wetGain;
+        EqualPowerGains(t, out float dryGain, out float wetGain);
+        return EqualPowerCrossfade(dry, wet, dryGain, wetGain);
     }
 
     /// <summary>
@@ -308,7 +324,8 @@ public class DelayBuffer
 /// A slow phase accumulator (~1.5 Hz) periodically samples a noise gate threshold.
 /// When triggered, a target attenuation depth is chosen; a slew-rate limiter
 /// (one-pole lowpass on depth) smooths the transition to avoid clicks.
-/// Slew coefficient 0.002 → ~150ms rise/fall time — matches real oxide wear behavior.
+/// The default 0.002 coefficient has an effective ~10 ms one-pole time constant
+/// (~31 ms to reach 95% of a step) at 48 kHz; ScaleCoeff preserves that timing at other rates.
 /// </summary>
 public struct TapeDropout
 {

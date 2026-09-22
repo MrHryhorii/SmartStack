@@ -117,8 +117,8 @@ internal sealed class FlacStreamEncoder : IDisposable
         header[6] = 0x00;
         header[7] = 34;
 
-        BinaryPrimitives.WriteUInt16BigEndian(header.Slice(8, 2), checked((ushort)BlockSize));
-        BinaryPrimitives.WriteUInt16BigEndian(header.Slice(10, 2), checked((ushort)BlockSize));
+        BinaryPrimitives.WriteUInt16BigEndian(header.Slice(8, 2), checked(BlockSize));
+        BinaryPrimitives.WriteUInt16BigEndian(header.Slice(10, 2), checked(BlockSize));
 
         // Min/max frame byte sizes are intentionally unknown (0).
         // They are optional hints and avoiding a seek/rewrite keeps streaming simple.
@@ -302,13 +302,13 @@ internal sealed class FlacStreamEncoder : IDisposable
 
             if (i >= 1)
             {
-                sum1 += Math.Abs((int)samples[i] - samples[i - 1]);
+                sum1 += Math.Abs(samples[i] - samples[i - 1]);
             }
 
             if (i >= 2)
             {
                 int prediction = 2 * samples[i - 1] - samples[i - 2];
-                sum2 += Math.Abs((int)samples[i] - prediction);
+                sum2 += Math.Abs(samples[i] - prediction);
             }
         }
 
