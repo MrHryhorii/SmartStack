@@ -221,17 +221,14 @@ public partial class SpeechSynthesisService(
             }
             return result;
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (
+            ex is OperationCanceledException ||
+            cancellationToken.IsCancellationRequested ||
+            httpContext.RequestAborted.IsCancellationRequested)
         {
-            // Triggered if the client disconnects/cancels the request midway through generation.
-            // Best-effort payload finalization preserves buffered B64Json correctness and releases
-            // wrapper state; network cleanup then returns all queued ArrayPool buffers.
-            if (responsePlanResolved)
-            {
-                ResponsePipeline.TryClosePayload(
-                    ref response,
-                    responsePlan);
-            }
+            // A client disconnect can surface as a closed output stream rather than an
+            // OperationCanceledException. Both paths are a canceled request.
+            // Discard unfinished payload framing and release network buffers.
             await ResponsePipeline.AbortAsync(response);
 
             TimeSpan totalElapsed =

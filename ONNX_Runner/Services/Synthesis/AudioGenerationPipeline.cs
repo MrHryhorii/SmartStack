@@ -532,9 +532,20 @@ internal static class AudioGenerationPipeline
         try
         {
             await Task.WhenAll(producerTask, consumerTask);
+            cancellationToken.ThrowIfCancellationRequested();
+            streamManager.Dispose();
         }
         catch
         {
+            // Incomplete output must not be finalized into a closed response.
+            streamManager.Abort();
+
+            // The consumer may stop before reading every pooled chunk from the channel.
+            while (channel.Reader.TryRead(out var pending))
+            {
+                ArrayPool<float>.Shared.Return(pending.Buffer);
+            }
+
             // Prefer the consumer's real failure over a synthetic cancellation that may
             // have been raised in the producer purely to unstick it from a full channel.
             if (consumerFault != null)

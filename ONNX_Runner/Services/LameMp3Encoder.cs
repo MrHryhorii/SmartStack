@@ -370,6 +370,30 @@ internal sealed class LameMp3Encoder : IDisposable
             IntPtr.Zero;
     }
 
+    // A canceled response must release the native encoder without writing its final frames.
+    public void Abort()
+    {
+        if (_disposed)
+        {
+            return;
+        }
+
+        try
+        {
+            CloseContext();
+        }
+        finally
+        {
+            if (_outputBuffer.Length > 0)
+            {
+                ArrayPool<byte>.Shared.Return(_outputBuffer);
+                _outputBuffer = [];
+            }
+
+            _disposed = true;
+        }
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -392,19 +416,7 @@ internal sealed class LameMp3Encoder : IDisposable
         }
         finally
         {
-            // Native state and pooled memory must be released even when the final flush fails.
-            CloseContext();
-
-            if (_outputBuffer.Length > 0)
-            {
-                ArrayPool<byte>.Shared.Return(
-                    _outputBuffer);
-
-                _outputBuffer = [];
-            }
-
-            _disposed =
-                true;
+            Abort();
         }
 
         if (flushError != null)

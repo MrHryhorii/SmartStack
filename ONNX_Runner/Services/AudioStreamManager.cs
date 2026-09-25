@@ -532,6 +532,35 @@ public class AudioStreamManager : IDisposable
     }
 
     /// <summary>
+    /// Releases encoder resources without writing to a failed or disconnected response.
+    /// </summary>
+    public void Abort()
+    {
+        if (_finalized)
+        {
+            return;
+        }
+
+        _finalized = true;
+
+        try
+        {
+            _lameEncoder?.Abort();
+            _aacEncoder?.Abort();
+            _flacEncoder?.Abort();
+        }
+        finally
+        {
+            if (_format == AudioFormat.Opus)
+            {
+                _opusEncoder?.Dispose();
+                _oggMuxer?.Dispose();
+                ReturnOpusBuffers();
+            }
+        }
+    }
+
+    /// <summary>
     /// Finalizes the output stream and releases encoder resources.
     /// </summary>
     public void Dispose()

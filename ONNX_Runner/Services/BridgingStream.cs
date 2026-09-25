@@ -143,6 +143,21 @@ public class BridgingStream : Stream
     }
 
     /// <summary>
+    /// Discards buffered bytes when the network response cannot accept more output.
+    /// </summary>
+    public void Abort()
+    {
+        if (_currentBuffer == null)
+        {
+            return;
+        }
+
+        ArrayPool<byte>.Shared.Return(_currentBuffer);
+        _currentBuffer = null;
+        _bufferPosition = 0;
+    }
+
+    /// <summary>
     /// Flushes any buffered bytes and returns locally owned pooled memory.
     /// </summary>
     protected override void Dispose(bool disposing)

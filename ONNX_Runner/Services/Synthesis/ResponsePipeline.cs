@@ -297,17 +297,8 @@ internal static class ResponsePipeline
         {
             return;
         }
-        // Flush any bytes successfully produced during best-effort payload finalization before
-        // terminating the channel. If the client is already gone this simply fails harmlessly.
-        try
-        {
-            state.RawStream?.Flush();
-        }
-        catch
-        {
-            // Best-effort cleanup only.
-        }
-
+        // The response is being abandoned: do not flush buffered bytes into a dead connection.
+        (state.RawStream as BridgingStream)?.Abort();
         state.NetworkChannel.Writer.TryComplete(error);
         if (state.NetworkSenderTask != null)
         {
@@ -431,9 +422,10 @@ internal static class ResponsePipeline
                 }
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             WriteSseDone(responseWriter);
             FlushResult doneResult = await responseWriter.FlushAsync(cancellationToken);
-            ThrowIfSseTransportClosed(doneResult, cancellationToken, allowCompleted: true);
+            ThrowIfSseTransportClosed(doneResult, cancellationToken);
         }
         catch (Exception ex)
         {
@@ -475,9 +467,10 @@ internal static class ResponsePipeline
             remaining -= length;
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         WriteSseDone(responseWriter);
         FlushResult doneResult = await responseWriter.FlushAsync(cancellationToken);
-        ThrowIfSseTransportClosed(doneResult, cancellationToken, allowCompleted: true);
+        ThrowIfSseTransportClosed(doneResult, cancellationToken);
     }
     private static void WriteSseDelta(
         PipeWriter writer,
@@ -519,14 +512,13 @@ internal static class ResponsePipeline
     }
     private static void ThrowIfSseTransportClosed(
         FlushResult result,
-        CancellationToken cancellationToken,
-        bool allowCompleted = false)
+        CancellationToken cancellationToken)
     {
         if (result.IsCanceled)
         {
             throw new OperationCanceledException(cancellationToken);
         }
-        if (result.IsCompleted && !allowCompleted)
+        if (result.IsCompleted)
         {
             throw new IOException("The SSE response transport was closed by the client.");
         }

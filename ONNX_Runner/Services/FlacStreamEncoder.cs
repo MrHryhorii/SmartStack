@@ -705,6 +705,18 @@ internal sealed class FlacStreamEncoder : IDisposable
         ArrayPool<byte>.Shared.Return(_outputBuffer);
     }
 
+    // Discard incomplete output while returning all rented buffers on cancellation.
+    public void Abort()
+    {
+        if (_finalized)
+        {
+            return;
+        }
+
+        _finalized = true;
+        ReturnBuffers();
+    }
+
     public void Dispose()
     {
         EnsureFinalized();
