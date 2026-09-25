@@ -599,7 +599,7 @@ Most voices come in multiple quality levels. Higher quality = larger model and h
 | `medium` | ~60 MB       | Recommended for most use cases     |
 | `high`   | ~130 MB      | Best quality, requires more memory |
 
-> **For voice cloning, the `high` quality tier (22050 Hz) is strongly recommended.** Its fuller frequency spectrum allows the OpenVoice neural network to operate without producing instability artifacts such as trembling or "crying" effects that are common on `medium` (16 kHz) models.
+> **For voice cloning, prefer a 22,050 Hz model.** Sample rate depends on the specific voice, not only its quality tier: `hfc_female/medium` is 22,050 Hz. Check the voice model card or `.onnx.json` before choosing a model. At lower sample rates, cloning may produce more audible artifacts.
 
 ---
 
@@ -1186,6 +1186,8 @@ will sound different from OpenAI's official voices.
 Tsubaki TTS Engine's original code is licensed under **GPL-3.0-or-later**;
 see `LICENSE`. Bundled components and voices retain their own licenses and
 attribution, listed in `THIRD_PARTY_NOTICES.txt` and `VOICE_PROVENANCE.txt`.
+The included `hfc_female` model is documented separately in
+`Model/MODEL_PROVENANCE.txt`; its training dataset has noncommercial terms.
 For binary releases, use the [packaging helper](#packaging-a-binary-release)
 to include notices and make the corresponding source available separately.
 

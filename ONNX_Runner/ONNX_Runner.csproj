@@ -54,6 +54,10 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
+    <None Update="Model\MODEL_PROVENANCE.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
     
     <None Update="PiperNative\**\*.*" Condition="'$(IsWindows)' == 'true'">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

@@ -164,11 +164,16 @@ Models and data
 Piper - original rhasspy/piper software MIT
   https://github.com/rhasspy/piper
   This does not grant a uniform license to independently published voices.
-Model/en_US-amy-medium.onnx.json and the matching Piper model weights in release builds
-  https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/amy/medium
-  Its model card refers to MycroftAI/mimic3-voices for the dataset license and
-  says the model was fine-tuned from en_US-lessac-medium. Keep the model card
-  and its specific license terms with releases containing the model weights.
+Model/en_US-hfc_female-medium.onnx and its matching .onnx.json in release builds
+  https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/hfc_female/medium
+  The model card identifies Hi-Fi-CAPTAIN (NICT) as the training dataset and
+  links its CC BY-NC-SA 4.0 license. The voice was fine-tuned from
+  en_US-lessac-medium, whose source recordings have separate research terms.
+  The repository-wide MIT label is not a blanket license for training data
+  or a clear grant for commercial use of these particular model weights.
+  Keep the model attribution and license links in Model/MODEL_PROVENANCE.txt
+  with every release containing these weights. Other Piper voices need their
+  own notices instead. The project GPL covers original code, not this model.
 OpenVoice V2 - MIT - https://github.com/myshell-ai/OpenVoice
   ONNX conversions are downloaded at first run from
   https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2

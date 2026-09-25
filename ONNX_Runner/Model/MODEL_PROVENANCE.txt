@@ -1,0 +1,35 @@
+Piper voice model: en_US-hfc_female-medium
+
+These notes apply only when the matching .onnx weights and .onnx.json
+configuration are included in a Tsubaki release. They do not license the
+project's original code, which remains GPL-3.0-or-later.
+
+Voice files:
+  en_US-hfc_female-medium.onnx
+  en_US-hfc_female-medium.onnx.json
+Model and original model card:
+  https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/hfc_female/medium
+  https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/hfc_female/medium/MODEL_CARD
+Language: English (US); one speaker; medium quality; 22,050 Hz.
+
+Training-data attribution:
+  Hi-Fi-CAPTAIN, published by NICT (National Institute of Information and
+  Communications Technology):
+  https://ast-astrec.nict.go.jp/en/release/hi-fi-captain/
+  The upstream model card links the dataset license, CC BY-NC-SA 4.0:
+  https://creativecommons.org/licenses/by-nc-sa/4.0/
+  This license requires attribution and limits covered uses to noncommercial
+  purposes; ShareAlike applies when an adaptation is shared.
+
+Training lineage:
+  The model card says this voice was fine-tuned from en_US-lessac-medium.
+  https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/lessac/medium/MODEL_CARD
+  That base voice's source-recording license is available at:
+  https://www.cstr.ed.ac.uk/projects/blizzard/2013/lessac_blizzard2013/license.html
+
+The repository-wide MIT label does not establish separate commercial rights
+to this voice's training data or clearly specify the rights in its weights.
+Do not describe the bundled voice as unrestricted or as covered by the
+project's GPL. This note records the upstream terms and links; it does not
+grant any additional rights. If the bundled model changes, update this note
+and THIRD_PARTY_NOTICES.txt to match the actual model files.
