@@ -1189,8 +1189,4 @@ attribution, listed in `THIRD_PARTY_NOTICES.txt` and `VOICE_PROVENANCE.txt`.
 For binary releases, use the [packaging helper](#packaging-a-binary-release)
 to include notices and make the corresponding source available separately.
 
-The DirectML build uses a prebuilt DLL with Microsoft redistributable terms;
-its source code has an MIT license. Both original texts and an explanation
-are in `THIRD_PARTY_LICENSES/DirectML/`.
-
 A link back to this repository in your credits is appreciated.

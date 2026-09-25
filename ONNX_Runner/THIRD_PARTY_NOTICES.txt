@@ -40,26 +40,13 @@ Swashbuckle.AspNetCore 10.1.7, .Swagger 10.1.7, .SwaggerGen 10.1.7,
   https://github.com/swagger-api/swagger-ui
 System.Numerics.Tensors 9.0.0 - MIT - https://github.com/dotnet/runtime
 
-Microsoft.AI.DirectML 1.15.4 is a redistributable native dependency of the
-DirectML build. Both original package license texts are included unchanged:
-THIRD_PARTY_LICENSES/DirectML/LICENSE.txt contains Microsoft Software
-License Terms for the redistributable DLL; the separate
-THIRD_PARTY_LICENSES/DirectML/LICENSE-CODE.txt is MIT for covered code
-material. The package's ThirdPartyNotices.txt is included there as well.
-THIRD_PARTY_LICENSES/DirectML/README.txt explains the scope of each file.
-The MIT text does not relicense the binary DLL:
-https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4/License
-Microsoft's DirectML GitHub repository is MIT licensed, but that repository
-license does not supersede the redistributable DLL's package license:
-https://github.com/microsoft/DirectML/blob/master/LICENSE
-Section 1(a) of the package terms expressly permits copying and distributing
-DirectML in applications and services developed with machine-learning tools
-and frameworks that run on Windows or Xbox, subject to those terms. The
-Windows DirectML build uses this permission. Preserve the package license
-and accompanying ThirdPartyNotices with its DLL. The application's GPL
-license applies to the application's own code; the prebuilt DirectML DLL
-retains its separate package terms. The difference between the source-code
-and redistributable licenses does not itself block the DirectML build.
+Microsoft.AI.DirectML 1.15.4 is used in the Windows DirectML build.
+Its prebuilt DLL has Microsoft redistributable terms, which permit distribution
+in Windows applications developed with machine-learning tools and frameworks,
+subject to those terms. The package also includes an MIT license for covered
+code material. Keep the package's LICENSE.txt, LICENSE-CODE.txt and
+ThirdPartyNotices.txt in THIRD_PARTY_LICENSES/DirectML/ with the build.
+https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4
 
 Conditional builds confirmed by the six restore graphs:
   CPU: Microsoft.ML.OnnxRuntime 1.29.0 (MIT) and its managed bindings.
@@ -232,8 +219,7 @@ includes Windows DirectML and copies its package terms without blocking build.
 NUGET_RESTORE_INVENTORY.txt records all six RID-specific restore graphs from
 the 20260924-235314 publish run. The script captures each exact restore graph
 and copies available package license and notice files from the NuGet cache.
-Inspect its reports and the actual native binaries. The Microsoft.AI.DirectML
-license issue above remains unresolved for the DirectML binary variant.
+Inspect its reports and the actual native binaries.
 
 When conveying the bundled Piper eSpeak DLL, make its corresponding fork
 source and build scripts available with equivalent access alongside the
