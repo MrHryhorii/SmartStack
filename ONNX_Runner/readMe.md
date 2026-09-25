@@ -123,11 +123,22 @@ The release includes a default Piper voice model. If you want to use a different
 
 On Windows, open the extracted folder and double-click `TsubakiTTS.exe`.
 
-On Linux, install eSpeak NG and the MP3 library, then run `TsubakiTTS` from the extracted folder. On Debian or Ubuntu:
+On Linux, install eSpeak NG and the MP3 library. On Debian or Ubuntu:
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y espeak-ng libmp3lame0
+```
+
+On Arch Linux:
+
+```bash
+sudo pacman -Syu --needed espeak-ng lame
+```
+
+Then, from the extracted folder, run:
+
+```bash
 chmod +x ./TsubakiTTS
 ./TsubakiTTS
 ```
