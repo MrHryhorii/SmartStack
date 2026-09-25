@@ -54,14 +54,14 @@ Most modern open-source TTS engines are written in Python. This often leads to "
 Tsubaki is built with an engineering-first approach to distribution:
 
 - **No Python Required:** Runs purely on compiled C# and `Microsoft.ML.OnnxRuntime`.
-- **Portable (Self-Contained):** Can be compiled into a single executable. Just download and run.
+- **Portable (Self-Contained):** Download the release ZIP, extract it, and run the included executable. No .NET SDK is needed.
 - **Hardware Acceleration:** Runs on CPU by default, with optional WebGPU, DirectML, or CUDA acceleration depending on the selected build and hardware configuration.
 - **Memory Protection (OOM Guard):** Built-in queueing and semaphore system that calculates available VRAM/RAM to prevent server crashes under heavy load.
 - **True Concurrency:** On CPU and CUDA, concurrent requests share the same loaded model instead of requiring a full model/runtime copy per request. DirectML uses a fixed-size session pool because a single DirectML session cannot execute concurrently; see `HardwareSettings` for details.
 
 | Tsubaki                               | Typical Python TTS                   |
 | ------------------------------------- | ------------------------------------ |
-| Single executable                     | Python virtual environments          |
+| Self-contained release                | Python virtual environments          |
 | OpenAI-compatible out of the box      | Custom APIs required                 |
 | DirectML support (NVIDIA, AMD, Intel) | Often CUDA-only                      |
 | Built-in DSP effects                  | External audio processing chains     |
@@ -83,7 +83,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 | Real-Time Streaming        | Supports Chunked Transfer Encoding and SSE — listen to audio before generation is complete.                                                                        |
 | Built-in Web Dashboard     | Sleek, user-friendly web interface available out-of-the-box for testing voices and effects.                                                                        |
 | OOM Guard                  | Built-in queueing and semaphore system that prevents VRAM/RAM crashes under heavy load.                                                                            |
-| No Python Required         | Pure C# and ONNX Runtime. Automatically detects GPU or falls back to CPU.                                                                                          |
+| No Python Required         | Pure C# and ONNX Runtime. Choose a CPU, WebGPU, DirectML, or CUDA build.                                                                                           |
 
 ---
 
@@ -105,51 +105,50 @@ Tsubaki is designed for:
 
 ## 1. Download the Release
 
-Download the latest binary for your OS:
+Download the build for your OS from:
 
 https://github.com/MrHryhorii/SmartStack/releases
+
+Extract the complete ZIP. For a first run, the CPU build is the simplest choice.
 
 ---
 
 ## 2. Add a Piper Voice Model (Optional)
 
-The release includes a default Piper voice model. If you want to use a different voice or replace the bundled model, download the corresponding files from HuggingFace:
-
-https://huggingface.co/rhasspy/piper-voices/tree/main
-
-For each Piper voice you need exactly **2 files**:
-
-- `.onnx` — the neural network weights (the large file)
-- `.onnx.json` — metadata: sample rate, phonemes, speaker IDs
-
-Place both files into the `Model/` folder next to the executable. See *Piper Voice Models* below for details on finding and configuring models.
+The release includes a default Piper voice model. If you want to use a different voice, download its `.onnx` and `.onnx.json` files from [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main) and put both in the `Model/` folder next to the executable. See *Piper Voice Models* below for details.
 
 ---
 
 ## 3. Run the Server
 
-Start the executable. The browser dashboard opens automatically at:
+On Windows, open the extracted folder and double-click `TsubakiTTS.exe`.
 
+On Linux, install eSpeak NG and the MP3 library, then run `TsubakiTTS` from the extracted folder. On Debian or Ubuntu:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y espeak-ng libmp3lame0
+chmod +x ./TsubakiTTS
+./TsubakiTTS
 ```
-http://localhost:5045
-```
+
+Tsubaki opens the browser dashboard automatically when possible. You can also open it at `http://localhost:5045`.
 
 ---
 
 ## 4. Test Speech Synthesis
 
-```bash
-curl http://localhost:5045/v1/audio/speech \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "tts-1",
-    "input": "Hello from Tsubaki TTS.",
-    "voice": "piper_base",
-    "response_format": "mp3"
-  }'
+Type some text in the dashboard and click **Generate**. You can play the result there or click **Download** to save it. No terminal command is needed for this first test.
+
+For a quick mixed-language test, paste this into the text box:
+
+```text
+Maya checked config.prod.json—twice—and whispered, "No... esto no funciona; but maybe, demain, ça ira?", then added (almost laughing): Я перевірю ще раз — pero, please, don't restart https://example.com/api?v=2.3.1&mode=fast; if Dr. Smith replies, say "sí, d'accord", otherwise... wait.
 ```
 
-That is enough for a complete first launch.
+It mixes English, Spanish, French, and Ukrainian. In the dashboard's
+**Pronunciation** selector, choose **Auto** to detect the language or select
+a language yourself. Try both to hear the difference.
 
 ---
 
@@ -170,7 +169,7 @@ Compatible with:
 ## Standard Request
 
 ```bash
-curl http://localhost:5045/v1/audio/speech \
+curl -o speech.mp3 http://localhost:5045/v1/audio/speech \
   -H "Content-Type: application/json" \
   -d '{
     "model": "tts-1",
@@ -365,12 +364,12 @@ Tsubaki also exposes `/tsbk/audio/speech` for full per-request control. It uses 
 
 Only `input` is required; omitted optional fields fall back to their engine or server defaults. Use `/v1/...` for OpenAI-shaped clients and `/tsbk/...` when you want Tsubaki-specific controls.
 
-A detailed **Swagger UI** with every parameter is available at `http://localhost:5045/swagger` when the server is running.
+A detailed **Swagger UI** with every parameter is available at `http://localhost:5045/swagger` when running in Development mode.
 
 ## Full Request Example
 
 ```bash
-curl http://localhost:5045/tsbk/audio/speech \
+curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
   -H "Content-Type: application/json" \
   -d '{
     "model": "tts-1",
@@ -669,7 +668,7 @@ Tsubaki provides several build variants for different hardware configurations. Y
 Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
 
 ```bash
-dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./Publish/Tsubaki-Windows-WebGPU
+dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-webgpu
 ```
 
 ### 2. Windows (DirectML + CPU)
@@ -677,13 +676,13 @@ dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o 
 Alternative Windows GPU acceleration with support for NVIDIA, AMD, and Intel GPUs.
 
 ```bash
-dotnet publish -c Release -r win-x64 --self-contained true -o ./Publish/Tsubaki-Windows-DML
+dotnet publish -c Release -r win-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-directml
 ```
 
 ### 3. Windows (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
-dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./Publish/Tsubaki-Windows-CPU
+dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-cpu
 ```
 
 ### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
@@ -691,13 +690,13 @@ dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./
 Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
 
 ```bash
-dotnet publish -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./Publish/Tsubaki-Linux-WebGPU
+dotnet publish -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
 ```
 
 ### 5. Linux (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
-dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./Publish/Tsubaki-Linux-CPU
+dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cpu
 ```
 
 ### 6. Linux (CUDA + CPU) — Advanced Users Only
@@ -705,7 +704,7 @@ dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o 
 Builds the NVIDIA CUDA version. See the Linux Deployment section for strict hardware and software requirements:
 
 ```bash
-dotnet publish -c Release -r linux-x64 --self-contained true -o ./Publish/Tsubaki-Linux-CUDA
+dotnet publish -c Release -r linux-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cuda
 ```
 
 ### 7. Docker (Lightweight CPU)
@@ -716,7 +715,34 @@ The provided `Dockerfile` is pre-configured to build the lightweight CPU version
 docker-compose up --build -d
 ```
 
-> **Voice model required for source builds:** Builds compiled from source do not bundle a Piper voice model. Before starting the server, download a voice model (`.onnx` + `.onnx.json`) and configure its path. Ready-to-use binary releases include a preconfigured default voice.
+> **Voice model for source builds:** If your checkout has no Piper model, add a matching `.onnx` and `.onnx.json` pair to `Model/` before starting. Ready-to-use binary releases include a default model.
+
+## Packaging a Binary Release
+
+For a downloadable release with license notices, run this command from
+`ONNX_Runner`. Regular users can use the ready-made release above.
+
+Windows:
+
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File .\tools\Publish-WithLicenses.ps1 -Variant All
+```
+
+Linux (PowerShell 7):
+
+```bash
+pwsh -File ./tools/Publish-WithLicenses.ps1 -Variant All
+```
+
+`All` builds all six CPU, DirectML, CUDA, and WebGPU variants. To build one,
+use `-Variant Windows-CPU`, `Windows-DML`, `Windows-WebGPU`, `Linux-CPU`,
+`Linux-CUDA`, or `Linux-WebGPU`. The ZIPs are written to
+`Publish-Licensed/<timestamp>/` with the license notices. The script checks
+for the Piper model before publishing.
+
+The script also prints the path to one separate corresponding-source package.
+Upload it once alongside the binary ZIPs; its large archives are not copied
+into each build.
 
 ---
 
@@ -1080,6 +1106,8 @@ A detailed Swagger UI with every parameter (Pitch, Volume, NoiseScale, CloneInte
 http://localhost:5045/swagger
 ```
 
+Swagger is enabled in Development mode.
+
 ---
 
 # Open Source Credits & Acknowledgements
@@ -1109,8 +1137,10 @@ Additional third-party license and attribution information is listed in `THIRD_P
 
 ## Voice Sources & Attribution
 
-The example voice fingerprints bundled with Tsubaki are derived from the
-**LibriTTS-R** corpus:
+The 13 named voice fingerprints (`alloy`, `ash`, `ballad`, `cedar`,
+`coral`, `echo`, `fable`, `marin`, `nova`, `onyx`, `sage`, `shimmer`, and `verse`)
+come from **LibriTTS-R** recordings. Their original speaker IDs were not
+retained, so attribution is given to the corpus:
 
 > Yuma Koizumi, Heiga Zen, Shigeki Karita, Yifan Ding, Kohei Yatabe,
 > Nobuyuki Morioka, Michiel Bacchiani, Yu Zhang, Wei Han, Ankur Bapna.
@@ -1118,8 +1148,14 @@ The example voice fingerprints bundled with Tsubaki are derived from the
 > Source: http://www.openslr.org/141/
 > License: [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
 
-No audio, model output, or vocal characteristics from any commercial TTS
-provider (OpenAI or otherwise) were used to create these fingerprints.
+The remaining two bundled voices use CC0 recordings: `female` from
+[vero.marengere](https://freesound.org/people/vero.marengere/sounds/514877/)
+and `male` from [aarongbuk](https://freesound.org/people/aarongbuk/sounds/222599/).
+The original WAVs and generated `.voice` files are included in `Voices/`.
+File hashes and further provenance are in `VOICE_PROVENANCE.txt`.
+
+No audio, model output, or vocal characteristics from a commercial TTS
+provider were used to create these fingerprints.
 
 ### A note on voice naming
 
@@ -1136,6 +1172,14 @@ will sound different from OpenAI's official voices.
 
 # License & Usage
 
-This project is open-source.
+Tsubaki TTS Engine's original code is licensed under **GPL-3.0-or-later**;
+see `LICENSE`. Bundled components and voices retain their own licenses and
+attribution, listed in `THIRD_PARTY_NOTICES.txt` and `VOICE_PROVENANCE.txt`.
+For binary releases, use the [packaging helper](#packaging-a-binary-release)
+to include notices and make the corresponding source available separately.
 
-We strongly believe in the open-source community. If you use this engine (ONNX Runner / Tsubaki) in your products, create a fork, or integrate it into a commercial or open-source project, please **provide a link back to this original repository** in your documentation or credits section. Your attribution helps this project grow.
+The DirectML build uses a prebuilt DLL with Microsoft redistributable terms;
+its source code has an MIT license. Both original texts and an explanation
+are in `THIRD_PARTY_LICENSES/DirectML/`.
+
+A link back to this repository in your credits is appreciated.

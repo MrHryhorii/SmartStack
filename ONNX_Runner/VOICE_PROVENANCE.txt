@@ -1,0 +1,46 @@
+Bundled voice embedding provenance
+=================================
+
+The project author supplied the corresponding source WAV recordings. All
+15 WAVs and the 15 .voice embeddings are included in Voices/ and copied to
+published builds. Their filenames match. This naming is the available
+pairing record; re-extraction was not performed to verify that each
+embedding was made from the corresponding WAV.
+
+The project identifies LibriTTS-R as the source of 13 voices:
+https://www.openslr.org/141/ (CC BY 4.0):
+https://creativecommons.org/licenses/by/4.0/ . Original corpus paths and
+individual speaker IDs were not retained. Recordings were selected and
+renamed; the source audio was transformed into .voice embeddings. Dataset
+creators and the paper are credited in THIRD_PARTY_NOTICES.txt. These
+voice names do not identify or claim endorsement by individual speakers.
+
+For male and female, the project author identified these Freesound recordings:
+female: vero.marengere, "French Canadian Woman Giving Instructions 04.wav"
+  https://freesound.org/people/vero.marengere/sounds/514877/
+male: aarongbuk, "other radio stations.wav"
+  https://freesound.org/people/aarongbuk/sounds/222599/
+Both source pages display Creative Commons 0 (CC0 1.0):
+https://creativecommons.org/publicdomain/zero/1.0/ . Attribution is not
+required by CC0, but these links preserve the known provenance. The bundled
+female.wav matches the page's listed 8-second, 48-kHz, stereo 24-bit format;
+male.wav matches its approximately 9.67-second, 48-kHz, stereo 32-bit format.
+The original downloads were not available here for byte-for-byte comparison,
+so the pairing relies on the author's identification and matching metadata.
+
+Name | Reported source/license | .voice SHA-256 | source WAV SHA-256
+alloy | LibriTTS-R / CC BY 4.0 (project attribution) | f95d06b71e7d4e8c3d1beffb6e49303d5948f53d7ac6ce68c21719c4a1b4d3f8 | 7fba2fce63f51e9b7c52553e1d05f6bed542784ebb4d858b81f2799da49b9ebe
+ash | LibriTTS-R / CC BY 4.0 (project attribution) | ed31172c147d7f60b69fdce514f534993793f83e2ce78cd0d371a433fb1b1327 | ddc071d4f9f5a08e8763944eaca7081704fcd712a41ac37ab5e18df3966c0ffa
+ballad | LibriTTS-R / CC BY 4.0 (project attribution) | 3f904771eef37fa50c968f0079e259e109d4c58cbc05ab274474fd42b1cd1485 | e851198d12d65a4d68455a3c1d88d5fd8cc2abc31abcd5684a31c404f6a93704
+cedar | LibriTTS-R / CC BY 4.0 (project attribution) | fcdfe28d691860d110559a390d7d5ba393781207c74433594a9f80a76e9fa484 | 100705ce54b50f8270b3529f00712a0d498ecb409a13f72cbaed031420ed0d76
+coral | LibriTTS-R / CC BY 4.0 (project attribution) | 4e65ee0634553e916ed20273d3d4553ba3b83eba537f34ccdc2404e68cbfa30c | a75524d576fae221653b4281e4ec53921dfd23941880c75c81434c541bb0cdbf
+echo | LibriTTS-R / CC BY 4.0 (project attribution) | ae164e420d4fc6ca6a8ef3819abe3943bd2972f7cc904c0ac3f2db965f59b000 | fdf7456db8be9115261abffbb5a1127713efe1925830b70d9499cf9db63896f2
+fable | LibriTTS-R / CC BY 4.0 (project attribution) | fc1f55333a44f674a5e876df0a8e56f6f011766fdf4f9179f420f3eb1d846857 | bd5a7eb44c05d7bb6e1772e24ef2791454d256c1a7080ee56a0f8b94798c94f6
+female | Freesound 514877 / CC0 1.0 (author pairing) | b121506145a34c2eddf499c1a5b03d92cfcdc3232f1ba1609448a2435d8a1d28 | ca9cf07aa34ee62fc99a58ced5741c65b341bb362b042f16b199d36ac80a7d14
+male | Freesound 222599 / CC0 1.0 (author pairing) | 84777c1b7d78b50eb63a210d5354ce345bddb0cb6065914cc21daf7f2f540a71 | f90e9e40f0556b21f1762d34f98a0030c35a3782f00b6771b8e14416deb060d6
+marin | LibriTTS-R / CC BY 4.0 (project attribution) | 124d2b443ff7175c0f997ff33df86aa7f3ed7e1a4ca2cc3e03df668ed933ea79 | 393fd232634e3e83f62535db16924bf69bc10d59b9dd4af958897053aa8961b3
+nova | LibriTTS-R / CC BY 4.0 (project attribution) | 9e6d3f010c5103c03dd9c1734344ccced3beab89a7e332ce46d548ca9544e2a7 | 1d82ad85c0909b665bbe53fd19b83ac359068b2ab2f7ef76191ebab7beff7b7c
+onyx | LibriTTS-R / CC BY 4.0 (project attribution) | 8fd3c4c319498f4a7e8b676399902e3bec4607b14cd5ce396fb2bd2ef1f2be4d | d0c2483a1f81e59b7bcdabb745dbe17deea3e08bbb518f3c8b41734d0210da2d
+sage | LibriTTS-R / CC BY 4.0 (project attribution) | 897d79bc3ff491bb9001404979d2ce7dc5ae09998206c8378b9a071806130ef6 | 50023a5fc14f4317fc5415280bdd4c0cfe402ed479d890f0078bbf2273fa2303
+shimmer | LibriTTS-R / CC BY 4.0 (project attribution) | 325721c97b6cee98c051bc0b482d61175a8aa63bf733588a3b5f06416ff0b3e9 | 741f445a1e4d330ceb735ea6c33c352a149d04ffd2cde57d13c3a209a2e737a0
+verse | LibriTTS-R / CC BY 4.0 (project attribution) | 8b2cd6ce4e78245ebba5578291b27c54ffa96af90a5051ffc04a898009d40f3b | ea492393a0499e7753d88f05d698a35e8825249ad1546479b89e3aca6a96246b

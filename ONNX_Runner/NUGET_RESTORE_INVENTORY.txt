@@ -1,0 +1,103 @@
+Tsubaki TTS Engine - NuGet restore inventory
+=========================================
+
+Input: six user-supplied project.assets.json snapshots from the 20260924-235314 publish run.
+Targets: net10.0/win-x64 and net10.0/linux-x64; self-contained publish.
+The list shows restored packages, not every file in the publish folders.
+Some packages are build-time only or contain native files for another RID.
+Do not include these raw JSON files in a release: they contain local cache paths.
+
+Variant | RID | Restored packages | Snapshot SHA-256
+------- | --- | ----------------- | -------------------
+Windows-CPU | win-x64 | 20 | 75525429c00acb13249f3aaf8af4e5e364e727a10c23a9c7716c65fc2e3ddd3c
+Windows-DML | win-x64 | 21 | 75f500b3ae7f04e297997a0482fbd7913248e85ec81da454a0ba57cdf1c1eb49
+Windows-WebGPU | win-x64 | 21 | 755db5d8f8b44e5f43af49c71f6aee2f9bad922d44542ff241e77c1d353fc4c9
+Linux-CPU | linux-x64 | 20 | e25b48c3f2d58cd36e5b614cc0beb6313f067f7a3074256e48c89ca742d4cd0a
+Linux-CUDA | linux-x64 | 22 | f50c3c5c8e968ed4ab03efb6187f46f9203848fbe38973fbe90b192e5a64e4de
+Linux-WebGPU | linux-x64 | 21 | 4f9af2c17e435af6a365fcc4bf03eab39f69a3bb2e0970db3809949b59142553
+
+Legend: WC=Windows-CPU, WD=Windows-DML, WW=Windows-WebGPU,
+LC=Linux-CPU, LG=Linux-CUDA, LW=Linux-WebGPU.
+Each row below lists the exact package version and every variant whose restore graph includes it.
+License labels are leads from package/upstream metadata; retain exact package texts and notices.
+
+Package | Version | Variants | License / notice
+------- | ------- | -------- | ----------------
+Concentus | 2.2.2 | WC,WD,WW,LC,LG,LW | BSD-3-Clause
+Microsoft.AI.DirectML | 1.15.4 | WD | Microsoft Software License Terms; review GPL compatibility
+Microsoft.AspNetCore.OpenApi | 10.0.7 | WC,WD,WW,LC,LG,LW | MIT
+Microsoft.Extensions.ApiDescription.Server | 10.0.0 | WC,WD,WW,LC,LG,LW | MIT (build-time)
+Microsoft.ML.OnnxRuntime.DirectML | 1.24.4 | WD | MIT; package ThirdPartyNotices
+Microsoft.ML.OnnxRuntime.EP.WebGpu | 0.3.0 | WW,LW | MIT; package ThirdPartyNotices (including Dawn)
+Microsoft.ML.OnnxRuntime.Gpu.Linux | 1.29.0 | LG | MIT; package ThirdPartyNotices
+Microsoft.ML.OnnxRuntime.Gpu.Windows | 1.29.0 | LG | MIT; package ThirdPartyNotices
+Microsoft.ML.OnnxRuntime.Gpu | 1.29.0 | LG | MIT; package ThirdPartyNotices
+Microsoft.ML.OnnxRuntime.Managed | 1.24.4 | WD | MIT; package ThirdPartyNotices
+Microsoft.ML.OnnxRuntime.Managed | 1.29.0 | WC,WW,LC,LG,LW | MIT; package ThirdPartyNotices
+Microsoft.ML.OnnxRuntime | 1.29.0 | WC,WW,LC,LW | MIT; package ThirdPartyNotices
+Microsoft.OpenApi | 2.7.5 | WC,WD,WW,LC,LG,LW | MIT
+NAudio.Asio | 2.2.1 | WC,WD,WW,LC,LG,LW | MIT
+NAudio.Core | 2.2.1 | WC,WD,WW,LC,LG,LW | MIT
+NAudio.Lame | 2.1.0 | WC,WD,WW,LC,LG,LW | MIT
+NAudio.Midi | 2.2.1 | WC,WD,WW,LC,LG,LW | MIT
+NAudio.Wasapi | 2.2.1 | WC,WD,WW,LC,LG,LW | MIT
+NAudio.WinMM | 2.2.1 | WC,WD,WW,LC,LG,LW | MIT
+NAudio | 2.2.1 | WC,WD,WW,LC,LG,LW | MIT
+SearchPioneer.Lingua | 2.0.0 | WC,WD,WW,LC,LG,LW | Apache-2.0
+SoundTouch.Net | 2.3.2 | WC,WD,WW,LC,LG,LW | LGPL-2.1-or-later
+Swashbuckle.AspNetCore.Swagger | 10.1.7 | WC,WD,WW,LC,LG,LW | MIT
+Swashbuckle.AspNetCore.SwaggerGen | 10.1.7 | WC,WD,WW,LC,LG,LW | MIT
+Swashbuckle.AspNetCore.SwaggerUI | 10.1.7 | WC,WD,WW,LC,LG,LW | MIT; embedded swagger-ui Apache-2.0
+Swashbuckle.AspNetCore | 10.1.7 | WC,WD,WW,LC,LG,LW | MIT
+System.Numerics.Tensors | 9.0.0 | WC,WD,WW,LC,LG,LW | MIT; package third-party notices
+
+RID-specific native assets identified in the restore graphs:
+Windows CPU: onnxruntime.dll, onnxruntime_providers_shared.dll.
+Windows DirectML: onnxruntime.dll, onnxruntime_providers_shared.dll;
+  Microsoft.AI.DirectML is a build-import package; check whether its targets
+  add DirectML.dll to the actual publish folder.
+Windows WebGPU: onnxruntime.dll, onnxruntime_providers_shared.dll,
+  onnxruntime_providers_webgpu.dll, dxcompiler.dll, dxil.dll.
+Linux CPU: libonnxruntime.so, libonnxruntime_providers_shared.so.
+Linux CUDA: libonnxruntime.so, libonnxruntime_providers_cuda.so,
+  libonnxruntime_providers_shared.so, libonnxruntime_providers_tensorrt.so.
+Linux WebGPU: libonnxruntime.so, libonnxruntime_providers_shared.so,
+  libonnxruntime_providers_webgpu.so.
+The Linux CUDA restore includes Microsoft.ML.OnnxRuntime.Gpu.Windows as a
+package dependency, but its linux-x64 target has no native files from that package.
+The assets graphs do not prove which package build targets copy extra binaries
+or whether native runtime dependencies are installed separately. Inspect publish folders.
+
+The WebGPU 0.3.0 package file list includes LICENSE and ThirdPartyNotices.txt.
+The DirectML 1.15.4 package file list includes LICENSE.txt, LICENSE-CODE.txt,
+and ThirdPartyNotices.txt. The publish script copies these package notices into
+THIRD_PARTY_LICENSES/NuGet/<package>/<version>/ for each relevant build.
+The source package texts were inspected from the local NuGet cache:
+  WebGPU LICENSE: MIT; ThirdPartyNotices contains Dawn BSD-3-Clause and
+    other notices. The provider and Windows dxcompiler.dll/dxil.dll still
+    require an actual-binary check against these notices.
+  GPU.Linux LICENSE: MIT; ThirdPartyNotices includes upstream notices.
+  DirectML LICENSE-CODE.txt: MIT for included code material;
+    LICENSE.txt: Microsoft Software License Terms for the redistributable.
+    ThirdPartyNotices.txt supplies additional component notices.
+The WebGPU and GPU.Linux ThirdPartyNotices files have identical SHA-256:
+  4c5b864d8974c94b37461f38163facef79a1bb5dea461667ee9e5be6a8e73f83
+DirectML LICENSE.txt SHA-256:
+  a05138e3a085ff60a44881eedfa58dccb03ecc1d7b1f6ae888418e8c2fec4b8d
+Their text does not prove the complete contents of any publish directory.
+
+Self-contained .NET runtime packs are not among the 27 package rows above.
+Each framework's downloadDependencies records exact version 10.0.10:
+  Windows: Microsoft.NETCore.App.Runtime.win-x64,
+    Microsoft.AspNetCore.App.Runtime.win-x64,
+    Microsoft.WindowsDesktop.App.Runtime.win-x64.
+  Linux: Microsoft.NETCore.App.Runtime.linux-x64,
+    Microsoft.AspNetCore.App.Runtime.linux-x64,
+    Microsoft.NETCore.App.Host.linux-x64.
+The WindowsDesktop pack is a declared download dependency, not proof that its
+files are part of this web application's published output. The apphost may be
+supplied by the SDK on Windows. Compare the actual publish folders with the
+pack files, then include the matching license and third-party notices.
+Windows runtime file licensing differs from Linux runtime file licensing.
+Microsoft.AI.DirectML has separate redistributable terms and an unresolved
+GPL compatibility question for the combined Windows DirectML binary.

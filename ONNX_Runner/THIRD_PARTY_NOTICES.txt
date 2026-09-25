@@ -1,110 +1,254 @@
 Tsubaki TTS Engine - Third-Party Notices
 ========================================
 
-This distribution uses third-party software, models, and datasets listed below.
-The upstream license terms remain controlling.
+The project's own source code is GPL-3.0-or-later; see LICENSE and readMe.md.
+That choice does not replace any license below. Keep this file, the included THIRD_PARTY_LICENSES/ texts, and the
+upstream copyright and license notices with binary distributions. The NuGet
+inventory below covers six net10.0 publish restore snapshots for Windows and
+Linux CPU, DirectML, CUDA, and WebGPU. Bundled runtime files may carry further notices.
+Check the final publish output before release.
 
 .NET / NuGet dependencies
 -------------------------
+Six supplied project.assets.json snapshots resolve 20 packages for each CPU
+variant, 21 for Windows DirectML and each WebGPU variant, and 22 for Linux
+CUDA. Together they contain 27 unique package/version records. These are
+restore graphs, not lists of files proven to be in the publish outputs. The
+JSON files do not contain package license text. Exact versions, variant
+membership, snapshot hashes and RID-specific native assets are in
+NUGET_RESTORE_INVENTORY.txt. Each published variant also has a generated
+NUGET_PUBLISH_INVENTORY.txt and copied package notice files.
 
-Concentus 2.2.2
-License: BSD-3-Clause
-Source: https://github.com/lostromb/concentus
-Purpose: Opus encoding.
+Concentus 2.2.2 - BSD-3-Clause - https://github.com/lostromb/concentus
+  Full upstream notice: THIRD_PARTY_LICENSES/Concentus-BSD.txt. Its own
+  license notes independently compiled Opus C reference libraries.
+Microsoft.AspNetCore.OpenApi 10.0.7 - MIT - https://github.com/dotnet/aspnetcore
+Microsoft.Extensions.ApiDescription.Server 10.0.0 - MIT (build tools) - https://github.com/dotnet/aspnetcore
+Microsoft.OpenApi 2.7.5 - MIT - https://github.com/microsoft/OpenAPI.NET
+Microsoft.ML.OnnxRuntime.DirectML 1.24.4 and .Managed 1.24.4 - MIT - https://github.com/microsoft/onnxruntime
+  Microsoft ONNX Runtime MIT text: THIRD_PARTY_LICENSES/ONNX-Runtime-MIT.txt
+NAudio 2.2.1, NAudio.Asio 2.2.1, NAudio.Core 2.2.1,
+NAudio.Midi 2.2.1, NAudio.Wasapi 2.2.1, NAudio.WinMM 2.2.1
+  - MIT - https://github.com/naudio/NAudio
+  Upstream license: THIRD_PARTY_LICENSES/NAudio-MIT.txt
+NAudio.Lame 2.1.0 - MIT - https://github.com/Corey-M/NAudio.Lame
+SearchPioneer.Lingua 2.0.0 - Apache-2.0 - https://github.com/searchpioneer/lingua-dotnet
+SoundTouch.Net 2.3.2 - LGPL-2.1-or-later - https://github.com/owoudenberg/soundtouch.net
+Swashbuckle.AspNetCore 10.1.7, .Swagger 10.1.7, .SwaggerGen 10.1.7,
+.SwaggerUI 10.1.7 - MIT - https://github.com/domaindrivendev/Swashbuckle.AspNetCore
+  SwaggerUI includes embedded swagger-ui assets, licensed Apache-2.0:
+  https://github.com/swagger-api/swagger-ui
+System.Numerics.Tensors 9.0.0 - MIT - https://github.com/dotnet/runtime
 
-Microsoft.OpenApi 2.7.5
-License: MIT
-Source: https://github.com/microsoft/OpenAPI.NET
+Microsoft.AI.DirectML 1.15.4 is a redistributable native dependency of the
+DirectML build. Both original package license texts are included unchanged:
+THIRD_PARTY_LICENSES/DirectML/LICENSE.txt contains Microsoft Software
+License Terms for the redistributable DLL; the separate
+THIRD_PARTY_LICENSES/DirectML/LICENSE-CODE.txt is MIT for covered code
+material. The package's ThirdPartyNotices.txt is included there as well.
+THIRD_PARTY_LICENSES/DirectML/README.txt explains the scope of each file.
+The MIT text does not relicense the binary DLL:
+https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4/License
+Microsoft's DirectML GitHub repository is MIT licensed, but that repository
+license does not supersede the redistributable DLL's package license:
+https://github.com/microsoft/DirectML/blob/master/LICENSE
+Section 1(a) of the package terms expressly permits copying and distributing
+DirectML in applications and services developed with machine-learning tools
+and frameworks that run on Windows or Xbox, subject to those terms. The
+Windows DirectML build uses this permission. Preserve the package license
+and accompanying ThirdPartyNotices with its DLL. The application's GPL
+license applies to the application's own code; the prebuilt DirectML DLL
+retains its separate package terms. The difference between the source-code
+and redistributable licenses does not itself block the DirectML build.
 
-Microsoft.AspNetCore.OpenApi 10.0.7
-License: MIT
-Source: https://github.com/dotnet/aspnetcore
+Conditional builds confirmed by the six restore graphs:
+  CPU: Microsoft.ML.OnnxRuntime 1.29.0 (MIT) and its managed bindings.
+  CUDA: Microsoft.ML.OnnxRuntime.Gpu 1.29.0 (MIT); the package declares
+    Microsoft.ML.OnnxRuntime.Gpu.Linux, .Gpu.Windows and .Managed 1.29.0
+    as dependencies. Check which native files are actually published.
+  WebGPU: Microsoft.ML.OnnxRuntime 1.29.0 (MIT) plus
+    Microsoft.ML.OnnxRuntime.EP.WebGpu 0.3.0 (MIT). Its package LICENSE was
+    inspected, and ThirdPartyNotices.txt includes Dawn (BSD-3-Clause) among
+    many upstream notices. Windows selects a WebGPU provider, dxcompiler.dll
+    and dxil.dll; Linux selects a WebGPU provider. Match the shipped native
+    files against the package notices before release.
+  NuGet pages: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.29.0
+  https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.Gpu/1.29.0
+  https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.EP.WebGpu/0.3.0
+The Linux CUDA graph also includes the Windows GPU package as a restore
+dependency, but its linux-x64 target does not select native assets from it.
+The actual publish folders and package build targets require a separate check.
+The GPU.Linux 1.29.0 package LICENSE was inspected and is MIT; its
+ThirdPartyNotices.txt has the same SHA-256 as the WebGPU 0.3.0 notice file.
+The ONNX Runtime package MIT license is included, but its native binaries
+also have separate upstream ThirdPartyNotices.txt obligations. CUDA/cuDNN,
+GPU drivers and other separately supplied runtimes retain their own terms.
 
-NAudio 2.2.1
-License: MIT
-Source: https://github.com/naudio/NAudio
+Self-contained .NET releases
+----------------------------
+The documented publish commands include .NET 10 runtime and ASP.NET Core
+framework files inside each binary release. The NuGet project.assets.json
+package rows do not inventory those runtime-pack files. All six supplied
+restore graphs declare runtime-pack download dependencies at version 10.0.10
+for their RIDs; see NUGET_RESTORE_INVENTORY.txt. The Windows graph also lists
+the WindowsDesktop runtime pack, which does not prove it is in this web app's
+publish output. Preserve the matching runtime-pack license and third-party
+notices for the files actually published. Microsoft describes Linux
+product distributions as MIT and Windows product distributions under its
+.NET Library License, with more specific Windows file-level guidance:
+https://github.com/dotnet/runtime/blob/main/docs/project/licensing-assets.md
+https://github.com/dotnet/core/blob/main/license-information-windows.md
+https://github.com/dotnet/runtime/blob/main/THIRD-PARTY-NOTICES.TXT
+The publishing helper copies notices found in restored NuGet packages and
+matching runtime packs it can find. Inspect its report for missing packs or
+notices and compare the files copied against the actual publish output.
 
-NAudio.Lame 2.1.0
-License: MIT
-Source: https://github.com/Corey-M/NAudio.Lame
+Bundled native files
+--------------------
+PiperNative/espeak-ng.dll and PiperNative/espeak-ng-data/
+  eSpeak NG, Piper fork - GPL-3.0-or-later.
+  These files came from the Windows x64 Piper release 2023.11.14-2:
+  https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_windows_amd64.zip
+  The DLL is byte-identical to the release file (SHA-256:
+  9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189).
+  All 355 eSpeak data files match the release contents; 206 text files have
+  Windows CRLF line endings instead of LF. The Piper phonemizer build recipe
+  obtains the eSpeak fork at commit 0f65aa301e0d6bae5e172cc74197d32a6182200f:
+  https://github.com/rhasspy/espeak-ng/tree/0f65aa301e0d6bae5e172cc74197d32a6182200f
+  Build recipe: https://github.com/rhasspy/piper-phonemize/blob/2023.11.14-4/CMakeLists.txt
+  eSpeak NG upstream: https://github.com/espeak-ng/espeak-ng
+  The release helper prepares a hash-checked corresponding-source package for
+  separate download alongside the binary release. Review its completeness before
+  distribution; the source archive does not by itself resolve other licenses.
+  Keep the notices and source for any modified data files as well.
+PiperNative/piper_phonemize.dll
+  Piper phonemization library - MIT (copyright 2023 Michael Hansen).
+  The binary is byte-identical to the same Piper release file (SHA-256:
+  4b5f344b2f31204a8a94a0bf485f93e4971671e81188a0d67f326e113bfb0b2e).
+  Source: https://github.com/rhasspy/piper-phonemize/tree/2023.11.14-4
+  License text: THIRD_PARTY_LICENSES/piper-phonemize-MIT.txt
+PiperNative/libtashkeel_model.ort
+  Arabic diacritization model bundled by Piper phonemize; the binary is
+  byte-identical to the Piper release file (SHA-256:
+  9f27090af3e0f661913af048a739632a3f577b3233512551d8c90580ccad4aa8).
+  Upstream libtashkeel project: https://github.com/mush42/libtashkeel
+  Its repository is MIT licensed (copyright 2023 Musharraf); see
+  THIRD_PARTY_LICENSES/libtashkeel-MIT.txt. Keep upstream model attribution.
 
-SearchPioneer.Lingua 2.0.0
-License: Apache-2.0
-Source: https://github.com/searchpioneer/lingua-dotnet
+System native dependencies (not bundled in this source archive)
+---------------------------------------------------------------
+On Linux, eSpeak NG is installed by the Dockerfile or by the user; its package
+license and source obligations remain with the distributor of the image.
+LAME MP3 encoder - LGPL-2.0-or-later - https://lame.sourceforge.io/
+  Loaded from the system or supplied separately; not included in this archive.
+  AAC-LC output uses this project's managed AacStreamEncoder.cs. It does not
+  use LAME, FAAC, FFmpeg, or an external AAC encoder library.
 
-SoundTouch.Net 2.3.2
-License: LGPL-2.1-or-later
-Source: https://github.com/owoudenberg/soundtouch.net
+Bundled browser decoders
+------------------------
+wwwroot/js/codecs/lib/mpg123-decoder.min.js (1.0.3)
+wwwroot/js/codecs/lib/ogg-opus-decoder.min.js (1.7.5)
+  Ethan Halsall / wasm-audio-decoders - project-authored code MIT
+  https://github.com/eshaz/wasm-audio-decoders
+  License text: THIRD_PARTY_LICENSES/wasm-audio-decoders-MIT.txt
+  The minified files embed external decoder code: mpg123/libmpg123
+  (LGPL-2.1), libopus (BSD-3-Clause), and codec-parser (LGPL-3.0-or-later).
+  https://www.mpg123.de/
+  https://github.com/xiph/opus
+  https://github.com/eshaz/codec-parser
+  Opus license and copyright: THIRD_PARTY_LICENSES/Opus-BSD.txt
+  The bundles also use simple-yenc (MIT, Ethan Halsall) and puff from zlib
+  (zlib license). The Ogg Opus decoder credits AnthumChris/opus-stream-decoder
+  as its original basis. Preserve those upstream copyright notices as well.
+  https://github.com/eshaz/simple-yenc
+  MIT text: THIRD_PARTY_LICENSES/simple-yenc-MIT.txt
+  https://github.com/madler/zlib/tree/develop/contrib/puff
+  puff notice: THIRD_PARTY_LICENSES/puff-zlib.txt
+  https://github.com/anthumchris/opus-stream-decoder
+  Preserve the bundled copyright headers. The source preparation helper
+  requires byte-identical npm package bundles and archives the tagged build
+  sources with the decoder-specific Git submodules. It also includes the
+  codec-parser package version from each decoder source lockfile. For LGPL
+  components, also provide access to any other material needed to satisfy
+  the applicable LGPL terms.
 
-Swashbuckle.AspNetCore 10.1.7
-License: MIT
-Source: https://github.com/domaindrivendev/Swashbuckle.AspNetCore
+Models and data
+---------------
+Piper - original rhasspy/piper software MIT
+  https://github.com/rhasspy/piper
+  This does not grant a uniform license to independently published voices.
+Model/en_US-amy-medium.onnx.json and the matching Piper model weights in release builds
+  https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/amy/medium
+  Its model card refers to MycroftAI/mimic3-voices for the dataset license and
+  says the model was fine-tuned from en_US-lessac-medium. Keep the model card
+  and its specific license terms with releases containing the model weights.
+OpenVoice V2 - MIT - https://github.com/myshell-ai/OpenVoice
+  ONNX conversions are downloaded at first run from
+  https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2
+  No OpenVoice model weights are included in this source archive.
+LibriTTS-R - CC BY 4.0 - https://www.openslr.org/141/
+  License terms: https://creativecommons.org/licenses/by/4.0/
+  Yuma Koizumi, Heiga Zen, Shigeki Karita, Yifan Ding, Kohei Yatabe,
+  Nobuyuki Morioka, Michiel Bacchiani, Yu Zhang, Wei Han, Ankur Bapna,
+  "LibriTTS-R: A Restored Multi-Speaker Text-to-Speech Corpus", Interspeech 2023.
+  The project attributes 13 source WAVs and their bundled .voice embeddings
+  to this corpus. Source recordings were selected and renamed; embeddings
+  were generated from the recordings. Individual speaker IDs and original
+  corpus paths are not known. The 15 source WAVs are included in Voices/ and
+  copied to published builds. See VOICE_PROVENANCE.txt for per-file hashes.
+  This attribution does not imply endorsement by the dataset creators.
+Two additional bundled embeddings (male.voice and female.voice)
+  female.wav: vero.marengere, "French Canadian Woman Giving Instructions 04.wav"
+  https://freesound.org/people/vero.marengere/sounds/514877/
+  male.wav: aarongbuk, "other radio stations.wav"
+  https://freesound.org/people/aarongbuk/sounds/222599/
+  Both Freesound pages display CC0 1.0:
+  https://creativecommons.org/publicdomain/zero/1.0/
+  CC0 does not require attribution; the links document provenance. The author
+  identified these recordings and the local WAV formats match page metadata.
+  Byte-identical copies of the Freesound downloads were not checked. The WAVs
+  and their SHA-256 checksums are in Voices/ and VOICE_PROVENANCE.txt.
+PHOIBLE 2.0 - CC BY-SA 3.0 - https://phoible.org/
+  Steven Moran and Daniel McCloy (eds.), PHOIBLE 2.0, 2019.
+  PHOIBLE/phoible.csv is bundled with ready-to-run releases. Preserve this
+  attribution and the CC BY-SA 3.0 license reference with the dataset.
 
-Microsoft.ML.OnnxRuntime 1.29.0
-Microsoft.ML.OnnxRuntime.DirectML 1.24.4
-Microsoft.ML.OnnxRuntime.Gpu 1.29.0
-Microsoft.ML.OnnxRuntime.EP.WebGpu 0.3.0
-License: MIT
-Source: https://github.com/microsoft/onnxruntime
-Note: ONNX Runtime packages include additional third-party components; see the upstream ThirdPartyNotices.txt for their notices.
+Binary release verification
+---------------------------
+This source archive is not an inventory of every published build. Before
+publishing each Windows, Linux, or container artifact, compare its actual
+contents against the notices above and the licenses inside its restored NuGet
+packages, including transitive and native dependencies. Preserve required
+copyright and license texts in the published artifact.
+The publishing helper prepares corresponding source once when needed, checks
+the staged hashes, and packages it as a separate release download. The binary
+outputs contain SOURCE_ACCESS.txt and SOURCE_MANIFEST.json rather than large
+copies of the source package. Offer the matching source package with equivalent
+access wherever the binaries are distributed.
+Linux builds omit the bundled
+Windows DLLs but retain eSpeak data; the Linux system eSpeak and container
+packages must be reviewed against the exact image. The default `All` publish
+includes Windows DirectML and copies its package terms without blocking build.
+NUGET_RESTORE_INVENTORY.txt records all six RID-specific restore graphs from
+the 20260924-235314 publish run. The script captures each exact restore graph
+and copies available package license and notice files from the NuGet cache.
+Inspect its reports and the actual native binaries. The Microsoft.AI.DirectML
+license issue above remains unresolved for the DirectML binary variant.
 
-Native components
------------------
+When conveying the bundled Piper eSpeak DLL, make its corresponding fork
+source and build scripts available with equivalent access alongside the
+binary. Do the same for source and other required materials for the two
+prebuilt browser decoder bundles and their LGPL components. A repository
+home-page link alone is not a substitute for these distribution steps.
+Linux/container publishes should also be checked for Windows-native files
+copied from PiperNative/ even when Linux uses a separately installed eSpeak.
 
-eSpeak NG
-License: GPL-3.0-or-later
-Source: https://github.com/espeak-ng/espeak-ng
-Purpose: phonemization and pronunciation rules.
+Check the Piper model card and license against the exact weights bundled in
+each published build. If a build also contains OpenVoice model weights, check
+its model card and notices against those files as well.
 
-LAME MP3 Encoder
-License: LGPL-2.0-or-later
-Source: https://lame.sourceforge.io/
-Purpose: MP3 encoding backend used through NAudio.Lame.
-
-Browser / Web dependencies
---------------------------
-
-mpg123-decoder 1.0.3
-Author / maintainer: eshaz
-License: MIT
-Source: https://github.com/eshaz/wasm-audio-decoders
-Purpose: WebAssembly MP3 decoding fallback for browsers without audio/mpeg MediaSource support.
-Note: The bundled decoder includes mpg123/libmpg123 components, which are licensed separately under LGPL-2.1.
-
-ogg-opus-decoder 1.7.5
-Author / maintainer: eshaz
-License: MIT
-Source: https://github.com/eshaz/wasm-audio-decoders
-Purpose: WebAssembly Ogg/Opus streaming decoder fallback for browsers without native Ogg/Opus MediaSource support.
-Note: The bundled decoder includes libopus (BSD-3-Clause) and codec-parser (LGPL-3.0-or-later); their upstream license terms remain controlling.
-
-Models and datasets
--------------------
-
-Piper TTS
-License: MIT for the original rhasspy/piper software.
-Source: https://github.com/rhasspy/piper
-Note: Piper voice models have their own per-model licenses.
-
-Bundled default Piper voice: en_US-amy-medium
-Voice source: https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/amy/medium
-Upstream model card: https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/amy/medium/MODEL_CARD
-Training: Fine-tuned from the U.S. English lessac medium voice.
-Dataset/provenance: The upstream model card points to MycroftAI/mimic3-voices and defers dataset licensing to that source.
-Licensing note: The linked mimic3-voices repository is licensed under CC BY-SA 4.0, but upstream discussion notes uncertainty about Amy's exact dataset provenance and does not establish a separate Amy-specific license. Tsubaki preserves the upstream attribution and does not claim authorship of the voice model or its source data.
-
-OpenVoice V2
-License: MIT
-Source: https://github.com/myshell-ai/OpenVoice
-ONNX distribution used by Tsubaki: https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2
-Note: The ONNX files are inference-format conversions of OpenVoice V2 models; Tsubaki does not claim authorship of the original models.
-
-PHOIBLE
-License: CC BY-SA 3.0
-Source: https://phoible.org/
-Citation: Steven Moran and Daniel McCloy (eds.), PHOIBLE 2.0, 2019.
-
-LibriTTS-R
-License: CC BY 4.0
-Source: http://www.openslr.org/141/
-Citation: Yuma Koizumi, Heiga Zen, Shigeki Karita, Yifan Ding, Kohei Yatabe, Nobuyuki Morioka, Michiel Bacchiani, Yu Zhang, Wei Han, Ankur Bapna. "LibriTTS-R: A Restored Multi-Speaker Text-to-Speech Corpus", Interspeech 2023.
+Project artwork
+---------------
+The project author created tsubaki_img.png, tsubaki-tts.png, tsubaki.ico,
+and wwwroot/tsubaki.svg. They are project-owned artwork; no external image
+license or attribution is required for these files.
