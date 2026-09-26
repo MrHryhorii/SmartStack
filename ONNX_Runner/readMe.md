@@ -12,6 +12,7 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 - Voice Freedom — use different voices without replacing the underlying Piper model
 - Cross-Language Pronunciation — use one Piper voice to approximate speech in other configured languages without replacing the base model
 - Zero-shot voice cloning via OpenVoice V2
+- WebGPU acceleration, including Vulkan on Linux
 - OpenAI-compatible API — works with existing OpenAI TTS clients and tools
 - Dedicated Tsubaki API for detailed audio control
 - Real-time streaming (Chunked Transfer Encoding and SSE)
@@ -39,9 +40,7 @@ Dashboard features:
 
 # Download
 
-**[Tsubaki TTS Engine v1.0.7 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.7)**
-
-> This documentation describes the upcoming **v1.0.8**. The latest published binary release is currently **v1.0.7**.
+**[Tsubaki TTS Engine v1.0.8 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.8)**
 
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
@@ -107,7 +106,7 @@ Tsubaki is designed for:
 
 Download the build for your OS from:
 
-https://github.com/MrHryhorii/SmartStack/releases
+https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.8
 
 Extract the complete ZIP. For a first run, the CPU build is the simplest choice.
 
@@ -698,7 +697,7 @@ dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./
 
 ### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
 
-Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
+Uses WebGPU through Vulkan for hardware-accelerated OpenVoice voice cloning. A working Vulkan driver is required for GPU acceleration; if WebGPU cannot initialize, Tsubaki falls back to CPU.
 
 ```bash
 dotnet publish -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
@@ -1001,7 +1000,7 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 | `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is primarily a concurrency throttle** — concurrent requests share the same loaded model rather than requiring one full model copy per request. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled. |
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value automatically derives a safe limit from the available logical processors and `OnnxSettings.Cpu.IntraOpNumThreads`. If `IntraOpNumThreads` is also automatic (`0`), Tsubaki uses one concurrent CPU request. |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
-| `OpenVoiceGpuDeviceId`     | Hardware index of the GPU used to execute the OpenVoice Tone Color Converter. Can be assigned a different ID in multi-GPU setups to split the computational load. |
+| `OpenVoiceGpuDeviceId`     | Selects the GPU for OpenVoice. In WebGPU builds, Windows uses the DXGI adapter number; Linux uses a zero-based index among WebGPU-compatible GPUs. These indices are specific to each machine and may differ between Windows and Linux. |
 | `ForcePiperToCpu`          | Forces the base Piper model to execute on the CPU regardless of GPU presence. When `true` (Hybrid Routing), the CPU handles parallel Piper text-to-speech generation while the GPU is reserved exclusively for the computationally heavy OpenVoice cloning passes. This keeps CPU synthesis independent from the GPU voice-conversion stage, allowing the CPU to prepare additional requests while the GPU processes a cloned voice. |
 
 > **DirectML users:** think of this setting as a direct trade — each unit of `MaxConcurrentGpuRequests` buys one more simultaneous request, at the cost of one more full copy of the relevant model(s) sitting in VRAM. CUDA and CPU users don't pay this cost, since they share one session across all concurrent requests. **On WebGPU, GPU voice conversion is currently processed one request at a time for stability, while multiple CPU synthesis requests can still be prepared in parallel.**
