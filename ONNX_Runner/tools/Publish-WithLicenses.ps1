@@ -286,8 +286,45 @@ foreach ($build in $variants) {
     ) | Set-Content -LiteralPath (Join-Path $publishDirectory 'RELEASE_CONTENTS.txt') -Encoding UTF8
     New-Item -ItemType Directory -Path $reviewRoot -Force | Out-Null
     Copy-Item -LiteralPath $assetsPath -Destination (Join-Path $reviewRoot "$($build.Name)-$runId.project.assets.json") -Force
+    Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
-    [System.IO.Compression.ZipFile]::CreateFromDirectory(
-        $publishDirectory, $archivePath, [System.IO.Compression.CompressionLevel]::Optimal, $true)
+    $archiveRoot = $build.Artifact
+    $sourceRoot = $publishDirectory.TrimEnd([char[]]@('\', '/'))
+    $zip = [System.IO.Compression.ZipFile]::Open($archivePath, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        [void]$zip.CreateEntry("$archiveRoot/")
+        foreach ($directory in (Get-ChildItem -LiteralPath $publishDirectory -Recurse -Directory -Force)) {
+            $relativePath = $directory.FullName.Substring($sourceRoot.Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+            [void]$zip.CreateEntry("$archiveRoot/$relativePath/")
+        }
+        $fileCount = 0
+        foreach ($file in (Get-ChildItem -LiteralPath $publishDirectory -Recurse -File -Force)) {
+            $relativePath = $file.FullName.Substring($sourceRoot.Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+            [void][System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+                $zip, $file.FullName, "$archiveRoot/$relativePath", [System.IO.Compression.CompressionLevel]::Optimal)
+            $fileCount++
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
+
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
+    try {
+        $archivedFiles = 0
+        foreach ($entry in $zip.Entries) {
+            if ($entry.FullName.Contains('\') -or
+                -not $entry.FullName.StartsWith("$archiveRoot/", [System.StringComparison]::Ordinal)) {
+                throw "Invalid ZIP entry path in ${archivePath}: $($entry.FullName)"
+            }
+            if (-not $entry.FullName.EndsWith('/')) { $archivedFiles++ }
+        }
+        if ($archivedFiles -ne $fileCount) {
+            throw "Incomplete ZIP archive: expected $fileCount files, found $archivedFiles in $archivePath"
+        }
+    }
+    finally {
+        $zip.Dispose()
+    }
     Write-Host "Published $($build.Name) with $($packages.Count) package records: $archivePath"
 }

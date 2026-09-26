@@ -99,6 +99,7 @@ public partial class OpenVoiceRunner : IDisposable
         int startingDeviceId = Math.Max(0, hwSettings.OpenVoiceGpuDeviceId);
         // Try the desired device + the next 3 as a fallback
         int maxGpusToTry = startingDeviceId + 4;
+        Exception? firstGpuError = null;
 
         for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
         {
@@ -121,11 +122,21 @@ public partial class OpenVoiceRunner : IDisposable
                 // stay as simple shared sessions.
                 gpuOptions.AppendExecutionProvider_CUDA(deviceId);
 
-                var extract = new InferenceSession(extractPath, gpuOptions);
-                var color = new InferenceSession(colorPath, gpuOptions);
-
-                OnnxHardwareDiagnostics.LogCudaDevice(logger, "OpenVoice Models", deviceId);
-                return (extract, color, null, false, int.MaxValue);
+                InferenceSession? extract = null;
+                InferenceSession? color = null;
+                try
+                {
+                    extract = new InferenceSession(extractPath, gpuOptions);
+                    color = new InferenceSession(colorPath, gpuOptions);
+                    OnnxHardwareDiagnostics.LogCudaDevice(logger, "OpenVoice Models", deviceId);
+                    return (extract, color, null, false, int.MaxValue);
+                }
+                catch
+                {
+                    color?.Dispose();
+                    extract?.Dispose();
+                    throw;
+                }
 #elif USE_DML
                 // DirectML crashes on concurrent execution.
                 gpuOptions.AppendExecutionProvider_DML(deviceId);
@@ -199,6 +210,7 @@ public partial class OpenVoiceRunner : IDisposable
                 }
 
                 OrtEpDevice? webGpuDevice = null;
+                int webGpuDeviceIndex = 0;
 
                 foreach (var device in env.GetEpDevices())
                 {
@@ -215,8 +227,15 @@ public partial class OpenVoiceRunner : IDisposable
                         continue;
                     }
 
-                    // On Windows this is the DXGI adapter index.
-                    // It matches the deviceId semantics used by DirectML.
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        if (webGpuDeviceIndex++ != deviceId) { continue; }
+
+                        webGpuDevice = device;
+                        break;
+                    }
+
+                    // DXGI adapter numbers are available only on Windows.
                     if (!device.HardwareDevice.Metadata.Entries.TryGetValue(
                         "DxgiAdapterNumber",
                         out string? adapterNumberText))
@@ -245,7 +264,7 @@ public partial class OpenVoiceRunner : IDisposable
                 if (webGpuDevice == null)
                 {
                     throw new InvalidOperationException(
-                        $"No WebGPU-compatible GPU was found for DXGI adapter index {deviceId}.");
+                        $"No WebGPU-compatible GPU was found for device index {deviceId}.");
                 }
 
                 // The OrtEpDevice already identifies the physical GPU.
@@ -301,10 +320,11 @@ public partial class OpenVoiceRunner : IDisposable
             }
             catch (Exception ex)
             {
+                firstGpuError ??= ex;
                 LogGpuInitFailed(logger, ex, deviceId);
             }
         }
-        logger.LogInformation("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
+        logger.LogWarning(firstGpuError, "[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
 
         // ====================================================================
         // CPU-ONLY BLOCK (Compiled if CpuOnly flag is used during build)

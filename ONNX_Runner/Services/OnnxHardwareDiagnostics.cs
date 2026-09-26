@@ -64,12 +64,95 @@ internal static partial class OnnxHardwareDiagnostics
         int adapterIndex,
         OrtEpDevice epDevice)
     {
+        OrtHardwareDevice hardwareDevice = epDevice.HardwareDevice;
+        string vendor = hardwareDevice.Vendor;
+
+        if (string.IsNullOrWhiteSpace(vendor))
+        {
+            vendor = TryGetLinuxPciVendor(hardwareDevice.DeviceId) ?? "Unknown";
+        }
+
         LogWebGpuLoaded(
             logger,
             component,
             adapterIndex,
-            epDevice.HardwareDevice.Vendor,
-            epDevice.HardwareDevice.DeviceId);
+            vendor,
+            hardwareDevice.DeviceId);
+    }
+
+    private static string? TryGetLinuxPciVendor(uint deviceId)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return null;
+        }
+
+        const string pciDevicesPath = "/sys/bus/pci/devices";
+
+        if (!Directory.Exists(pciDevicesPath))
+        {
+            return null;
+        }
+
+        uint? matchedVendorId = null;
+
+        try
+        {
+            foreach (string path in Directory.EnumerateDirectories(pciDevicesPath))
+            {
+                if (!TryReadPciHex(Path.Combine(path, "class"), out uint classCode) ||
+                    classCode >> 16 != 0x03 ||
+                    !TryReadPciHex(Path.Combine(path, "device"), out uint pciDeviceId) ||
+                    pciDeviceId != deviceId ||
+                    !TryReadPciHex(Path.Combine(path, "vendor"), out uint vendorId))
+                {
+                    continue;
+                }
+
+                if (matchedVendorId is not null && matchedVendorId != vendorId)
+                {
+                    return null;
+                }
+
+                matchedVendorId = vendorId;
+            }
+        }
+        catch (IOException)
+        {
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        return matchedVendorId switch
+        {
+            0x1002 => "AMD",
+            0x10DE => "NVIDIA",
+            0x8086 => "Intel",
+            uint value => $"PCI vendor 0x{value:X4}",
+            _ => null
+        };
+    }
+
+    private static bool TryReadPciHex(string path, out uint value)
+    {
+        value = default;
+
+        if (!File.Exists(path))
+        {
+            return false;
+        }
+
+        string content = File.ReadAllText(path).Trim();
+
+        return content.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+            uint.TryParse(
+                content.AsSpan(2),
+                NumberStyles.AllowHexSpecifier,
+                CultureInfo.InvariantCulture,
+                out value);
     }
 
     private static bool TryGetDxgiAdapter(int adapterIndex, out OrtHardwareDevice hardwareDevice)
