@@ -3,6 +3,8 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading.Channels;
 using Whisper.net;
+using Whisper.net.LibraryLoader;
+using Whisper.net.Wave;
 
 namespace STT_Runner.Services;
 
@@ -34,18 +36,23 @@ namespace STT_Runner.Services;
 public sealed class Transcriptor : IDisposable
 {
     private readonly WhisperFactory _whisperFactory;
+    private readonly SemaphoreSlim _whisperSemaphore;
 
     /// <summary>
     /// Default language used when the caller does not provide an override.
     /// "auto" lets Whisper detect the language from the first ~30 s of audio.
     /// </summary>
     private readonly string _defaultLanguage;
+    private readonly string _warmUpAudioPath;
 
-    public Transcriptor(string modelPath, IConfiguration config)
+    public Transcriptor(string modelPath, IConfiguration config, SemaphoreSlim whisperSemaphore)
     {
-        var factoryOptions = new WhisperFactoryOptions();
-
+        _whisperSemaphore = whisperSemaphore;
         bool useGpu = config.GetValue<bool>("SttSettings:UseGpu", false);
+        RuntimeOptions.RuntimeLibraryOrder = [RuntimeLibrary.Cpu];
+        if (useGpu)
+            RuntimeOptions.RuntimeLibraryOrder.Insert(0, RuntimeLibrary.Vulkan);
+        var factoryOptions = new WhisperFactoryOptions();
 
         if (useGpu)
         {
@@ -53,7 +60,7 @@ public sealed class Transcriptor : IDisposable
             factoryOptions.GpuDevice = config.GetValue<int>("SttSettings:GpuDeviceIndex", 0);
 
             Console.ForegroundColor = ConsoleColor.Magenta;
-            Console.WriteLine($"[HARDWARE] Whisper: GPU acceleration active (device {factoryOptions.GpuDevice}).");
+            Console.WriteLine($"[HARDWARE] Whisper GPU requested (device {factoryOptions.GpuDevice}).");
         }
         else
         {
@@ -64,56 +71,46 @@ public sealed class Transcriptor : IDisposable
         Console.ResetColor();
 
         _defaultLanguage = config.GetValue<string>("SttSettings:DefaultLanguage") ?? "auto";
+        string warmUpAudioFile = config.GetValue<string>("SttSettings:WarmUpAudioFile") ?? "Assets/warmup.wav";
+        _warmUpAudioPath = Path.IsPathRooted(warmUpAudioFile)
+            ? warmUpAudioFile
+            : Path.Combine(AppContext.BaseDirectory, warmUpAudioFile);
 
         // Load the GGML weight matrix once — this is the expensive operation.
         _whisperFactory = WhisperFactory.FromPath(modelPath, factoryOptions);
+        Console.WriteLine($"[HARDWARE] Whisper loaded runtime: {RuntimeOptions.LoadedLibrary?.ToString() ?? "unknown"}.");
+        if (useGpu && RuntimeOptions.LoadedLibrary != RuntimeLibrary.Vulkan)
+            Console.WriteLine("[WARNING] Vulkan unavailable; Whisper is running on CPU.");
     }
 
     /// <summary>
-    /// Primes Whisper before the first real request by running a full inference pass
-    /// on dummy audio. On GPU backends this forces CUDA/Vulkan shader compilation and
-    /// cuBLAS plan caching, eliminating the latency spike on the first real sentence.
-    ///
-    /// Why 3 seconds of silence instead of 1?
-    /// A longer dummy clip exercises more of the encoder's attention layers and ensures
-    /// the GPU driver pre-compiles all kernel variants Whisper actually uses during
-    /// decoding. One second of silence often misses the decoder warmup path entirely.
-    ///
-    /// Both inference tasks (transcription and translation) are warmed up independently
-    /// because they compile different decoder kernels on the GPU.
+    /// Runs real speech through both decoder tasks before the server accepts requests.
+    /// This primes the loaded backend and the shader paths exercised by the sample.
     /// </summary>
     public async Task WarmUpAsync()
     {
         Console.WriteLine("[SYSTEM] Warming up Whisper...");
+        if (!File.Exists(_warmUpAudioPath))
+            throw new FileNotFoundException("Whisper warm-up audio is missing.", _warmUpAudioPath);
 
-        const int dummySamples = 16_000 * 3; // 3 seconds of silence
-        float[] dummyAudio = ArrayPool<float>.Shared.Rent(dummySamples);
-        try
-        {
-            // ArrayPool may return a dirty buffer — zero it so Whisper sees clean silence.
-            dummyAudio.AsSpan(0, dummySamples).Clear();
+        await using var input = File.OpenRead(_warmUpAudioPath);
+        var parser = new WaveParser(input);
+        float[] samples = await parser.GetAvgSamplesAsync();
+        if (parser.SampleRate != 16_000 || samples.Length < 16_000 || samples.Length > 16_000 * 30)
+            throw new InvalidDataException("Whisper warm-up audio must be 16 kHz WAV between 1 and 30 seconds.");
 
-            var dummyMemory = dummyAudio.AsMemory(0, dummySamples);
+        using var transcriptionProcessor = _whisperFactory.CreateBuilder()
+            .WithLanguage(_defaultLanguage)
+            .WithTemperature(0.0f)
+            .Build();
+        await foreach (var _ in transcriptionProcessor.ProcessAsync(samples.AsMemory())) { }
 
-            // Warm up the transcription decoder path.
-            using var transcriptionProcessor = _whisperFactory.CreateBuilder()
-                .WithLanguage(_defaultLanguage)
-                .WithTemperature(0.0f)
-                .Build();
-            await foreach (var _ in transcriptionProcessor.ProcessAsync(dummyMemory)) { }
-
-            // Warm up the translation decoder path — different GPU kernels are involved.
-            using var translationProcessor = _whisperFactory.CreateBuilder()
-                .WithLanguage(_defaultLanguage)
-                .WithTranslate()
-                .WithTemperature(0.0f)
-                .Build();
-            await foreach (var _ in translationProcessor.ProcessAsync(dummyMemory)) { }
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(dummyAudio);
-        }
+        using var translationProcessor = _whisperFactory.CreateBuilder()
+            .WithLanguage(_defaultLanguage)
+            .WithTranslate()
+            .WithTemperature(0.0f)
+            .Build();
+        await foreach (var _ in translationProcessor.ProcessAsync(samples.AsMemory())) { }
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine("[SYSTEM] Whisper warm-up complete (transcription + translation paths).");
@@ -176,9 +173,15 @@ public sealed class Transcriptor : IDisposable
                 // Slice to the exact valid sample count reported by VadProcessor.
                 ReadOnlyMemory<float> audioSlice = owner.Memory[..length];
 
-                await foreach (var segment in processor.ProcessAsync(audioSlice, ct))
+                await _whisperSemaphore.WaitAsync(ct);
+                try
                 {
-                    sb.Append(segment.Text);
+                    await foreach (var segment in processor.ProcessAsync(audioSlice, ct))
+                        sb.Append(segment.Text);
+                }
+                finally
+                {
+                    _whisperSemaphore.Release();
                 }
             }
             // owner is returned to MemoryPool here — safe to yield after the using block.

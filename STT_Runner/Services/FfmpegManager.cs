@@ -4,109 +4,70 @@ using Xabe.FFmpeg.Downloader;
 
 namespace STT_Runner.Services;
 
-/// <summary>
-/// Ensures FFmpeg is available on the host system.
-/// Automatically downloads the correct static build (Windows/Linux/macOS)
-/// and configures execution permissions on Unix systems.
-/// </summary>
 public static class FfmpegManager
 {
+    public static string ExecutablePath { get; private set; } = "ffmpeg";
+
     public static async Task EnsureInitializedAsync()
     {
-        Console.WriteLine("[SYSTEM] Checking FFmpeg installation...");
-
-        if (IsFfmpegAvailable())
+        string localPath = GetLocalFfmpegPath();
+        if (File.Exists(localPath))
         {
-            Console.WriteLine("[SYSTEM] FFmpeg is already installed and available.");
+            try { EnsureUnixExecutePermissions(localPath); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            if (await CanRunAsync(localPath))
+            {
+                ExecutablePath = localPath;
+                return;
+            }
+        }
+
+        if (await CanRunAsync("ffmpeg"))
+        {
+            ExecutablePath = "ffmpeg";
             return;
         }
 
-        Console.WriteLine("[SYSTEM] FFmpeg not found. Downloading the latest static build...");
+        await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official, AppContext.BaseDirectory);
+        EnsureUnixExecutePermissions(localPath);
+        if (!await CanRunAsync(localPath))
+            throw new InvalidOperationException("FFmpeg could not be started after download.");
 
-        // Xabe.FFmpeg.Downloader automatically detects the OS and architecture and downloads the appropriate version.
-        await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official, AppDomain.CurrentDomain.BaseDirectory);
-
-        // After downloading, ensure the local FFmpeg has execute permissions on Unix systems.
-        EnsureUnixExecutePermissions();
-
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("[SYSTEM] FFmpeg downloaded and configured successfully.");
-        Console.ResetColor();
+        ExecutablePath = localPath;
     }
 
-    /// <summary>
-    /// Returns the correct path to the local FFmpeg file depending on the OS.
-    /// This method is made public so that AudioProcessor can use it.
-    /// </summary>
     public static string GetLocalFfmpegPath()
     {
-        string ext = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
-        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, $"ffmpeg{ext}");
+        string extension = OperatingSystem.IsWindows() ? ".exe" : "";
+        return Path.Combine(AppContext.BaseDirectory, $"ffmpeg{extension}");
     }
 
-    private static bool IsFfmpegAvailable()
+    private static async Task<bool> CanRunAsync(string path)
     {
         try
         {
-            // First, try to run "ffmpeg -version" to see if it's globally available in the PATH.
-            var process = new Process
+            using var process = Process.Start(new ProcessStartInfo(path)
             {
-                StartInfo = new ProcessStartInfo
-                {
-                    FileName = "ffmpeg",
-                    Arguments = "-version",
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                }
-            };
-
-            process.Start();
-            process.WaitForExit();
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+                ArgumentList = { "-version" }
+            });
+            if (process is null) return false;
+            await process.WaitForExitAsync();
             return process.ExitCode == 0;
         }
-        catch
+        catch (Exception)
         {
-            // If it's not available globally, check if it exists locally in the application directory
-            string localPath = GetLocalFfmpegPath();
-            return File.Exists(localPath);
+            return false;
         }
     }
 
-    /// <summary>
-    /// On Linux and macOS, the downloaded file doesn't have execute permissions by default.
-    /// This method calls the system command chmod +x.
-    /// </summary>
-    private static void EnsureUnixExecutePermissions()
+    private static void EnsureUnixExecutePermissions(string path)
     {
-        // If this is Windows, execute permissions are not needed
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            return;
-
-        string localPath = GetLocalFfmpegPath();
-
-        if (File.Exists(localPath))
-        {
-            try
-            {
-                var process = Process.Start(new ProcessStartInfo
-                {
-                    FileName = "chmod",
-                    Arguments = $"+x \"{localPath}\"",
-                    UseShellExecute = false,
-                    CreateNoWindow = true
-                });
-
-                process?.WaitForExit();
-                Console.WriteLine("[SYSTEM] Unix execute permissions (chmod +x) granted to local FFmpeg.");
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[WARNING] Failed to set execute permissions for FFmpeg: {ex.Message}");
-                Console.ResetColor();
-            }
-        }
+        if (OperatingSystem.IsWindows()) return;
+        File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserExecute);
     }
 }

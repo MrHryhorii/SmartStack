@@ -9,10 +9,11 @@ using System.Threading.RateLimiting;
 // Architecture:
 //   AudioProcessor  →  [Channel<IMemoryOwner<float>>]
 //   VadProcessor    →  [Channel<(IMemoryOwner<float>, int)>]
-//   Transcriptor    →  IAsyncEnumerable<string>  →  HTTP response
+//   Transcriptor    →  ordered text            →  final HTTP response
 // =============================================================================
 
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 512L * 1024 * 1024);
 
 // ── Swagger / API documentation ───────────────────────────────────────────────
 builder.Services.AddEndpointsApiExplorer();
@@ -25,6 +26,7 @@ builder.Services.AddSwaggerGen(c =>
         Description = "A drop-in local replacement for the OpenAI Whisper API " +
                       "built on the Three-Body Channel pipeline.",
     });
+    c.OperationFilter<TranscriptionUploadOperationFilter>();
 });
 
 // ── CORS configuration ──────────────────────────────────────────────────────
@@ -60,7 +62,7 @@ if (enableRateLimiting)
             opt.PermitLimit = maxRequests;
             opt.Window = TimeSpan.FromSeconds(windowSec);
             opt.QueueProcessingOrder = QueueProcessingOrder.OldestFirst;
-            opt.QueueLimit = 50; // Allow some queuing beyond the immediate limit, but reject if the queue is too long.
+            opt.QueueLimit = 0; // Reject requests immediately when the rate limit is reached.
         });
         options.RejectionStatusCode = 429; // Too Many Requests
     });
@@ -73,8 +75,7 @@ string vadPath;
 try
 {
     Console.WriteLine("[SYSTEM] Running pre-flight checks for dependencies...");
-    // Check and download FFmpeg if not present, since it's required for audio preprocessing. 
-    // This also ensures the correct version is available for the host OS.
+    // Resolve a working local or system FFmpeg executable.
     await FfmpegManager.EnsureInitializedAsync();
     // Check and download AI models if not present.
     (whisperPath, vadPath) = await ModelManager.EnsureModelsExistAsync(builder.Configuration);
@@ -90,26 +91,31 @@ catch (Exception ex)
 
 // ── Dependency injection ──────────────────────────────────────────────────────
 
-// SemaphoreSlim to limit concurrent inference requests and prevent resource exhaustion.
-int maxConcurrency = builder.Configuration.GetValue<int>("ServerSecurity:MaxConcurrentInference", 2);
-builder.Services.AddSingleton(new SemaphoreSlim(maxConcurrency, maxConcurrency));
+// Separate limits for request pipelines and native Whisper inference.
+int maxConcurrency = Math.Max(1, builder.Configuration.GetValue<int>("ServerSecurity:MaxConcurrentRequests", 4));
+int maxWhisper = Math.Max(1, builder.Configuration.GetValue<int>("ServerSecurity:MaxConcurrentWhisper", 1));
+int queueLimit = builder.Configuration.GetValue<int>("ServerSecurity:MaxQueuedRequests", 8);
+int queueWaitSeconds = builder.Configuration.GetValue<int>("ServerSecurity:QueueWaitSeconds", 120);
+var requestSlots = new RequestSlots(maxConcurrency, queueLimit, queueWaitSeconds);
+builder.Services.AddSingleton(requestSlots);
+var whisperSlots = new SemaphoreSlim(maxWhisper, maxWhisper);
 
 // Stage 1: stateless audio normaliser — safe to share across requests.
 builder.Services.AddSingleton<AudioProcessor>();
 
 // Stage 2: holds a single ONNX Runtime session; ONNX inference is thread-safe.
-var vadProcessor = new VadProcessor(vadPath);
+var vadProcessor = new VadProcessor(vadPath, builder.Configuration);
 builder.Services.AddSingleton(vadProcessor);
 
 // Stage 3: holds the GGML weight matrix in RAM/VRAM; WhisperFactory is thread-safe,
 // but each ProcessWhisperChannelAsync call creates its own WhisperProcessor internally.
-var transcriptor = new Transcriptor(whisperPath, builder.Configuration);
+var transcriptor = new Transcriptor(whisperPath, builder.Configuration, whisperSlots);
 builder.Services.AddSingleton(transcriptor);
 
 // ── Model warm-up ─────────────────────────────────────────────────────────────
 // Warm up both models before accepting traffic so the first real request is fast.
 // VAD: triggers ONNX Runtime JIT graph compilation.
-// Whisper: triggers CUDA/Vulkan shader compilation and cuBLAS plan caching.
+// Whisper: primes the selected native runtime.
 vadProcessor.WarmUp();
 await transcriptor.WarmUpAsync();
 
@@ -131,6 +137,6 @@ if (app.Environment.IsDevelopment())
 }
 
 // Map the transcription endpoints, which implement the Three-Body Channel pipeline internally.
-app.MapTranscriptionEndpoints();
+app.MapTranscriptionEndpoints(enableRateLimiting);
 
 app.Run();

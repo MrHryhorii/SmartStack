@@ -1,269 +1,265 @@
-using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Net.Http.Headers;
 using STT_Runner.Services;
 using System.Buffers;
+using System.ComponentModel.DataAnnotations;
 using System.Text;
+using System.Text.Json.Serialization;
 using System.Threading.Channels;
 
 namespace STT_Runner.Endpoints;
 
-/// <summary>
-/// OpenAI-compatible Speech-to-Text endpoints.
-///
-/// Implements the same routes, parameters, and response shapes as the OpenAI Audio API
-/// so any client using the official OpenAI SDK can point at this server with zero changes.
-///
-/// Routes
-/// ──────
-/// POST /v1/audio/transcriptions — transcribes speech in its original language.
-/// POST /v1/audio/translations   — transcribes speech and translates the result to English.
-///
-/// Supported response_format values
-/// ─────────────────────────────────
-/// "json"         (default) → { "text": "..." }
-/// "text"                   → plain text body
-/// "verbose_json"           → { "task": ..., "language": ..., "text": "..." }
-///
-/// Concurrency guard
-/// ─────────────────
-/// A <see cref="SemaphoreSlim"/> injected from DI limits how many requests run the
-/// AI pipeline simultaneously. Requests that arrive when all slots are occupied are
-/// rejected immediately with 503 rather than queued, keeping memory and latency bounded.
-/// The limit is configured via <c>ServerSecurity:MaxConcurrentInference</c>.
-/// </summary>
 public static class TranscriptionEndpoints
 {
-    // Channel 1 (AudioProcessor → VAD): larger — 512-sample chunks arrive very fast.
-    private const int AudioChannelCapacity = 500;
-
-    // Channel 2 (VAD → Whisper): small — each item is a full sentence (many kilobytes).
-    private const int SentenceChannelCapacity = 20;
-
-    public static void MapTranscriptionEndpoints(this IEndpointRouteBuilder app)
+    // Documentation-only shape; the endpoint reads multipart sections directly.
+    public sealed class UploadForm
     {
-        // =====================================================================
-        // POST /v1/audio/transcriptions
-        // =====================================================================
-        // OpenAI reference: https://platform.openai.com/docs/api-reference/audio/createTranscription
-        //
-        // Accepted multipart/form-data fields:
-        //   file            (required) — audio file in any format NAudio supports
-        //   model           (optional) — accepted but ignored; model path comes from config
-        //   language        (optional) — BCP-47 source language hint, e.g. "uk", "en"
-        //   response_format (optional) — "json" | "text" | "verbose_json"  (default: "json")
-        // =====================================================================
-        app.MapPost("/v1/audio/transcriptions", async (
-            IFormFile file,
-            [FromForm] string? model,
-            [FromForm] string? language,
-            [FromForm] string? response_format,
-            [FromServices] AudioProcessor audioProcessor,
-            [FromServices] VadProcessor vadProcessor,
-            [FromServices] Transcriptor transcriptor,
-            [FromServices] SemaphoreSlim inferenceSemaphore,
-            CancellationToken ct) =>
-        {
-            if (file is null || file.Length == 0)
-                return Results.BadRequest(new
-                {
-                    error = new { message = "Audio file is required.", type = "invalid_request_error" }
-                });
-
-            // Try to enter the semaphore without waiting.
-            // If all inference slots are occupied, return 503 immediately.
-            if (!await inferenceSemaphore.WaitAsync(TimeSpan.Zero, ct))
-            {
-                return Results.Json(
-                    new { error = new { message = "Server is busy. Please retry shortly.", type = "server_busy" } },
-                    statusCode: 503);
-            }
-
-            try
-            {
-                string transcript = await RunPipelineAsync(
-                    file, audioProcessor, vadProcessor, transcriptor,
-                    languageHint: language,
-                    translate: false,
-                    ct);
-
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine($"[TRANSCRIPTION] {transcript}");
-                Console.ResetColor();
-
-                return FormatResponse(response_format, transcript, task: "transcribe", language: language ?? "auto");
-            }
-            catch (OperationCanceledException)
-            {
-                return Results.StatusCode(499); // Nginx convention: Client Closed Request
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[ERROR] Transcription failed: {ex.Message}");
-                Console.ResetColor();
-                return Results.Problem("An internal error occurred during transcription.", statusCode: 500);
-            }
-            finally
-            {
-                // Always release the slot, even if the pipeline threw.
-                inferenceSemaphore.Release();
-            }
-        })
-        .DisableAntiforgery()
-        .WithName("CreateTranscription")
-        .WithSummary("Transcribes audio into the input language.")
-        .WithTags("Audio");
-
-        // =====================================================================
-        // POST /v1/audio/translations
-        // =====================================================================
-        // OpenAI reference: https://platform.openai.com/docs/api-reference/audio/createTranslation
-        //
-        // Always outputs English regardless of the source language.
-        // The `language` parameter is intentionally absent — the OpenAI Translations
-        // endpoint does not accept it; Whisper auto-detects the source language
-        // internally via the WithTranslate() decoder task.
-        //
-        // Accepted multipart/form-data fields:
-        //   file            (required) — audio file
-        //   model           (optional) — accepted but ignored
-        //   response_format (optional) — "json" | "text" | "verbose_json"  (default: "json")
-        // =====================================================================
-        app.MapPost("/v1/audio/translations", async (
-            IFormFile file,
-            [FromForm] string? model,
-            [FromForm] string? response_format,
-            [FromServices] AudioProcessor audioProcessor,
-            [FromServices] VadProcessor vadProcessor,
-            [FromServices] Transcriptor transcriptor,
-            [FromServices] SemaphoreSlim inferenceSemaphore,
-            CancellationToken ct) =>
-        {
-            if (file is null || file.Length == 0)
-                return Results.BadRequest(new
-                {
-                    error = new { message = "Audio file is required.", type = "invalid_request_error" }
-                });
-
-            if (!await inferenceSemaphore.WaitAsync(TimeSpan.Zero, ct))
-            {
-                return Results.Json(
-                    new { error = new { message = "Server is busy. Please retry shortly.", type = "server_busy" } },
-                    statusCode: 503);
-            }
-
-            try
-            {
-                string translated = await RunPipelineAsync(
-                    file, audioProcessor, vadProcessor, transcriptor,
-                    languageHint: null, // Source language is auto-detected by Whisper's translation task.
-                    translate: true,
-                    ct);
-
-                Console.ForegroundColor = ConsoleColor.Cyan;
-                Console.WriteLine($"[TRANSLATION] {translated}");
-                Console.ResetColor();
-
-                return FormatResponse(response_format, translated, task: "translate", language: "en");
-            }
-            catch (OperationCanceledException)
-            {
-                return Results.StatusCode(499);
-            }
-            catch (Exception ex)
-            {
-                Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine($"[ERROR] Translation failed: {ex.Message}");
-                Console.ResetColor();
-                return Results.Problem("An internal error occurred during translation.", statusCode: 500);
-            }
-            finally
-            {
-                inferenceSemaphore.Release();
-            }
-        })
-        .DisableAntiforgery()
-        .WithName("CreateTranslation")
-        .WithSummary("Translates audio into English.")
-        .WithTags("Audio");
+        public string? Language { get; set; }
+        [Required]
+        public IFormFile File { get; set; } = default!;
+        public string? Model { get; set; }
+        [JsonPropertyName("response_format")]
+        public string? ResponseFormat { get; set; }
     }
 
-    // ── Shared pipeline ───────────────────────────────────────────────────────
+    private const int AudioChannelCapacity = 32;
+    private const int SentenceChannelCapacity = 3;
+    private const int MaxBoundaryLength = 128;
+    private const int MaxFieldBytes = 8192;
 
-    /// <summary>
-    /// Runs the full three-stage pipeline (AudioProcessor → VAD → Whisper) for a single
-    /// audio file and returns the concatenated transcript.
-    ///
-    /// Ordering matters: stage 3 (Whisper) drains channel2 inline before we await the
-    /// background tasks. Awaiting stage 1/2 first would deadlock because VAD blocks
-    /// writing to the full channel2 while Whisper hasn't started reading yet.
-    /// </summary>
-    private static async Task<string> RunPipelineAsync(
-        IFormFile file,
-        AudioProcessor audioProcessor,
-        VadProcessor vadProcessor,
-        Transcriptor transcriptor,
-        string? languageHint,
-        bool translate,
-        CancellationToken ct)
+    public static void MapTranscriptionEndpoints(this IEndpointRouteBuilder app, bool rateLimitingEnabled)
     {
-        // Create the two channels that connect the pipeline stages. 
-        // Both are bounded to prevent unbounded memory growth when downstream stages are slower than upstream ones.'
-        var channel1 = Channel.CreateBounded<IMemoryOwner<float>>(
-            new BoundedChannelOptions(AudioChannelCapacity)
-            {
-                SingleWriter = true,
-                SingleReader = true,
-            });
+        MapEndpoint(app, "/v1/audio/transcriptions", translate: false, rateLimitingEnabled);
+        MapEndpoint(app, "/v1/audio/translations", translate: true, rateLimitingEnabled);
+    }
 
-        var channel2 = Channel.CreateBounded<(IMemoryOwner<float>, int)>(
+    private static void MapEndpoint(IEndpointRouteBuilder app, string route, bool translate, bool rateLimitingEnabled)
+    {
+        var endpoint = app.MapPost(route, (HttpContext context, AudioProcessor audio,
+            VadProcessor vad, Transcriptor whisper, RequestSlots slots, IConfiguration config) =>
+            HandleAsync(context, audio, vad, whisper, slots, config, translate))
+            .DisableAntiforgery()
+            .WithTags("Audio")
+            .WithName(translate ? "CreateTranslation" : "CreateTranscription");
+
+        if (rateLimitingEnabled)
+            endpoint.RequireRateLimiting("SttRateLimit");
+    }
+
+    private static async Task<IResult> HandleAsync(HttpContext context, AudioProcessor audio,
+        VadProcessor vad, Transcriptor whisper, RequestSlots slots, IConfiguration config, bool translate)
+    {
+        CancellationToken ct = context.RequestAborted;
+        try
+        {
+            using var requestLease = await slots.AcquireAsync(ct);
+            if (!requestLease.IsAcquired)
+                return Error("Server queue is full. Please retry shortly.", 503);
+
+            string? format = context.Request.Query["response_format"];
+            string? language = context.Request.Query["language"];
+            bool streamResponse = config.GetValue<bool>("SttSettings:StreamResponse", false);
+            bool wroteSentence = false;
+            Func<string, CancellationToken, Task>? sendSentence = null;
+            if (streamResponse)
+            {
+                context.Response.ContentType = "text/plain; charset=utf-8";
+                context.Response.Headers["Cache-Control"] = "no-cache";
+                context.Response.Headers["X-Accel-Buffering"] = "no";
+                sendSentence = async (sentence, token) =>
+                {
+                    await context.Response.WriteAsync(wroteSentence ? " " + sentence : sentence, token);
+                    await context.Response.Body.FlushAsync(token);
+                    wroteSentence = true;
+                };
+            }
+            string transcript;
+
+            if (context.Request.HasFormContentType)
+            {
+                (transcript, format, language) = await ProcessMultipartAsync(context.Request, audio, vad,
+                    whisper, language, format, translate, sendSentence, ct);
+            }
+            else if (IsRawAudio(context.Request.ContentType))
+            {
+                transcript = await RunPipelineAsync(context.Request.Body, audio, vad, whisper,
+                    translate ? null : language, translate, sendSentence, ct);
+            }
+            else
+            {
+                return Error("Send multipart/form-data or raw audio with an audio/* or application/octet-stream content type.", 415);
+            }
+
+            Console.WriteLine($"[{(translate ? "TRANSLATION" : "TRANSCRIPTION")}] {transcript}");
+            if (streamResponse) return Results.Empty;
+            return FormatResponse(format, transcript, translate, language);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            if (context.Response.HasStarted) return Results.Empty;
+            return Results.StatusCode(499);
+        }
+        catch (OperationCanceledException)
+        {
+            return Error("Server queue wait timed out. Please retry shortly.", 503);
+        }
+        catch (InvalidDataException ex)
+        {
+            if (context.Response.HasStarted)
+            {
+                context.Abort();
+                return Results.Empty;
+            }
+            return Error(ex.Message, 400);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[ERROR] Transcription failed: {ex}");
+            if (context.Response.HasStarted)
+            {
+                context.Abort();
+                return Results.Empty;
+            }
+            return Results.Problem("An internal error occurred during transcription.", statusCode: 500);
+        }
+    }
+
+    private static async Task<(string Transcript, string? Format, string? Language)> ProcessMultipartAsync(
+        HttpRequest request, AudioProcessor audio, VadProcessor vad, Transcriptor whisper,
+        string? language, string? format, bool translate,
+        Func<string, CancellationToken, Task>? sendSentence, CancellationToken ct)
+    {
+        if (!MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaType))
+            throw new InvalidDataException("Invalid multipart content type.");
+
+        string boundary = HeaderUtilities.RemoveQuotes(mediaType.Boundary).Value ?? "";
+        if (boundary.Length is 0 or > MaxBoundaryLength)
+            throw new InvalidDataException("Missing or oversized multipart boundary.");
+
+        var reader = new MultipartReader(boundary, request.Body)
+        {
+            BodyLengthLimit = 512L * 1024 * 1024,
+            HeadersLengthLimit = 16 * 1024
+        };
+        string? transcript = null;
+        bool fileSeen = false;
+        MultipartSection? section;
+        while ((section = await reader.ReadNextSectionAsync(ct)) is not null)
+        {
+            if (!ContentDispositionHeaderValue.TryParse(section.ContentDisposition, out var disposition)
+                || !disposition.DispositionType.Equals("form-data"))
+                throw new InvalidDataException("Invalid multipart section.");
+
+            string fieldName = HeaderUtilities.RemoveQuotes(disposition.Name).Value ?? "";
+            bool isFile = disposition.FileName.HasValue || disposition.FileNameStar.HasValue;
+            if (isFile)
+            {
+                if (fieldName != "file" || fileSeen)
+                    throw new InvalidDataException("Exactly one audio file field named 'file' is required.");
+
+                fileSeen = true;
+                transcript = await RunPipelineAsync(section.Body, audio, vad, whisper,
+                    translate ? null : language, translate, sendSentence, ct);
+                continue;
+            }
+
+            string value = await ReadFieldAsync(section.Body, ct);
+            switch (fieldName)
+            {
+                case "language" when !translate:
+                    if (fileSeen && !string.Equals(language ?? "auto", value, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("The language field must appear before the file field for streaming transcription.");
+                    language = value;
+                    break;
+                case "response_format":
+                    format = value;
+                    break;
+                case "model":
+                    break;
+            }
+        }
+
+        if (!fileSeen) throw new InvalidDataException("Audio file is required.");
+        return (transcript ?? "", format, language);
+    }
+
+    private static async Task<string> ReadFieldAsync(Stream stream, CancellationToken ct)
+    {
+        byte[] buffer = new byte[MaxFieldBytes + 1];
+        int total = 0;
+        while (total < buffer.Length)
+        {
+            int read = await stream.ReadAsync(buffer.AsMemory(total), ct);
+            if (read == 0) return Encoding.UTF8.GetString(buffer, 0, total);
+            total += read;
+        }
+        throw new InvalidDataException("Multipart field exceeds 8192 bytes.");
+    }
+
+    private static bool IsRawAudio(string? contentType) =>
+        contentType?.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) == true ||
+        contentType?.StartsWith("application/octet-stream", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static async Task<string> RunPipelineAsync(Stream input, AudioProcessor audio,
+        VadProcessor vad, Transcriptor whisper, string? language, bool translate,
+        Func<string, CancellationToken, Task>? sendSentence, CancellationToken ct)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        CancellationToken token = linked.Token;
+        var pcm = Channel.CreateBounded<IMemoryOwner<float>>(new BoundedChannelOptions(AudioChannelCapacity)
+        {
+            SingleWriter = true,
+            SingleReader = true
+        });
+        var sentences = Channel.CreateBounded<(IMemoryOwner<float> Owner, int Length)>(
             new BoundedChannelOptions(SentenceChannelCapacity)
             {
                 SingleWriter = true,
-                SingleReader = true,
+                SingleReader = true
             });
 
-        await using var fileStream = file.OpenReadStream();
-
-        // Stages 1 and 2 run as fire-and-forget tasks; exceptions are captured and
-        // re-thrown by Task.WhenAll after stage 3 has finished draining the channel.
-        var audioTask = audioProcessor.ProcessStreamToChannelAsync(fileStream, channel1.Writer, ct);
-        var vadTask = vadProcessor.ProcessVadChannelAsync(channel1.Reader, channel2.Writer, ct);
-
-        // Stage 3 runs inline so we can stream the transcript sentences as they arrive.
-        var sb = new StringBuilder();
-        await foreach (var sentence in transcriptor.ProcessWhisperChannelAsync(
-                           channel2.Reader, languageHint, translate, ct))
+        Task producer = audio.ProcessStreamToChannelAsync(input, pcm.Writer, token);
+        Task segmenter = vad.ProcessVadChannelAsync(pcm.Reader, sentences.Writer, token);
+        var text = new StringBuilder();
+        try
         {
-            if (sb.Length > 0) sb.Append(' ');
-            sb.Append(sentence);
+            await foreach (string sentence in whisper.ProcessWhisperChannelAsync(sentences.Reader,
+                language, translate, token))
+            {
+                if (text.Length > 0) text.Append(' ');
+                text.Append(sentence);
+                if (sendSentence is not null)
+                    await sendSentence(sentence, token);
+            }
+            await Task.WhenAll(producer, segmenter);
+            return text.ToString();
         }
-
-        // Both channels are completed at this point; WhenAll surfaces any background exceptions.
-        await Task.WhenAll(audioTask, vadTask);
-
-        return sb.ToString();
-    }
-
-    // ── Response formatting ───────────────────────────────────────────────────
-
-    /// <summary>
-    /// Formats the transcript per the OpenAI <c>response_format</c> contract.
-    /// Unknown values fall back to <c>json</c>, matching OpenAI's behaviour.
-    /// </summary>
-    private static IResult FormatResponse(
-        string? responseFormat,
-        string text,
-        string task,
-        string language)
-    {
-        return responseFormat?.ToLowerInvariant() switch
+        catch
         {
-            "text" => Results.Text(text, contentType: "text/plain; charset=utf-8"),
-
-            "verbose_json" => Results.Ok(new { task, language, text }),
-
-            // Default: plain { "text": "..." } — identical to OpenAI's response shape.
-            _ => Results.Ok(new { text }),
-        };
+            linked.Cancel();
+            try { await Task.WhenAll(producer, segmenter); } catch (Exception) { }
+            throw;
+        }
+        finally
+        {
+            while (pcm.Reader.TryRead(out var owner)) owner.Dispose();
+            while (sentences.Reader.TryRead(out var sentence)) sentence.Owner.Dispose();
+        }
     }
+
+    private static IResult FormatResponse(string? format, string text, bool translate, string? language) =>
+        format?.ToLowerInvariant() switch
+        {
+            "text" => Results.Text(text, "text/plain; charset=utf-8"),
+            "verbose_json" => Results.Ok(new
+            {
+                task = translate ? "translate" : "transcribe",
+                language = translate ? "en" : language ?? "auto",
+                text
+            }),
+            _ => Results.Ok(new { text })
+        };
+
+    private static IResult Error(string message, int statusCode) => Results.Json(
+        new { error = new { message, type = "invalid_request_error" } }, statusCode: statusCode);
 }

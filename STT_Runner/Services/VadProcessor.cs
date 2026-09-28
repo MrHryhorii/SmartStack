@@ -29,7 +29,7 @@ namespace STT_Runner.Services;
 /// • It transfers ownership of each output IMemoryOwner<float> to the Whisper consumer,
 ///   which is responsible for disposing it after use.
 /// </summary>
-public sealed class VadProcessor(string vadModelPath) : IDisposable
+public sealed class VadProcessor : IDisposable
 {
     // ── Model constants ──────────────────────────────────────────────────────
     private const int SampleRate = 16_000;
@@ -46,14 +46,29 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
     /// </summary>
     private const int TailSilenceChunks = 3;
 
-    // ── Buffer ceilings ───────────────────────────────────────────────────────
-    /// <summary>Hard ceiling for a single utterance: 30 seconds.</summary>
-    private const int MaxSentenceSamples = SampleRate * 30;
+    private readonly int _maxSegmentSamples;
+    private readonly int _maxBufferedSamples;
 
     /// <summary>Worst-case silence accumulation before a boundary is triggered.</summary>
     private const int SilenceBufferSamples = MaxSilenceChunks * WindowSize;
+    private const int PreRollSamples = 6 * WindowSize;
+    private const int SplitOverlapSamples = 4 * WindowSize;
 
-    private readonly InferenceSession _vadSession = new(vadModelPath, new Microsoft.ML.OnnxRuntime.SessionOptions());
+    private readonly InferenceSession _vadSession;
+
+    public VadProcessor(string vadModelPath, IConfiguration config)
+    {
+        int maxSegmentSeconds = config.GetValue<int>("SttSettings:MaxSegmentSeconds", 0);
+        int maxBufferedSeconds = config.GetValue<int>("SttSettings:MaxBufferedSegmentSeconds", 600);
+        if (maxSegmentSeconds < 0 || maxBufferedSeconds < 1 || maxBufferedSeconds > 3600 ||
+            maxSegmentSeconds > maxBufferedSeconds)
+            throw new ArgumentOutOfRangeException(nameof(config),
+                "MaxSegmentSeconds must be 0 or positive and no greater than MaxBufferedSegmentSeconds (1–3600).");
+
+        _maxSegmentSamples = checked(maxSegmentSeconds * SampleRate);
+        _maxBufferedSamples = checked(maxBufferedSeconds * SampleRate);
+        _vadSession = new InferenceSession(vadModelPath, new Microsoft.ML.OnnxRuntime.SessionOptions());
+    }
 
     /// <summary>
     /// Reads chunks from <paramref name="inputChannel"/>, segments them into sentences
@@ -81,13 +96,16 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
         };
 
         // ── Pre-allocated sentence + silence buffers (zero per-chunk allocs) ─
-        float[] sentenceBuffer = ArrayPool<float>.Shared.Rent(MaxSentenceSamples);
+        float[] sentenceBuffer = ArrayPool<float>.Shared.Rent(Math.Min(_maxBufferedSamples, SampleRate * 10));
         float[] silenceBuffer = ArrayPool<float>.Shared.Rent(SilenceBufferSamples);
+        float[] preRoll = new float[PreRollSamples];
+        int preRollLength = 0;
         int sentenceLength = 0;
         int silenceLength = 0;
         int silenceChunks = 0;
         bool isSpeaking = false;
 
+        Exception? failure = null;
         try
         {
             await foreach (var owner in inputChannel.ReadAllAsync(ct))
@@ -95,10 +113,9 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
                 // Dispose the incoming chunk rental once we have copied what we need.
                 using (owner)
                 {
-                    ReadOnlySpan<float> chunk = owner.Memory.Span[..WindowSize];
 
                     // ── Copy chunk into ONNX input tensor ────────────────────────
-                    chunk.CopyTo(inputTensor.Buffer.Span);
+                    owner.Memory.Span[..WindowSize].CopyTo(inputTensor.Buffer.Span);
 
                     // ── Run Silero VAD ────────────────────────────────────────────
                     using var results = _vadSession.Run(onnxInputs);
@@ -122,15 +139,38 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
                         // so we don't lose inter-word pauses shorter than the boundary threshold.
                         if (silenceLength > 0)
                         {
-                            EnsureCapacity(sentenceLength, silenceLength);
+                            if (_maxSegmentSamples > 0 && sentenceLength + silenceLength + WindowSize > _maxSegmentSamples)
+                            {
+                                await FlushSentenceAsync(sentenceBuffer, sentenceLength, silenceBuffer, 0, outputChannel, ct);
+                                int overlap = Math.Min(SplitOverlapSamples, sentenceLength);
+                                sentenceBuffer.AsSpan(sentenceLength - overlap, overlap).CopyTo(sentenceBuffer);
+                                sentenceLength = overlap;
+                            }
+                            EnsureSentenceCapacity(ref sentenceBuffer, sentenceLength + silenceLength + WindowSize);
                             silenceBuffer.AsSpan(0, silenceLength)
                                          .CopyTo(sentenceBuffer.AsSpan(sentenceLength));
                             sentenceLength += silenceLength;
                             silenceLength = 0;
                         }
 
-                        EnsureCapacity(sentenceLength, WindowSize);
-                        chunk.CopyTo(sentenceBuffer.AsSpan(sentenceLength));
+                        if (!isSpeaking && preRollLength > 0)
+                        {
+                            EnsureSentenceCapacity(ref sentenceBuffer, preRollLength);
+                            preRoll.AsSpan(0, preRollLength).CopyTo(sentenceBuffer);
+                            sentenceLength = preRollLength;
+                            preRollLength = 0;
+                        }
+
+                        if (_maxSegmentSamples > 0 && sentenceLength + WindowSize > _maxSegmentSamples)
+                        {
+                            await FlushSentenceAsync(sentenceBuffer, sentenceLength, silenceBuffer, 0, outputChannel, ct);
+                            int overlap = Math.Min(SplitOverlapSamples, sentenceLength);
+                            sentenceBuffer.AsSpan(sentenceLength - overlap, overlap).CopyTo(sentenceBuffer);
+                            sentenceLength = overlap;
+                        }
+
+                        EnsureSentenceCapacity(ref sentenceBuffer, sentenceLength + WindowSize);
+                        owner.Memory.Span[..WindowSize].CopyTo(sentenceBuffer.AsSpan(sentenceLength));
                         sentenceLength += WindowSize;
 
                         silenceChunks = 0;
@@ -139,11 +179,21 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
                     else if (isSpeaking)
                     {
                         // Silence after speech — hold in the side buffer, not yet committed.
-                        chunk.CopyTo(silenceBuffer.AsSpan(silenceLength));
+                        owner.Memory.Span[..WindowSize].CopyTo(silenceBuffer.AsSpan(silenceLength));
                         silenceLength += WindowSize;
                         silenceChunks++;
                     }
-                    // Silence before any speech — discard (leading silence is not useful).
+                    else
+                    {
+                        int shift = Math.Max(0, preRollLength + WindowSize - PreRollSamples);
+                        if (shift > 0)
+                        {
+                            preRoll.AsSpan(shift, preRollLength - shift).CopyTo(preRoll);
+                            preRollLength -= shift;
+                        }
+                        owner.Memory.Span[..WindowSize].CopyTo(preRoll.AsSpan(preRollLength));
+                        preRollLength += WindowSize;
+                    }
 
                     // ── Sentence-boundary check ───────────────────────────────────
                     if (isSpeaking && silenceChunks >= MaxSilenceChunks)
@@ -153,6 +203,9 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
                             silenceBuffer, silenceLength,
                             outputChannel, ct);
 
+                        preRollLength = Math.Min(PreRollSamples, silenceLength);
+                        if (preRollLength > 0)
+                            silenceBuffer.AsSpan(silenceLength - preRollLength, preRollLength).CopyTo(preRoll);
                         sentenceLength = 0;
                         silenceLength = 0;
                         silenceChunks = 0;
@@ -170,14 +223,32 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
                     outputChannel, ct);
             }
         }
+        catch (Exception ex)
+        {
+            failure = ex;
+            throw;
+        }
         finally
         {
             ArrayPool<float>.Shared.Return(sentenceBuffer);
             ArrayPool<float>.Shared.Return(silenceBuffer);
 
             // Signal Whisper that no more sentences are coming.
-            outputChannel.TryComplete();
+            outputChannel.TryComplete(failure);
         }
+    }
+
+    private void EnsureSentenceCapacity(ref float[] buffer, int required)
+    {
+        if (required > _maxBufferedSamples)
+            throw new InvalidDataException("Speech segment exceeds SttSettings:MaxBufferedSegmentSeconds.");
+        if (required <= buffer.Length) return;
+
+        int capacity = (int)Math.Min(_maxBufferedSamples, Math.Max((long)buffer.Length * 2, required));
+        float[] larger = ArrayPool<float>.Shared.Rent(capacity);
+        buffer.AsSpan().CopyTo(larger);
+        ArrayPool<float>.Shared.Return(buffer);
+        buffer = larger;
     }
 
     /// <summary>
@@ -199,20 +270,15 @@ public sealed class VadProcessor(string vadModelPath) : IDisposable
         sentenceBuffer.AsSpan(0, sentenceLength).CopyTo(output.Memory.Span);
         silenceBuffer.AsSpan(0, tailSamples).CopyTo(output.Memory.Span[sentenceLength..]);
 
-        await channel.WriteAsync((output, totalLength), ct);
-    }
-
-    /// <summary>
-    /// Guards against exceeding the pre-allocated sentence buffer ceiling.
-    /// In practice 30 s is never reached in normal speech, but fails loudly
-    /// rather than corrupting memory if it ever is.
-    /// </summary>
-    private static void EnsureCapacity(int currentLength, int incoming)
-    {
-        if (currentLength + incoming > MaxSentenceSamples)
-            throw new InvalidOperationException(
-                $"Sentence exceeds the {MaxSentenceSamples / SampleRate}s ceiling. " +
-                "Consider lowering MaxSilenceChunks or splitting the audio.");
+        try
+        {
+            await channel.WriteAsync((output, totalLength), ct);
+        }
+        catch
+        {
+            output.Dispose();
+            throw;
+        }
     }
 
     /// <summary>

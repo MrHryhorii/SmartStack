@@ -47,6 +47,9 @@ public static class ModelManager
         // ==========================================
         string finalWhisperPath;
 
+        if (!string.IsNullOrWhiteSpace(exactWhisper) && !File.Exists(exactWhisper))
+            throw new FileNotFoundException($"Configured Whisper model does not exist: {exactWhisper}");
+
         // Priority 1: Exact Path (If specified and exists)
         if (!string.IsNullOrWhiteSpace(exactWhisper) && File.Exists(exactWhisper))
         {
@@ -71,6 +74,9 @@ public static class ModelManager
         // SILERO VAD MODEL RESOLUTION
         // ==========================================
         string finalVadPath;
+
+        if (!string.IsNullOrWhiteSpace(exactVad) && !File.Exists(exactVad))
+            throw new FileNotFoundException($"Configured VAD model does not exist: {exactVad}");
 
         // Priority 1: Exact Path (If specified and exists)
         if (!string.IsNullOrWhiteSpace(exactVad) && File.Exists(exactVad))
@@ -146,7 +152,8 @@ public static class ModelManager
             // Try to get total file size for percentage calculation
             var totalBytes = response.Content.Headers.ContentLength ?? -1L;
             using var contentStream = await response.Content.ReadAsStreamAsync();
-            using var fileStream = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None);
+            string temporaryPath = destinationPath + ".download";
+            using var fileStream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None);
 
             var totalRead = 0L;
             var buffer = new byte[8192];
@@ -173,6 +180,9 @@ public static class ModelManager
             }
             while (isMoreToRead);
 
+            await fileStream.FlushAsync();
+            fileStream.Close();
+            File.Move(temporaryPath, destinationPath, overwrite: true);
             stopwatch.Stop();
             Console.WriteLine(); // Add a new line after the progress bar is done
 
@@ -185,7 +195,7 @@ public static class ModelManager
         }
         catch (Exception ex)
         {
-            if (File.Exists(destinationPath)) File.Delete(destinationPath);
+            if (File.Exists(destinationPath + ".download")) File.Delete(destinationPath + ".download");
             throw new Exception($"Failed to download {modelName} from {url}. Error: {ex.Message}", ex);
         }
     }

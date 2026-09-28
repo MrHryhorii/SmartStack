@@ -1,66 +1,48 @@
-# Simple Whisper STT Runner 🎙️🚀
+# STT Runner
 
-## **Simple Whisper STT Runner** is a high-performance local backend server for Speech-to-Text, built on .NET 10.
+A local .NET 10 speech transcription and translation server. It reads uploads incrementally, decodes with FFmpeg, segments speech with Silero VAD, and sends completed segments to Whisper while the rest of the upload is still arriving. The API returns the complete transcript after the input ends. A file uploaded in one request uses the same pipeline.
 
-The project is designed as a lightweight, private alternative to cloud solutions, providing an OpenAI-compatible API for audio transcription and translation.
+## Requirements
 
-This is a pure **Headless Service (Backend Only)**. It does not include a frontend, and interaction with the system as well as endpoint testing is performed via the built-in **Swagger UI**.
+- .NET 10 SDK to build, or the corresponding runtime for a framework-dependent deployment.
+- FFmpeg on `PATH` or in the application directory. If neither exists, automatic download is attempted.
+- A GGML Whisper model and the matching Silero ONNX model, configured in `appsettings.json` or downloaded on first launch.
+- For Vulkan inference: a working Vulkan loader and GPU driver on Windows x64 or Linux x64.
 
-## 🛠 Tech Stack
+The project references `Whisper.net.Runtime.Vulkan` version `1.9.1`. Its published NuGet package already includes five native Linux x64 `.so` files and copies them to `runtimes/vulkan/linux-x64` during build and publish. No custom Whisper runtime build, Vulkan SDK, or CUDA installation is needed to run the published application. The `Whisper.net.Runtime` package provides CPU fallback. The server logs the runtime selected by Whisper.net; `UseGpu=true` alone does not prove GPU inference.
 
-**Runtime:** .NET 10 (C#)  
-**STT Engine:** Whisper.net using the **Vulkan** runtime for cross-platform GPU acceleration (Windows/Linux)  
-**VAD Engine:** Microsoft.ML.OnnxRuntime with the **Silero VAD v5** model  
-**Media Processing:** **FFmpeg** (automatic download and configuration) for decoding any media containers
+To publish for Linux x64:
 
-## 🚀 Key Features
+```bash
+dotnet publish -c Release -r linux-x64 --self-contained false
+```
 
-### 1. Audio and Video Container Processing
+Check that `runtimes/vulkan/linux-x64` in the publish directory contains the five `.so` files. Test on a Linux machine with a working Vulkan driver: publishing successfully does not prove that the target GPU will execute inference.
 
-Thanks to the integrated FFmpeg-based pipeline, the server can process not only raw audio files but also any video containers (MP4, MKV, AVI, etc.).
+## API
 
-The audio track is extracted, normalized, and passed to the neural network entirely in memory (In-Memory Piping), without creating temporary files on disk.
+`POST /v1/audio/transcriptions` returns recognized text in the source language. `POST /v1/audio/translations` translates speech to English. Both accept OpenAI-style `multipart/form-data` with one file field named `file` and optional `model` and `response_format` fields (`json`, `text`, `verbose_json`). Transcriptions also accept `language`. Put `language` before `file` so recognition can start as soon as the audio arrives. Fields after `file` can supply `response_format`, but cannot change the language of segments already processed.
 
-### 2. “Three-Body Pipeline”
+```bash
+curl -F language=en -F file=@sample.wav -F response_format=json http://localhost:5050/v1/audio/transcriptions
+```
 
-To achieve minimal latency, processing is divided into three asynchronous stages connected via channels (`System.Threading.Channels`):
+Raw audio is also accepted as the request body with `Content-Type: audio/*` or `application/octet-stream`; pass `language` and `response_format` as query parameters:
 
-**Stage 1:** FFmpeg converts the input stream into 16kHz mono float32  
-**Stage 2 (VAD):** Silero VAD v5 analyzes the stream in real time using recurrent memory (RNN state [2, 1, 128]) for accurate speech boundary detection  
-**Stage 3 (Whisper):** As soon as VAD detects the end of a speech segment, it is immediately sent for transcription
+```bash
+curl -H 'Content-Type: audio/wav' --data-binary @sample.wav 'http://localhost:5050/v1/audio/transcriptions?language=en'
+```
 
-### 3. OpenAI-Compatible API
+The client can upload incrementally using chunked transfer. By default the server collects ordered text and returns the selected `response_format` at end of input. Set `SttSettings:StreamResponse` to `true` to return a `text/plain; charset=utf-8` response instead: each recognized speech segment is written and flushed as soon as Whisper finishes it. The HTTP response completes after all input is processed (the underlying HTTP keep-alive connection may remain open). In this mode `response_format` is ignored, so an OpenAI SDK expecting JSON should use the default mode. A proxy may buffer streaming output unless configured otherwise. For example, use `curl -N` to display chunks as they arrive.
 
-The server supports standard routes `/v1/audio/transcriptions` and `/v1/audio/translations`, allowing it to be used as a direct replacement for the OpenAI Whisper API in existing applications (e.g., in combination with local LLMs).
+VAD splits on roughly 800 ms of silence. `SttSettings:MaxSegmentSeconds` is `0` by default: no duration-based segmentation occurs. Set it to `30` to split continuous speech approximately every 30 seconds; adjacent long segments retain a short overlap, so words at a split may repeat. A continuous speech segment produces no text until it ends or reaches a configured forced split. `SttSettings:MaxBufferedSegmentSeconds` defaults to `600`: if a segment exceeds this memory safety limit, the request fails rather than growing without bound. The first ~192 ms of speech are preserved as pre-roll. The request body limit is 512 MiB.
 
-## ⚠️ Technical Note: GPU “Cold Start”
+`ServerSecurity:MaxConcurrentRequests` limits simultaneous uploads. `ServerSecurity:MaxConcurrentWhisper` limits inference on the shared GPU separately. The default is one Whisper inference at a time; tune only after measuring on your hardware.
 
-This project follows the principle of **clean code without hacks**. This means no artificial background load is used to keep the GPU active.
+Up to `ServerSecurity:MaxQueuedRequests` additional HTTP requests wait in a first-in-first-out queue before their bodies are read. The default queue holds eight requests, with a `QueueWaitSeconds` limit of 120 seconds. A full queue or an expired wait returns HTTP 503; a disconnected client leaves the queue. Set `MaxQueuedRequests` to `0` for immediate rejection when all active slots are occupied. The separate fixed-window rate limit still returns HTTP 429 when its request budget is exhausted.
 
-**Consequence:**
+The Whisper factory and VAD session remain loaded for the application's lifetime. At startup, before accepting requests, the server transcribes and translates the included eight-second spoken sample to exercise both Whisper tasks and warm the selected backend. `SttSettings:WarmUpAudioFile` can point to another 16 kHz WAV (1–30 seconds). The bundled `Assets/warmup.wav` is a 16 kHz mono conversion of [French Canadian Woman Giving Instructions 04.wav](https://freesound.org/people/vero.marengere/sounds/514877/) by vero.marengere, licensed CC0. This primes shader paths used by the sample; a different model, device, language, or audio shape may still cause some first-use work. Startup takes longer because warm-up runs before the server starts listening.
 
-Due to aggressive power-saving behavior of modern GPU drivers (especially when using Vulkan), the GPU may enter sleep mode after ~30 seconds of inactivity.
+## Configuration
 
-In such cases, **the first request after idle may experience a 2–3 second delay**, required to "wake up" the GPU and reinitialize the compute graph.
-
-During active usage, when pauses between requests are shorter than 30 seconds, processing remains effectively instant.
-
-## 💡 Use Cases
-
-**Local AI Assistants:** Providing a voice interface for smart home systems with full privacy (data never leaves your server)
-
-**Automated Video Transcription:** Fast generation of transcripts or subtitles for video files of any size
-
-**Private Chatbots:** Using it as a Speech-to-Text module for corporate LLM systems where data security is critical
-
-**Media Archive Tools:** Indexing audio and video content for keyword-based search
-
-## ⚙️ Getting Started
-
-- Specify the model path in `appsettings.json` (or allow the system to download them automatically from Hugging Face)
-- Run the project — FFmpeg will be configured automatically on first startup
-- Open the Swagger page (usually http://localhost:5050/swagger) to test the API
-
----
-
-_Created with focus on performance, memory safety, and architectural integrity._
+`appsettings.json` controls model paths, download behavior, CORS, segmentation, streaming responses, and concurrency. `UseGpu=false` forces the Whisper CPU runtime. Swagger is enabled in the development environment at `/swagger`; the curl examples above show streaming multipart and raw requests directly.
