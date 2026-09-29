@@ -3,7 +3,8 @@ using Swashbuckle.AspNetCore.SwaggerGen;
 
 namespace STT_Runner.Endpoints;
 
-// Describe multipart uploads without restricting the endpoint's raw audio content types.
+// OpenAPI metadata is documentation only: Accepts<T> would reject raw audio
+// before the handler can inspect its Content-Type.
 public sealed class TranscriptionUploadOperationFilter : IOperationFilter
 {
     public void Apply(OpenApiOperation operation, OperationFilterContext context)

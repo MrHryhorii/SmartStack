@@ -2,6 +2,10 @@ using System.Threading.RateLimiting;
 
 namespace STT_Runner.Services;
 
+/// <summary>
+/// Bounds active request pipelines and waiting requests independently of the
+/// fixed-window HTTP rate limit and the Whisper inference semaphore.
+/// </summary>
 public sealed class RequestSlots : IDisposable
 {
     private readonly ConcurrencyLimiter _limiter;
@@ -24,9 +28,20 @@ public sealed class RequestSlots : IDisposable
 
     public async ValueTask<RateLimitLease> AcquireAsync(CancellationToken cancellationToken)
     {
+        // The linked token removes a timed-out or disconnected client from the queue.
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(_waitTimeout);
         return await _limiter.AcquireAsync(1, timeout.Token);
+    }
+
+    public object GetStatus()
+    {
+        RateLimiterStatistics? statistics = _limiter.GetStatistics();
+        return new
+        {
+            available = statistics?.CurrentAvailablePermits ?? 0,
+            waiting = statistics?.CurrentQueuedCount ?? 0
+        };
     }
 
     public void Dispose() => _limiter.Dispose();

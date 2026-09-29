@@ -3,3 +3,7 @@
 Models/
 ffmpeg
 ffmpeg.exe
+Builds/
+
+# Keep only the bundled startup sample despite the repository-wide audio rule.
+!Assets/warmup.wav

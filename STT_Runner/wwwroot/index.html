@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#15151b">
+  <title>Mwandishi STT — Live transcription</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark" aria-hidden="true">M.</span><span>Mwandishi <small>STT</small></span></div>
+      <button id="themeButton" class="quiet-button" type="button" aria-pressed="false">Dark mode</button>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="pageTitle">
+        <div>
+          <p class="eyebrow">LOCAL SPEECH JOURNAL</p>
+          <h1 id="pageTitle">Keep the words.<br><em>Leave the noise.</em></h1>
+          <p class="intro-copy">Turn a lecture, meeting, or passing thought into a journal as it happens. Audio is processed by your local server; only the transcript is saved in this browser.</p>
+        </div>
+        <div class="server-card" aria-live="polite">
+          <div class="status-row"><span id="statusDot" class="status-dot"></span><span id="statusText">Connecting to server</span></div>
+          <p id="modelText">Checking the local model...</p>
+          <button id="retryButton" class="text-button" type="button" hidden>Retry connection</button>
+        </div>
+      </section>
+
+      <section class="workspace" aria-label="Live transcription">
+        <div class="controls">
+          <label class="field" for="languageSelect"><span>Spoken language</span><select id="languageSelect"><option value="auto">Auto detect</option></select></label>
+          <label class="translate-control" for="translateCheck"><input id="translateCheck" type="checkbox"><span class="checkbox-face" aria-hidden="true"></span><span>Translate to English</span></label>
+          <button id="recordButton" class="record-button" type="button" disabled><span class="record-symbol" aria-hidden="true"></span><span id="recordLabel">Start microphone</span></button>
+        </div>
+        <p id="recordHint" class="record-hint">Choose a language or leave automatic detection on, then start recording.</p>
+
+        <div class="journal-heading">
+          <div>
+            <p class="eyebrow">YOUR JOURNAL</p>
+            <h2>Transcript</h2>
+          </div>
+          <label class="history-field" for="sessionSelect"><span>Recording</span><select id="sessionSelect"><option value="">No recordings yet</option></select></label>
+        </div>
+        <div class="journal-actions">
+          <span id="entryCount" class="entry-count">No entries</span>
+          <div class="action-group">
+            <button id="copyButton" class="quiet-button" type="button" disabled>Copy</button>
+            <button id="downloadButton" class="quiet-button" type="button" disabled>Download .txt</button>
+            <button id="clearButton" class="quiet-button danger" type="button" disabled>Delete recording</button>
+          </div>
+        </div>
+        <div id="journal" class="journal" role="log" aria-live="polite" aria-relevant="additions">
+          <div id="emptyState" class="empty-state"><span class="empty-rule" aria-hidden="true"></span><p>When a phrase is ready, it will appear here.</p><small>Each entry is marked by its position in the recording.</small></div>
+          <div id="entries" class="entries"></div>
+        </div>
+      </section>
+    </main>
+    <footer>Local audio processing · Browser-stored journals · <a href="/v1/models">Available models</a></footer>
+  </div>
+</body>
+</html>

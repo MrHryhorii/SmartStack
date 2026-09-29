@@ -1,15 +1,15 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using Xabe.FFmpeg.Downloader;
 
 namespace STT_Runner.Services;
 
+/// <summary>Resolves a usable FFmpeg executable once at startup.</summary>
 public static class FfmpegManager
 {
     public static string ExecutablePath { get; private set; } = "ffmpeg";
 
     public static async Task EnsureInitializedAsync()
     {
+        // Published archives carry FFmpeg; local development may use PATH.
         string localPath = GetLocalFfmpegPath();
         if (File.Exists(localPath))
         {
@@ -29,12 +29,8 @@ public static class FfmpegManager
             return;
         }
 
-        await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official, AppContext.BaseDirectory);
-        EnsureUnixExecutePermissions(localPath);
-        if (!await CanRunAsync(localPath))
-            throw new InvalidOperationException("FFmpeg could not be started after download.");
-
-        ExecutablePath = localPath;
+        throw new FileNotFoundException(
+            "FFmpeg was not found. Use a packaged release or provide ffmpeg on PATH for development.");
     }
 
     public static string GetLocalFfmpegPath()
@@ -45,6 +41,7 @@ public static class FfmpegManager
 
     private static async Task<bool> CanRunAsync(string path)
     {
+        // Existence alone does not prove that a binary can run on this host.
         try
         {
             using var process = Process.Start(new ProcessStartInfo(path)
@@ -67,6 +64,7 @@ public static class FfmpegManager
 
     private static void EnsureUnixExecutePermissions(string path)
     {
+        // Downloaded binaries may arrive without the executable permission bit.
         if (OperatingSystem.IsWindows()) return;
         File.SetUnixFileMode(path, File.GetUnixFileMode(path) | UnixFileMode.UserExecute);
     }
