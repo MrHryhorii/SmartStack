@@ -1,198 +1,1439 @@
 # Mwandishi STT
 
-A local .NET 10 speech journal and transcription and translation server. The name *Mwandishi* comes from Swahili for a writer or scribe. It decodes with FFmpeg, segments speech with Silero VAD, and sends completed segments to Whisper while the decoder processes later audio. Raw audio with explicit VAD starts inference during upload; multipart audio is spooled first to honor form fields in any order. Completed files use a single block unless chunking is requested. The default API response contains the complete transcript.
+Mwandishi STT is a local speech-to-text server and browser speech journal built with .NET 10.
 
-## Browser journal
+It uses FFmpeg to decode incoming audio, Silero VAD to detect speech segments, and Whisper through Whisper.net for transcription and speech-to-English translation. The server exposes OpenAI-compatible HTTP routes, optional Server-Sent Events for incremental transcription, and a WebSocket endpoint for live microphone sessions.
 
-Open `http://localhost:5050/` after the server starts. The browser interface captures a microphone, streams uncompressed mono PCM to the local `/live` WebSocket, and displays timestamped text as VAD segments finish. It can also translate speech to English through the same local pipeline. The language selector starts with automatic detection; language and translation are locked until recording stops. Each new browser session starts with translation off, and the active mode and source language are shown while recording. Select the spoken language explicitly if automatic detection mistakes short or mixed-language speech. The language selection and light/dark preference are stored in `localStorage`, and separate journal sessions are stored in IndexedDB. Copy, download, and delete apply to the selected recording; Delete all recordings clears the entire browser journal after confirmation. The server stores no completed journal.
+The project runs locally on Windows x64 and Linux x64. Whisper can use Vulkan when available and falls back to CPU when the Vulkan runtime cannot be loaded.
 
-After listening begins, the console prints the browser URL, the OpenAI API
-base URL (for example `http://localhost:5050/v1`), and the transcription and
-translation routes. On a desktop, the application tries to open the browser
-page automatically. Set `ServerSettings:OpenBrowserOnStart` to `false` for a
-headless server or when using your own browser. The printed `localhost` URL is
-for clients on the same machine. By default, the server listens on port 5050
-on all interfaces, allows browser origins through CORS, and accepts WebSocket
-clients from any origin. It has no built-in authentication. To keep it local,
-set `Kestrel:Endpoints:Http:Url` to `http://localhost:5050`. To restrict
-cross-origin HTTP browser clients, set `ServerSecurity:CorsAllowAnyOrigin=false`
-and edit `CorsAllowedOrigins`. CORS does not restrict non-browser clients or the
-separate `/live` WebSocket route; use a firewall or reverse proxy if you want
-to restrict access to the server itself.
+## Contents
 
-Microphone access requires a secure browser context: `localhost` works over HTTP; remote access requires HTTPS and WSS. AudioWorklet captures mono float32 PCM without lossy encoding and sends it at the AudioContext sample rate. The microphone requests input without browser noise suppression, echo cancellation, or automatic gain control; unsupported constraints may be ignored. The server uses one FFmpeg process for resampling to 16 kHz. Stopping flushes the final partial PCM block before the stop command. AudioWorklet requires a supported browser and a secure context. Browser upload `fetch` is half duplex, so the browser uses the separate WebSocket route to receive text while the microphone is still active. OpenAI-compatible HTTP routes remain available.
+- [Features](#features)
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- [Quick start](#quick-start)
+- [Models](#models)
+- [Configuration](#configuration)
+- [HTTP API](#http-api)
+- [Live WebSocket API](#live-websocket-api)
+- [Browser journal](#browser-journal)
+- [Concurrency and rate limiting](#concurrency-and-rate-limiting)
+- [Building](#building)
+- [Validation and tests](#validation-and-tests)
+- [Security notes](#security-notes)
+- [Troubleshooting](#troubleshooting)
+- [Third-party components](#third-party-components)
 
-The browser sends little-endian mono float32 PCM messages to `/live?language=auto&translate=false&audio_format=pcm_f32le&sample_rate=48000` (using the actual AudioContext sample rate, not a fixed 48000) and finishes with the text message `stop`. Omitting `audio_format` retains encoded-file support for existing `/live` clients. Raw PCM declarations require a sample rate between 8000 and 192000 Hz. These are local WebSocket options; the OpenAI-style HTTP fields and encoded file uploads are unchanged. The server sends JSON text messages: `session.ready`, `transcript.text.delta` (ordered `index`, `delta`, audio `start` and `end` seconds), `transcript.text.done` (complete text, duration, language), or `error`. A delta's timestamp is the approximate audio offset, including the VAD pre-roll; it is not the time at which inference finished. The client waits for `done` before marking the recording complete. For long sessions, download the journal as a separate backup because browser storage may be cleared by the user or the browser.
+## Features
+
+- Local transcription with Whisper GGML models.
+- Local speech-to-English translation using Whisper's translation task.
+- OpenAI-compatible `/v1/audio/transcriptions` and `/v1/audio/translations` routes.
+- JSON, plain text, `verbose_json`, SRT, and WebVTT responses.
+- Optional word and segment timestamps.
+- Optional SSE transcription output with incremental text deltas.
+- Live WebSocket transcription for browser or custom microphone clients.
+- Silero VAD with configurable profiles and per-request `server_vad` overrides.
+- FFmpeg-based decoding and resampling to 16 kHz mono float PCM.
+- Streaming RMS level normalization before VAD and Whisper.
+- Vulkan inference through Whisper.net with CPU fallback.
+- Bounded request queues and a separate global Whisper inference limit.
+- Fixed-window HTTP rate limiting.
+- Built-in browser journal stored entirely in the browser.
+- Automatic model download with SHA-256 verification for the pinned default models.
+- Self-contained Windows x64 and Linux x64 release builds.
+
+## How it works
+
+The main audio pipeline is:
+
+```text
+HTTP or WebSocket input
+        |
+        v
+FFmpeg decode / resample
+        |
+        v
+16 kHz mono float PCM
+        |
+        v
+Streaming RMS normalization
+        |
+        v
+Silero VAD or whole-file buffering
+        |
+        v
+Whisper workers
+        |
+        v
+Ordered transcript / translation
+        |
+        v
+JSON, text, subtitles, SSE, or WebSocket events
+```
+
+FFmpeg and VAD can continue processing later audio while Whisper handles completed speech segments. Bounded channels provide backpressure instead of allowing unlimited audio or segment buffering.
+
+For completed HTTP files, VAD is not enabled unless `chunking_strategy` is explicitly supplied. Without chunking, the completed recording is processed as one block. Live WebSocket sessions always use VAD.
 
 ## Requirements
 
-- .NET 10 SDK and PowerShell to create the release archives. The default release archives include the .NET runtime.
-- FFmpeg is bundled in both release archives. Direct source builds use a local `ffmpeg` or one on `PATH`.
-- A GGML Whisper model and the matching Silero ONNX model, configured in `appsettings.json` or downloaded on first launch.
-- For Vulkan inference: a working Vulkan loader and GPU driver on Windows x64 or Linux x64.
+### Running a packaged release
 
-The project references `Whisper.net.Runtime.Vulkan` version `1.9.1`. Its published NuGet package already includes five native Linux x64 `.so` files and copies them to `runtimes/vulkan/linux-x64` during build and publish. No custom Whisper runtime build, Vulkan SDK, or CUDA installation is needed to run the published application. The `Whisper.net.Runtime` package provides CPU fallback. The server logs the runtime selected by Whisper.net; `UseGpu=true` alone does not prove GPU inference.
+- Windows x64 or Linux x64.
+- A writable application directory if models must be downloaded on first launch.
+- Internet access on first launch when `AutoDownload:Enable` is `true` and the configured models are not already present.
+- A Vulkan-capable driver if GPU inference is requested.
+- No Python installation is required.
+- No CUDA installation is required.
+- No Vulkan SDK is required for the packaged application.
 
-## Build Windows and Linux releases
+The release archives include:
 
-From the project directory, run `./Build-Releases.ps1` in PowerShell (or
-`pwsh ./Build-Releases.ps1` from a shell). The script publishes self-contained
-`win-x64` and `linux-x64` versions, downloads the pinned LGPL FFmpeg binaries
-from BtbN, and produces two ZIP files in a new timestamped `Builds/` directory.
-The archives include the application, FFmpeg, warm-up sample, browser UI,
-documentation, and dependency license notices. Models are deliberately absent:
-the first run downloads them into `Models/`. A network connection is therefore
-required once per installation. The script itself needs a network connection
-for NuGet restore and FFmpeg; Windows 10/11 includes the `tar` command used for
-the Linux FFmpeg package.
+- the .NET runtime by default;
+- the application;
+- FFmpeg;
+- Whisper.net CPU and Vulkan native runtimes;
+- the browser UI;
+- the warm-up audio file;
+- third-party notices.
 
-Extract into a writable folder so the first launch can save models. Start
-`MwandishiSTT.exe` on Windows or `./MwandishiSTT` on Linux. The Linux ZIP
-records executable file permissions and uses forward slashes for directory
-entries. If an unpacking tool discards permissions, run
-`chmod +x MwandishiSTT`; the application repairs the bundled FFmpeg permission
-at startup. A compatible GPU driver is needed for Vulkan inference; set
-`SttSettings__UseGpu=false` to use the CPU runtime.
+Model files are not included in release archives.
 
-For a smaller package that uses an already installed .NET 10 runtime, pass
-`-FrameworkDependent` and run `dotnet MwandishiSTT.dll`. To reuse downloaded
-FFmpeg archives on another build, pass `-WindowsFFmpegArchive` and
-`-LinuxFFmpegArchive` with paths to the exact upstream files. The upstream
-archive names and source revision are pinned in the script. The script checks
-both archives against the release's `checksums.sha256` before extracting them;
-for an offline build supply that file with `-FFmpegChecksumsFile`. These sums
-come from the same publisher as the archives, so independently pin the hashes
-if a stronger supply-chain guarantee is needed. Each output ZIP records the
-archive and packaged executable SHA-256 hashes in its provenance file; read
-`THIRD-PARTY-NOTICES.md` before redistributing the result.
+### Building from source
 
-To publish only for Linux x64 during development:
+Install:
+
+- .NET 10 SDK;
+- Git;
+- FFmpeg on `PATH`, unless a usable `ffmpeg` or `ffmpeg.exe` is placed next to the built application;
+- PowerShell 7 or Windows PowerShell when using `Build-Releases.ps1`.
+
+The release script also needs network access for NuGet restore and FFmpeg downloads unless the required FFmpeg archives and checksum file are supplied manually.
+
+## Quick start
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/MrHryhorii/SmartStack.git
+cd SmartStack/STT_Runner
+```
+
+### 2. Restore dependencies
+
+```bash
+dotnet restore
+```
+
+### 3. Check FFmpeg
+
+For a source build, make sure this succeeds:
+
+```bash
+ffmpeg -version
+```
+
+A packaged release already contains FFmpeg.
+
+### 4. Run the server
+
+```bash
+dotnet run
+```
+
+By default the server listens on:
+
+```text
+http://localhost:5050
+```
+
+The default Kestrel configuration actually binds to all interfaces with `http://+:5050`; `localhost` is the local client address printed by the application.
+
+On first launch, the default Whisper and Silero VAD models are downloaded into `Models/` when they are not already present.
+
+### 5. Test transcription
+
+```bash
+curl -F "file=@sample.wav" \
+     -F "language=en" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+Example response:
+
+```json
+{
+  "text": "Recognized speech."
+}
+```
+
+## Models
+
+Mwandishi STT uses two model files:
+
+| Model | Default | Purpose |
+| --- | --- | --- |
+| Whisper | `ggml-small.bin` | Speech recognition and speech-to-English translation |
+| Silero VAD | `silero_vad.onnx` | Speech activity detection and segmentation |
+
+The default Whisper model is the multilingual `small` model in whisper.cpp GGML format. It is approximately 488 MB on disk.
+
+OpenAI `.pt` Whisper checkpoints cannot be loaded directly by Whisper.net. Use a compatible whisper.cpp GGML model.
+
+### Model resolution order
+
+For each model the server uses this order:
+
+1. `SttSettings:ExactWhisperFilePath` or `SttSettings:ExactVadFilePath`, when configured.
+2. A file in `SttSettings:ModelDirectory` using the configured model filename.
+3. Automatic download when the file does not exist and `AutoDownload:Enable` is `true`.
+
+Relative paths are resolved from the application directory, not from the shell's current working directory.
+
+### Default model verification
+
+The default download URLs are pinned to specific revisions and have built-in SHA-256 digests. The digest is checked on startup when the default URL is used.
+
+For custom URLs:
+
+- leave the SHA-256 setting empty to disable digest verification;
+- or provide the expected 64-character SHA-256 value.
+
+Downloads are written to a temporary `.download` file and renamed only after the download and optional checksum verification succeed.
+
+### GPU and CPU runtime
+
+`SttSettings:UseGpu=true` requests the Vulkan runtime. Whisper.net tries Vulkan first and CPU second.
+
+If Vulkan cannot be loaded, the server logs a warning and continues on CPU.
+
+`UseGpu=true` therefore means "request Vulkan", not "guarantee GPU inference". Check `/health` or the startup log to see the runtime that was actually loaded.
+
+## Configuration
+
+The main configuration file is:
+
+```text
+appsettings.json
+```
+
+Standard ASP.NET Core configuration overrides are supported. Environment variables use double underscores for nested keys.
+
+Example:
+
+```bash
+SttSettings__UseGpu=false
+```
+
+On PowerShell:
+
+```powershell
+$env:SttSettings__UseGpu = "false"
+dotnet run
+```
+
+Configuration changes are read at startup. Restart the server after changing model, VAD, normalization, concurrency, or server settings.
+
+### Default configuration
+
+```json
+{
+  "Logging": {
+    "LogLevel": {
+      "Default": "Information",
+      "Microsoft.AspNetCore": "Warning"
+    }
+  },
+  "Kestrel": {
+    "Endpoints": {
+      "Http": {
+        "Url": "http://+:5050"
+      }
+    }
+  },
+  "ServerSettings": {
+    "OpenBrowserOnStart": true
+  },
+  "ServerSecurity": {
+    "MaxConcurrentRequests": 4,
+    "MaxQueuedRequests": 8,
+    "QueueWaitSeconds": 120,
+    "MaxConcurrentWhisper": 2,
+    "EnableRateLimiting": true,
+    "RateLimitMaxRequests": 100,
+    "RateLimitWindowSeconds": 60,
+    "CorsAllowAnyOrigin": true,
+    "CorsAllowedOrigins": [
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:11434",
+      "http://127.0.0.1:11434",
+      "http://localhost:5001",
+      "http://127.0.0.1:5001",
+      "http://localhost:5173",
+      "http://localhost:8080",
+      "http://localhost:5050"
+    ]
+  },
+  "SttSettings": {
+    "ModelDirectory": "Models",
+    "WhisperModelName": "ggml-small.bin",
+    "VadModelName": "silero_vad.onnx",
+    "ExactWhisperFilePath": "",
+    "ExactVadFilePath": "",
+    "UseGpu": true,
+    "GpuDeviceIndex": 0,
+    "WhisperWorkers": 2,
+    "WarmUpAudioFile": "Assets/warmup.wav",
+    "DefaultLanguage": "auto"
+  },
+  "AutoDownload": {
+    "Enable": true,
+    "WhisperUrl": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
+    "VadUrl": "https://huggingface.co/Hinotsuba/silero_vad_ggml-base/resolve/ee6290b4dde18d884258a108a809daffb6ca11cb/silero_vad.onnx",
+    "WhisperSha256": "",
+    "VadSha256": ""
+  },
+  "VadSettings": {
+    "Profile": "segment",
+    "Profiles": {
+      "segment": {
+        "PauseMs": 800,
+        "MaxSegmentSeconds": 0,
+        "MaxBufferedSegmentSeconds": 600,
+        "PrefixPaddingMs": 300,
+        "TailPaddingMs": 300,
+        "Threshold": 0.5,
+        "SplitOverlapMs": 128,
+        "MinSpeechMs": 250,
+        "ExitThreshold": null
+      }
+    }
+  },
+  "AudioNormalization": {
+    "Enabled": true,
+    "TargetRmsDbfs": -20,
+    "NoiseFloorDbfs": -70,
+    "MaxGainDb": 30,
+    "MinGainDb": -18,
+    "PeakDbfs": -1,
+    "RmsWindowMs": 250,
+    "AttackMs": 100,
+    "ReleaseMs": 1000
+  }
+}
+```
+
+### `Kestrel`
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `Kestrel:Endpoints:Http:Url` | `http://+:5050` | HTTP listener. `+` binds to all interfaces. Use `http://localhost:5050` for local-only listening. |
+
+### `ServerSettings`
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `OpenBrowserOnStart` | `true` | Opens the browser journal after the server starts. Disable for headless use. |
+
+### `ServerSecurity`
+
+| Setting | Default | Description |
+| --- | ---: | --- |
+| `MaxConcurrentRequests` | `4` | Maximum active HTTP or live request pipelines. Must be at least 1. |
+| `MaxQueuedRequests` | `8` | Number of additional requests allowed to wait for a request slot. `0` disables waiting. |
+| `QueueWaitSeconds` | `120` | Maximum time a queued request waits for a slot. Must be at least 1 second. |
+| `MaxConcurrentWhisper` | `2` | Global limit for simultaneous Whisper inference across all requests. Values below 1 are clamped to 1. |
+| `EnableRateLimiting` | `true` | Enables the fixed-window HTTP rate limiter on transcription and translation routes. |
+| `RateLimitMaxRequests` | `100` | Number of allowed HTTP requests per fixed window. |
+| `RateLimitWindowSeconds` | `60` | Fixed rate-limit window length. |
+| `CorsAllowAnyOrigin` | `true` | Allows any browser origin for HTTP API requests. |
+| `CorsAllowedOrigins` | see JSON | Used only when `CorsAllowAnyOrigin` is `false`. |
+
+The request queue and the HTTP rate limiter are separate systems:
+
+- request queue exhaustion or timeout returns HTTP `503`;
+- fixed-window rate-limit exhaustion returns HTTP `429`.
+
+CORS applies to browser HTTP requests. It does not authenticate clients, block normal non-browser HTTP clients, or restrict the separate `/live` WebSocket route.
+
+### `SttSettings`
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `ModelDirectory` | `Models` | Directory used for managed local model files and automatic downloads. |
+| `WhisperModelName` | `ggml-small.bin` | Filename used inside `ModelDirectory`. Changing the filename does not change the download URL. |
+| `VadModelName` | `silero_vad.onnx` | VAD filename used inside `ModelDirectory`. |
+| `ExactWhisperFilePath` | empty | Explicit existing Whisper model path. Takes priority over `ModelDirectory` and auto-download. |
+| `ExactVadFilePath` | empty | Explicit existing Silero VAD model path. Takes priority over `ModelDirectory` and auto-download. |
+| `UseGpu` | `true` | Requests Whisper.net Vulkan inference. CPU is used as fallback when Vulkan cannot load. |
+| `GpuDeviceIndex` | `0` | Vulkan GPU device index passed to Whisper.net. |
+| `WhisperWorkers` | `2` | Number of Whisper processors created per request. Must be at least 1. |
+| `WarmUpAudioFile` | `Assets/warmup.wav` | WAV used to warm transcription and translation paths before the server begins listening. |
+| `DefaultLanguage` | `auto` | Default Whisper source language when a request does not provide one. |
+
+The warm-up file must be:
+
+- WAV;
+- 16 kHz;
+- between 1 and 30 seconds.
+
+The server performs VAD warm-up and then runs both Whisper transcription and translation warm-up before it accepts traffic.
+
+### `AutoDownload`
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `Enable` | `true` | Downloads missing managed model files. If disabled, missing models cause startup to fail. |
+| `WhisperUrl` | pinned `ggml-small.bin` URL | Full HTTP or HTTPS URL for the Whisper model. |
+| `VadUrl` | pinned Silero URL | Full HTTP or HTTPS URL for the VAD model. |
+| `WhisperSha256` | empty | Optional custom SHA-256. The pinned default URL uses a built-in hash when this field is empty. |
+| `VadSha256` | empty | Optional custom SHA-256. The pinned default URL uses a built-in hash when this field is empty. |
+
+If you replace a managed model, either remove the existing destination file or change its configured local filename. Existing files are reused rather than downloaded again on every startup.
+
+### `VadSettings`
+
+`VadSettings:Profile` selects one named object under `VadSettings:Profiles`.
+
+The default profile is `segment`.
+
+You can add another profile:
+
+```json
+"VadSettings": {
+  "Profile": "long-form",
+  "Profiles": {
+    "segment": {
+      "PauseMs": 800,
+      "MaxSegmentSeconds": 0,
+      "MaxBufferedSegmentSeconds": 600,
+      "PrefixPaddingMs": 300,
+      "TailPaddingMs": 300,
+      "Threshold": 0.5,
+      "SplitOverlapMs": 128,
+      "MinSpeechMs": 250,
+      "ExitThreshold": null
+    },
+    "long-form": {
+      "PauseMs": 1200,
+      "MaxSegmentSeconds": 30,
+      "MaxBufferedSegmentSeconds": 600,
+      "PrefixPaddingMs": 300,
+      "TailPaddingMs": 300,
+      "Threshold": 0.5,
+      "SplitOverlapMs": 128,
+      "MinSpeechMs": 250,
+      "ExitThreshold": null
+    }
+  }
+}
+```
+
+| Field | Default | Valid range | Description |
+| --- | ---: | --- | --- |
+| `PauseMs` | `800` | `32..5000` | Silence required to close a speech segment. |
+| `MinSpeechMs` | `250` | `0..5000` | Minimum speech duration. Shorter candidates are discarded. `0` disables this filter. |
+| `PrefixPaddingMs` | `300` | `0..5000` | Audio retained before the speech trigger. |
+| `TailPaddingMs` | `300` | `0..5000` | Audio retained after detected speech end. |
+| `Threshold` | `0.5` | `0..1` | Probability required to enter or resume speech. |
+| `ExitThreshold` | `null` | `0..Threshold` or `null` | Probability below which silence begins. `null` derives a lower threshold automatically. |
+| `SplitOverlapMs` | `128` | `0..5000` | Audio overlap used only for forced duration splits. Must be shorter than `MaxSegmentSeconds` when forced splitting is enabled. |
+| `MaxSegmentSeconds` | `0` | `0..MaxBufferedSegmentSeconds` | Forced maximum speech segment duration. `0` disables forced splitting. |
+| `MaxBufferedSegmentSeconds` | `600` | `1..3600` | Safety limit for buffered audio. Also limits whole-file mode. |
+
+The VAD model operates on 512 new samples at 16 kHz for each inference step, which corresponds to 32 ms of audio.
+
+### `AudioNormalization`
+
+Normalization runs before both VAD and Whisper for decoded files and live PCM.
+
+It is a causal RMS level controller, not LUFS normalization. It does not change sample count, timing, or playback speed.
+
+| Field | Default | Valid range | Description |
+| --- | ---: | --- | --- |
+| `Enabled` | `true` | boolean | Enables or disables level normalization. |
+| `TargetRmsDbfs` | `-20` | `-40..-6` | Target speech RMS level. Must remain below `PeakDbfs`. |
+| `NoiseFloorDbfs` | `-70` | `-90..-20` | Frames below this level do not drive upward gain. Must remain below the target. |
+| `MaxGainDb` | `30` | `0..30` | Maximum amplification. |
+| `MinGainDb` | `-18` | `-60..0` | Minimum requested gain. |
+| `PeakDbfs` | `-1` | `-12..0` | Output peak ceiling. |
+| `RmsWindowMs` | `250` | `32..5000` | RMS averaging window. |
+| `AttackMs` | `100` | `1..5000` | Gain reduction response time. |
+| `ReleaseMs` | `1000` | `1..10000` | Gain increase response time. |
+
+Non-finite PCM values are replaced with zero even when normalization is disabled.
+
+## HTTP API
+
+Default local base URL:
+
+```text
+http://localhost:5050
+```
+
+OpenAI-style base URL:
+
+```text
+http://localhost:5050/v1
+```
+
+### Endpoint summary
+
+| Method | Route | Description |
+| --- | --- | --- |
+| `POST` | `/v1/audio/transcriptions` | Transcribe audio in its source language. |
+| `POST` | `/v1/audio/translations` | Translate speech to English. |
+| `GET` | `/v1/models` | List local API model aliases. |
+| `GET` | `/v1/models/{id}` | Get one API model alias. |
+| `GET` | `/v1/languages` | List Whisper language codes exposed by the live client API. |
+| `GET` | `/health` | Server readiness, loaded model, backend, and queue state. |
+| `GET` | `/v1/health` | Same response as `/health`. |
+| `GET` | `/live` | WebSocket upgrade route for live transcription. |
+
+Swagger is enabled only when the ASP.NET environment is `Development`:
+
+```text
+http://localhost:5050/swagger
+```
+
+### `POST /v1/audio/transcriptions`
+
+Transcribes speech without translating it.
+
+#### Multipart request
+
+Content type:
+
+```text
+multipart/form-data
+```
+
+Exactly one file field named `file` is required.
+
+Supported form fields:
+
+| Parameter | Required | Default | Description |
+| --- | --- | --- | --- |
+| `file` | yes | none | Audio file. Exactly one `file` field is allowed. |
+| `model` | no | loaded local model | Accepted for API compatibility. It does not switch weights. |
+| `language` | no | `auto` | Whisper language code or `auto`. |
+| `prompt` | no | empty | Initial prompt passed to Whisper. |
+| `temperature` | no | `0` | Whisper temperature from `0` to `1`. |
+| `response_format` | no | `json` | `json`, `text`, `verbose_json`, `srt`, or `vtt`. |
+| `stream` | no | `false` | Enables SSE when explicitly `true`. Only valid with `response_format=json`. |
+| `timestamp_granularities[]` | no | segments for `verbose_json` | Repeated `segment` and/or `word` values. Only valid with `verbose_json`. |
+| `timestamp_granularities` | no | same | Non-bracketed alias accepted by the local server. |
+| `chunking_strategy` | no | whole-file mode | `auto` or a JSON `server_vad` object. |
+
+Missing or empty optional values keep their defaults.
+
+Example:
+
+```bash
+curl -F "file=@sample.wav" \
+     -F "language=en" \
+     -F "response_format=json" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+#### Raw audio request
+
+As a local extension, the same endpoint also accepts a raw request body with:
+
+```text
+Content-Type: audio/*
+```
+
+or:
+
+```text
+Content-Type: application/octet-stream
+```
+
+Parameters are passed through the query string:
+
+```bash
+curl -H "Content-Type: audio/wav" \
+     --data-binary @sample.wav \
+     "http://localhost:5050/v1/audio/transcriptions?language=en&response_format=json"
+```
+
+With raw input and explicit `chunking_strategy=auto`, FFmpeg, VAD, and Whisper can operate while the request body is still arriving.
+
+Without a chunking strategy, the server waits for end-of-file and processes the completed recording as one block.
+
+Multipart uploads are always spooled to a temporary file first so fields can appear in any form order. Multipart inference begins after the complete form has been received.
+
+#### Chunking strategy
+
+When `chunking_strategy` is omitted or empty:
+
+```text
+whole completed recording -> one Whisper block
+```
+
+When set to:
+
+```text
+auto
+```
+
+the active server VAD profile is used.
+
+Example:
+
+```bash
+curl -F "file=@lecture.wav" \
+     -F "chunking_strategy=auto" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+A per-request VAD override can be supplied as JSON:
+
+```json
+{
+  "type": "server_vad",
+  "prefix_padding_ms": 384,
+  "silence_duration_ms": 800,
+  "threshold": 0.5
+}
+```
+
+Supported `server_vad` fields:
+
+| Field | Valid range | Description |
+| --- | --- | --- |
+| `type` | `server_vad` | Required strategy type. |
+| `silence_duration_ms` | `32..5000` | Overrides the profile pause duration. |
+| `prefix_padding_ms` | `0..5000` | Overrides the profile prefix padding. |
+| `threshold` | `0..1` | Overrides the speech threshold. |
+
+Missing fields inherit values from the active VAD profile.
+
+Multipart clients may also submit individual fields:
+
+```text
+chunking_strategy[type]=server_vad
+chunking_strategy[prefix_padding_ms]=384
+chunking_strategy[silence_duration_ms]=800
+chunking_strategy[threshold]=0.5
+```
+
+Dotted names such as `chunking_strategy.threshold` are also accepted.
+
+Do not submit both the JSON strategy and individual strategy fields in the same request.
+
+#### Timestamp granularities
+
+Timestamps are available only with:
+
+```text
+response_format=verbose_json
+```
+
+Segment timestamps:
+
+```bash
+curl -F "file=@sample.wav" \
+     -F "response_format=verbose_json" \
+     -F "timestamp_granularities[]=segment" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+Word timestamps:
+
+```bash
+curl -F "file=@sample.wav" \
+     -F "response_format=verbose_json" \
+     -F "timestamp_granularities[]=word" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+Both:
+
+```bash
+curl -F "file=@sample.wav" \
+     -F "response_format=verbose_json" \
+     -F "timestamp_granularities[]=segment" \
+     -F "timestamp_granularities[]=word" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+If `verbose_json` is requested without any explicit timestamp granularity, segment timestamps are included by default.
+
+Word timestamps use token timing and add inference work.
+
+### `POST /v1/audio/translations`
+
+Runs Whisper's speech-to-English translation task.
+
+Supported fields:
+
+| Parameter | Required | Default | Description |
+| --- | --- | --- | --- |
+| `file` | yes | none | Audio file. |
+| `model` | no | loaded local model | Accepted for compatibility. Does not switch weights. |
+| `prompt` | no | empty | Initial Whisper prompt. |
+| `temperature` | no | `0` | Whisper temperature from `0` to `1`. |
+| `response_format` | no | `json` | `json`, `text`, `verbose_json`, `srt`, or `vtt`. |
+
+Translation does not accept:
+
+- `language`;
+- `stream`;
+- `chunking_strategy`;
+- `timestamp_granularities[]`.
+
+Example:
+
+```bash
+curl -F "file=@speech.wav" \
+     -F "response_format=json" \
+     http://localhost:5050/v1/audio/translations
+```
+
+### Response formats
+
+#### `json`
+
+```json
+{
+  "text": "Recognized speech."
+}
+```
+
+#### `text`
+
+Returns UTF-8 `text/plain`.
+
+#### `verbose_json`
+
+Base response:
+
+```json
+{
+  "task": "transcribe",
+  "language": "English",
+  "duration": 4.21,
+  "text": "Recognized speech.",
+  "segments": []
+}
+```
+
+For translation:
+
+```json
+{
+  "task": "translate",
+  "language": "english",
+  "duration": 4.21,
+  "text": "Translated speech.",
+  "segments": []
+}
+```
+
+Segment objects may contain:
+
+```json
+{
+  "id": 0,
+  "seek": 0,
+  "start": 0.0,
+  "end": 2.4,
+  "text": "Recognized speech.",
+  "tokens": [],
+  "temperature": 0.0,
+  "avg_logprob": 0.0,
+  "compression_ratio": 0.0,
+  "no_speech_prob": 0.0
+}
+```
+
+Word timing objects contain:
+
+```json
+{
+  "word": "speech",
+  "start": 1.4,
+  "end": 1.8
+}
+```
+
+Fields that were not requested are omitted.
+
+#### `srt`
+
+Returns SubRip subtitles with Whisper segment timestamps.
+
+#### `vtt`
+
+Returns WebVTT subtitles with Whisper segment timestamps.
+
+### SSE transcription
+
+SSE is available only for transcription:
+
+```text
+POST /v1/audio/transcriptions
+response_format=json
+stream=true
+```
+
+Example:
+
+```bash
+curl -N \
+     -F "file=@sample.wav" \
+     -F "stream=true" \
+     -F "chunking_strategy=auto" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+Delta event:
+
+```text
+data: {"type":"transcript.text.delta","delta":"Recognized text"}
+```
+
+Final event:
+
+```text
+data: {"type":"transcript.text.done","text":"Recognized text"}
+```
+
+If an error occurs after the SSE response has started, the server sends an SSE `error` event containing an OpenAI-style error object.
+
+`stream=true` is a local extension for the `whisper-1` alias. OpenAI's hosted `whisper-1` behavior should not be inferred from this implementation.
+
+### Model aliases
+
+`GET /v1/models` exposes two API identifiers:
+
+```text
+whisper-1
+gpt-4o-transcribe
+```
+
+Both identifiers point to the same locally loaded GGML Whisper weights.
+
+`gpt-4o-transcribe` is a compatibility alias for clients that expect a streaming-capable transcription model name. It does not mean that GPT-4o weights or GPT-specific features are loaded.
+
+The `model` field on audio requests is accepted for compatibility but does not change the loaded model.
+
+Example:
+
+```bash
+curl http://localhost:5050/v1/models
+```
+
+A model entry includes:
+
+```json
+{
+  "id": "whisper-1",
+  "object": "model",
+  "created": 0,
+  "owned_by": "local",
+  "loaded_model": "ggml-small.bin",
+  "model_family": "small",
+  "multilingual": true,
+  "supports_streaming": true
+}
+```
+
+`created` is derived from the local model file modification time.
+
+### Health
+
+Routes:
+
+```text
+GET /health
+GET /v1/health
+```
+
+Both return the same readiness information.
+
+Example shape:
+
+```json
+{
+  "status": "ok",
+  "model": "whisper-1",
+  "loaded_model": "ggml-small.bin",
+  "model_family": "small",
+  "multilingual": true,
+  "backend": "Vulkan",
+  "queue": {
+    "available": 4,
+    "waiting": 0
+  }
+}
+```
+
+The endpoint is registered only after dependency checks, model loading, and warm-up have completed.
+
+`model_family` and `multilingual` are inferred from the GGML header. They identify architecture metadata, not the source, training history, or exact checkpoint identity of arbitrary model weights.
+
+### Languages
+
+Route:
+
+```text
+GET /v1/languages
+```
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "code": "auto",
+      "name": "Auto detect"
+    },
+    {
+      "code": "en",
+      "name": "English"
+    }
+  ]
+}
+```
+
+The complete list is generated from the language codes supported by Whisper.net.
+
+### Request limits and errors
+
+The Kestrel request body limit is:
+
+```text
+512 MiB
+```
+
+Multipart form rules:
+
+- exactly one file field named `file`;
+- empty files are rejected;
+- multipart boundary length is limited;
+- individual text fields are limited to 32 KiB;
+- unknown parameters are rejected instead of ignored.
+
+Common HTTP responses:
+
+| Status | Meaning |
+| --- | --- |
+| `400` | Invalid or unsupported request option. |
+| `415` | Request is neither multipart form data nor supported raw audio content type. |
+| `429` | Fixed-window HTTP rate limit exceeded. |
+| `499` | Client cancelled after request processing began. |
+| `503` | Request queue full or queue wait timed out. |
+| `500` | Unexpected server-side transcription failure. |
+
+Validation errors use this shape:
+
+```json
+{
+  "error": {
+    "message": "Description of the error.",
+    "type": "invalid_request_error"
+  }
+}
+```
+
+Options requiring hosted GPT capabilities, such as speaker diarization or GPT-only metadata, are not implemented by the local GGML Whisper backend and should not be treated as supported.
+
+## Live WebSocket API
+
+Route:
+
+```text
+GET /live
+```
+
+The request must upgrade to WebSocket. A normal HTTP request receives status `426 Upgrade Required`.
+
+### Query parameters
+
+| Parameter | Required | Default | Description |
+| --- | --- | --- | --- |
+| `language` | no | `auto` | Whisper language code or `auto`. |
+| `translate` | no | `false` | `true` runs Whisper speech-to-English translation. |
+| `audio_format` | no | encoded stream | Omit for an FFmpeg-detectable encoded stream, or use `pcm_f32le` for raw float PCM. |
+| `sample_rate` | with `pcm_f32le` | none | Required for raw PCM. Valid range: `8000..192000`. |
+
+Example browser-style connection:
+
+```text
+ws://localhost:5050/live?language=auto&translate=false&audio_format=pcm_f32le&sample_rate=48000
+```
+
+For remote microphone access from a browser, use HTTPS and WSS because microphone capture requires a secure browser context. `localhost` is allowed over HTTP by browsers.
+
+### Client protocol
+
+After accepting the connection, the server sends:
+
+```json
+{
+  "type": "session.ready"
+}
+```
+
+Audio is then sent as WebSocket binary messages.
+
+For `pcm_f32le`, the binary payload must contain:
+
+- little-endian float32 samples;
+- mono audio;
+- the sample rate declared in the query string.
+
+For encoded mode, binary messages form one continuous encoded audio stream consumed by FFmpeg.
+
+To end input, send this WebSocket text message:
+
+```text
+stop
+```
+
+No other control message is accepted.
+
+### Server events
+
+Incremental text:
+
+```json
+{
+  "type": "transcript.text.delta",
+  "delta": "Recognized text",
+  "index": 0,
+  "start": 0.3,
+  "end": 2.7
+}
+```
+
+`start` and `end` are approximate positions in the source audio timeline. They are not inference completion times.
+
+Final result:
+
+```json
+{
+  "type": "transcript.text.done",
+  "text": "Complete recognized text.",
+  "duration": 8.42,
+  "language": "English"
+}
+```
+
+Error:
+
+```json
+{
+  "type": "error",
+  "message": "Error description."
+}
+```
+
+The server closes a successful session after the final result.
+
+Live sessions consume the same request-slot pool and global Whisper inference pool as HTTP requests.
+
+## Browser journal
+
+Open:
+
+```text
+http://localhost:5050/
+```
+
+The included browser application:
+
+- captures the microphone;
+- streams mono float32 PCM to `/live`;
+- shows incremental transcript text;
+- can switch between transcription and translation before recording starts;
+- lets the user select automatic or explicit source language;
+- stores the preferred language and theme in `localStorage`;
+- stores journal recordings in IndexedDB;
+- supports copying, downloading, and deleting saved journal sessions.
+
+The server does not store completed journal entries.
+
+The browser requests microphone capture without browser noise suppression, echo cancellation, or automatic gain control. A browser may ignore unsupported media constraints.
+
+## Concurrency and rate limiting
+
+There are three separate concurrency controls.
+
+### Active request slots
+
+`ServerSecurity:MaxConcurrentRequests` limits active HTTP and WebSocket pipelines.
+
+Additional requests can wait in the FIFO request queue controlled by:
+
+```text
+MaxQueuedRequests
+QueueWaitSeconds
+```
+
+The request body is not read until an HTTP request obtains a slot.
+
+### Whisper workers per request
+
+`SttSettings:WhisperWorkers` controls how many Whisper processors one request may use for completed VAD segments.
+
+Results are returned in source audio order even when later segments finish first.
+
+The pipeline keeps at most approximately twice the worker count of unfinished segment work per request, providing backpressure.
+
+### Global Whisper inference limit
+
+`ServerSecurity:MaxConcurrentWhisper` limits simultaneous native Whisper inference across the entire process.
+
+For example:
+
+```json
+{
+  "ServerSecurity": {
+    "MaxConcurrentWhisper": 1
+  },
+  "SttSettings": {
+    "WhisperWorkers": 2
+  }
+}
+```
+
+creates two per-request workers, but only one can execute Whisper inference at a time.
+
+For strict sequential inference, set both values to `1`.
+
+Multiple simultaneous Vulkan inference jobs may increase VRAM use and do not necessarily improve throughput. Benchmark the target GPU and driver before increasing these values.
+
+### Fixed-window HTTP rate limiting
+
+The HTTP transcription and translation routes can also be limited by:
+
+```text
+EnableRateLimiting
+RateLimitMaxRequests
+RateLimitWindowSeconds
+```
+
+This limit is independent of request concurrency and queueing.
+
+The `/live` WebSocket route uses request-slot admission but is not mapped through the fixed-window HTTP endpoint limiter.
+
+## Building
+
+### Development build
+
+```bash
+dotnet build -c Release
+```
+
+Run:
+
+```bash
+dotnet run -c Release
+```
+
+A direct source build does not download or bundle FFmpeg automatically. Provide a working FFmpeg executable either:
+
+- on `PATH`; or
+- next to the built application as `ffmpeg.exe` on Windows or `ffmpeg` on Linux.
+
+### Direct publish
+
+Windows x64:
+
+```bash
+dotnet publish -c Release -r win-x64 --self-contained false
+```
+
+Linux x64:
 
 ```bash
 dotnet publish -c Release -r linux-x64 --self-contained false
 ```
 
-The direct `dotnet publish` command does not bundle FFmpeg. Check that
-`runtimes/vulkan/linux-x64` in the publish directory contains the five `.so`
-files. Test on a Linux machine with a working Vulkan driver: publishing
-successfully does not prove that the target GPU will execute inference.
+Direct `dotnet publish` does not package FFmpeg. Use the release script for distributable archives.
 
-## API
+### Build Windows and Linux release archives
 
-`POST /v1/audio/transcriptions` returns recognized text in the source language. `POST /v1/audio/translations` translates speech to English. Both accept OpenAI-style `multipart/form-data` with a `file` field. The local server requires only `file`; if `model` is omitted it uses the loaded Whisper model (the hosted OpenAI API requires `model`). Missing or empty optional form fields keep their defaults. Supported optional fields are `model`, `prompt`, `temperature` (0–1), and `response_format` (`json`, `text`, `verbose_json`, `srt`, `vtt`). Transcriptions also accept `language`, `stream` (boolean), repeated `timestamp_granularities[]` values (`segment`, `word`) with `verbose_json`, and `chunking_strategy`. Unknown options and unsupported formats fail explicitly. The submitted `model` value is accepted but does not select different weights.
+From `STT_Runner`:
 
-```bash
-curl -F language=en -F file=@sample.wav -F response_format=json http://localhost:5050/v1/audio/transcriptions
+```powershell
+./Build-Releases.ps1
 ```
 
-OpenAI clients may send multipart fields in any order. The server temporarily stores the uploaded file on disk while reading the form, then runs the selected whole-block or VAD path and Whisper through the bounded producer/consumer pipeline. The temporary file is removed automatically when the request ends. This lets a `language` or `prompt` field after `file` affect the whole recording, but multipart transcription starts after the upload completes.
-
-Raw audio is also accepted as a local extension with `Content-Type: audio/*` or `application/octet-stream`; pass `language`, `prompt`, `temperature`, `response_format`, `stream`, `chunking_strategy`, and `timestamp_granularities[]` as query parameters. With explicit `chunking_strategy=auto`, this route runs VAD and Whisper while bytes arrive. Without a strategy, it waits for EOF before transcribing the accumulated block:
+or:
 
 ```bash
-curl -H 'Content-Type: audio/wav' --data-binary @sample.wav 'http://localhost:5050/v1/audio/transcriptions?language=en'
+pwsh ./Build-Releases.ps1
 ```
 
-By default the server returns the selected format after processing completes. Set `stream=true` on a transcription request to receive `text/event-stream` with `transcript.text.delta` events as ordered audio pieces finish, followed by one `transcript.text.done` event with the complete text. Use `curl -N` to display events as they arrive. Missing or empty `stream` always means `false`; only an explicit `stream=true` enables SSE. The former `SttSettings:StreamResponse` setting is no longer used. OpenAI's hosted `whisper-1` ignores `stream=true`, so SSE for this local `whisper-1` alias is an intentional extension. Translation requests have no SSE option. A proxy may buffer the response despite server flushes.
+The script builds both:
 
-For a live lecture journal, use /live or send a continuous raw audio body with stream=true and chunking_strategy=auto, then append each delta in the client. The runner keeps the complete text for the final `transcript.text.done` event, but it does not retain timestamp and token metadata for plain JSON or SSE responses. The journal itself belongs to the client; the server closes the response after input EOF and final inference. Multipart uploads start inference only after the complete form has been received.
+```text
+win-x64
+linux-x64
+```
 
-`verbose_json` contains detected language, decoded duration, and Whisper segment timestamps by default. Request `timestamp_granularities[]=word` for token-derived word timings; requesting word timings adds inference work. `srt` and `vtt` use the same segment timestamps. The local VAD and parallel segments can produce slightly different boundaries from hosted Whisper.
+By default they are self-contained and include the .NET runtime.
 
-`GET /v1/models` lists `whisper-1` and `gpt-4o-transcribe` as API aliases; `GET /v1/models/{id}` retrieves either. Both aliases use **the same loaded GGML Whisper weights** and this runner's SSE implementation. The `gpt-4o-transcribe` identifier is offered for streaming-capable client selection; it does **not** indicate OpenAI GPT-4o weights, accuracy, or GPT-only features. Model entries include `supports_streaming`, `loaded_model`, `model_family`, and `multilingual` as local metadata. `GET /health` (and `/v1/health`) reports readiness after model loading and warm-up, the actual backend, queue occupancy, and the same model details. The GGML header can identify an architecture such as `base`, but cannot verify the origin, training, or exact checkpoint version of its weights. The health endpoints and additional model fields are local extensions.
+Output is written under a new directory:
 
-`chunking_strategy=auto` uses the active VAD profile. An omitted or empty strategy processes the completed file as one block, matching the documented OpenAI file behavior. To override a transcription request, send a JSON object such as `{"type":"server_vad","prefix_padding_ms":384,"silence_duration_ms":800,"threshold":0.5}`. Multipart clients may instead send individual fields such as `chunking_strategy[type]=server_vad`. Missing VAD object options inherit the active profile. The duration accepts 32–5000 ms, padding 0–5000 ms, and threshold 0–1. Translation also processes the file as one block and does not accept `chunking_strategy`. Whole-block requests retain decoded audio up to the profile's MaxBufferedSegmentSeconds safety limit (600 seconds by default); raise that limit for longer completed files, or choose auto for long transcriptions. Live microphone sessions always use VAD and bounded segment queues.
+```text
+Builds/<timestamp>-<id>/
+```
 
-Hosted GPT transcription options such as `include[]=logprobs`, `keywords`, language candidates, speaker labels, and `diarized_json` require capabilities absent from the local GGML model; they return a validation error instead of fabricated data. Translation has no `language`, `stream`, or timestamps option. SSE is currently available only for transcription with `response_format=json`.
+The directory contains:
 
-All VAD tuning lives in `appsettings.json` under `VadSettings`. `Profile` selects a named object in `Profiles`; the default is `segment`. This is a local profile name, not an OpenAI `chunking_strategy` value. Copy that object to create another profile and select its name. Restart the server after changing profiles.
+```text
+MwandishiSTT-win-x64.zip
+MwandishiSTT-linux-x64.zip
+```
 
-| Profile field | Default | Meaning |
+The script:
+
+1. publishes the .NET application;
+2. obtains pinned Windows and Linux x64 LGPL FFmpeg builds;
+3. verifies the FFmpeg archive SHA-256 values against the release checksum manifest;
+4. copies the FFmpeg executable and available legal files;
+5. writes FFmpeg provenance information;
+6. verifies required release files and Vulkan native runtime files;
+7. creates the final ZIP archives;
+8. preserves executable permissions in the Linux ZIP.
+
+The release archives intentionally do not contain model weights.
+
+### Release script parameters
+
+```powershell
+./Build-Releases.ps1 `
+    -Configuration Release `
+    -WindowsFFmpegArchive "path/to/windows.zip" `
+    -LinuxFFmpegArchive "path/to/linux.tar.xz" `
+    -FFmpegChecksumsFile "path/to/checksums.sha256" `
+    -FrameworkDependent
+```
+
+| Parameter | Default | Description |
 | --- | --- | --- |
-| `PauseMs` | 800 | Silence needed to end any speech segment; 32–5000 ms. No short-segment override. |
-| `MinSpeechMs` | 250 | Discard brief speech candidates as noise; 0 disables this filter, maximum 5000 ms. Padding is excluded when a pause closes the segment. |
-| `PrefixPaddingMs` | 300 | Keep audio before the speech trigger; 0–5000 ms. |
-| `TailPaddingMs` | 300 | Keep audio after the detected speech end; 0–5000 ms, limited by available audio. |
-| `Threshold` | 0.5 | Probability needed to enter or resume speech; 0–1. |
-| `ExitThreshold` | null | Probability below which a silence candidate starts. Null derives `max(Threshold - 0.15, 0.01)`, capped at Threshold. Explicit values must be 0–Threshold. |
-| `SplitOverlapMs` | 128 | Overlap at forced duration splits; 0–5000 ms, below the forced segment duration. |
-| `MaxSegmentSeconds` | 0 | Zero disables forced splits; set 30 for a duration limit. |
-| `MaxBufferedSegmentSeconds` | 600 | Memory safety limit; 1–3600 seconds, at least MaxSegmentSeconds. |
+| `-Configuration` | `Release` | .NET build configuration. |
+| `-WindowsFFmpegArchive` | empty | Reuses an existing exact Windows FFmpeg archive instead of downloading it. |
+| `-LinuxFFmpegArchive` | empty | Reuses an existing exact Linux FFmpeg archive instead of downloading it. |
+| `-FFmpegChecksumsFile` | empty | Uses a local checksum manifest instead of downloading the upstream one. |
+| `-FrameworkDependent` | off | Produces framework-dependent output without bundling the .NET runtime or native app host. |
 
-Silero receives 512 new samples at 16 kHz plus the previous 64 waveform samples, independently of its recurrent state. State and waveform context are private to each request and persist across its segments. Hysteresis preserves uncertain speech between the two thresholds. All audio inside a segment, including internal pauses, stays intact. Normal pause padding does not duplicate samples in neighboring segments; forced splits may overlap explicitly. The final partial frame keeps its real length; VAD-only zero padding never reaches Whisper or inflates duration.
+For framework-dependent output, start the application with:
 
-Pause detection has 32 ms resolution; padding uses sample-accurate lengths. EOF flushes an active segment that meets MinSpeechMs. The removed `MinSegmentMs` and `ShortSegmentPauseMs` fields no longer delay short phrases: remove them from old profiles. The old VAD settings under `SttSettings` have moved into the selected profile. API `server_vad` overrides apply only to that request. An explicit profile ExitThreshold is capped at a request's Threshold; null derives it from the request threshold. The request body limit is 512 MiB.
+```bash
+dotnet MwandishiSTT.dll
+```
 
-The 800 ms pause is the tested local default. It does not delay short speech differently or merge completed phrases. Silero's model, probability scores, short-noise filter, and end padding differ from the hosted service. Completed files use a single block by default; explicit auto/server_vad enables segmentation. SSE controls response delivery independently of this choice. The /live endpoint keeps incremental VAD segmentation.
+The currently pinned FFmpeg release script targets x64 Windows and Linux LGPL builds.
 
-### Input level normalization
+## Validation and tests
 
-`AudioNormalization` applies to both decoded uploads and live PCM, before VAD and Whisper. Each request owns a causal RMS level controller. It operates in place on the existing frames, adds no lookahead or whole-file buffering, and never changes sample count or speed. This is RMS normalization, not LUFS or a reproduction of OpenAI's undisclosed normalizer.
-
-| Field | Default | Meaning |
-| --- | --- | --- |
-| `Enabled` | true | Set false for finite PCM passthrough and level-control comparisons. |
-| `TargetRmsDbfs` | -20 | Target speech RMS; -40 to -6 dBFS, below PeakDbfs. |
-| `NoiseFloorDbfs` | -70 | Frames below this RMS do not drive upward gain and are not amplified; -90 to -20 dBFS, below target. |
-| `MaxGainDb` | 30 | Maximum amplification; 0–30 dB. |
-| `MinGainDb` | -18 | Minimum requested gain; -60–0 dB. The peak limiter may attenuate further. |
-| `PeakDbfs` | -1 | Output sample peak ceiling; -12–0 dBFS. |
-| `RmsWindowMs` | 250 | Exponential speech-power averaging; 32–5000 ms. |
-| `AttackMs` | 100 | Gain reduction response; 1–5000 ms. |
-| `ReleaseMs` | 1000 | Gain increase response; 1–10000 ms. |
-
-Gain changes are ramped within each frame. A final sample limiter protects the output ceiling during sudden peaks; it can alter very loud transients. Nonfinite samples are replaced with zero even when normalization is disabled. This level control cannot restore clipped recordings or guarantee correct transcription. Configuration changes require a server restart. Short or mixed-language segments can still be misrecognized by the default multilingual Whisper small model. Correct VAD and level control do not provide the context of a full recording; compare whole-file and auto modes on representative speech before reducing the pause further.
-
-`ServerSecurity:MaxConcurrentRequests` limits simultaneous uploads. `SttSettings:WhisperWorkers` controls the number of Whisper processors per request (default `2`; values must be positive, with no fixed worker cap). Workers independently transcribe completed VAD segments, then return text in the original audio order. If segment 1 finishes after segment 2, segment 2's text waits for segment 1. Up to twice the worker count of unfinished segments is retained per request; upstream channels provide backpressure. A live stream cannot process its next sentence until VAD finishes that segment.
-
-`ServerSecurity:MaxConcurrentWhisper` is the global inference limit across all requests (default `2`). Set it to at least `2` for two workers to run at once; a lower limit serializes inference even when `WhisperWorkers` is `2`. Multiple workers may use more GPU memory and may not improve performance on a busy Vulkan device. The bundled 1.9.1 runtime has not been validated for simultaneous inference on every Linux driver: compare one and two workers on the target device before raising the global limit further. Set both options to `1` to use sequential inference.
-
-Up to `ServerSecurity:MaxQueuedRequests` additional HTTP requests wait in a first-in-first-out queue before their bodies are read. The default queue holds eight requests, with a `QueueWaitSeconds` limit of 120 seconds. A full queue or an expired wait returns HTTP 503; a disconnected client leaves the queue. Set `MaxQueuedRequests` to `0` for immediate rejection when all active slots are occupied. The separate fixed-window rate limit still returns HTTP 429 when its request budget is exhausted.
-
-The Whisper factory and VAD session remain loaded for the application's lifetime. At startup, before accepting requests, the server transcribes and translates the included eight-second spoken sample to exercise both Whisper tasks and warm the selected backend. `SttSettings:WarmUpAudioFile` can point to another 16 kHz WAV (1–30 seconds). The bundled `Assets/warmup.wav` is a 16 kHz mono conversion of [French Canadian Woman Giving Instructions 04.wav](https://freesound.org/people/vero.marengere/sounds/514877/) by vero.marengere, licensed CC0. This primes shader paths used by the sample; a different model, device, language, or audio shape may still cause some first-use work. Startup takes longer because warm-up runs before the server starts listening.
-
-The local `.gitignore` explicitly includes `Assets/warmup.wav` even when the repository root ignores other WAV files.
-
-## Configuration
-
-`appsettings.json` controls model paths, download behavior, CORS, segmentation profiles, concurrency, and browser launch at startup. The default weights are **multilingual Whisper small** in whisper.cpp GGML format and the existing compatible Silero ONNX model. `UseGpu=false` forces the Whisper CPU runtime.
-
-| Setting | Purpose |
-| --- | --- |
-| `AutoDownload:WhisperUrl` | Complete download URL for a Whisper GGML file; defaults to `ggml-small.bin` at a pinned revision of [ggerganov/whisper.cpp](https://huggingface.co/ggerganov/whisper.cpp). OpenAI's original `.pt` checkpoint cannot be loaded directly by Whisper.net. |
-| `AutoDownload:VadUrl` | Complete download URL for a Silero ONNX file compatible with the existing 16 kHz input/context/state contract. |
-| `AutoDownload:WhisperSha256`, `VadSha256` | Optional custom file digests. Empty values use built-in verified digests for the exact pinned default URLs. For other URLs, empty values disable digest checking; supply the matching SHA-256 if desired. |
-| `SttSettings:ModelDirectory` | Download directory; relative paths are anchored to the application's directory. |
-| `SttSettings:WhisperModelName`, `VadModelName` | Local destination filenames. They do not change the remote URL or determine model architecture. |
-| `SttSettings:ExactWhisperFilePath`, `ExactVadFilePath` | Existing local model files; take priority over downloads and default hashes. Relative paths are anchored to the application. A missing explicit file is a configuration error. |
-| `AutoDownload:Enable` | Set false to require models already present locally. |
-
-To change weights, edit the appropriate full URL and, if configured, its checksum. When replacing a managed model, remove the previous downloaded file or select a different local destination filename: existing files are reused, not overwritten at every startup. The former shared `RepositoryUrl` setting is replaced by the two full URLs. Renaming a compatible model does not change its detected family; startup reads the GGML header. Names and extensions cannot make an incompatible model format compatible.
-
-Default downloads are checked against pinned SHA-256 digests on every startup. Downloads are streamed to a temporary file and renamed only after completion and checksum verification. The `small` weights need about 488 MB on disk and more memory than `base`. The models stay loaded until server shutdown. The tested defaults use an 800 ms VAD pause, two Whisper workers per request, and RMS normalization with `NoiseFloorDbfs=-70` and `MaxGainDb=30`. No special short-phrase merging is enabled. Explicitly select a language when a brief phrase does not provide enough evidence for automatic detection; fixed-language transcription can render foreign words phonetically.
-
-Swagger is enabled in the development environment at `/swagger`. Its upload form shows only the common fields for each endpoint; attach a file and execute to get a JSON transcript. The model alias, language detection, temperature (`0`), response format (`json`), and streaming (`false`) have defaults. Advanced `chunking_strategy` and `timestamp_granularities[]` remain available to API clients without cluttering the basic form.
-
-## Contract checks
-
-Start the server with models available (for a portable CPU check, set `SttSettings__UseGpu=false`), then exercise success and validation paths for every supported request field, both routes, both model aliases, raw audio, multipart uploads, and SSE:
+API contract checks:
 
 ```bash
 python3 Tests/api_contract.py --base-url http://127.0.0.1:5050
+```
+
+Long streaming test:
+
+```bash
 python3 Tests/long_stream.py
+```
+
+WebSocket test:
+
+```bash
 python3 Tests/live_websocket.py
+```
+
+Raw PCM live test:
+
+```bash
 python3 Tests/pcm_live.py --sample path/to/recording.mp3
 ```
 
-To check cleanup after a client disconnect, start the warmed server with
-`ServerSecurity__MaxConcurrentRequests=1`, `ServerSecurity__MaxQueuedRequests=2`,
-`ServerSecurity__MaxConcurrentWhisper=1`, and `SttSettings__UseGpu=false`, then
-run `python3 Tests/disconnect_cleanup.py`. It checks queue removal, active HTTP
-and WebSocket slot release, and a successful transcription afterward. Native
-Whisper inference may finish its current step before it observes cancellation.
+Disconnect and queue cleanup test:
 
-Run `dotnet run --project Tests/SignalChecks.csproj -c Release` to verify VAD pause timing, hysteresis, PCM preservation, EOF length, forced overlap, and normalization bounds without loading Whisper.
+```bash
+python3 Tests/disconnect_cleanup.py
+```
 
-Run `node Tests/pcm_worklet.cjs` to check PCM continuity, mono downmixing, byte order, and final-block flushing without a microphone.
+Signal-level checks without loading Whisper:
 
-Run `dotnet run --project Tests/ModelChecks/ModelChecks.csproj -c Release` for download URLs, renamed destinations, optional checksums, explicit-path precedence, and failed-download cleanup. Run `node Tests/browser_language.cjs` for remembered language selection and fallback to automatic detection.
+```bash
+dotnet run --project Tests/SignalChecks.csproj -c Release
+```
+
+Model download and path checks:
+
+```bash
+dotnet run --project Tests/ModelChecks/ModelChecks.csproj -c Release
+```
+
+Browser PCM worklet checks:
+
+```bash
+node Tests/pcm_worklet.cjs
+```
+
+Browser language behavior checks:
+
+```bash
+node Tests/browser_language.cjs
+```
+
+The Python and Node.js test scripts are development checks only. They are not runtime dependencies of the server.
+
+## Security notes
+
+The default configuration is intended for a trusted local network or local machine, not for direct public Internet exposure.
+
+Important defaults:
+
+- the server has no built-in authentication;
+- Kestrel listens on all interfaces with `http://+:5050`;
+- HTTP CORS allows any origin;
+- `/live` accepts WebSocket clients without origin-based access control.
+
+To bind only to the local machine:
+
+```json
+{
+  "Kestrel": {
+    "Endpoints": {
+      "Http": {
+        "Url": "http://localhost:5050"
+      }
+    }
+  }
+}
+```
+
+To restrict browser HTTP origins:
+
+```json
+{
+  "ServerSecurity": {
+    "CorsAllowAnyOrigin": false,
+    "CorsAllowedOrigins": [
+      "https://your-client.example"
+    ]
+  }
+}
+```
+
+CORS is not authentication and does not secure the WebSocket route or non-browser clients.
+
+For remote exposure, place the service behind an authenticated HTTPS reverse proxy or enforce access with a firewall.
+
+## Troubleshooting
+
+### `FFmpeg was not found`
+
+A source build requires a working FFmpeg executable.
+
+Check:
+
+```bash
+ffmpeg -version
+```
+
+or place `ffmpeg.exe` / `ffmpeg` next to the application.
+
+### GPU requested but CPU is used
+
+Check the startup log or:
+
+```bash
+curl http://localhost:5050/health
+```
+
+If `backend` reports CPU, verify the Vulkan driver and selected device.
+
+The project does not require the Vulkan SDK, but the operating system still needs a working Vulkan loader and GPU driver.
+
+### Startup fails because a model is missing
+
+Either enable automatic download:
+
+```json
+{
+  "AutoDownload": {
+    "Enable": true
+  }
+}
+```
+
+or provide exact local paths:
+
+```json
+{
+  "SttSettings": {
+    "ExactWhisperFilePath": "D:/Models/ggml-small.bin",
+    "ExactVadFilePath": "D:/Models/silero_vad.onnx"
+  }
+}
+```
+
+### Custom model URL does not download
+
+`AutoDownload:WhisperUrl` and `AutoDownload:VadUrl` must be complete HTTP or HTTPS file URLs.
+
+Changing only `WhisperModelName` or `VadModelName` changes the local destination name, not the source URL.
+
+### Short speech is detected in the wrong language
+
+Automatic language detection has little context for very short phrases. Send an explicit Whisper language code:
+
+```bash
+curl -F "file=@sample.wav" \
+     -F "language=uk" \
+     http://localhost:5050/v1/audio/transcriptions
+```
+
+### Long completed files fail in whole-file mode
+
+Without `chunking_strategy`, the completed recording is buffered as one block and is limited by `VadSettings:Profiles:<active>:MaxBufferedSegmentSeconds`.
+
+For long recordings, either:
+
+- increase that safety limit; or
+- use `chunking_strategy=auto`.
+
+### Remote browser cannot access the microphone
+
+Browsers require a secure context for microphone capture.
+
+Use:
+
+- `http://localhost:5050` on the same machine; or
+- HTTPS and WSS for remote access.
+
+## Third-party components
+
+Direct project dependencies include:
+
+| Component | Version | Purpose |
+| --- | --- | --- |
+| .NET | 10 | Web server and application runtime |
+| Microsoft.ML.OnnxRuntime | 1.25.1 | Silero VAD inference |
+| Whisper.net | 1.9.1 | Managed Whisper API |
+| Whisper.net.Runtime | 1.9.1 | CPU native Whisper runtime |
+| Whisper.net.Runtime.Vulkan | 1.9.1 | Vulkan native Whisper runtime |
+| Swashbuckle.AspNetCore | 10.1.7 | Swagger/OpenAPI UI and generation |
+| Microsoft.AspNetCore.OpenApi | 10.0.7 | ASP.NET OpenAPI integration |
+| Microsoft.OpenApi | 2.7.5 | OpenAPI model support |
+| FFmpeg | pinned by `Build-Releases.ps1` | Audio decoding and resampling |
+
+The default Whisper and Silero models are downloaded separately and are not included in release archives.
+
+See `THIRD-PARTY-NOTICES.md` and the `Licenses/` directory before redistributing packaged releases.
