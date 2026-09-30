@@ -52,6 +52,23 @@ public static class LiveTranscriptionEndpoints
             return;
         }
         bool translate = translation == "true";
+        string audioFormat = context.Request.Query["audio_format"].ToString();
+        int? pcmSampleRate = null;
+        if (audioFormat == "pcm_f32le")
+        {
+            if (!int.TryParse(context.Request.Query["sample_rate"], out int rate) || rate is < 8000 or > 192000)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+            pcmSampleRate = rate;
+        }
+        else if (audioFormat.Length != 0 || context.Request.Query.ContainsKey("sample_rate"))
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
 
         System.Threading.RateLimiting.RateLimitLease acquired;
         try { acquired = await slots.AcquireAsync(context.RequestAborted); }
@@ -80,7 +97,7 @@ public static class LiveTranscriptionEndpoints
             await using Stream input = pipe.Reader.AsStream();
             long index = 0;
             var request = new PipelineRequest(language, null, 0, translate, null,
-                WordTimestamps: false, IncludeSegments: false, VerboseSegmentMetadata: false);
+                WordTimestamps: false, IncludeSegments: false, VerboseSegmentMetadata: false, PcmSampleRate: pcmSampleRate);
             TranscriptResult result = await TranscriptPipeline.RunAsync(input, audio, vad, whisper,
                 request, (delta, chunk, token) => SendAsync(socket, new
                 {

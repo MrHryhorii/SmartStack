@@ -34,7 +34,7 @@ def main():
     finished = threading.Event()
     failures = []
 
-    connection.putrequest("POST", "/v1/audio/transcriptions?stream=true")
+    connection.putrequest("POST", "/v1/audio/transcriptions?stream=true&chunking_strategy=auto")
     connection.putheader("Content-Type", "audio/wav")
     connection.putheader("Transfer-Encoding", "chunked")
     connection.endheaders()

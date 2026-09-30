@@ -12,8 +12,10 @@ public sealed class TranscriptionUploadOperationFilter : IOperationFilter
         if (context.ApiDescription.RelativePath is not
             ("v1/audio/transcriptions" or "v1/audio/translations")) return;
 
-        var schema = context.SchemaGenerator.GenerateSchema(
-            typeof(TranscriptionEndpoints.UploadForm), context.SchemaRepository);
+        Type form = context.ApiDescription.RelativePath == "v1/audio/translations"
+            ? typeof(TranscriptionEndpoints.TranslationUploadForm)
+            : typeof(TranscriptionEndpoints.TranscriptionUploadForm);
+        var schema = context.SchemaGenerator.GenerateSchema(form, context.SchemaRepository);
         operation.RequestBody = new OpenApiRequestBody
         {
             Required = true,

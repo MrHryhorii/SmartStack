@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#15151b">
   <title>Mwandishi STT — Live transcription</title>
   <link rel="stylesheet" href="/styles.css">
-  <script defer src="/app.js"></script>
+  <script defer src="/app.js?v=20260930"></script>
 </head>
 <body>
   <div class="page-shell">
@@ -37,6 +37,7 @@
         </div>
         <p id="recordHint" class="record-hint">Choose a language or leave automatic detection on, then start recording.</p>
 
+
         <div class="journal-heading">
           <div>
             <p class="eyebrow">YOUR JOURNAL</p>
@@ -50,6 +51,7 @@
             <button id="copyButton" class="quiet-button" type="button" disabled>Copy</button>
             <button id="downloadButton" class="quiet-button" type="button" disabled>Download .txt</button>
             <button id="clearButton" class="quiet-button danger" type="button" disabled>Delete recording</button>
+            <button id="clearAllButton" class="quiet-button danger" type="button" disabled>Delete all recordings</button>
           </div>
         </div>
         <div id="journal" class="journal" role="log" aria-live="polite" aria-relevant="additions">

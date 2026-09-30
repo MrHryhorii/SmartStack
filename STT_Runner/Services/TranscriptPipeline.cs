@@ -8,7 +8,7 @@ namespace STT_Runner.Services;
 public sealed record PipelineRequest(
     string? Language, string? Prompt, float Temperature, bool Translate,
     VadSegmentationOptions? VadOptions, bool WordTimestamps,
-    bool IncludeSegments, bool VerboseSegmentMetadata);
+    bool IncludeSegments, bool VerboseSegmentMetadata, int? PcmSampleRate = null, bool UseVad = true);
 
 /// <summary>
 /// Runs the same bounded decoding, VAD, and Whisper stages for HTTP and live
@@ -27,7 +27,7 @@ public static class TranscriptPipeline
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct);
         CancellationToken token = linked.Token;
-        var pcm = Channel.CreateBounded<float[]>(new BoundedChannelOptions(AudioChannelCapacity)
+        var pcm = Channel.CreateBounded<PcmFrame>(new BoundedChannelOptions(AudioChannelCapacity)
         {
             SingleWriter = true, SingleReader = true
         });
@@ -36,8 +36,8 @@ public static class TranscriptPipeline
             SingleWriter = true, SingleReader = true
         });
 
-        Task producer = audio.ProcessStreamToChannelAsync(input, pcm.Writer, token);
-        Task<long> segmenter = vad.ProcessVadChannelAsync(pcm.Reader, sentences.Writer, request.VadOptions, token);
+        Task producer = audio.ProcessStreamToChannelAsync(input, pcm.Writer, token, request.PcmSampleRate);
+        Task<long> segmenter = vad.ProcessVadChannelAsync(pcm.Reader, sentences.Writer, request.VadOptions, token, request.UseVad);
         var text = new StringBuilder();
         List<TranscriptSegment>? segments = request.IncludeSegments ? new() : null;
         List<TranscriptWord>? words = request.WordTimestamps ? new() : null;
@@ -73,7 +73,7 @@ public static class TranscriptPipeline
         }
         finally
         {
-            while (pcm.Reader.TryRead(out float[]? frame)) ArrayPool<float>.Shared.Return(frame);
+            while (pcm.Reader.TryRead(out PcmFrame frame)) ArrayPool<float>.Shared.Return(frame.Samples);
             while (sentences.Reader.TryRead(out var piece)) piece.Owner.Dispose();
         }
     }

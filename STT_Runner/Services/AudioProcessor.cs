@@ -13,15 +13,19 @@ public sealed class AudioProcessor
 {
     // One VAD window is 512 samples, or 32 ms at 16 kHz.
     private const int FrameBytes = 512 * sizeof(float);
+    private readonly AudioNormalizationSettings _normalization;
+
+    public AudioProcessor(IConfiguration config) => _normalization = AudioNormalizationSettings.Read(config);
 
     /// <summary>
-    /// Writes padded 512-sample frames and transfers each pooled array to the channel.
+    /// Writes up to 512 real samples per frame and transfers each pooled array to the channel.
     /// Completes the channel with the original failure when decoding fails.
     /// </summary>
     public async Task ProcessStreamToChannelAsync(
         Stream inputStream,
-        ChannelWriter<float[]> outputChannel,
-        CancellationToken ct = default)
+        ChannelWriter<PcmFrame> outputChannel,
+        CancellationToken ct = default,
+        int? pcmSampleRate = null)
     {
         var startInfo = new ProcessStartInfo(FfmpegManager.ExecutablePath)
         {
@@ -31,6 +35,12 @@ public sealed class AudioProcessor
             UseShellExecute = false,
             CreateNoWindow = true
         };
+        // Raw browser PCM declares its actual sample rate before FFmpeg reads input.
+        if (pcmSampleRate is not null)
+        {
+            foreach (string argument in new[] { "-f", "f32le", "-ar", pcmSampleRate.Value.ToString(System.Globalization.CultureInfo.InvariantCulture), "-ac", "1" })
+                startInfo.ArgumentList.Add(argument);
+        }
         foreach (string argument in FfmpegArguments)
             startInfo.ArgumentList.Add(argument);
 
@@ -52,6 +62,7 @@ public sealed class AudioProcessor
         Task inputTask = CopyInputAsync(inputStream, process.StandardInput.BaseStream, token);
         Task<string> errorTask = process.StandardError.ReadToEndAsync(token);
         byte[] buffer = ArrayPool<byte>.Shared.Rent(FrameBytes);
+        var normalizer = new StreamingAudioNormalizer(_normalization);
         Exception? failure = null;
 
         try
@@ -66,11 +77,11 @@ public sealed class AudioProcessor
                 float[] frame = ArrayPool<float>.Shared.Rent(512);
                 try
                 {
-                    // Zero padding is needed only for the final partial VAD window.
-                    if (count < FrameBytes)
-                        frame.AsSpan(count / sizeof(float), 512 - count / sizeof(float)).Clear();
-                    buffer.AsSpan(0, count).CopyTo(MemoryMarshal.AsBytes(frame.AsSpan(0, 512)));
-                    await outputChannel.WriteAsync(frame, token);
+                    int samples = count / sizeof(float);
+                    buffer.AsSpan(0, count).CopyTo(MemoryMarshal.AsBytes(frame.AsSpan(0, samples)));
+                    // Normalize once before both VAD and Whisper; EOF padding stays private to VAD.
+                    normalizer.Process(frame.AsSpan(0, samples));
+                    await outputChannel.WriteAsync(new PcmFrame(frame, samples), token);
                     frame = null!;
                 }
                 finally

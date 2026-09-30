@@ -248,11 +248,13 @@ public sealed class Transcriptor : IDisposable
                                 if (segments is null && words is null) continue;
 
                                 double offset = piece.StartSample / 16_000d;
+                                double pieceEnd = (piece.StartSample + piece.Length) / 16_000d;
                                 WhisperToken[] tokens = segment.Tokens ?? [];
                                 if (segments is not null)
                                 {
-                                    double start = offset + segment.Start.TotalSeconds;
-                                    double end = Math.Max(start, offset + segment.End.TotalSeconds);
+                                    // Whisper's internal padding must not extend public timestamps beyond real PCM.
+                                    double start = Math.Clamp(offset + segment.Start.TotalSeconds, offset, pieceEnd);
+                                    double end = Math.Clamp(offset + segment.End.TotalSeconds, start, pieceEnd);
                                     int[] ids = verboseSegmentMetadata ? new int[tokens.Length] : [];
                                     double logprob = 0;
                                     if (verboseSegmentMetadata)
@@ -269,7 +271,7 @@ public sealed class Transcriptor : IDisposable
                                         segment.NoSpeechProbability));
                                 }
                                 if (words is not null)
-                                    AppendWords(words, tokens, offset);
+                                    AppendWords(words, tokens, offset, pieceEnd);
                             }
                         }
                         finally
@@ -317,7 +319,7 @@ public sealed class Transcriptor : IDisposable
         return buffer.Length == 0 ? 0 : (double)data.Length / buffer.Length;
     }
 
-    private static void AppendWords(List<TranscriptWord> words, WhisperToken[] tokens, double offset)
+    private static void AppendWords(List<TranscriptWord> words, WhisperToken[] tokens, double offset, double pieceEnd)
     {
         string value = "";
         long start = 0;
@@ -329,7 +331,7 @@ public sealed class Transcriptor : IDisposable
                 continue;
             if (value.Length > 0 && char.IsWhiteSpace(token.Text[0]))
             {
-                words.Add(new TranscriptWord(offset + start / 100d, offset + end / 100d, value));
+                AddWord();
                 value = "";
             }
             if (value.Length == 0) start = token.Start;
@@ -337,7 +339,14 @@ public sealed class Transcriptor : IDisposable
             end = token.End;
         }
         if (value.Length > 0)
-            words.Add(new TranscriptWord(offset + start / 100d, offset + end / 100d, value));
+            AddWord();
+
+        void AddWord()
+        {
+            double wordStart = Math.Clamp(offset + start / 100d, offset, pieceEnd);
+            double wordEnd = Math.Clamp(offset + end / 100d, wordStart, pieceEnd);
+            words.Add(new TranscriptWord(wordStart, wordEnd, value));
+        }
     }
     public void Dispose()
     {

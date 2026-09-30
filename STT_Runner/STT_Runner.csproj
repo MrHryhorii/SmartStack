@@ -13,6 +13,10 @@
     <Authors>MrHryhorii</Authors>
     <Description>A local speech journal and OpenAI-compatible STT server using Whisper, Vulkan, and Silero VAD.</Description>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Tests/**/*.cs" />
+    <Content Remove="Tests/**" />
+  </ItemGroup>
   <!-- Keep the managed API, CPU fallback, and Vulkan runtime versions aligned. -->
   <ItemGroup>
     <!-- Swagger documents the multipart endpoint without buffering uploads. -->

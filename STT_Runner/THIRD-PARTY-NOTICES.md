@@ -39,12 +39,12 @@ under MIT. See https://github.com/ggml-org/whisper.cpp/blob/master/LICENSE and
 https://github.com/ggml-org/ggml/blob/master/LICENSE. Copyright belongs to the
 respective contributors, including Copyright (c) 2023-2026 The ggml authors.
 
-The default `ggml-base.bin` is a converted Whisper model. OpenAI publishes
+The default `ggml-small.bin` is a converted Whisper model. OpenAI publishes
 Whisper code and model weights under MIT:
 https://github.com/openai/whisper/blob/main/LICENSE. The default
 `silero_vad.onnx` is based on Silero VAD, also MIT:
-https://github.com/snakers4/silero-vad/blob/master/LICENSE. Both defaults are
-served by https://huggingface.co/Hinotsuba/silero_vad_ggml-base. If you change
+https://github.com/snakers4/silero-vad/blob/master/LICENSE. The Whisper default is served by https://huggingface.co/ggerganov/whisper.cpp;
+the VAD default is served by https://huggingface.co/Hinotsuba/silero_vad_ggml-base. If you change
 the model source, check that model's own license before distributing it.
 The upstream notices include Copyright (c) 2022 OpenAI and Copyright (c)
 2020-present Silero Team.

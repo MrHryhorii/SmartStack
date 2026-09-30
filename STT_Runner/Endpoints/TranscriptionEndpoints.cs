@@ -3,6 +3,7 @@ using Microsoft.Net.Http.Headers;
 using STT_Runner.Services;
 using System.Buffers;
 using System.ComponentModel.DataAnnotations;
+using System.ComponentModel;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -14,21 +15,31 @@ namespace STT_Runner.Endpoints;
 public static class TranscriptionEndpoints
 {
     // Swagger describes the multipart API; the handler reads sections itself.
-    public sealed class UploadForm
+    public sealed class TranscriptionUploadForm
     {
         [Required]
         public IFormFile File { get; set; } = default!;
-        public string? Model { get; set; }
         public string? Language { get; set; }
         public string? Prompt { get; set; }
+        [DefaultValue(0)]
         public float? Temperature { get; set; }
+        [DefaultValue(false)]
         public bool? Stream { get; set; }
         [JsonPropertyName("response_format")]
+        [DefaultValue("json")]
         public string? ResponseFormat { get; set; }
-        [JsonPropertyName("timestamp_granularities[]")]
-        public string[]? TimestampGranularities { get; set; }
-        [JsonPropertyName("chunking_strategy")]
-        public string? ChunkingStrategy { get; set; }
+    }
+
+    public sealed class TranslationUploadForm
+    {
+        [Required]
+        public IFormFile File { get; set; } = default!;
+        public string? Prompt { get; set; }
+        [DefaultValue(0)]
+        public float? Temperature { get; set; }
+        [JsonPropertyName("response_format")]
+        [DefaultValue("json")]
+        public string? ResponseFormat { get; set; }
     }
 
     private sealed class AudioOptions
@@ -38,8 +49,6 @@ public static class TranscriptionEndpoints
         public string ResponseFormat { get; set; } = "json";
         public float Temperature { get; set; }
         public bool Stream { get; set; }
-        public bool StreamSpecified { get; set; }
-        public bool DefaultStream { get; set; }
         public bool SegmentTimestamps { get; set; }
         public bool WordTimestamps { get; set; }
         public bool ExplicitGranularity { get; set; }
@@ -61,11 +70,16 @@ public static class TranscriptionEndpoints
 
     private static void MapEndpoint(IEndpointRouteBuilder app, string route, bool translate, bool rateLimitingEnabled)
     {
+        string description = translate
+            ? "Upload one audio file. Optional fields: prompt, response_format (default json), and temperature (default 0). The loaded Whisper model translates to English."
+            : "Upload one audio file. Optional fields: language (default auto), prompt, response_format (default json), temperature (default 0), and stream (default false). The loaded Whisper model is used automatically. Advanced chunking and timestamp options remain available to API clients.";
         var endpoint = app.MapPost(route, (HttpContext context, AudioProcessor audio,
             VadProcessor vad, Transcriptor whisper, RequestSlots slots, IConfiguration config) =>
             HandleAsync(context, audio, vad, whisper, slots, config, translate))
             .DisableAntiforgery()
             .WithTags("Audio")
+            .WithSummary(translate ? "Translate audio to English" : "Transcribe audio in its spoken language")
+            .WithDescription(description)
             .WithName(translate ? "CreateTranslation" : "CreateTranscription");
 
         if (rateLimitingEnabled)
@@ -86,8 +100,7 @@ public static class TranscriptionEndpoints
             {
                 Language = context.Request.Query["language"],
                 Prompt = context.Request.Query["prompt"],
-                ResponseFormat = context.Request.Query["response_format"].ToString() is { Length: > 0 } format ? format : "json",
-                DefaultStream = config.GetValue<bool>("SttSettings:StreamResponse", false)
+                ResponseFormat = context.Request.Query["response_format"].ToString() is { Length: > 0 } format ? format : "json"
             };
             ApplyQueryOptions(context.Request.Query, options, config);
 
@@ -152,24 +165,27 @@ public static class TranscriptionEndpoints
 
     private static void ApplyQueryOptions(IQueryCollection query, AudioOptions options, IConfiguration config)
     {
-        if (query.TryGetValue("stream", out var stream))
+        if (query.TryGetValue("stream", out var stream) && !string.IsNullOrWhiteSpace(stream))
         {
             options.Stream = ParseBool(stream.ToString(), "stream");
-            options.StreamSpecified = true;
         }
-        if (query.TryGetValue("temperature", out var temperature))
+        if (query.TryGetValue("temperature", out var temperature) && !string.IsNullOrWhiteSpace(temperature))
             options.Temperature = ParseTemperature(temperature.ToString());
         if (query.TryGetValue("timestamp_granularities[]", out var granularities))
-            foreach (string? value in granularities) AddGranularity(options, value ?? "");
+            foreach (string? value in granularities)
+                if (!string.IsNullOrWhiteSpace(value)) AddGranularity(options, value);
         if (query.TryGetValue("timestamp_granularities", out var plainGranularities))
-            foreach (string? value in plainGranularities) AddGranularity(options, value ?? "");
-        if (query.TryGetValue("chunking_strategy", out var chunking))
+            foreach (string? value in plainGranularities)
+                if (!string.IsNullOrWhiteSpace(value)) AddGranularity(options, value);
+        if (query.TryGetValue("chunking_strategy", out var chunking) && !string.IsNullOrWhiteSpace(chunking))
             SetChunkingStrategy(options, chunking.ToString(), config);
         foreach (string field in query.Keys)
         {
             if (TryGetChunkingField(field, out string name))
             {
-                (options.ChunkingFields ??= new(StringComparer.Ordinal))[name] = query[field].ToString();
+                string value = query[field].ToString();
+                if (!string.IsNullOrWhiteSpace(value))
+                    (options.ChunkingFields ??= new(StringComparer.Ordinal))[name] = value;
                 continue;
             }
             if (field is not ("model" or "language" or "prompt" or "response_format" or
@@ -215,6 +231,8 @@ public static class TranscriptionEndpoints
                         FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 81920,
                         FileOptions.Asynchronous | FileOptions.DeleteOnClose);
                     await section.Body.CopyToAsync(upload, ct);
+                    if (upload.Length == 0)
+                        throw new InvalidDataException("Audio file is empty.");
                     continue;
                 }
 
@@ -223,19 +241,30 @@ public static class TranscriptionEndpoints
                 {
                     case "language": options.Language = value; break;
                     case "prompt": options.Prompt = value; break;
-                    case "response_format": options.ResponseFormat = value; break;
-                    case "temperature": options.Temperature = ParseTemperature(value); break;
-                    case "stream":
-                        options.Stream = ParseBool(value, "stream");
-                        options.StreamSpecified = true;
+                    case "response_format" when !string.IsNullOrWhiteSpace(value):
+                        options.ResponseFormat = value;
                         break;
-                    case "timestamp_granularities[]" or "timestamp_granularities":
+                    case "response_format": break;
+                    case "temperature" when !string.IsNullOrWhiteSpace(value):
+                        options.Temperature = ParseTemperature(value);
+                        break;
+                    case "temperature": break;
+                    case "stream" when !string.IsNullOrWhiteSpace(value):
+                        options.Stream = ParseBool(value, "stream");
+                        break;
+                    case "stream": break;
+                    case "timestamp_granularities[]" or "timestamp_granularities" when !string.IsNullOrWhiteSpace(value):
                         AddGranularity(options, value);
                         break;
-                    case "chunking_strategy": SetChunkingStrategy(options, value, config); break;
+                    case "timestamp_granularities[]" or "timestamp_granularities": break;
+                    case "chunking_strategy" when !string.IsNullOrWhiteSpace(value):
+                        SetChunkingStrategy(options, value, config);
+                        break;
+                    case "chunking_strategy": break;
                     case "model": break; // API aliases use the same loaded GGML weights.
                     case var name when TryGetChunkingField(name, out string key):
-                        (options.ChunkingFields ??= new(StringComparer.Ordinal))[key] = value;
+                        if (!string.IsNullOrWhiteSpace(value))
+                            (options.ChunkingFields ??= new(StringComparer.Ordinal))[key] = value;
                         break;
                     default: throw new InvalidDataException($"Unsupported parameter: {field}.");
                 }
@@ -362,9 +391,10 @@ public static class TranscriptionEndpoints
                 type.ValueKind != JsonValueKind.String || type.GetString() != "server_vad")
                 throw new InvalidDataException("chunking_strategy must be 'auto' or a server_vad object.");
 
-            int pauseMs = config.GetValue<int>("SttSettings:VadPauseMs", 800);
-            int paddingMs = 384;
-            float threshold = 0.5f;
+            VadProfile profile = VadProfile.Read(config);
+            int pauseMs = profile.PauseMs;
+            int paddingMs = profile.PrefixPaddingMs;
+            float threshold = profile.Threshold;
             foreach (JsonProperty property in strategy.EnumerateObject())
             {
                 switch (property.Name)
@@ -400,6 +430,9 @@ public static class TranscriptionEndpoints
 
     private static void ValidateOptions(AudioOptions options, bool translate)
     {
+        if (string.IsNullOrWhiteSpace(options.Language)) options.Language = null;
+        if (string.IsNullOrWhiteSpace(options.Prompt)) options.Prompt = null;
+        if (string.IsNullOrWhiteSpace(options.ResponseFormat)) options.ResponseFormat = "json";
         if (options.ResponseFormat is not ("json" or "text" or "srt" or "vtt" or "verbose_json"))
             throw new InvalidDataException("Unsupported response_format.");
         if (options.ExplicitGranularity && (translate || options.ResponseFormat != "verbose_json"))
@@ -412,8 +445,6 @@ public static class TranscriptionEndpoints
             !options.Language.Equals("auto", StringComparison.OrdinalIgnoreCase) &&
             !SupportedLanguages.Value.Contains(options.Language))
             throw new InvalidDataException("language must be a language code supported by Whisper.");
-        if (!options.StreamSpecified && !translate && options.ResponseFormat == "json")
-            options.Stream = options.DefaultStream;
         if (options.ResponseFormat == "verbose_json" && !options.ExplicitGranularity)
             options.SegmentTimestamps = true;
         if (options.Stream && (translate || options.ResponseFormat != "json"))
@@ -430,7 +461,8 @@ public static class TranscriptionEndpoints
     {
         bool includeSegments = options.SegmentTimestamps || options.ResponseFormat is "srt" or "vtt";
         var request = new PipelineRequest(options.Language, options.Prompt, options.Temperature,
-            translate, options.VadOptions, options.WordTimestamps, includeSegments, options.SegmentTimestamps);
+            translate, options.VadOptions, options.WordTimestamps, includeSegments, options.SegmentTimestamps,
+            UseVad: options.ChunkingSpecified);
         Func<string, RecognizedChunk, CancellationToken, Task>? onDelta = options.Stream
             ? (delta, _, token) => WriteEventAsync(context, new { type = "transcript.text.delta", delta }, token)
             : null;

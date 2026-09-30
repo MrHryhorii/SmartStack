@@ -48,7 +48,7 @@ def frame(reader):
     length = second & 127
     if length == 126:
         length = int.from_bytes(read_exact(reader, 2), "big")
-    if length == 127:
+    elif length == 127:
         length = int.from_bytes(read_exact(reader, 8), "big")
     assert not second & 128
     return opcode, read_exact(reader, length)
@@ -143,6 +143,8 @@ def check_session(translate):
         assert "".join(deltas) == done["text"]
         if translate:
             assert done["language"] == "english"
+        else:
+            assert done["language"] == "french"
         print(f"PASS: {'translation' if translate else 'transcription'}, {len(deltas)} timed deltas before EOF")
     finally:
         release.set()

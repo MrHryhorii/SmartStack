@@ -13,6 +13,7 @@ const elements = {
   copy: document.querySelector("#copyButton"),
   download: document.querySelector("#downloadButton"),
   clear: document.querySelector("#clearButton"),
+  clearAll: document.querySelector("#clearAllButton"),
   count: document.querySelector("#entryCount"),
   journal: document.querySelector("#journal"),
   entries: document.querySelector("#entries"),
@@ -23,15 +24,19 @@ const storageName = "mwandishi-journals";
 let database;
 let session;
 let entries = [];
+let sessionCount = 0;
 let socket;
-let recorder;
+let audioContext;
+let captureNode;
+let captureSource;
+let acknowledgeStop;
+let rejectStop;
 let microphone;
 let state = "idle";
 let serverReady = false;
 let completed = false;
 let serverError = false;
 let storageFailed = false;
-let uploadQueue = Promise.resolve();
 let persistQueue = Promise.resolve();
 let finalizing = Promise.resolve();
 
@@ -80,6 +85,7 @@ async function loadSessions(selectedId) {
   const transaction = database.transaction("sessions", "readonly");
   const all = await requestResult(transaction.objectStore("sessions").getAll());
   all.sort((a, b) => b.createdAt - a.createdAt);
+  sessionCount = all.length;
   elements.sessions.replaceChildren();
   if (all.length === 0) elements.sessions.add(new Option("No recordings yet", ""));
   for (const item of all) elements.sessions.add(new Option(item.title, item.id));
@@ -116,6 +122,16 @@ async function deleteSession() {
   await loadSessions();
 }
 
+async function deleteAllSessions() {
+  if (state !== "idle" || sessionCount === 0) return;
+  if (!window.confirm(`Permanently delete all ${sessionCount} recordings and their transcripts?`)) return;
+  const transaction = database.transaction(["sessions", "entries"], "readwrite");
+  transaction.objectStore("sessions").clear();
+  transaction.objectStore("entries").clear();
+  await transactionDone(transaction);
+  await loadSessions();
+}
+
 function formatTime(seconds) {
   const value = Math.max(0, Math.floor(seconds));
   const hours = Math.floor(value / 3600);
@@ -147,6 +163,7 @@ function updateActions() {
   elements.copy.disabled = entries.length === 0;
   elements.download.disabled = entries.length === 0;
   elements.clear.disabled = !session || state !== "idle";
+  elements.clearAll.disabled = sessionCount === 0 || state !== "idle";
 }
 
 function renderJournal() {
@@ -186,7 +203,8 @@ async function checkServer() {
     if (!healthResponse.ok || !languageResponse.ok) throw new Error("The server is unavailable.");
     const health = await healthResponse.json();
     const languages = await languageResponse.json();
-    const selected = elements.language.value || localStorage.getItem("mwandishi-language") || "auto";
+    // Restore the remembered language before the initial HTML selection (auto).
+    const selected = localStorage.getItem("mwandishi-language") || elements.language.value || "auto";
     elements.language.replaceChildren();
     for (const item of languages.data) elements.language.add(new Option(item.name, item.code));
     elements.language.value = selected;
@@ -208,9 +226,15 @@ function stopMicrophone() {
   microphone = null;
 }
 
-function recordingFormat() {
-  const formats = ["audio/webm;codecs=opus", "audio/ogg;codecs=opus", "audio/mp4;codecs=mp4a.40.2", "audio/mp4"];
-  return formats.find(format => MediaRecorder.isTypeSupported(format));
+function releaseCapture() {
+  captureSource?.disconnect();
+  captureNode?.disconnect();
+  captureNode?.port.close();
+  captureSource = null;
+  captureNode = null;
+  if (audioContext) void audioContext.close().catch(() => {});
+  audioContext = null;
+  stopMicrophone();
 }
 
 async function handleServerMessage(message) {
@@ -263,16 +287,28 @@ async function startRecording() {
   updateControls();
   setStatus("Requesting microphone", "recording");
   try {
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder)
+    if (!navigator.mediaDevices?.getUserMedia || !window.AudioContext || !window.AudioWorkletNode)
       throw new Error("This browser cannot record microphone audio on this page.");
-    const format = recordingFormat();
-    if (!format) throw new Error("No supported microphone recording format was found.");
-    microphone = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-    recorder = new MediaRecorder(microphone, { mimeType: format });
+    audioContext = new AudioContext();
+    await audioContext.resume();
+    // Browser voice cleanup can suppress soft syllables before the server sees them.
+    microphone = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+      video: false
+    });
+    await audioContext.audioWorklet.addModule("/pcm-worklet.js");
+    captureNode = new AudioWorkletNode(audioContext, "pcm-capture");
+    captureSource = audioContext.createMediaStreamSource(microphone);
+    const format = `PCM float32 · ${audioContext.sampleRate} Hz`;
+
     const scheme = location.protocol === "https:" ? "wss:" : "ws:";
     const url = new URL(`${scheme}//${location.host}/live`);
-    url.searchParams.set("language", elements.language.value);
-    url.searchParams.set("translate", String(elements.translate.checked));
+    const language = elements.language.value || "auto";
+    const translate = elements.translate.checked;
+    url.searchParams.set("language", language);
+    url.searchParams.set("translate", String(translate));
+    url.searchParams.set("audio_format", "pcm_f32le");
+    url.searchParams.set("sample_rate", String(audioContext.sampleRate));
     socket = new WebSocket(url);
 
     await new Promise((resolve, reject) => {
@@ -292,12 +328,12 @@ async function startRecording() {
       socket.onerror = () => { clearTimeout(timeout); reject(new Error("Could not open the live connection.")); };
       socket.onclose = async () => {
         clearTimeout(timeout);
+        rejectStop?.(new Error("The connection closed before audio upload finished."));
         if (state === "connecting") reject(new Error("The live connection closed before recording."));
         if (state === "recording" || state === "finishing") {
           await finalizing;
           if (!completed && !serverError) setStatus("Connection lost", "error", "Your existing journal entries are still saved.");
-          if (recorder?.state === "recording") recorder.stop();
-          stopMicrophone();
+          releaseCapture();
           state = "idle";
           updateControls();
         }
@@ -306,38 +342,40 @@ async function startRecording() {
 
     const createdAt = Date.now();
     session = { id: crypto.randomUUID(), createdAt,
-      title: new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(createdAt) };
+      title: new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(createdAt),
+      sourceLanguage: language, translate };
     await saveSession(session);
     await loadSessions(session.id);
-    uploadQueue = Promise.resolve();
-    recorder.ondataavailable = event => {
-      if (!event.data.size) return;
-      uploadQueue = uploadQueue.then(async () => {
-        const bytes = await event.data.arrayBuffer();
-        if (socket.readyState !== WebSocket.OPEN) return;
-        socket.send(bytes);
-        if (socket.bufferedAmount > 4 * 1024 * 1024) {
-          setStatus("Server is falling behind", "error", "Stopping to avoid an unbounded audio queue.");
-          stopRecording();
-        }
-      });
+    if (socket.readyState !== WebSocket.OPEN) throw new Error("The live connection closed before recording.");
+    captureNode.port.onmessage = event => {
+      if (event.data === "stopped") {
+        acknowledgeStop?.();
+        return;
+      }
+      if (socket.readyState !== WebSocket.OPEN) return;
+      socket.send(event.data);
+      if (socket.bufferedAmount > 4 * 1024 * 1024 && state === "recording") {
+        elements.hint.textContent = "Upload is falling behind; finishing this recording.";
+        void stopRecording();
+      }
     };
-    recorder.onstop = () => {
-      uploadQueue.then(() => {
-        if (socket.readyState === WebSocket.OPEN) socket.send("stop");
-      }).catch(error => setStatus("Audio upload failed", "error", error.message));
+    captureNode.onprocessorerror = () => {
+      serverError = true;
+      setStatus("Audio capture failed", "error", "Start a new recording to retry.");
+      socket.close();
+      releaseCapture();
     };
-    recorder.onerror = () => stopRecording();
-    recorder.start(500);
+    captureSource.connect(captureNode);
+    captureNode.connect(audioContext.destination);
     state = "recording";
     updateControls();
-    setStatus("Recording", "recording", `Microphone · ${format}`);
-    elements.hint.textContent = elements.translate.checked
-      ? "Listening and translating to English. Settings are locked until you stop."
-      : "Listening. Settings are locked until you stop.";
+    setStatus(translate ? "Recording · translating to English" : "Recording · transcribing",
+      "recording", `Source: ${elements.language.selectedOptions[0]?.textContent ?? language} · ${format}`);
+    elements.hint.textContent = translate
+      ? "Translation is on: the journal will contain English text. Settings are locked until you stop."
+      : "Transcription is on: the journal will use the spoken language. Settings are locked until you stop.";
   } catch (error) {
-    if (recorder?.state === "recording") recorder.stop();
-    stopMicrophone();
+    releaseCapture();
     socket?.close();
     state = "idle";
     updateControls();
@@ -346,13 +384,29 @@ async function startRecording() {
   }
 }
 
-function stopRecording() {
+async function stopRecording() {
   if (state !== "recording") return;
   state = "finishing";
   updateControls();
   setStatus("Finishing the last phrases", "recording", "Keep this page open until the journal is saved.");
-  if (recorder.state === "recording") recorder.stop();
-  stopMicrophone();
+  try {
+    // The port delivers the final partial PCM block before the stop acknowledgement.
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Audio capture did not finish.")), 3000);
+      acknowledgeStop = () => { clearTimeout(timeout); resolve(); };
+      rejectStop = error => { clearTimeout(timeout); reject(error); };
+      captureNode.port.postMessage("stop");
+    });
+    if (socket.readyState === WebSocket.OPEN) socket.send("stop");
+  } catch (error) {
+    serverError = true;
+    setStatus("Recording interrupted", "error", error.message);
+    socket?.close();
+  } finally {
+    acknowledgeStop = null;
+    rejectStop = null;
+    releaseCapture();
+  }
 }
 
 async function copyJournal() {
@@ -379,12 +433,13 @@ function downloadJournal() {
 elements.theme.addEventListener("click", () => setTheme(
   document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
 elements.language.addEventListener("change", () => localStorage.setItem("mwandishi-language", elements.language.value));
-elements.translate.addEventListener("change", () => localStorage.setItem("mwandishi-translate", String(elements.translate.checked)));
 elements.record.addEventListener("click", () => state === "recording" ? stopRecording() : void startRecording());
 elements.sessions.addEventListener("change", () => void loadSessionById(elements.sessions.value));
 elements.copy.addEventListener("click", () => void copyJournal());
 elements.download.addEventListener("click", downloadJournal);
 elements.clear.addEventListener("click", () => void deleteSession());
+elements.clearAll.addEventListener("click", () => void deleteAllSessions().catch(error =>
+  setStatus("Could not delete recordings", "error", error.message)));
 elements.retry.addEventListener("click", () => void checkServer());
 
 async function loadSessionById(id) {
@@ -394,7 +449,9 @@ async function loadSessionById(id) {
 
 async function initialize() {
   setTheme(localStorage.getItem("mwandishi-theme") || "light");
-  elements.translate.checked = localStorage.getItem("mwandishi-translate") === "true";
+  // A new session starts in transcription mode; translation requires an explicit choice.
+  elements.translate.checked = false;
+  localStorage.removeItem("mwandishi-translate");
   try {
     database = await openDatabase();
     await loadSessions();

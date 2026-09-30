@@ -109,3 +109,4 @@ footer a { color: inherit; text-underline-offset: 3px; }
   .entry { grid-template-columns: 52px minmax(0, 1fr); gap: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .status-dot.recording { animation: none; } }
+

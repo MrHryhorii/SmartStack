@@ -81,6 +81,8 @@ def main():
     args = parser.parse_args()
     base = args.base_url.rstrip("/")
     audio = sample_bytes(args.sample)
+    with wave.open(io.BytesIO(audio), "rb") as source:
+        expected_duration = source.getnframes() / source.getframerate()
     count = 0
 
     for route in ("/health", "/v1/health"):
@@ -108,6 +110,24 @@ def main():
 
     transcription = "/v1/audio/transcriptions"
     translation = "/v1/audio/translations"
+    for endpoint in (transcription, translation):
+        _, body = successful(base, endpoint, [], audio)
+        assert json.loads(body)["text"]
+        count += 1
+        _, body = successful(base, endpoint,
+                             [("model", ""), ("prompt", ""), ("temperature", ""),
+                              ("response_format", ""), ("stream", "")], audio)
+        assert json.loads(body)["text"]
+        count += 1
+    _, body = successful(base, transcription,
+                         [("chunking_strategy", ""), ("timestamp_granularities[]", "")], audio)
+    assert json.loads(body)["text"]
+    count += 1
+    _, body = successful(base, transcription, [], audio, raw=True)
+    assert json.loads(body)["text"]
+    count += 1
+    rejected(base, transcription, [], b"")
+    count += 1
     _, body = successful(base, transcription,
                          [("model", "unrecognized-alias"), ("language", "fr"),
                           ("prompt", "Volume instructions."), ("temperature", "0.2"),
@@ -126,6 +146,8 @@ def main():
             elif fmt == "verbose_json":
                 result = json.loads(body)
                 assert result["text"] and result["duration"] > 0 and result["segments"]
+                assert abs(result["duration"] - expected_duration) < 1e-9
+                assert all(0 <= s["start"] <= s["end"] <= result["duration"] for s in result["segments"])
                 assert result["segments"][0]["start"] <= result["segments"][0]["end"]
                 if endpoint == translation:
                     assert result["language"] == "english"
@@ -142,7 +164,9 @@ def main():
         _, body = successful(base, transcription,
                              [("response_format", "verbose_json"), ("language", "fr")]
                              + [("timestamp_granularities[]", g) for g in granularities], audio)
-        assert json.loads(body)[expected], body
+        result = json.loads(body)
+        assert result[expected], body
+        assert all(0 <= item["start"] <= item["end"] <= result["duration"] for item in result[expected])
         count += 1
     _, body = successful(base, transcription,
                          [("response_format", "verbose_json"),

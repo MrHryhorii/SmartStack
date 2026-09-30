@@ -3,231 +3,134 @@ using System.Security.Cryptography;
 
 namespace STT_Runner.Services;
 
-/// <summary>
-/// Resolves the configured Whisper and VAD files before the server starts.
-/// Missing files are downloaded only when AutoDownload is enabled.
-/// </summary>
+/// <summary>Resolves local weights and downloads missing models before startup.</summary>
 public static class ModelManager
 {
-    /// <summary>
-    /// Uses explicit file paths first, then names within the configured model directory.
-    /// </summary>
-    /// <param name="config">The application configuration.</param>
-    /// <returns>A tuple containing the absolute paths to the verified Whisper and VAD models.</returns>
-    /// <exception cref="FileNotFoundException">Thrown if a required model is missing and AutoDownload is disabled.</exception>
+    // Pin both the revision and digest of the bundled defaults, independently of local filenames.
+    private const string DefaultWhisperUrl = "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin";
+    private const string DefaultVadUrl = "https://huggingface.co/Hinotsuba/silero_vad_ggml-base/resolve/ee6290b4dde18d884258a108a809daffb6ca11cb/silero_vad.onnx";
+    private const string DefaultWhisperHash = "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b";
+    private const string DefaultVadHash = "a4a068cd6cf1ea8355b84327595838ca748ec29a25bc91fc82e6c299ccdc5808";
+
+    /// <summary>Prefers explicit paths, otherwise uses the configured model directory and URLs.</summary>
     public static async Task<(string WhisperPath, string VadPath)> EnsureModelsExistAsync(IConfiguration config)
     {
-        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-        string modelsDir = config["SttSettings:ModelDirectory"] ?? "Models";
-
-        // Anchor a relative model directory to the application, not the shell's cwd.
-        if (!Path.IsPathRooted(modelsDir))
-        {
-            modelsDir = Path.GetFullPath(Path.Combine(baseDir, modelsDir));
-        }
-
-        // Create the directory before a possible first-run download.
-        if (!Directory.Exists(modelsDir))
-        {
-            Directory.CreateDirectory(modelsDir);
-            Console.WriteLine($"[SYSTEM] Created model directory at: {modelsDir}");
-        }
-
-        string? exactWhisper = config["SttSettings:ExactWhisperFilePath"];
-        string? exactVad = config["SttSettings:ExactVadFilePath"];
-        string whisperName = config["SttSettings:WhisperModelName"] ?? "ggml-base.bin";
-        string vadName = config["SttSettings:VadModelName"] ?? "silero_vad.onnx";
-        string whisperHash = GetExpectedHash(config, "AutoDownload:WhisperSha256");
-        string vadHash = GetExpectedHash(config, "AutoDownload:VadSha256");
-
-        // An invalid explicit path is a configuration error, not a download hint.
-        string finalWhisperPath;
-
-        if (!string.IsNullOrWhiteSpace(exactWhisper) && !File.Exists(exactWhisper))
-            throw new FileNotFoundException($"Configured Whisper model does not exist: {exactWhisper}");
-
-        if (!string.IsNullOrWhiteSpace(exactWhisper) && File.Exists(exactWhisper))
-        {
-            finalWhisperPath = Path.GetFullPath(exactWhisper);
-            Console.WriteLine($"[SYSTEM] Using EXACT Whisper path: {finalWhisperPath}");
-        }
-        else
-        {
-            // Otherwise use the configured filename and download only if absent.
-            finalWhisperPath = Path.Combine(modelsDir, whisperName);
-            if (!File.Exists(finalWhisperPath))
-            {
-                await HandleMissingFileAsync(config, finalWhisperPath, "Whisper GGML", whisperHash);
-            }
-            else
-            {
-                Console.WriteLine($"[SYSTEM] Found Whisper model at: {finalWhisperPath}");
-            }
-            await VerifyFileHashAsync(finalWhisperPath, whisperHash);
-        }
-
-        // Apply the same precedence to the VAD model.
-        string finalVadPath;
-
-        if (!string.IsNullOrWhiteSpace(exactVad) && !File.Exists(exactVad))
-            throw new FileNotFoundException($"Configured VAD model does not exist: {exactVad}");
-
-        if (!string.IsNullOrWhiteSpace(exactVad) && File.Exists(exactVad))
-        {
-            finalVadPath = Path.GetFullPath(exactVad);
-            Console.WriteLine($"[SYSTEM] Using EXACT VAD path: {finalVadPath}");
-        }
-        else
-        {
-            finalVadPath = Path.Combine(modelsDir, vadName);
-            if (!File.Exists(finalVadPath))
-            {
-                await HandleMissingFileAsync(config, finalVadPath, "Silero VAD", vadHash);
-            }
-            else
-            {
-                Console.WriteLine($"[SYSTEM] Found VAD model at: {finalVadPath}");
-            }
-            await VerifyFileHashAsync(finalVadPath, vadHash);
-        }
-
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("=========================================");
-        Console.WriteLine("        STT MODELS READY                 ");
-        Console.WriteLine("=========================================");
-        Console.ResetColor();
-
-        return (finalWhisperPath, finalVadPath);
+        string modelsDir = ApplicationPath(ValueOrDefault(config["SttSettings:ModelDirectory"], "Models"));
+        string whisper = await ResolveAsync(config, modelsDir, "Whisper", "Whisper GGML",
+            "ggml-small.bin", DefaultWhisperUrl, DefaultWhisperHash);
+        string vad = await ResolveAsync(config, modelsDir, "Vad", "Silero VAD",
+            "silero_vad.onnx", DefaultVadUrl, DefaultVadHash);
+        Console.WriteLine("[SYSTEM] STT models ready.");
+        return (whisper, vad);
     }
 
-    /// <summary>
-    /// Downloads a missing model or fails startup when automatic downloads are disabled.
-    /// </summary>
-    private static async Task HandleMissingFileAsync(IConfiguration config, string destinationPath, string modelName, string expectedHash)
+    /// <summary>Anchors relative paths to the application rather than the launching shell.</summary>
+    private static string ApplicationPath(string path) =>
+        Path.GetFullPath(path, AppDomain.CurrentDomain.BaseDirectory);
+
+    private static string ValueOrDefault(string? value, string fallback) =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+
+    /// <summary>Local names control storage only; each remote URL identifies the complete source file.</summary>
+    private static async Task<string> ResolveAsync(IConfiguration config, string modelsDir, string key,
+        string description, string defaultName, string defaultUrl, string defaultHash)
     {
-        bool autoDownload = bool.Parse(config["AutoDownload:Enable"] ?? "true");
-
-        if (autoDownload)
+        string? exact = config[$"SttSettings:Exact{key}FilePath"];
+        if (!string.IsNullOrWhiteSpace(exact))
         {
-            string repoUrl = config["AutoDownload:RepositoryUrl"]!;
-            string fileName = Path.GetFileName(destinationPath);
-            // The repository URL is a base path shared by both model filenames.
-            string downloadUrl = repoUrl.EndsWith('/') ? $"{repoUrl}{fileName}" : $"{repoUrl}/{fileName}";
+            string path = ApplicationPath(exact.Trim());
+            if (!File.Exists(path))
+                throw new FileNotFoundException($"Configured {description} model does not exist: {path}");
+            Console.WriteLine($"[SYSTEM] Using explicit {description} path: {path}");
+            return path;
+        }
 
-            await DownloadFileAsync(downloadUrl, destinationPath, modelName, expectedHash);
-        }
-        else
+        string name = ValueOrDefault(config[$"SttSettings:{key}ModelName"], defaultName);
+        string destination = Path.GetFullPath(Path.Combine(modelsDir, name));
+        string url = ValueOrDefault(config[$"AutoDownload:{key}Url"], defaultUrl);
+        string? hash = ExpectedHash(config, key, url, defaultUrl, defaultHash);
+        if (File.Exists(destination))
         {
-            throw new FileNotFoundException($"[FATAL] {modelName} not found at {destinationPath} and AutoDownload is disabled.");
+            await VerifyFileHashAsync(destination, hash);
+            Console.WriteLine($"[SYSTEM] Found {description} model at: {destination}");
+            return destination;
         }
+
+        if (!config.GetValue("AutoDownload:Enable", true))
+            throw new FileNotFoundException($"{description} not found at {destination} and AutoDownload is disabled.");
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var source) ||
+            (source.Scheme != Uri.UriSchemeHttps && source.Scheme != Uri.UriSchemeHttp))
+            throw new InvalidOperationException($"AutoDownload:{key}Url must be a complete HTTP or HTTPS file URL.");
+
+        Directory.CreateDirectory(Path.GetDirectoryName(destination)!);
+        await DownloadFileAsync(source, destination, description, hash);
+        return destination;
     }
 
-    /// <summary>
-    /// Streams a model into a temporary file and replaces the target only on success.
-    /// </summary>
-    private static async Task DownloadFileAsync(string url, string destinationPath, string modelName, string expectedHash)
+    /// <summary>Custom checksums are optional; the pinned default URLs always retain digest verification.</summary>
+    private static string? ExpectedHash(IConfiguration config, string key, string url, string defaultUrl, string defaultHash)
     {
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"[INFO] {modelName} is missing locally. Downloading from Hugging Face...");
-        Console.ResetColor();
-
-        var stopwatch = Stopwatch.StartNew();
-
-        try
-        {
-            using var client = new HttpClient();
-            // Do not buffer the entire model in HttpClient before copying it to disk.
-            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
-            response.EnsureSuccessStatusCode();
-
-            // A missing Content-Length disables percentage progress, not the download.
-            var totalBytes = response.Content.Headers.ContentLength ?? -1L;
-            using var contentStream = await response.Content.ReadAsStreamAsync();
-            string temporaryPath = destinationPath + ".download";
-            using var fileStream = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None);
-
-            var totalRead = 0L;
-            var buffer = new byte[8192];
-            var isMoreToRead = true;
-
-            do
-            {
-                var read = await contentStream.ReadAsync(buffer, 0, buffer.Length);
-                if (read == 0)
-                {
-                    isMoreToRead = false;
-                }
-                else
-                {
-                    await fileStream.WriteAsync(buffer.AsMemory(0, read));
-                    totalRead += read;
-
-                    // Update the console progress bar
-                    if (totalBytes != -1)
-                    {
-                        DrawProgressBar(modelName, totalRead, totalBytes);
-                    }
-                }
-            }
-            while (isMoreToRead);
-
-            // Move only a complete download into the path used by model loading.
-            await fileStream.FlushAsync();
-            fileStream.Close();
-            if (totalBytes >= 0 && totalRead != totalBytes)
-                throw new InvalidDataException($"Incomplete {modelName} download: expected {totalBytes} bytes, received {totalRead}.");
-
-            await VerifyFileHashAsync(temporaryPath, expectedHash);
-            File.Move(temporaryPath, destinationPath, overwrite: true);
-            stopwatch.Stop();
-            Console.WriteLine(); // Finish the in-place progress line.
-
-            var fileInfo = new FileInfo(destinationPath);
-            double sizeMb = fileInfo.Length / (1024.0 * 1024.0);
-
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"[SUCCESS] Downloaded {modelName} ({sizeMb:F1} MB) in {stopwatch.Elapsed.TotalSeconds:F1} seconds.");
-            Console.ResetColor();
-        }
-        catch (Exception ex)
-        {
-            if (File.Exists(destinationPath + ".download")) File.Delete(destinationPath + ".download");
-            throw new Exception($"Failed to download {modelName} from {url}. Error: {ex.Message}", ex);
-        }
-    }
-
-    /// <summary>Rejects invalid or missing checksums before loading downloaded model weights.</summary>
-    private static string GetExpectedHash(IConfiguration config, string key)
-    {
-        string hash = config[key]?.Trim() ?? "";
+        string hash = config[$"AutoDownload:{key}Sha256"]?.Trim() ?? "";
+        if (hash.Length == 0) return url == defaultUrl ? defaultHash : null;
         if (hash.Length != 64 || !hash.All(Uri.IsHexDigit))
-            throw new InvalidOperationException($"{key} must be a 64-character SHA-256 value.");
+            throw new InvalidOperationException($"AutoDownload:{key}Sha256 must be empty or a 64-character SHA-256 value.");
         return hash;
     }
 
-    /// <summary>Checks local and newly downloaded managed models against the pinned digest.</summary>
-    private static async Task VerifyFileHashAsync(string path, string expectedHash)
+    /// <summary>Streams into a temporary file; incomplete or invalid downloads never become model files.</summary>
+    private static async Task DownloadFileAsync(Uri url, string destination, string description, string? hash)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        string actualHash = Convert.ToHexString(await SHA256.HashDataAsync(stream));
-        if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException($"SHA-256 mismatch for {path}. Expected {expectedHash}, got {actualHash}.");
+        Console.WriteLine($"[INFO] Downloading {description} from its configured URL...");
+        var stopwatch = Stopwatch.StartNew();
+        string temporary = destination + ".download";
+        try
+        {
+            using var client = new HttpClient();
+            using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
+            response.EnsureSuccessStatusCode();
+            long total = response.Content.Headers.ContentLength ?? -1;
+            long received = 0;
+            long lastProgress = 0;
+            await using var content = await response.Content.ReadAsStreamAsync();
+            await using (var output = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None,
+                81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+            {
+                byte[] buffer = new byte[81920];
+                int read;
+                while ((read = await content.ReadAsync(buffer)) != 0)
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, read));
+                    received += read;
+                    // Throttle console writes while retaining streaming, bounded-memory downloads.
+                    if (total > 0 && stopwatch.ElapsedMilliseconds - lastProgress >= 250)
+                    {
+                        Console.Write($"\r[DOWNLOAD] {description}: {received / (double)total:P0}");
+                        lastProgress = stopwatch.ElapsedMilliseconds;
+                    }
+                }
+                await output.FlushAsync();
+            }
+            if (received == 0 || (total >= 0 && received != total))
+                throw new InvalidDataException($"Incomplete {description} download: expected {total} bytes, received {received}.");
+            await VerifyFileHashAsync(temporary, hash);
+            File.Move(temporary, destination, overwrite: true);
+            Console.WriteLine($"\n[SUCCESS] Downloaded {description} ({received / 1048576d:F1} MB) in {stopwatch.Elapsed.TotalSeconds:F1} seconds.");
+        }
+        catch (Exception ex)
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+            throw new IOException($"Failed to download {description}. Error: {ex.Message}", ex);
+        }
     }
 
-    /// <summary>
-    /// Updates one console line while the response body is being copied.
-    /// </summary>
-    private static void DrawProgressBar(string modelName, long current, long total)
+    /// <summary>Checks managed local and newly downloaded weights when a digest is available.</summary>
+    private static async Task VerifyFileHashAsync(string path, string? expected)
     {
-        int progressLength = 30;
-        double percentage = (double)current / total;
-        int filled = (int)(progressLength * percentage);
-
-        string bar = new string('#', filled).PadRight(progressLength, '-');
-        double currentMb = current / (1024.0 * 1024.0);
-        double totalMb = total / (1024.0 * 1024.0);
-
-        // A carriage return keeps repeated updates on the same console line.
-        Console.Write($"\r   -> [{bar}] {percentage:P0} ({currentMb:F1}/{totalMb:F1} MB) ");
+        if (expected is null) return;
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read,
+            81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        string actual = Convert.ToHexString(await SHA256.HashDataAsync(stream));
+        if (!actual.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException($"SHA-256 mismatch for {path}. Expected {expected}, got {actual}.");
     }
 }

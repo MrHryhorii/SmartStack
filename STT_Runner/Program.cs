@@ -92,7 +92,7 @@ builder.Services.AddSingleton(requestSlots);
 var whisperSlots = new SemaphoreSlim(maxWhisper, maxWhisper);
 
 // AudioProcessor has no per-request state outside its method calls.
-builder.Services.AddSingleton<AudioProcessor>();
+builder.Services.AddSingleton(new AudioProcessor(builder.Configuration));
 
 // Keep the ONNX session and GGML model alive across requests.
 var vadProcessor = new VadProcessor(vadPath, builder.Configuration);
