@@ -76,6 +76,7 @@
 
     <None Update="Cloner\**\*.*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
 
     <None Update="Voices\**\*.*">

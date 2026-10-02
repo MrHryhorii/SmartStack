@@ -1,1 +1,6 @@
 /Publish-Licensed/
+/Model/*.onnx
+/Model/*.json
+/Model/**/*.onnx
+/Model/**/*.json
+**/*.partial

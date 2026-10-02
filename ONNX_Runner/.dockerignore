@@ -6,3 +6,4 @@ Publish-Licensed/
 .git/
 .vs/
 .vscode/
+**/*.partial

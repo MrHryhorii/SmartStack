@@ -27,6 +27,8 @@ COPY --from=build /app/publish .
 
 # Configure the server to listen on port 5045
 ENV ASPNETCORE_URLS=http://+:5045
+ENV ModelSettings__AutoDownloadFallbackModel=true
+ENV StartupSettings__OpenBrowserOnStart=false
 EXPOSE 5045
 
 # Define mount points (Volumes) for external models and voice caches

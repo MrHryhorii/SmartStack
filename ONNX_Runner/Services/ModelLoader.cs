@@ -12,6 +12,18 @@ namespace ONNX_Runner.Services;
 public static class ModelLoader
 {
     /// <summary>
+    /// Resolves ModelDirectory relative to the application directory when a relative path is used.
+    /// </summary>
+    public static string GetModelDirectoryPath(ModelSettings settings)
+    {
+        string directoryPath = settings.ModelDirectory;
+
+        return Path.IsPathRooted(directoryPath)
+            ? Path.GetFullPath(directoryPath)
+            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, directoryPath));
+    }
+
+    /// <summary>
     /// Scans the directory, identifies the .onnx model, and finds the most appropriate .json configuration,
     /// or loads exact files if specified in the settings.
     /// </summary>
@@ -46,14 +58,7 @@ public static class ModelLoader
         else
         {
             // --- DIRECTORY SCANNING LOGIC (STANDARD BEHAVIOR) ---
-            string directoryPath = settings.ModelDirectory;
-
-            // Bulletproof relative paths: ensures the folder is searched relative to the .exe file,
-            // not the terminal's current working directory (prevents bugs with shortcuts).
-            if (!Path.IsPathRooted(directoryPath))
-            {
-                directoryPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, directoryPath));
-            }
+            string directoryPath = GetModelDirectoryPath(settings);
 
             // Fail fast if the primary model directory is missing
             if (!Directory.Exists(directoryPath))

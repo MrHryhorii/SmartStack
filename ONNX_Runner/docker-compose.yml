@@ -9,6 +9,8 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Development # Set to "Production" in production for better performance and security
       - ASPNETCORE_URLS=http://+:5045 # Bind to all network interfaces
+      - ModelSettings__AutoDownloadFallbackModel=true # Allow fallback download when no mounted Piper model is available
+      - StartupSettings__OpenBrowserOnStart=false # Containers must not attempt to open a desktop browser
     volumes:
       # Mount paths: Left side is the host machine directory, right side is the container directory
       - ./Model:/app/Model

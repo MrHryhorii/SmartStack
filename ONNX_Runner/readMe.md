@@ -640,6 +640,12 @@ If your files have custom names or are scattered across the system, you can spec
 
 > **Windows users:** When writing absolute paths in JSON, you must use double backslashes (`\\`).
 
+Additional `ModelSettings` options:
+
+- **`FallbackModelUrl`** — URL of the fallback Piper `.onnx` model.
+- **`FallbackConfigUrl`** — URL of the matching Piper model configuration.
+- **`AutoDownloadFallbackModel`** — Downloads the fallback model automatically when required instead of asking for confirmation.
+
 ---
 
 # Building From Source
@@ -956,6 +962,8 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 ## Network & Access
 
 - **`Kestrel > Endpoints > Http > Url`** — Defines the port the server listens on. Default is `http://+:5045`.
+
+- **`StartupSettings > OpenBrowserOnStart`** — Controls whether the Web Dashboard is opened automatically after server startup.
 
 - **`CorsSettings`** — Controls Cross-Origin Resource Sharing. Setting `"AllowAnyOrigin": true` completely disables access limits and is perfectly fine for local or home use. If set to `false`, the server will only accept requests from the domains listed in `"AllowedOrigins"`, which you can freely edit to secure your endpoints.
 

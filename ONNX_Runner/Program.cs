@@ -78,46 +78,76 @@ var modelConfig = builder.Configuration.GetSection("ModelSettings").Get<ModelSet
 // =================================================================
 // MODEL LOADING & LOGGING
 // =================================================================
-string modelDirectory = modelConfig.ModelDirectory;
 PiperConfig? piperConfig = null;
 string? piperModelPath = null;
+string modelDirectory = ModelLoader.GetModelDirectoryPath(modelConfig);
+bool hasExactModelPaths =
+    !string.IsNullOrWhiteSpace(modelConfig.ExactModelFilePath) &&
+    !string.IsNullOrWhiteSpace(modelConfig.ExactConfigFilePath);
+
 try
 {
-    // Graceful initialization: create directory if missing and warn the user,
-    // allowing the server to start without crashing.
-    if (!Directory.Exists(modelDirectory))
+    // The model directory is only required for directory discovery. Exact paths are independent from it.
+    if (!hasExactModelPaths && !Directory.Exists(modelDirectory))
     {
         Directory.CreateDirectory(modelDirectory);
         Console.WriteLine($"[WARNING] Directory '{modelDirectory}' was created. Please put your .onnx and .json files there.");
     }
-    else
-    {
-        var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelConfig);
-        piperModelPath = onnxPath;
-        piperConfig = config;
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("=========================================");
-        Console.WriteLine("        MODEL LOADED SUCCESSFULLY        ");
-        Console.WriteLine("=========================================");
-        Console.ResetColor();
-        Console.WriteLine($"Model Path:      {onnxPath}");
-        Console.WriteLine($"Sample Rate:     {config.Audio.SampleRate} Hz");
-        Console.WriteLine($"Espeak Voice:    {config.Espeak.Voice}");
-        Console.WriteLine($"Noise Scale:     {config.Inference.NoiseScale}");
-        Console.WriteLine($"Length Scale:    {config.Inference.LengthScale}");
-        Console.WriteLine($"Noise W:         {config.Inference.NoiseW}");
-        Console.WriteLine($"Total Phonemes:  {config.PhonemeIdMap.Count} unique sounds mapped");
-        Console.WriteLine("=========================================\n");
-    }
+
+    var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelConfig);
+    piperModelPath = onnxPath;
+    piperConfig = config;
+
+    Console.ForegroundColor = ConsoleColor.Green;
+    Console.WriteLine("=========================================");
+    Console.WriteLine("        MODEL LOADED SUCCESSFULLY        ");
+    Console.WriteLine("=========================================");
+    Console.ResetColor();
+    Console.WriteLine($"Model Path:      {onnxPath}");
+    Console.WriteLine($"Sample Rate:     {config.Audio.SampleRate} Hz");
+    Console.WriteLine($"Espeak Voice:    {config.Espeak.Voice}");
+    Console.WriteLine($"Noise Scale:     {config.Inference.NoiseScale}");
+    Console.WriteLine($"Length Scale:    {config.Inference.LengthScale}");
+    Console.WriteLine($"Noise W:         {config.Inference.NoiseW}");
+    Console.WriteLine($"Total Phonemes:  {config.PhonemeIdMap.Count} unique sounds mapped");
+    Console.WriteLine("=========================================\n");
 }
 catch (Exception ex)
 {
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine($"[WARNING] Primary Piper model unavailable: {ex.Message}");
+    Console.ResetColor();
+}
+
+if (piperConfig == null || piperModelPath == null)
+{
+    var (fallbackModelPath, fallbackConfig) = await PiperModelBootstrapper.TryLoadFallbackAsync(modelConfig);
+    if (fallbackModelPath != null && fallbackConfig != null)
+    {
+        piperModelPath = fallbackModelPath;
+        piperConfig = fallbackConfig;
+
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("=========================================");
+        Console.WriteLine("      FALLBACK MODEL LOADED SUCCESSFULLY ");
+        Console.WriteLine("=========================================");
+        Console.ResetColor();
+        Console.WriteLine($"Model Path:      {fallbackModelPath}");
+        Console.WriteLine($"Sample Rate:     {fallbackConfig.Audio.SampleRate} Hz");
+        Console.WriteLine($"Espeak Voice:    {fallbackConfig.Espeak.Voice}");
+        Console.WriteLine("=========================================\n");
+    }
+}
+
+if (piperConfig == null || piperModelPath == null)
+{
     Console.ForegroundColor = ConsoleColor.Red;
-    Console.WriteLine($"[ERROR] Failed to load model: {ex.Message}");
+    Console.WriteLine("[ERROR] Piper model is unavailable. The server will start, but TTS endpoints cannot synthesize audio.");
     Console.ResetColor();
 }
 // Read configuration sections from appsettings.json
 var apiConfig = builder.Configuration.GetSection("ApiSettings").Get<ApiSettings>() ?? new ApiSettings();
+var startupConfig = builder.Configuration.GetSection("StartupSettings").Get<StartupSettings>() ?? new StartupSettings();
 var corsConfig = builder.Configuration.GetSection("CorsSettings").Get<CorsSettings>() ?? new CorsSettings();
 var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
 var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
@@ -183,12 +213,13 @@ if (piperConfig != null && piperModelPath != null)
     string colorPath = Path.Combine(clonerDirectory, "tone_color.onnx");
     string toneJsonPath = Path.Combine(clonerDirectory, "tone_config.json");
 
-    if (!Directory.Exists(clonerDirectory))
+    if (clonerConfig.EnableCloning && !Directory.Exists(clonerDirectory))
     {
         Directory.CreateDirectory(clonerDirectory);
     }
     // Auto-fetch missing OpenVoice models from Hugging Face
-    if (!File.Exists(extractPath) || !File.Exists(colorPath) || !File.Exists(toneJsonPath))
+    if (clonerConfig.EnableCloning &&
+        (!File.Exists(extractPath) || !File.Exists(colorPath) || !File.Exists(toneJsonPath)))
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
         Console.WriteLine("\n[INFO] Missing Voice Cloner models (OpenVoice) detected locally.");
@@ -206,7 +237,8 @@ if (piperConfig != null && piperModelPath != null)
             await HuggingFaceDownloader.DownloadFileAsync(baseUrl + "tone_config.json", toneJsonPath, "tone_config.json", desc);
     }
     // If models are present, load them into memory and process cached voices
-    if (File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
+    if (clonerConfig.EnableCloning &&
+        File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
     {
         try
         {
@@ -304,12 +336,16 @@ if (piperConfig != null && piperModelPath != null)
             Console.WriteLine($"[ERROR] Failed to load OpenVoice/Voices: {ex.Message}");
         }
     }
-    else
+    else if (clonerConfig.EnableCloning)
     {
         // Graceful degradation: The server will still run, but voice cloning will be disabled
         Console.ForegroundColor = ConsoleColor.Red;
         Console.WriteLine("[ERROR] Voice Cloner models are missing. OpenVoice features will be unavailable.");
         Console.ResetColor();
+    }
+    else
+    {
+        Console.WriteLine("[SYSTEM] Voice cloning is disabled by ClonerSettings.EnableCloning.");
     }
     // =================================================================
     // PHONEMIZER & LANGUAGE DETECTION SETUP
@@ -319,7 +355,7 @@ if (piperConfig != null && piperModelPath != null)
 
     if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
     {
-        string phoibleDirectory = "PHOIBLE";
+        string phoibleDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PHOIBLE"));
         string phoiblePath = Path.Combine(phoibleDirectory, "phoible.csv");
         if (!Directory.Exists(phoibleDirectory))
         {
@@ -609,25 +645,10 @@ if (!string.IsNullOrEmpty(url))
     Console.WriteLine($"    [Tsubaki Base URL]    {baseUrl}/tsbk");
     Console.WriteLine($"    [Extended Endpoint]   {baseUrl}/tsbk/audio/speech");
     Console.WriteLine();
-    try
-    {
-        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(baseUrl) { UseShellExecute = true });
-        }
-        else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Linux))
-        {
-            System.Diagnostics.Process.Start("xdg-open", baseUrl);
-        }
-        else if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX))
-        {
-            System.Diagnostics.Process.Start("open", baseUrl);
-        }
-    }
-    catch (Exception ex)
+    if (startupConfig.OpenBrowserOnStart && !BrowserLauncher.TryOpen(baseUrl, out string? browserError))
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"[WARNING] Could not auto-open browser (headless environment?): {ex.Message}");
+        Console.WriteLine($"[WARNING] Could not auto-open browser: {browserError}");
         Console.ResetColor();
     }
 }

@@ -42,13 +42,33 @@ if ($models.Count -eq 0) {
     throw "A ready-to-run release needs a Piper .onnx model in $modelDirectory. Restore the model from your complete project before publishing."
 }
 foreach ($model in $models) {
-    if (-not (Test-Path -LiteralPath "$($model.FullName).json" -PathType Leaf)) {
-        throw "Missing Piper model configuration: $($model.FullName).json"
+    $officialConfig = "$($model.FullName).json"
+    $simpleConfig = Join-Path $model.DirectoryName ($model.BaseName + '.json')
+    if (-not (Test-Path -LiteralPath $officialConfig -PathType Leaf) -and
+        -not (Test-Path -LiteralPath $simpleConfig -PathType Leaf)) {
+        throw "Missing Piper model configuration for: $($model.FullName)"
     }
 }
 $phoibleFile = Join-Path $projectDirectory 'PHOIBLE/phoible.csv'
 if (-not (Test-Path -LiteralPath $phoibleFile -PathType Leaf)) {
     throw "A ready-to-run release needs the PHOIBLE dataset at $phoibleFile. Restore it from your complete project before publishing."
+}
+
+$appSettingsPath = Join-Path $projectDirectory 'appsettings.json'
+$appSettings = Get-Content -LiteralPath $appSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+$cloningEnabled = $true
+if ($null -ne $appSettings.ClonerSettings -and $null -ne $appSettings.ClonerSettings.EnableCloning) {
+    $cloningEnabled = [bool]$appSettings.ClonerSettings.EnableCloning
+}
+$requiredClonerFiles = @('tone_extract.onnx', 'tone_color.onnx', 'tone_config.json')
+if ($cloningEnabled) {
+    $clonerDirectory = Join-Path $projectDirectory 'Cloner'
+    foreach ($fileName in $requiredClonerFiles) {
+        $filePath = Join-Path $clonerDirectory $fileName
+        if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) {
+            throw "Cloning is enabled, so the ready-to-run offline release needs $filePath. Restore the OpenVoice model files before publishing."
+        }
+    }
 }
 
 $manifestFile = Join-Path $SourcesRoot 'SOURCE_MANIFEST.json'
@@ -137,13 +157,26 @@ foreach ($build in $variants) {
         if (-not (Test-Path -LiteralPath $publishedModel -PathType Leaf)) {
             throw "Published build is missing Piper model: $publishedModel"
         }
-        if (-not (Test-Path -LiteralPath "$publishedModel.json" -PathType Leaf)) {
-            throw "Published build is missing Piper model configuration: $publishedModel.json"
+        $publishedOfficialConfig = "$publishedModel.json"
+        $publishedSimpleConfig = Join-Path (Split-Path $publishedModel -Parent) ($model.BaseName + '.json')
+        if (-not (Test-Path -LiteralPath $publishedOfficialConfig -PathType Leaf) -and
+            -not (Test-Path -LiteralPath $publishedSimpleConfig -PathType Leaf)) {
+            throw "Published build is missing Piper model configuration for: $publishedModel"
         }
     }
     $publishedPhoible = Join-Path $publishDirectory 'PHOIBLE/phoible.csv'
     if (-not (Test-Path -LiteralPath $publishedPhoible -PathType Leaf)) {
         throw "Published build is missing PHOIBLE data: $publishedPhoible"
+    }
+
+    if ($cloningEnabled) {
+        $publishedClonerDirectory = Join-Path $publishDirectory 'Cloner'
+        foreach ($fileName in $requiredClonerFiles) {
+            $publishedClonerFile = Join-Path $publishedClonerDirectory $fileName
+            if (-not (Test-Path -LiteralPath $publishedClonerFile -PathType Leaf)) {
+                throw "Published build is missing required OpenVoice model file: $publishedClonerFile"
+            }
+        }
     }
 
     Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $publishDirectory 'SOURCE_MANIFEST.json') -Force
