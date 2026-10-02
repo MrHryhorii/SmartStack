@@ -222,8 +222,8 @@ if (piperConfig != null && piperModelPath != null)
         (!File.Exists(extractPath) || !File.Exists(colorPath) || !File.Exists(toneJsonPath)))
     {
         Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("\n[INFO] Missing Voice Cloner models (OpenVoice) detected locally.");
-        Console.WriteLine("[INFO] Initiating automatic download from Hugging Face...");
+        Console.WriteLine("\n[INFO] OpenVoice model files are missing locally.");
+        Console.WriteLine("[INFO] Downloading missing OpenVoice model files from Hugging Face...");
         Console.ResetColor();
         string baseUrl = "https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2/resolve/main/";
         string desc = "Voice Cloner";
