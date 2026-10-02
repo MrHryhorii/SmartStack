@@ -31,8 +31,5 @@ ENV ModelSettings__AutoDownloadFallbackModel=true
 ENV StartupSettings__OpenBrowserOnStart=false
 EXPOSE 5045
 
-# Define mount points (Volumes) for external models and voice caches
-VOLUME ["/app/Model", "/app/Cloner", "/app/Voices"]
-
 # Start the server
 ENTRYPOINT ["dotnet", "TsubakiTTS.dll"]
