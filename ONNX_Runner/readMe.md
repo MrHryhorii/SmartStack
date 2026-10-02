@@ -731,7 +731,6 @@ The provided `Dockerfile` is pre-configured to build the lightweight CPU version
 docker-compose up --build -d
 ```
 
-> **Voice model for source builds:** If your checkout has no Piper model, add a matching `.onnx` and `.onnx.json` pair to `Model/` before starting. Ready-to-use binary releases include a default model.
 
 ## Packaging a Binary Release
 
@@ -771,6 +770,8 @@ The provided `docker-compose.yml` and `Dockerfile` are highly optimized and pre-
 ```bash
 docker-compose up --build -d
 ```
+
+> Docker Compose mounts `Model/`, `Cloner/`, and `Voices/` from the project directory, so downloaded models and voice data persist there between container recreations.
 
 ## Bare-Metal Linux (CPU)
 
