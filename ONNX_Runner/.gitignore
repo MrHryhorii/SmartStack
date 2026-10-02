@@ -1,6 +1,11 @@
 /Publish-Licensed/
+
+# Piper model files and configs
 /Model/*.onnx
 /Model/*.json
 /Model/**/*.onnx
 /Model/**/*.json
+
+# OpenVoice model config
+/Cloner/tone_config.json
 **/*.partial
