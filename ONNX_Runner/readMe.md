@@ -1,4 +1,4 @@
-# Tsubaki TTS Engine v1.0.8
+# Tsubaki TTS Engine v1.0.9
 
 Production-grade local Text-to-Speech engine for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
