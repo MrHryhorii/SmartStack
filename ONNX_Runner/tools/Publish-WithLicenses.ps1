@@ -1,4 +1,4 @@
-param(
+﻿param(
     [ValidateSet('All', 'Windows-CPU', 'Windows-DML', 'Windows-WebGPU', 'Linux-CPU', 'Linux-CUDA', 'Linux-WebGPU')]
     [string]$Variant = 'All',
     [string]$ProjectDirectory,
@@ -50,8 +50,12 @@ foreach ($model in $models) {
     }
 }
 $phoibleFile = Join-Path $projectDirectory 'PHOIBLE/phoible.csv'
+$phoibleLicense = Join-Path $projectDirectory 'PHOIBLE/LICENSE.txt'
 if (-not (Test-Path -LiteralPath $phoibleFile -PathType Leaf)) {
     throw "A ready-to-run release needs the PHOIBLE dataset at $phoibleFile. Restore it from your complete project before publishing."
+}
+if (-not (Test-Path -LiteralPath $phoibleLicense -PathType Leaf)) {
+    throw "A ready-to-run release needs the PHOIBLE license notice at $phoibleLicense."
 }
 
 $appSettingsPath = Join-Path $projectDirectory 'appsettings.json'
@@ -121,7 +125,8 @@ $sourcePackageName = 'Tsubaki-Corresponding-Sources-{0}-{1}-{2}.tar.gz' -f `
     $sourceManifest.EspeakDllSha256.Substring(0, 12), `
     $sourceManifest.Mpg123BundleSha256.Substring(0, 12), `
     $sourceManifest.OggOpusBundleSha256.Substring(0, 12)
-$sourcePackagePath = Join-Path (Split-Path $SourcesRoot -Parent) $sourcePackageName
+New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+$sourcePackagePath = Join-Path $runRoot $sourcePackageName
 if (-not (Test-Path -LiteralPath $sourcePackagePath -PathType Leaf)) {
     $temporaryPackage = "$sourcePackagePath.partial"
     try {
@@ -167,6 +172,10 @@ foreach ($build in $variants) {
     $publishedPhoible = Join-Path $publishDirectory 'PHOIBLE/phoible.csv'
     if (-not (Test-Path -LiteralPath $publishedPhoible -PathType Leaf)) {
         throw "Published build is missing PHOIBLE data: $publishedPhoible"
+    }
+    $publishedPhoibleLicense = Join-Path $publishDirectory 'PHOIBLE/LICENSE.txt'
+    if (-not (Test-Path -LiteralPath $publishedPhoibleLicense -PathType Leaf)) {
+        throw "Published build is missing PHOIBLE license notice: $publishedPhoibleLicense"
     }
 
     if ($cloningEnabled) {

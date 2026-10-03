@@ -1,0 +1,22 @@
+PHOIBLE 2.0
+
+Moran, Steven & McCloy, Daniel (eds.) 2019.
+PHOIBLE 2.0.
+Jena: Max Planck Institute for the Science of Human History.
+
+The PHOIBLE 2.0 dataset is licensed under the Creative Commons
+Attribution-ShareAlike 3.0 Unported License (CC BY-SA 3.0).
+
+License URI:
+https://creativecommons.org/licenses/by-sa/3.0/
+
+Project:
+https://phoible.org/
+
+Recommended citation:
+Moran, Steven & McCloy, Daniel (eds.) 2019. PHOIBLE 2.0.
+Jena: Max Planck Institute for the Science of Human History.
+
+PHOIBLE/phoible.csv is distributed by Tsubaki TTS Engine as part of the
+PHOIBLE 2.0 dataset. Preserve this attribution and the license URI when
+redistributing the dataset.

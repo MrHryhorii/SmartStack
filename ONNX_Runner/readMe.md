@@ -1,4 +1,4 @@
-# Tsubaki TTS Engine v1.0.9
+# Tsubaki TTS Engine v1.0.8
 
 Production-grade local Text-to-Speech engine for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
@@ -771,7 +771,7 @@ The provided `docker-compose.yml` and `Dockerfile` are highly optimized and pre-
 docker-compose up --build -d
 ```
 
-> Docker Compose mounts `Model/`, `Cloner/`, and `Voices/` from the project directory, so downloaded models and voice data persist there between container recreations.
+Docker Compose mounts `Model/`, `Cloner/`, and `Voices/` from the project directory, so downloaded models and voice data persist there between container recreations.
 
 ## Bare-Metal Linux (CPU)
 

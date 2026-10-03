@@ -204,6 +204,7 @@ PHOIBLE 2.0 - CC BY-SA 3.0 - https://phoible.org/
   Steven Moran and Daniel McCloy (eds.), PHOIBLE 2.0, 2019.
   PHOIBLE/phoible.csv is bundled with ready-to-run releases. Preserve this
   attribution and the CC BY-SA 3.0 license reference with the dataset.
+  See PHOIBLE/LICENSE.txt for the bundled attribution and license URI.
 
 Binary release verification
 ---------------------------
