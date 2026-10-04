@@ -1,4 +1,4 @@
-# Tsubaki TTS Engine v1.0.8
+# Tsubaki TTS Engine v1.0.9
 
 Production-grade local Text-to-Speech engine for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
@@ -40,7 +40,7 @@ Dashboard features:
 
 # Download
 
-**[Tsubaki TTS Engine v1.0.8 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.8)**
+**[Tsubaki TTS Engine v1.0.9 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.9)**
 
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
@@ -106,7 +106,7 @@ Tsubaki is designed for:
 
 Download the build for your OS from:
 
-https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.8
+https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.9
 
 Extract the complete ZIP. For a first run, the CPU build is the simplest choice.
 
@@ -114,7 +114,7 @@ Extract the complete ZIP. For a first run, the CPU build is the simplest choice.
 
 ## 2. Add a Piper Voice Model (Optional)
 
-The release includes a default Piper voice model. If you want to use a different voice, download its `.onnx` and `.onnx.json` files from [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main) and put both in the `Model/` folder next to the executable. See *Piper Voice Models* below for details.
+The release includes a default Piper voice model. If no usable Piper model is available, Tsubaki can use the configured fallback model; normal interactive launches ask before downloading it unless automatic fallback downloading is enabled. If you want to use a different voice, download its `.onnx` and `.onnx.json` files from [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main) and put both in the `Model/` folder next to the executable. See *Piper Voice Models* below for details.
 
 ---
 
@@ -640,11 +640,33 @@ If your files have custom names or are scattered across the system, you can spec
 
 > **Windows users:** When writing absolute paths in JSON, you must use double backslashes (`\\`).
 
-Additional `ModelSettings` options:
+## ModelSettings Reference
 
-- **`FallbackModelUrl`** — URL of the fallback Piper `.onnx` model.
-- **`FallbackConfigUrl`** — URL of the matching Piper model configuration.
-- **`AutoDownloadFallbackModel`** — Downloads the fallback model automatically when required instead of asking for confirmation.
+The complete model-loading configuration is:
+
+```json
+"ModelSettings": {
+  "ModelDirectory": "Model",
+  "ExactModelFilePath": "",
+  "ExactConfigFilePath": "",
+  "FallbackModelUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx",
+  "FallbackConfigUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
+  "AutoDownloadFallbackModel": false,
+  "Speaker": ""
+}
+```
+
+| Parameter | Purpose |
+| --------- | ------- |
+| `ModelDirectory` | Directory searched for a Piper `.onnx` model and its matching configuration when exact paths are not supplied. Relative paths are resolved from the application directory. |
+| `ExactModelFilePath` | Optional explicit path to the Piper `.onnx` model. Use it when you do not want automatic discovery in `ModelDirectory`. |
+| `ExactConfigFilePath` | Optional explicit path to the configuration for `ExactModelFilePath`. The model and configuration should be supplied together. |
+| `FallbackModelUrl` | URL used to obtain a fallback Piper model only when no usable configured/local Piper model can be loaded. Existing local models remain preferred. |
+| `FallbackConfigUrl` | URL of the configuration that belongs to `FallbackModelUrl`. |
+| `AutoDownloadFallbackModel` | `false` keeps normal interactive launches conservative and asks before a required fallback download. `true` allows the fallback model to be downloaded automatically without a prompt. Docker enables this automatically for non-interactive startup. |
+| `Speaker` | Speaker key from a multi-speaker model's `speaker_id_map`. Leave empty to use the first available speaker. It is ignored for single-speaker models. |
+
+The fallback model is a startup safety net, not a replacement for a model you deliberately place in `ModelDirectory` or configure through exact paths. Once downloaded, it is cached and reused on later starts.
 
 ---
 
@@ -751,13 +773,13 @@ pwsh -File ./tools/Publish-WithLicenses.ps1 -Variant All
 
 `All` builds all six CPU, DirectML, CUDA, and WebGPU variants. To build one,
 use `-Variant Windows-CPU`, `Windows-DML`, `Windows-WebGPU`, `Linux-CPU`,
-`Linux-CUDA`, or `Linux-WebGPU`. The ZIPs are written to
-`Publish-Licensed/<timestamp>/` with the license notices. The script checks
-for the Piper model before publishing.
+`Linux-CUDA`, or `Linux-WebGPU`. The binary ZIPs and one separate
+`Tsubaki-Corresponding-Sources-*.tar.gz` package are written to
+`Publish-Licensed/<timestamp>/`. The script checks the required Piper model
+and release notices before publishing.
 
-The script also prints the path to one separate corresponding-source package.
-Upload it once alongside the binary ZIPs; its large archives are not copied
-into each build.
+Upload the corresponding-source package once alongside the binary ZIPs. It is
+kept separate so the same source archive is not duplicated inside every build.
 
 ---
 
@@ -771,7 +793,7 @@ The provided `docker-compose.yml` and `Dockerfile` are highly optimized and pre-
 docker-compose up --build -d
 ```
 
-Docker Compose mounts `Model/`, `Cloner/`, and `Voices/` from the project directory, so downloaded models and voice data persist there between container recreations.
+Docker Compose mounts `Model/`, `Cloner/`, and `Voices/` from the project directory, so downloaded models and voice data persist there between container recreations. The Docker image enables `ModelSettings__AutoDownloadFallbackModel=true` and disables `StartupSettings__OpenBrowserOnStart`, so a missing fallback model can be recovered without an interactive prompt and no browser is launched inside the container.
 
 ## Bare-Metal Linux (CPU)
 
@@ -964,7 +986,7 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 
 - **`Kestrel > Endpoints > Http > Url`** — Defines the port the server listens on. Default is `http://+:5045`.
 
-- **`StartupSettings > OpenBrowserOnStart`** — Controls whether the Web Dashboard is opened automatically after server startup.
+- **`StartupSettings > OpenBrowserOnStart`** — Controls whether Tsubaki attempts to open the Web Dashboard after startup. The default is `true`. On supported Linux desktop environments the browser is launched independently of the server process, and browser startup is skipped when no graphical session is available. Set it to `false` for headless systems, services, or when you prefer to open `http://localhost:5045` manually. Docker disables automatic browser opening.
 
 - **`CorsSettings`** — Controls Cross-Origin Resource Sharing. Setting `"AllowAnyOrigin": true` completely disables access limits and is perfectly fine for local or home use. If set to `false`, the server will only accept requests from the domains listed in `"AllowedOrigins"`, which you can freely edit to secure your endpoints.
 
