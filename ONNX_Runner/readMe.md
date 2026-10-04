@@ -55,7 +55,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 - **No Python Required:** Runs purely on compiled C# and `Microsoft.ML.OnnxRuntime`.
 - **Portable (Self-Contained):** Download the release ZIP, extract it, and run the included executable. No .NET SDK is needed.
 - **Hardware Acceleration:** Runs on CPU by default, with optional WebGPU, DirectML, or CUDA acceleration depending on the selected build and hardware configuration.
-- **Memory Protection (OOM Guard):** Built-in queueing and semaphore system that calculates available VRAM/RAM to prevent server crashes under heavy load.
+- **Memory Protection (OOM Guard):** Built-in request gating and provider-specific concurrency limits reduce the risk of exhausting CPU/GPU resources under heavy load.
 - **True Concurrency:** On CPU and CUDA, concurrent requests share the same loaded model instead of requiring a full model/runtime copy per request. DirectML uses a fixed-size session pool because a single DirectML session cannot execute concurrently; see `HardwareSettings` for details.
 
 | Tsubaki                               | Typical Python TTS                   |
@@ -81,7 +81,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 | Studio-Grade DSP Effects   | Real-time audio effects (Telephone, Overdrive, Reverb, etc.), pitch and volume shifting.                                                                           |
 | Real-Time Streaming        | Supports Chunked Transfer Encoding and SSE — listen to audio before generation is complete.                                                                        |
 | Built-in Web Dashboard     | Sleek, user-friendly web interface available out-of-the-box for testing voices and effects.                                                                        |
-| OOM Guard                  | Built-in queueing and semaphore system that prevents VRAM/RAM crashes under heavy load.                                                                            |
+| OOM Guard                  | Built-in request gating and provider-specific concurrency limits reduce the risk of resource exhaustion under heavy load.                                           |
 | No Python Required         | Pure C# and ONNX Runtime. Choose a CPU, WebGPU, DirectML, or CUDA build.                                                                                           |
 
 ---
@@ -295,12 +295,12 @@ If `voice` is omitted or the requested cloned voice is unavailable, Tsubaki uses
 - 5–15 seconds of clean speech
 - minimal background noise
 - no music, no reverb
-- no clipping — if the sample peaks above 0 dBFS, the cloned output will also clip and distort
+- no clipping — clipped source audio has already lost waveform detail, and loudness normalization cannot restore it
 - **Recommended peak level: around −6 to −3 dBFS** — loud enough to fully capture the voice character, with just enough headroom to avoid distortion
 
 ## OpenVoice Cloning Models
 
-The voice cloning engine requires separate OpenVoice ONNX models. Tsubaki downloads them **automatically from HuggingFace on the first run** — no manual setup needed.
+The voice cloning engine requires separate OpenVoice ONNX models. When voice cloning is enabled, Tsubaki automatically downloads any missing model files from HuggingFace during startup.
 
 If you prefer to download them manually:
 
@@ -351,9 +351,7 @@ The perceived loudness of a cloned voice is shaped by **reference loudness norma
 `-23 LUFS` is the EBU R128 broadcast reference. The important part is consistency: every reference is normalized against the same target, providing a common loudness baseline.
 
 - **Residual recording characteristics:** Loudness normalization matches overall perceived loudness, not every detail of the source recording. Microphone response, room coloration, dynamics, and other characteristics can still influence the resulting clone.
-- **Voice pitch:** Lower-pitched voices — deep male voices, bass characters — naturally concentrate more spectral energy in the low-frequency range. Because OpenVoice transfers this energy profile, deep voices can still sound quieter than brighter, higher-pitched voices even when the reference samples have been loudness-normalized. This is a property of the cloning process, not a bug.
-
-**Recommended recording level:** aim for peaks around **−6 to −3 dBFS** — loud enough to capture the voice clearly, with enough headroom to avoid distortion. Loudness normalization handles the overall level; the peak recommendation is mainly about avoiding clipping and preserving a clean source signal. See *Recommended Sample Quality* above.
+- **Perceived output differences:** Reference normalization makes the input recordings consistent, but it does not force every cloned voice to have the same perceived output loudness. Different voice characteristics and OpenVoice conversion results can still sound brighter, darker, louder, or quieter.
 
 If the cloned voice is still too quiet, compensate using `DefaultVolume` or `VolumeBoosterDb` in `DspSettings` (see *Server-Side DSP Defaults* below), or send `"volume"` per request:
 
@@ -640,33 +638,25 @@ If your files have custom names or are scattered across the system, you can spec
 
 > **Windows users:** When writing absolute paths in JSON, you must use double backslashes (`\\`).
 
-## ModelSettings Reference
+## Fallback Model Settings
 
-The complete model-loading configuration is:
+The normal model paths above remain the primary source. These settings only control the fallback used when no usable configured or local Piper model can be loaded:
 
 ```json
 "ModelSettings": {
-  "ModelDirectory": "Model",
-  "ExactModelFilePath": "",
-  "ExactConfigFilePath": "",
   "FallbackModelUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx",
   "FallbackConfigUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
-  "AutoDownloadFallbackModel": false,
-  "Speaker": ""
+  "AutoDownloadFallbackModel": false
 }
 ```
 
 | Parameter | Purpose |
 | --------- | ------- |
-| `ModelDirectory` | Directory searched for a Piper `.onnx` model and its matching configuration when exact paths are not supplied. Relative paths are resolved from the application directory. |
-| `ExactModelFilePath` | Optional explicit path to the Piper `.onnx` model. Use it when you do not want automatic discovery in `ModelDirectory`. |
-| `ExactConfigFilePath` | Optional explicit path to the configuration for `ExactModelFilePath`. The model and configuration should be supplied together. |
-| `FallbackModelUrl` | URL used to obtain a fallback Piper model only when no usable configured/local Piper model can be loaded. Existing local models remain preferred. |
-| `FallbackConfigUrl` | URL of the configuration that belongs to `FallbackModelUrl`. |
-| `AutoDownloadFallbackModel` | `false` keeps normal interactive launches conservative and asks before a required fallback download. `true` allows the fallback model to be downloaded automatically without a prompt. Docker enables this automatically for non-interactive startup. |
-| `Speaker` | Speaker key from a multi-speaker model's `speaker_id_map`. Leave empty to use the first available speaker. It is ignored for single-speaker models. |
+| `FallbackModelUrl` | URL of the fallback Piper `.onnx` model. |
+| `FallbackConfigUrl` | URL of the matching Piper model configuration. |
+| `AutoDownloadFallbackModel` | `false` asks before downloading a required fallback during a normal interactive launch. `true` downloads it automatically without a prompt; Docker enables this for non-interactive startup. |
 
-The fallback model is a startup safety net, not a replacement for a model you deliberately place in `ModelDirectory` or configure through exact paths. Once downloaded, it is cached and reused on later starts.
+Downloaded fallback files are cached and reused on later starts.
 
 ---
 
@@ -891,14 +881,12 @@ This softer handling of single brackets and slashes is intentionally a compatibi
 }
 ```
 
-For normal use, keep the defaults and list only the **2–3 additional languages** most likely to appear in your text. Fewer candidates improve both detection reliability and performance.
+For normal use, keep `UseLanguageDetector: true`. Leave `SupportedLanguages` empty if you only need the Piper model's own language plus script-aware handling of clearly different alphabets. Add only the **2–3 additional languages** you actually expect when you want automatic switching to them; fewer candidates improve both detection reliability and performance. Leave the advanced tuning values unchanged unless detection behavior needs adjustment.
 
 - `UseLanguageDetector: true` enables automatic language detection and script-aware fallback behavior.
-- `UseLanguageDetector: false` disables statistical language detection and its memory/CPU cost.
+- `UseLanguageDetector: false` disables the language-detector path entirely, including statistical detection and script-aware routing/fallback. This saves its memory/CPU cost, but foreign-script text no longer gets that protection.
 - Leaving `SupportedLanguages` empty does **not** disable detection; it simply leaves no additional languages beyond the active model language.
 - Language values may use base codes such as `"en"`, `"uk"`, `"de"`, `"fr"`, `"cmn"`, or extended eSpeak tags such as `"en-us"`, `"fr-ca"`, and `"en-gb-x-rp"`.
-
-> **Recommendation:** Leave the advanced values unchanged unless automatic detection produces unwanted language switches or fails to preserve the base model's accent.
 
 <details>
 <summary><strong>Advanced: How language detection works and how to tune it</strong></summary>
@@ -988,7 +976,7 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 
 - **`StartupSettings > OpenBrowserOnStart`** — Controls whether Tsubaki attempts to open the Web Dashboard after startup. The default is `true`. On supported Linux desktop environments the browser is launched independently of the server process, and browser startup is skipped when no graphical session is available. Set it to `false` for headless systems, services, or when you prefer to open `http://localhost:5045` manually. Docker disables automatic browser opening.
 
-- **`CorsSettings`** — Controls Cross-Origin Resource Sharing. Setting `"AllowAnyOrigin": true` completely disables access limits and is perfectly fine for local or home use. If set to `false`, the server will only accept requests from the domains listed in `"AllowedOrigins"`, which you can freely edit to secure your endpoints.
+- **`CorsSettings`** — Controls which browser origins are allowed to call Tsubaki through CORS. `"AllowAnyOrigin": true` is convenient for a trusted local setup. Setting it to `false` restricts browser-origin requests to `"AllowedOrigins"`. CORS is not authentication or a firewall and does not prevent direct HTTP clients from reaching an exposed server.
 
 - **`ApiSettings > MaxTextLength`** — Imposes a hard character limit on text-to-speech requests. Setting this to `0` removes the limit entirely, which is perfectly fine for personal or home use.
 
@@ -1028,15 +1016,15 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 
 | Parameter                 | Description                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is primarily a concurrency throttle** — concurrent requests share the same loaded model rather than requiring one full model copy per request. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML increases VRAM usage predictably and linearly: model size × `MaxConcurrentGpuRequests`, and separately again for the OpenVoice Tone Color Converter if voice cloning is enabled. |
+| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is primarily a concurrency throttle** — concurrent requests share the same loaded model rather than requiring one full model copy per request. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML creates additional resident inference sessions and therefore increases VRAM usage; the exact increase depends on the model and ONNX Runtime/provider overhead. |
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value automatically derives a safe limit from the available logical processors and `OnnxSettings.Cpu.IntraOpNumThreads`. If `IntraOpNumThreads` is also automatic (`0`), Tsubaki uses one concurrent CPU request. |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
 | `OpenVoiceGpuDeviceId`     | Selects the GPU for OpenVoice. In WebGPU builds, Windows uses the DXGI adapter number; Linux uses a zero-based index among WebGPU-compatible GPUs. These indices are specific to each machine and may differ between Windows and Linux. |
 | `ForcePiperToCpu`          | Forces the base Piper model to execute on the CPU regardless of GPU presence. When `true` (Hybrid Routing), the CPU handles parallel Piper text-to-speech generation while the GPU is reserved exclusively for the computationally heavy OpenVoice cloning passes. This keeps CPU synthesis independent from the GPU voice-conversion stage, allowing the CPU to prepare additional requests while the GPU processes a cloned voice. |
 
-> **DirectML users:** think of this setting as a direct trade — each unit of `MaxConcurrentGpuRequests` buys one more simultaneous request, at the cost of one more full copy of the relevant model(s) sitting in VRAM. CUDA and CPU users don't pay this cost, since they share one session across all concurrent requests. **On WebGPU, GPU voice conversion is currently processed one request at a time for stability, while multiple CPU synthesis requests can still be prepared in parallel.**
+> **WebGPU note:** GPU voice conversion is currently processed one request at a time for stability, while multiple CPU synthesis requests can still be prepared in parallel.
 
-- **`RateLimitSettings`** — Provides basic anti-spam and anti-DDoS protection by restricting the number of requests allowed from a single IP address within a specific time window. Useful for public-facing deployments.
+- **`RateLimitSettings`** — Provides basic per-IP request throttling by limiting how many requests are accepted within a fixed time window and how many excess requests may queue. It helps control accidental or abusive request bursts, but it is not a substitute for a reverse proxy, firewall, or network-level DDoS protection on a public deployment.
 
 ```json
 "RateLimitSettings": {
@@ -1052,7 +1040,7 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 
 - **`EffectsSettings`** — Server-wide default character effect and spatial environment, automatically applied to every request unless overridden by a custom client. See *Server-Side DSP Defaults* above for why this matters specifically for OpenAI-compatible clients.
 
-- **`DspSettings`** — Adds an audio cleanup pass (Low-Pass Filter), server-wide default pitch and volume, and a fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
+- **`DspSettings`** — Controls the low-pass cleanup filter used on cloned output, server-wide default pitch and volume, and the fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
 
 - **`ClonerSettings`** — Server defaults for cloning strength, OpenVoice conversion stability, and reference-audio loudness normalization. See *Fine-Tuning Cloning Behavior* and *Cloned Voice Volume* above.
 - **`EnableCloning`** — Enables or disables OpenVoice voice cloning. Leave it `true` to use voices stored in the `Voices/` folder; when enabled, those voices are discovered automatically at server startup and appear in the Web Dashboard voice list.
@@ -1061,7 +1049,7 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 
 # ONNX Runtime Optimization
 
-This section provides low-level control over the internal MLAS (Microsoft Linear Algebra Subprograms) math engine, heavily optimizing execution. Since the CPU and GPU execution paths have fundamentally different concurrency needs, `Cpu` and `Gpu` use independent threading and memory profiles rather than a single shared configuration. The defaults are already configured as a balanced "golden standard" for home use. **If you are not tuning performance, leave this entire section unchanged.** Change these only if you understand the consequences.
+This section provides low-level ONNX Runtime execution settings. CPU and GPU paths use independent threading and memory profiles because their workloads have different requirements. The shipped values are conservative defaults for Tsubaki's tested workload. **If you are not tuning performance, leave this section unchanged.**
 
 ```json
 "OnnxSettings": {
@@ -1086,10 +1074,10 @@ This section provides low-level control over the internal MLAS (Microsoft Linear
 | Parameter             | Description                                                                                                                                                                                                                                                                                                                        |
 | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `IntraOpNumThreads`   | Threads used for matrix math within a single neural network node. `0` lets ONNX Runtime choose the thread count automatically. The `Cpu` profile defaults to `4` to balance per-request throughput with concurrent requests; the `Gpu` profile defaults to `1`. |
-| `InterOpNumThreads`   | Parallelization across different graph nodes. For TTS (which is strictly sequential), this must **always be `1`**. Higher values cause thread thrashing and micro-stutters.                                                                                                                                                       |
-| `EnableMemoryPattern` | Pre-allocates memory blocks during model load rather than dynamically during inference. Decreases latency per request by 5–10%.                                                                                                                                                                                                    |
-| `EnableCpuMemArena`   | Utilizes an isolated memory arena for ONNX tensors. **Critical for .NET:** Bypasses the C# Garbage Collector entirely during audio generation, eliminating GC-induced freezes on long texts. Disabled by default in the `Gpu` profile, since this optimization targets CPU-resident memory and doesn't apply to tensors that live in VRAM. |
-| `ExecutionMode`       | `"Sequential"` is the safest and fastest mode for Piper and OpenVoice architectures, as they do not benefit from parallel graph execution.                                                                                                                                                                                         |
+| `InterOpNumThreads`   | Thread budget for parallel execution across graph nodes. Tsubaki ships with `1`, which is the recommended value for its Piper/OpenVoice workload. Higher values are mainly relevant with parallel graph execution and can add contention rather than improve latency. |
+| `EnableMemoryPattern` | Enables ONNX Runtime's memory-pattern optimization, allowing compatible repeated graph executions to reuse planned memory layouts and reduce allocation overhead. The benefit depends on the model and input shapes; no fixed latency improvement is guaranteed. |
+| `EnableCpuMemArena`   | Enables ONNX Runtime's native CPU memory arena for tensor allocations. It can reduce repeated native allocation overhead, but it does **not** bypass the C# garbage collector for the rest of Tsubaki; managed buffers are optimized separately. The shipped GPU profile keeps it disabled. |
+| `ExecutionMode`       | Selects sequential or parallel ONNX graph execution. Tsubaki ships with `"Sequential"`, which is the tested and recommended mode for its Piper/OpenVoice workload. |
 
 ## Concurrency & CPU Bottlenecks
 
