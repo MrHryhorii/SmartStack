@@ -151,6 +151,10 @@ var startupConfig = builder.Configuration.GetSection("StartupSettings").Get<Star
 var corsConfig = builder.Configuration.GetSection("CorsSettings").Get<CorsSettings>() ?? new CorsSettings();
 var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
 var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
+// Optional additions are merged into one immutable catalog before services are created.
+var chunkerRules = TextChunkerRules.LoadOrDefault(
+    Path.Combine(builder.Environment.ContentRootPath, "TextChunkerRules.json"));
+builder.Services.AddSingleton(chunkerRules);
 var hardwareConfig = builder.Configuration.GetSection("HardwareSettings").Get<HardwareSettings>() ?? new HardwareSettings();
 var dspConfig = builder.Configuration.GetSection("DspSettings").Get<DspSettings>() ?? new DspSettings();
 var streamConfig = builder.Configuration.GetSection("StreamSettings").Get<StreamSettings>() ?? new StreamSettings();
@@ -187,7 +191,7 @@ if (piperConfig != null && piperModelPath != null)
     var phonemizer = new PiperPhonemizer(piperConfig, bootstrapLoggerFactory.CreateLogger<PiperPhonemizer>());
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
-    var textChunker = new TextChunker(chunkerConfig);
+    var textChunker = new TextChunker(chunkerConfig, chunkerRules);
     builder.Services.AddSingleton(textChunker);
     var runner = new PiperRunner(
      piperModelPath,
@@ -199,7 +203,7 @@ if (piperConfig != null && piperModelPath != null)
      bootstrapLoggerFactory.CreateLogger<PiperRunner>());
     builder.Services.AddSingleton(runner);
 
-    var punctuationMapper = new DynamicPunctuationMapper(piperConfig);
+    var punctuationMapper = new DynamicPunctuationMapper(piperConfig, chunkerRules);
     builder.Services.AddSingleton(punctuationMapper);
     string dataPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PiperNative"));
     var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
@@ -367,7 +371,8 @@ if (piperConfig != null && piperModelPath != null)
         mixedPhonemizer = new MixedLanguagePhonemizer(
             phonemizerConfig,
             piperConfig.Espeak.Voice ?? "en",
-            bootstrapLoggerFactory.CreateLogger<MixedLanguagePhonemizer>()
+            bootstrapLoggerFactory.CreateLogger<MixedLanguagePhonemizer>(),
+            textChunker
         );
         builder.Services.AddSingleton(mixedPhonemizer);
     }

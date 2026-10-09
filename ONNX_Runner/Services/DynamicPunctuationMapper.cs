@@ -3,6 +3,7 @@ using System.Collections.Frozen;
 using System.Globalization;
 using System.Text;
 using ONNX_Runner.Models;
+using PunctuationKind = ONNX_Runner.Models.TextChunkerRules.PunctuationKind;
 
 namespace ONNX_Runner.Services;
 
@@ -13,27 +14,6 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public sealed class DynamicPunctuationMapper
 {
-    private enum PunctuationKind : byte
-    {
-        Period,
-        Question,
-        Exclamation,
-        Interrobang,
-        DoubleQuestion,
-        QuestionExclamation,
-        ExclamationQuestion,
-        Comma,
-        Semicolon,
-        Colon,
-        Ellipsis,
-        Dash,
-        OpenBracket,
-        CloseBracket,
-        WordSeparator,
-        OpeningQuestion,
-        OpeningExclamation
-    }
-
     private enum CollapseKind : byte
     {
         None,
@@ -41,73 +21,7 @@ public sealed class DynamicPunctuationMapper
         Ellipsis
     }
 
-    // Semantic families. The list intentionally contains punctuation from multiple writing
-    // systems, while Unicode-category fallback below guarantees safe handling for punctuation
-    // not explicitly listed here.
-    private const string PeriodMarks =
-        ".。．｡۔։।॥།༎༏༐༑༒។៕။።፨᙮᠃᠉꓿꘎෴׃܀܁܂";
-
-    private const string QuestionMarks =
-        "?？؟;՞፧꘏⸮";
-
-    private const string ExclamationMarks =
-        "!！՜߹";
-
-    private const string InterrobangMarks =
-        "‽";
-
-    private const string DoubleQuestionMarks =
-        "⁇";
-
-    private const string QuestionExclamationMarks =
-        "⁈";
-
-    private const string ExclamationQuestionMarks =
-        "⁉";
-
-    private const string CommaMarks =
-        ",，、､،՝፣၊᠂᠈߸꓾꘍";
-
-    private const string SemicolonMarks =
-        ";；؛፤";
-
-    private const string ColonMarks =
-        ":：፥፦៖᠄܃܄܅܆܇܈܉";
-
-    private const string EllipsisMarks =
-        "…‥⋯᠅";
-
-    // Hyphen-minus and lexical hyphens are deliberately excluded. When they occur inside a
-    // word they are passed to eSpeak; when standalone they degrade as punctuation instead.
-    private const string DashMarks =
-        "—–―‒⸺⸻〜～";
-
-    private const string OpenBracketMarks =
-        "([{（［｛〈《【〔〖〘〚⟨⟦⟪〈";
-
-    private const string CloseBracketMarks =
-        ")]}）］｝〉》】〕〗〙〛⟩⟧⟫〉";
-
-    // Punctuation that semantically separates words rather than clauses.
-    private const string WordSeparatorMarks =
-        "·・･፡";
-
-    // These marks introduce a question/exclamation. If a model does not explicitly know them,
-    // silently dropping them is safer than inserting a closing intonation marker at the start.
-    private const string OpeningQuestionMarks =
-        "¿𞥟";
-
-    private const string OpeningExclamationMarks =
-        "¡𞥞";
-
-    private const string VisualQuoteMarks =
-        "\"“”„‟«»‹›「」『』〝〞〟❝❞❛❜‘’‚‛'";
-
-    private static readonly FrozenDictionary<Rune, PunctuationKind> SemanticKinds =
-        BuildSemanticKinds();
-
-    private static readonly FrozenSet<Rune> VisualQuotes =
-        BuildRuneSet(VisualQuoteMarks);
+    public TextChunkerRules Rules { get; }
 
     // Every single-scalar token explicitly exposed by the loaded Piper model.
     private readonly HashSet<Rune> _supportedSymbols = [];
@@ -129,8 +43,9 @@ public sealed class DynamicPunctuationMapper
 
     private readonly bool _supportsSpace;
 
-    public DynamicPunctuationMapper(PiperConfig config)
+    public DynamicPunctuationMapper(PiperConfig config, TextChunkerRules? rules = null)
     {
+        Rules = rules ?? TextChunkerRules.Default;
         if (config?.PhonemeIdMap != null)
         {
             foreach (string key in config.PhonemeIdMap.Keys)
@@ -155,19 +70,19 @@ public sealed class DynamicPunctuationMapper
         // Resolve one model-native representative per semantic family. Each chain degrades
         // from the closest meaning toward a weaker generic pause and finally to whitespace.
         string period = FirstNonEmpty(
-            SelectSupported(PeriodMarks),
-            SelectSupported(SemicolonMarks),
-            SelectSupported(CommaMarks),
-            SelectSupported(ColonMarks),
+            SelectSupported(PunctuationKind.Period),
+            SelectSupported(PunctuationKind.Semicolon),
+            SelectSupported(PunctuationKind.Comma),
+            SelectSupported(PunctuationKind.Colon),
             unknownNativePause,
             SpaceFallback());
 
-        string nativeQuestion = SelectSupported(QuestionMarks);
-        string nativeExclamation = SelectSupported(ExclamationMarks);
-        string nativeInterrobang = SelectSupported(InterrobangMarks);
-        string nativeDoubleQuestion = SelectSupported(DoubleQuestionMarks);
-        string nativeQuestionExclamation = SelectSupported(QuestionExclamationMarks);
-        string nativeExclamationQuestion = SelectSupported(ExclamationQuestionMarks);
+        string nativeQuestion = SelectSupported(PunctuationKind.Question);
+        string nativeExclamation = SelectSupported(PunctuationKind.Exclamation);
+        string nativeInterrobang = SelectSupported(PunctuationKind.Interrobang);
+        string nativeDoubleQuestion = SelectSupported(PunctuationKind.DoubleQuestion);
+        string nativeQuestionExclamation = SelectSupported(PunctuationKind.QuestionExclamation);
+        string nativeExclamationQuestion = SelectSupported(PunctuationKind.ExclamationQuestion);
 
         string question = FirstNonEmpty(
             nativeQuestion,
@@ -217,40 +132,40 @@ public sealed class DynamicPunctuationMapper
             exclamation);
 
         _commaFallback = FirstNonEmpty(
-            SelectSupported(CommaMarks),
-            SelectSupported(SemicolonMarks),
+            SelectSupported(PunctuationKind.Comma),
+            SelectSupported(PunctuationKind.Semicolon),
             period);
 
         string semicolon = FirstNonEmpty(
-            SelectSupported(SemicolonMarks),
-            SelectSupported(ColonMarks),
+            SelectSupported(PunctuationKind.Semicolon),
+            SelectSupported(PunctuationKind.Colon),
             _commaFallback,
             period);
 
         string colon = FirstNonEmpty(
-            SelectSupported(ColonMarks),
-            SelectSupported(SemicolonMarks),
+            SelectSupported(PunctuationKind.Colon),
+            SelectSupported(PunctuationKind.Semicolon),
             _commaFallback,
             period);
 
         string dash = FirstNonEmpty(
-            SelectSupported(DashMarks),
+            SelectSupported(PunctuationKind.Dash),
             _commaFallback,
             period);
 
         string openBracket = FirstNonEmpty(
-            SelectSupported(OpenBracketMarks),
+            SelectSupported(PunctuationKind.OpenBracket),
             _commaFallback,
             SpaceFallback());
 
         string closeBracket = FirstNonEmpty(
-            SelectSupported(CloseBracketMarks),
+            SelectSupported(PunctuationKind.CloseBracket),
             _commaFallback,
             SpaceFallback());
 
         string wordSeparator = FirstNonEmpty(
             SpaceFallback(),
-            SelectSupported(WordSeparatorMarks),
+            SelectSupported(PunctuationKind.WordSeparator),
             _commaFallback);
 
         _genericPunctuationFallback = FirstNonEmpty(
@@ -261,16 +176,16 @@ public sealed class DynamicPunctuationMapper
             unknownNativePause,
             SpaceFallback());
 
-        string nativeEllipsis = SelectSupported(EllipsisMarks);
+        string nativeEllipsis = SelectSupported(PunctuationKind.Ellipsis);
         _ellipsisFallback = !string.IsNullOrEmpty(nativeEllipsis)
             ? nativeEllipsis
             : _supportedSymbols.Contains(new Rune('.'))
                 ? "..."
                 : BuildExtendedPause(period);
 
-        var fallbacks = new Dictionary<Rune, string>(SemanticKinds.Count);
+        var fallbacks = new Dictionary<Rune, string>(Rules.SemanticKinds.Count);
 
-        foreach (var entry in SemanticKinds)
+        foreach (var entry in Rules.SemanticKinds)
         {
             Rune source = entry.Key;
 
@@ -405,7 +320,7 @@ public sealed class DynamicPunctuationMapper
             // Known punctuation families use a replacement resolved once at startup.
             if (_fallbacks.TryGetValue(rune, out string? replacement))
             {
-                SemanticKinds.TryGetValue(rune, out PunctuationKind sourceKind);
+                Rules.SemanticKinds.TryGetValue(rune, out PunctuationKind sourceKind);
 
                 AppendReplacement(
                     builder,
@@ -526,9 +441,9 @@ public sealed class DynamicPunctuationMapper
     }
 
     // Returns the first candidate punctuation token supported by the loaded model.
-    private string SelectSupported(string candidates)
+    private string SelectSupported(PunctuationKind kind)
     {
-        foreach (Rune rune in candidates.EnumerateRunes())
+        foreach (Rune rune in Rules.GetSemanticMarks(kind))
         {
             if (!IsModelControlRune(rune) && _supportedSymbols.Contains(rune))
             {
@@ -565,7 +480,7 @@ public sealed class DynamicPunctuationMapper
         {
             if (IsModelControlRune(rune) ||
                 IsVisualQuote(rune) ||
-                SemanticKinds.ContainsKey(rune))
+                Rules.SemanticKinds.ContainsKey(rune))
             {
                 continue;
             }
@@ -649,9 +564,9 @@ public sealed class DynamicPunctuationMapper
     }
 
     // Classifies a native punctuation rune for duplicate-pause collapsing.
-    private static CollapseKind GetNativeCollapseKind(Rune rune)
+    private CollapseKind GetNativeCollapseKind(Rune rune)
     {
-        if (!SemanticKinds.TryGetValue(rune, out PunctuationKind kind))
+        if (!Rules.SemanticKinds.TryGetValue(rune, out PunctuationKind kind))
         {
             return CollapseKind.None;
         }
@@ -746,44 +661,6 @@ public sealed class DynamicPunctuationMapper
         lastCollapseKind = collapseKind;
     }
 
-    // Builds the immutable lookup from punctuation rune to semantic family.
-    private static FrozenDictionary<Rune, PunctuationKind> BuildSemanticKinds()
-    {
-        var map = new Dictionary<Rune, PunctuationKind>();
-
-        AddSemanticGroup(map, PunctuationKind.Interrobang, InterrobangMarks);
-        AddSemanticGroup(map, PunctuationKind.DoubleQuestion, DoubleQuestionMarks);
-        AddSemanticGroup(map, PunctuationKind.QuestionExclamation, QuestionExclamationMarks);
-        AddSemanticGroup(map, PunctuationKind.ExclamationQuestion, ExclamationQuestionMarks);
-        AddSemanticGroup(map, PunctuationKind.Ellipsis, EllipsisMarks);
-        AddSemanticGroup(map, PunctuationKind.OpeningQuestion, OpeningQuestionMarks);
-        AddSemanticGroup(map, PunctuationKind.OpeningExclamation, OpeningExclamationMarks);
-        AddSemanticGroup(map, PunctuationKind.Question, QuestionMarks);
-        AddSemanticGroup(map, PunctuationKind.Exclamation, ExclamationMarks);
-        AddSemanticGroup(map, PunctuationKind.Period, PeriodMarks);
-        AddSemanticGroup(map, PunctuationKind.Comma, CommaMarks);
-        AddSemanticGroup(map, PunctuationKind.Semicolon, SemicolonMarks);
-        AddSemanticGroup(map, PunctuationKind.Colon, ColonMarks);
-        AddSemanticGroup(map, PunctuationKind.Dash, DashMarks);
-        AddSemanticGroup(map, PunctuationKind.OpenBracket, OpenBracketMarks);
-        AddSemanticGroup(map, PunctuationKind.CloseBracket, CloseBracketMarks);
-        AddSemanticGroup(map, PunctuationKind.WordSeparator, WordSeparatorMarks);
-
-        return map.ToFrozenDictionary();
-    }
-
-    // Adds every rune from one semantic family to the lookup table.
-    private static void AddSemanticGroup(
-        Dictionary<Rune, PunctuationKind> map,
-        PunctuationKind kind,
-        string symbols)
-    {
-        foreach (Rune rune in symbols.EnumerateRunes())
-        {
-            map.TryAdd(rune, kind);
-        }
-    }
-
     // Consumes a run of three or more ASCII periods as one semantic ellipsis.
     private static bool TryConsumeAsciiEllipsis(
         ReadOnlySpan<char> text,
@@ -809,7 +686,7 @@ public sealed class DynamicPunctuationMapper
     }
 
     // Inserts a safe separator when removing a visual quote would merge words.
-    private static void AppendQuoteSeparatorIfNeeded(
+    private void AppendQuoteSeparatorIfNeeded(
         StringBuilder builder,
         ReadOnlySpan<char> text,
         int nextIndex)
@@ -845,28 +722,15 @@ public sealed class DynamicPunctuationMapper
     }
 
     // Checks whether a rune is treated as a removable visual quote.
-    private static bool IsVisualQuote(Rune rune)
+    private bool IsVisualQuote(Rune rune)
     {
-        return VisualQuotes.Contains(rune) ||
+        return rune.IsBmp && Rules.VisualQuotes.Contains((char)rune.Value) ||
                Rune.GetUnicodeCategory(rune) is UnicodeCategory.InitialQuotePunctuation
                    or UnicodeCategory.FinalQuotePunctuation;
     }
 
-    // Builds an immutable rune set from a Unicode string.
-    private static FrozenSet<Rune> BuildRuneSet(string symbols)
-    {
-        var set = new HashSet<Rune>();
-
-        foreach (Rune rune in symbols.EnumerateRunes())
-        {
-            set.Add(rune);
-        }
-
-        return set.ToFrozenSet();
-    }
-
     // Checks whether punctuation is acting as an in-word connector at this position.
-    private static bool IsLexicalConnector(
+    private bool IsLexicalConnector(
         ReadOnlySpan<char> text,
         int index,
         int consumed,
@@ -892,12 +756,11 @@ public sealed class DynamicPunctuationMapper
     }
 
     // Checks whether a rune is an apostrophe or lexical hyphen connector.
-    private static bool IsConnectorRune(Rune rune)
+    private bool IsConnectorRune(Rune rune)
     {
-        return rune.Value is
-            '\'' or '’' or 'ʼ' or
-            '-' or '\u2010' or '\u2011' or
-            '\u058A' or '\u05BE' or '\u30A0';
+        return rune.IsBmp &&
+            (Rules.LexicalApostrophes.Contains((char)rune.Value) ||
+             Rules.LexicalHyphens.Contains((char)rune.Value));
     }
 
     // Checks whether a rune belongs to Piper/eSpeak control syntax.

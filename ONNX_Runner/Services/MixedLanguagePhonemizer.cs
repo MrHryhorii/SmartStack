@@ -42,14 +42,6 @@ public partial class MixedLanguagePhonemizer
     // of the word itself (e.g., "state-of-the-art", "будь-який", Hebrew maqaf compounds).
     // Typographic dashes (figure/en/em/horizontal bar) remain punctuation even without spaces,
     // so constructions such as "word—word" still create a soft language-boundary candidate.
-    private static readonly SearchValues<char> LexicalHyphens =
-        SearchValues.Create("-\u2010\u2011\u058A\u05BE\u30A0");
-
-    // Quotes are structural boundaries for language analysis, but never phonetic content.
-    // Apostrophes inside words are consumed by the lexical-token path before they can reach
-    // this set, so contractions such as "don't" remain untouched.
-    private static readonly SearchValues<char> VisualQuotes =
-        SearchValues.Create("\"“”„‟«»‹›「」『』〝〞〟❝❞❛❜‘’‚‛'");
 
     // Diagnostic collections are immutable-by-contract and cached once for the entire process.
     // Production requests therefore do not allocate tiny List<string> instances for metadata.
@@ -396,12 +388,21 @@ public partial class MixedLanguagePhonemizer
     private const double LocalWinnerProbabilityFloor = 0.50;
     private const double LocalWinnerMarginFloor = 0.08;
 
+    private readonly TextChunker _textChunker;
+    private readonly TextChunkerRules _rules;
+
     // logger
     private readonly ILogger<MixedLanguagePhonemizer> _logger;
 
-    public MixedLanguagePhonemizer(PhonemizerSettings settings, string modelEspeakCode, ILogger<MixedLanguagePhonemizer> logger)
+    public MixedLanguagePhonemizer(
+        PhonemizerSettings settings,
+        string modelEspeakCode,
+        ILogger<MixedLanguagePhonemizer> logger,
+        TextChunker? textChunker = null)
     {
         _logger = logger;
+        _textChunker = textChunker ?? new TextChunker(new ChunkerSettings());
+        _rules = _textChunker.Rules;
 
         _mapper = new EspeakLinguaMapper();
 
@@ -678,7 +679,7 @@ public partial class MixedLanguagePhonemizer
     /// real scripts, preserving compounds such as COVID-19, B-52, and date-like tokens while
     /// still splitting constructions such as English-123-українська at the script boundary.
     /// </summary>
-    private static bool ShouldSplitAtLexicalHyphen(ReadOnlySpan<char> word, int hyphenIndex)
+    private bool ShouldSplitAtLexicalHyphen(ReadOnlySpan<char> word, int hyphenIndex)
     {
         ScriptType leftScript = FindNearestLetterScriptLeft(word, hyphenIndex);
         ScriptType rightScript = FindNearestLetterScriptRight(word, hyphenIndex);
@@ -692,7 +693,7 @@ public partial class MixedLanguagePhonemizer
     }
 
     // Finds the nearest letter script before a lexical hyphen.
-    private static ScriptType FindNearestLetterScriptLeft(ReadOnlySpan<char> word, int hyphenIndex)
+    private ScriptType FindNearestLetterScriptLeft(ReadOnlySpan<char> word, int hyphenIndex)
     {
         int segmentEnd = hyphenIndex;
 
@@ -718,7 +719,7 @@ public partial class MixedLanguagePhonemizer
     }
 
     // Finds the nearest letter script after a lexical hyphen.
-    private static ScriptType FindNearestLetterScriptRight(ReadOnlySpan<char> word, int hyphenIndex)
+    private ScriptType FindNearestLetterScriptRight(ReadOnlySpan<char> word, int hyphenIndex)
     {
         int segmentStart = hyphenIndex + 1;
 
@@ -851,15 +852,10 @@ public partial class MixedLanguagePhonemizer
         return false;
     }
 
-    // Returns true for hyphens that may participate in a word token.
-    private static bool IsLexicalHyphen(char value)
+    // Uses the shared catalog for hyphens that may participate in a word token.
+    private bool IsLexicalHyphen(char value)
     {
-        return value is '-'
-            or '\u2010'
-            or '\u2011'
-            or '\u058A'
-            or '\u05BE'
-            or '\u30A0';
+        return _rules.LexicalHyphens.Contains(value);
     }
 
     // Extracts the base language family from an eSpeak language code.
@@ -1020,92 +1016,21 @@ public partial class MixedLanguagePhonemizer
     }
 
     // Returns true for period-like forms that may terminate a written abbreviation.
-    private static bool IsPeriodLike(char value)
+    private bool IsPeriodLike(char value)
     {
-        return value is '.' or '\u2024' or '﹒' or '．';
+        return _rules.PeriodLikeMarks.Contains(value);
     }
 
     // Protects titles, initials, and dotted abbreviations from becoming independent language chunks.
-    // Sentence boundaries were already resolved by TextChunker, so within this layer a recognized
-    // abbreviation followed by more text belongs to the same language-detection phrase.
-    private static bool ShouldKeepAbbreviationPeriod(ReadOnlySpan<char> text, int periodIndex)
+    // Delegate period ambiguity to the same classifier used for audio sentence boundaries.
+    private bool ShouldKeepAbbreviationPeriod(ReadOnlySpan<char> text, int periodIndex)
     {
-        if (periodIndex <= 0 || periodIndex >= text.Length || !IsPeriodLike(text[periodIndex]))
-        {
-            return false;
-        }
-
-        int nextIndex = periodIndex + 1;
-
-        // Clause punctuation may follow an abbreviation before its continuation: "e.g., this".
-        while (nextIndex < text.Length && text[nextIndex] is ',' or ';' or ':')
-        {
-            nextIndex++;
-        }
-
-        while (nextIndex < text.Length && char.IsWhiteSpace(text[nextIndex]))
-        {
-            nextIndex++;
-        }
-
-        if (nextIndex >= text.Length)
-        {
-            return false;
-        }
-
-        int nextLength = DecodeRune(text[nextIndex..], out Rune nextRune);
-        _ = nextLength;
-
-        UnicodeCategory nextCategory = Rune.GetUnicodeCategory(nextRune);
-        bool nextIsWord = IsLetterRune(nextRune) ||
-                          nextCategory == UnicodeCategory.DecimalDigitNumber;
-
-        if (!nextIsWord)
-        {
-            return false;
-        }
-
-        int start = periodIndex - 1;
-        while (start >= 0)
-        {
-            char value = text[start];
-
-            if (char.IsLetterOrDigit(value) ||
-                IsPeriodLike(value) ||
-                value is '\'' or '’' ||
-                IsLexicalHyphen(value))
-            {
-                start--;
-                continue;
-            }
-
-            break;
-        }
-
-        ReadOnlySpan<char> token = text[(start + 1)..periodIndex];
-        if (token.IsEmpty)
-        {
-            return false;
-        }
-
-        if (token.Length == 1 && char.IsLetter(token[0]))
-        {
-            return true;
-        }
-
-        if (TextChunker.CommonAbbreviations
-            .GetAlternateLookup<ReadOnlySpan<char>>()
-            .Contains(token))
-        {
-            return true;
-        }
-
-        return LooksLikeDottedAbbreviationForSegmentation(token);
+        return _textChunker.IsIntraSentencePeriod(text, periodIndex);
     }
 
     // Recognizes conservative dotted initialisms such as U.S, p.m and S.T.A.L.K.E.R without
     // classifying short domains such as x.ai or co.uk as abbreviations.
-    private static bool LooksLikeDottedAbbreviationForSegmentation(ReadOnlySpan<char> token)
+    private bool LooksLikeDottedAbbreviationForSegmentation(ReadOnlySpan<char> token)
     {
         int separatorCount = 0;
         int segmentLength = 0;
@@ -1156,7 +1081,7 @@ public partial class MixedLanguagePhonemizer
 
     // Finds a non-whitespace technical token whose internal punctuation must not become language
     // boundaries. The rule is deliberately structural rather than product/domain specific.
-    private static bool TryGetProtectedTechnicalSpanLength(
+    private bool TryGetProtectedTechnicalSpanLength(
         ReadOnlySpan<char> text,
         int startIndex,
         out int length)
@@ -1181,8 +1106,8 @@ public partial class MixedLanguagePhonemizer
         // Internal punctuation remains protected, while a trailing comma in "https://x, then"
         // still offers a useful language-switch candidate after the URL.
         while (protectedLength > 0 &&
-               (candidate[protectedLength - 1] is ',' or ';' or ':' or '!' or '?' ||
-                VisualQuotes.Contains(candidate[protectedLength - 1])))
+               (_rules.TechnicalSuffixMarks.Contains(candidate[protectedLength - 1]) ||
+                _rules.VisualQuotes.Contains(candidate[protectedLength - 1])))
         {
             protectedLength--;
         }
@@ -1213,7 +1138,7 @@ public partial class MixedLanguagePhonemizer
         return true;
     }
 
-    private static bool LooksLikeProtectedTechnicalSpan(ReadOnlySpan<char> token)
+    private bool LooksLikeProtectedTechnicalSpan(ReadOnlySpan<char> token)
     {
         bool dottedCall = token.IndexOf('.') >= 0 &&
                           token.IndexOf('(') >= 0 &&
@@ -1248,14 +1173,14 @@ public partial class MixedLanguagePhonemizer
 
     // Dotted identifiers/domains/files are technical structure, not natural-language punctuation.
     // Known abbreviations and all-numeric decimals remain on their existing lexical paths.
-    private static bool LooksLikeDottedTechnicalSpan(ReadOnlySpan<char> token)
+    private bool LooksLikeDottedTechnicalSpan(ReadOnlySpan<char> token)
     {
         if (token.IndexOf('.') < 0 || token.IsEmpty)
         {
             return false;
         }
 
-        if (TextChunker.CommonAbbreviations
+        if (_rules.CommonAbbreviations
             .GetAlternateLookup<ReadOnlySpan<char>>()
             .Contains(token) ||
             LooksLikeDottedAbbreviationForSegmentation(token))
@@ -1303,10 +1228,10 @@ public partial class MixedLanguagePhonemizer
     }
 
     // Quotes are analysis boundaries but never output punctuation.
-    private static bool IsVisualQuote(Rune rune)
+    private bool IsVisualQuote(Rune rune)
     {
         return rune.Value <= char.MaxValue &&
-               VisualQuotes.Contains((char)rune.Value);
+               _rules.VisualQuotes.Contains((char)rune.Value);
     }
 
     // Checks whether a sentence-wide language verdict can safely apply to this script.
@@ -1338,14 +1263,14 @@ public partial class MixedLanguagePhonemizer
     }
 
     // Checks whether a character is an apostrophe, period, or lexical hyphen allowed inside a word.
-    private static bool IsWordConnector(char value)
+    private bool IsWordConnector(char value)
     {
-        return value is '\'' or '’' or '.'
-            || IsLexicalHyphen(value);
+        return _rules.LexicalApostrophes.Contains(value) ||
+            _rules.PeriodLikeMarks.Contains(value) || IsLexicalHyphen(value);
     }
 
     // Returns true for punctuation that may form a soft language-detection boundary.
-    private static bool IsBoundaryPunctuation(Rune rune)
+    private bool IsBoundaryPunctuation(Rune rune)
     {
         // Quotes are handled separately as silent hard analysis boundaries. All remaining
         // punctuation stays audible/structural and becomes a soft language-detection boundary.
@@ -1948,7 +1873,7 @@ public partial class MixedLanguagePhonemizer
         // Hyphenated words only pay the extra script-boundary checks when a lexical hyphen exists.
         void AppendWordToken(ReadOnlySpan<char> word)
         {
-            if (word.IndexOfAny(LexicalHyphens) < 0)
+            if (word.IndexOfAny(_rules.LexicalHyphens) < 0)
             {
                 AppendWord(word);
                 return;
@@ -1959,7 +1884,7 @@ public partial class MixedLanguagePhonemizer
 
             while (searchStart < word.Length)
             {
-                int relativeIndex = word[searchStart..].IndexOfAny(LexicalHyphens);
+                int relativeIndex = word[searchStart..].IndexOfAny(_rules.LexicalHyphens);
                 if (relativeIndex < 0)
                 {
                     break;

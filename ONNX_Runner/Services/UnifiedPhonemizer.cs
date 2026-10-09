@@ -280,7 +280,7 @@ public partial class UnifiedPhonemizer
     }
 
     // Appends a punctuation token while suppressing title and acronym periods.
-    private static void AppendPunctuationToken(
+    private void AppendPunctuationToken(
         TextChunk originalChunk,
         string normalizedText,
         int tokenIndex,
@@ -299,7 +299,7 @@ public partial class UnifiedPhonemizer
             int lastSpaceIdx = prevText.LastIndexOf(' ');
             ReadOnlySpan<char> lastWord = prevText[(lastSpaceIdx + 1)..];
 
-            bool isTitle = TextChunker.CommonAbbreviations
+            bool isTitle = _punctuationMapper.Rules.CommonAbbreviations
                 .GetAlternateLookup<ReadOnlySpan<char>>()
                 .Contains(lastWord);
 

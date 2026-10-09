@@ -5,7 +5,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <DefaultItemExcludes>$(DefaultItemExcludes);Publish-Licensed/**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);Publish-Licensed/**;Tests/**</DefaultItemExcludes>
 
     <AssemblyName>TsubakiTTS</AssemblyName>
     <ApplicationIcon>tsubaki.ico</ApplicationIcon>
@@ -50,6 +50,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Update="TextChunkerRules.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Remove="TextChunkerRules.example.json" />
+    <None Include="TextChunkerRules.example.json" />
     <None Update="Model\**\*.onnx;Model\**\*.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

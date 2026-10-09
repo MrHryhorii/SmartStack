@@ -994,9 +994,74 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 }
 ```
 
-- **`MaxChunkLength`** — emergency cap for one already-detected sentence. Long sentences prefer a natural pause mark, then whitespace, then a safe character boundary.
+- **`MaxChunkLength`** — emergency cap for one already-detected sentence. Long sentences prefer a natural pause mark, then whitespace, then a safe Unicode text-element boundary. Protected URLs, email addresses, and paths remain intact; one indivisible technical token may exceed the cap.
 - **`EarlySplit`** — allows one conservative clause-level split before the first audio chunk to reduce time to first audio; normal sentence chunking resumes immediately afterward. This can slightly change the rhythm or intonation of the first sentence. It is mainly useful when low latency matters; for non-streaming output there is usually little benefit to enabling it. `/tsbk/audio/speech` can override it per request with `early_split`.
-- **`SentencePauseSeconds`** — pause added only after real sentence boundaries. Early and emergency continuation chunks do not receive this artificial sentence pause.
+- **`SentencePauseSeconds`** — pause added after completed sentence boundaries and explicit ordered-list markers. Early and emergency continuation chunks do not receive this artificial sentence pause.
+
+<details>
+<summary><strong>Advanced: Sentence boundaries and custom rules</strong></summary>
+
+### Sentence boundaries
+
+Unknown single lowercase letters in cased writing systems can end a sentence after a
+period, including decomposed accented letters. This single-letter exception does not
+apply to the final letter of a longer word. Registered abbreviations retain their
+category-specific protection. Uppercase initials, dotted initialisms, and initials in
+uncased writing systems remain conservative. Georgian Mkhedruli has no ordinary sentence-initial
+capitalization and is handled separately. Explicit newlines override abbreviation
+protection. Thai endings `๚` and `๛` are recognized both as boundaries and as period
+semantics when the loaded model requires punctuation fallback.
+
+These rules analyze visible text structure, not grammar. For example, `A. Smith` and
+`Plan A. Tomorrow` can be structurally indistinguishable. Uppercase initials remain
+attached in these cases; lowercase personal initials may instead produce a boundary.
+A sender can use explicit line boundaries when that distinction matters. Ordered-list
+markers such as `1. Open the report.` deliberately become `1.` followed by the item
+text, preserving the configured pause after the marker.
+
+The regression projects and run commands are documented in [Tests/README.md](Tests/README.md).
+They include shared-rule preprocessing checks up to the native eSpeak boundary, Unicode
+emergency-split invariants, optional JSON edge cases, and managed allocation budgets.
+Whole-input sentence chunks reuse the input string; slices still own their result strings.
+
+### Custom rules
+
+`Models/TextChunkerRules.cs` is the shared, immutable catalog for abbreviation categories,
+punctuation roles, and model-normalization semantics. The chunker, language tokenizer,
+and punctuation mapper use the same catalog. All additions are resolved once at startup.
+
+`TextChunkerRules.json` is optional. If it does not exist, the complete built-in rules
+remain active and no file is created. To extend a category, copy
+`TextChunkerRules.example.json` to `TextChunkerRules.json` in the application content
+root and populate the appropriate arrays. Only the optional active JSON is copied to
+build and publish output when present. Restart Tsubaki after editing it.
+
+```json
+{
+  "AdditionalNameBindingAbbreviations": ["customtitle."],
+  "AdditionalNumberBindingAbbreviations": ["eqn."],
+  "AdditionalIntroductoryAbbreviations": ["i.ex."]
+}
+```
+
+General abbreviations, capitalized prefixes, name-binding abbreviations, numbered
+references, and introductory expressions have distinct categories. Case-insensitive
+entries are deduplicated, and trailing period-like marks are removed. Additions extend
+the built-in entries; they do not replace them. Invalid JSON, unknown fields, invalid
+entries, and conflicting punctuation roles produce an explicit startup error.
+
+`AdditionalAbbreviations` does not force attachment to a following capitalized word:
+`etc. Next...` can end a sentence. Use `AdditionalNameBindingAbbreviations` for lowercase
+prefixes before names, such as `id. Kovács`.
+
+`AdditionalSentenceTerminators` adds hard period-style endings. Use
+`AdditionalPeriodLikeMarks` for marks requiring abbreviation and initial checks,
+`AdditionalEllipsisMarks` for contextual ellipses, and `AdditionalQuestionMarks` or
+`AdditionalExclamationMarks` for the corresponding normalization semantics. Clause,
+pause, and closing punctuation have separate extension arrays. Custom punctuation
+entries currently accept individual BMP punctuation marks or line boundaries.
+
+</details>
 
 ---
 

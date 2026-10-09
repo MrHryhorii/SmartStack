@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="SearchPioneer.Lingua" Version="2.0.0" />
+    <Compile Include="../../Models/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
+    <Compile Include="../../Models/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
+    <Compile Include="../../Models/PhonemizerSettings.cs" Link="PhonemizerSettings.cs" />
+    <Compile Include="../../Models/PiperConfig.cs" Link="PiperConfig.cs" />
+    <Compile Include="../../Services/TextChunker.cs" Link="TextChunker.cs" />
+    <Compile Include="../../Services/EspeakLinguaMapper.cs" Link="EspeakLinguaMapper.cs" />
+    <Compile Include="../../Services/MixedLanguagePhonemizer.cs" Link="MixedLanguagePhonemizer.cs" />
+    <Compile Include="../../Services/DynamicPunctuationMapper.cs" Link="DynamicPunctuationMapper.cs" />
+  </ItemGroup>
+</Project>
