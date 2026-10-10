@@ -866,12 +866,15 @@ This softer handling of single brackets and slashes is intentionally a compatibi
 
 ### Language Detection Configuration
 
-`PhonemizerSettings` controls how Tsubaki detects and routes text outside the active Piper model's own language. The model language is always included automatically; `SupportedLanguages` only adds languages that Tsubaki should actively consider switching to.
+`PhonemizerSettings` controls automatic pronunciation-language routing. The Piper model's language is always included; `SupportedLanguages` adds statistical candidates.
 
 ```json
 "PhonemizerSettings": {
   "SupportedLanguages": ["en", "uk", "fr"],
   "UseLanguageDetector": true,
+  "LocalWinnerProbabilityFloor": 0.50,
+  "LocalWinnerMarginFloor": 0.08,
+  "ReliabilityProbabilityThreshold": 0.50,
   "ForeignValidationMaxLetters": 5,
   "MaxBonusMultiplier": 0.60,
   "BonusMinLetterCount": 8,
@@ -881,90 +884,62 @@ This softer handling of single brackets and slashes is intentionally a compatibi
 }
 ```
 
-For normal use, keep `UseLanguageDetector: true`. Leave `SupportedLanguages` empty if you only need the Piper model's own language plus script-aware handling of clearly different alphabets. Add only the **2–3 additional languages** you actually expect when you want automatic switching to them; fewer candidates improve both detection reliability and performance. Leave the advanced tuning values unchanged unless detection behavior needs adjustment.
+- `UseLanguageDetector: true` keeps automatic routing enabled. With **two or more distinct recognized languages**, it loads Lingua for statistical comparison.
+- With fewer than two candidates, including `SupportedLanguages: []`, it starts **without Lingua**. Compatible scripts use the model language; other scripts use existing letter hints and script defaults. Han routes to Mandarin and Hiragana/Katakana to Japanese in both modes.
+- `UseLanguageDetector: false` disables both statistical detection and automatic script routing. A per-request `language` can still select pronunciation explicitly.
 
-- `UseLanguageDetector: true` enables automatic language detection and script-aware fallback behavior.
-- `UseLanguageDetector: false` disables the language-detector path entirely, including statistical detection and script-aware routing/fallback. This saves its memory/CPU cost, but foreign-script text no longer gets that protection.
-- Leaving `SupportedLanguages` empty does **not** disable detection; it simply leaves no additional languages beyond the active model language.
-- Language values may use base codes such as `"en"`, `"uk"`, `"de"`, `"fr"`, `"cmn"`, or extended eSpeak tags such as `"en-us"`, `"fr-ca"`, and `"en-gb-x-rp"`.
+Keep the candidate list limited to expected languages. Base codes (`"en"`, `"uk"`, `"fr"`) and eSpeak dialect tags (`"en-us"`, `"fr-ca"`) are accepted; duplicates and aliases count as one statistical language. Unknown codes add no Lingua candidate. Omitted values retain defaults; restart after configuration changes.
 
 <details>
 <summary><strong>Advanced: How language detection works and how to tune it</strong></summary>
 
-#### 1. Script routing comes first
+Ordinary text around technical spans shares one analysis phrase until punctuation, quotes, or a script change separates it. Technical syntax adds no statistical votes.
 
-A different writing system is the easiest case. If Cyrillic text reaches a Latin-script model, for example, Tsubaki can identify the script reliably and use diagnostic letters and script-level fallbacks when statistical language detection is uncertain. This reduces the chance that foreign text will be pronounced letter-by-letter.
+With Lingua available, a local winner must pass the raw confidence and margin floors, plus short-foreign validation when applicable. Accepted local evidence takes priority. Otherwise, compatible sentence context may resolve a short phrase; remaining ambiguity uses scoring with the model-language bonus.
 
-Keeping `UseLanguageDetector: true` also keeps this automatic routing path available. If you only need the base language plus script-level handling of clearly different alphabets, `SupportedLanguages` can remain empty.
+The model-language bonus and short-foreign validation require a compatible script.
 
-#### 2. Same-script languages require statistical detection
+| Parameter | Default | Effect |
+| --- | --- | --- |
+| `LocalWinnerProbabilityFloor` | `0.50` | Minimum raw winner confidence (`>=`). Raise it to require stronger independent local evidence. |
+| `LocalWinnerMarginFloor` | `0.08` | Minimum raw winner confidence minus runner-up confidence (`>=`). Raise it to reject closer contests. |
+| `ReliabilityProbabilityThreshold` | `0.50` | An ambiguous winner can supply neighboring technical context only when its raw confidence is **strictly greater** (`>`). Raising it restricts inheritance; it does not change the prose language already selected. |
+| `ForeignValidationMaxLetters` | `5` | At or below this letter count, a foreign winner must also beat the model's boosted score. Raising it checks longer foreign fragments; `0` disables this check, while the final scoring bonus remains active. |
+| `MaxBonusMultiplier` | `0.60` | Maximum model-language score bonus: `0.60` means up to ×1.6. Higher values discourage short foreign switches. |
+| `BonusMinLetterCount` | `8` | Full bonus at or below this letter count. Raising it extends the full bonus to longer fragments. |
+| `BonusMaxLetterCount` | `32` | No bonus at or above this count; the bonus decreases linearly between the two limits. Raising it extends the bonus tail and sentence-override eligibility. |
+| `MixedLanguageOverrideThreshold` | `0.85` | Minimum whole-sentence confidence for overriding an ambiguous compatible phrase. Raising it restricts overrides; above `1.0` disables them. |
+| `MinSentenceLengthForOverride` | `20` | Minimum whole-sentence letter count before sentence context is evaluated. Raising it requires longer context; lowering it allows shorter sentences to influence ambiguous fragments. |
 
-Languages that share a script are harder to distinguish. English, French, and Spanish all use Latin characters, so Tsubaki uses Lingua to estimate the most likely language.
+The margin is an absolute difference: `0.53 - 0.44 = 0.09` passes the default floors; `0.51 - 0.49 = 0.02` does not. Lowering either floor accepts weaker local evidence; raising it sends more fragments to sentence context or adjusted scoring. Neither direction guarantees the model language will win. Probability and margin floors normally range from `0.0` to `1.0`; either floor above `1.0` disables authoritative local acceptance. A reliability threshold of `1.0` or higher blocks inheritance from ambiguous winners; authoritative, sentence-context, forced-language, and script-capability results keep their reliable status.
 
-Detection is performed on **chunks** — a script run between punctuation boundaries — rather than isolated words. A foreign word without punctuation around it is therefore evaluated together with its neighbors, which usually provides more context but can also pull an ambiguous word toward the surrounding language.
+Sentence overrides require phrases shorter than `BonusMaxLetterCount` and compatible scripts. Quoted phrases use independent local evidence. Technical-only phrases can inherit reliable same-script context within the current allowed boundary. Statistical tuning has no effect when Lingua is absent; ordinary model/script fallbacks do not report statistical confidence.
 
-#### 3. Short chunks receive a base-language bonus
+#### Tuning by symptom
 
-Very short text is statistically ambiguous, so Tsubaki can bias it toward the active Piper model's language.
+| Observed behavior | Adjustment | Trade-off |
+| --- | --- | --- |
+| Short ordinary text switches to another language too often. | Increase `MaxBonusMultiplier`; increase `ForeignValidationMaxLetters` if short foreign winners bypass final scoring. | Genuine short foreign phrases may also stay in the model language. |
+| Local winners with close scores cause unwanted switches. | Raise `LocalWinnerMarginFloor` or `LocalWinnerProbabilityFloor`. | More fragments depend on sentence context or adjusted scoring. |
+| An intended foreign phrase inherits the surrounding sentence's language. | Raise `MixedLanguageOverrideThreshold`. If local evidence narrowly misses acceptance, lowering its floors can instead protect that phrase. | Less context correction for ambiguous names; lower floors can introduce false switches. |
+| A short sentence supplies unreliable context. | Raise `MinSentenceLengthForOverride` or `MixedLanguageOverrideThreshold`. | Short sentences receive less stabilization. |
+| A technical-only fragment inherits a weak neighboring language decision. | Raise `ReliabilityProbabilityThreshold`; lower it only when weaker neighboring results should be inherited. | Stricter inheritance uses model/script fallback more often. |
 
-| Parameter | Behavior |
-| --------- | -------- |
-| `MaxBonusMultiplier` | Maximum bonus applied to the base-model language. `0.60` means up to ×1.6. |
-| `BonusMinLetterCount` | Chunks at or below this length receive the full bonus. |
-| `BonusMaxLetterCount` | Chunks at or above this length receive no bonus. Between the two limits, the bonus is reduced gradually. |
+`ReliabilityProbabilityThreshold` applies to ambiguous neighboring results, not technical parts inside a phrase that already contains ordinary prose. Those parts share the phrase's language; tune its local evidence or sentence context instead.
 
-Example: `"Hi"` receives the full short-text bonus and stays English. `"I am Alejandro"` is longer, so the bonus is weaker and a strongly Spanish result can still win.
+#### Numerical examples
 
-#### 4. Very short foreign results can be validated again
+These scores illustrate the rules; they are not fixed outputs for particular words.
 
-`ForeignValidationMaxLetters` adds an extra safeguard for short chunks that were classified as foreign. At or below this length, the foreign result must still beat the base-model language after the short-text bonus is applied.
+- **Bonus length:** with defaults, a fragment of 8 letters or fewer receives ×1.6, a 20-letter fragment receives ×1.3, and one of 32 letters or more receives ×1.0. Counts refer to letters in the analysis text. Keep `0 <= BonusMinLetterCount < BonusMaxLetterCount`; lowering the limits narrows the bonus range.
+- **Short foreign validation:** a 4-letter foreign winner with raw confidence `0.55`, versus `0.45` for the model language, passes both local floors. The default model bonus produces a competing score of `0.45 × 1.6 = 0.72`, so short-foreign validation prevents direct local acceptance. Without applicable sentence context, adjusted scoring selects the model language. Reducing `MaxBonusMultiplier` to `0.20` gives `0.45 × 1.2 = 0.54`, allowing the foreign winner to pass. Setting `ForeignValidationMaxLetters` to `0` also removes this extra local check.
+- **Reliability:** an ambiguous selected winner with raw confidence `0.50` cannot supply neighboring technical context at the default threshold; `0.51` can. This gate does not change the ordinary phrase's selected language.
 
-Set it to `0` to disable this extra validation.
+Enable `Debug` logging for `ONNX_Runner` and inspect `LANG-DEBUG` lines: `LOCAL DETECTOR` means accepted local evidence, `SENTENCE OVERRIDE` means sentence inheritance, and `AMBIGUOUS LOCAL` means adjusted scoring. Start with defaults, change one parameter at a time, restart, and repeat the same ordinary and foreign examples. An accepted local winner is unaffected by sentence tuning; the model bonus affects it only through short-foreign validation when that check applies.
 
-#### 5. Whole-sentence confidence can override an ambiguous chunk
+A script does not uniquely identify a language. Without statistical comparison, same-script prose uses the model language, and romaji remains Latin rather than automatically becoming Japanese. Short names and mixed-language phrases can remain ambiguous; pass `language` when it is known.
 
-The short-text bonus has a limit. For longer sentences, Tsubaki can also measure the active model language across the **whole sentence** and use that context to correct short ambiguous chunks.
-
-| Parameter | Behavior |
-| --------- | -------- |
-| `MixedLanguageOverrideThreshold` | Minimum whole-sentence confidence required before the base-model language can override a short chunk. Default: `0.85`. |
-| `MinSentenceLengthForOverride` | Minimum sentence length in letters before this override is allowed. Default: `20`. |
-
-Only chunks shorter than `BonusMaxLetterCount` are eligible for this correction.
-
-Example: in `"Yes, I am Hermes, an AI model created by Anthropic."`, `"Hermes"` alone may be detected as French. A confidently English surrounding sentence can override that result and keep the English pronunciation.
-
-#### 6. The sentence override is intentionally conservative, not semantic
-
-The override only knows the surrounding sentence's language confidence. It cannot know whether a foreign phrase is accidental or intentional.
-
-For example, in:
-
-```text
-...and whispered: c'est la vie.
-```
-
-the surrounding sentence can be confident enough in English to override the French phrase despite the punctuation. With the default threshold of `0.85`, a measured English confidence of `0.9666` is sufficient.
-
-If deliberate foreign phrases should switch languages more freely:
-
-- raise `MixedLanguageOverrideThreshold` toward `1.0`;
-- set it above `1.0` to disable the sentence-level override entirely;
-- or reduce the amount of surrounding base-language context.
-
-#### 7. Practical tuning
-
-| Goal | What to change |
-| ---- | -------------- |
-| Reduce accidental switches on short text | Increase `MaxBonusMultiplier` and/or `ForeignValidationMaxLetters`. |
-| Let deliberate foreign phrases switch more freely | Raise `MixedLanguageOverrideThreshold` toward `1.0`, or above `1.0` to disable the sentence-level override. |
-| Reduce ambiguity between similar same-script languages | Keep `SupportedLanguages` limited to languages you actually expect. |
-| Disable statistical detection and save RAM | Set `UseLanguageDetector: false`. |
-| Keep automatic handling without adding extra same-script languages | Keep `UseLanguageDetector: true` and leave `SupportedLanguages` empty. |
-
-Language detection from a few characters is inherently uncertain. These settings bias that uncertainty toward the behavior that best fits your use case; they cannot make every short name, acronym, or mixed-language phrase unambiguous.
-
-Finally, language routing controls **pronunciation rules**, not the acoustic identity of the Piper model. eSpeak can apply another language or dialect's phonetic rules, but sounds missing from the active Piper model are still mapped to the closest available phonemes. Cross-language speech therefore keeps the base voice and may retain an accent rather than becoming fully native speech.
+Routing selects eSpeak pronunciation rules, while the Piper model retains its voice. Missing phonemes are adapted to the model inventory, so foreign speech may retain an accent.
 
 </details>
 
@@ -998,8 +973,17 @@ Finally, language routing controls **pronunciation rules**, not the acoustic ide
 - **`EarlySplit`** — allows one conservative clause-level split before the first audio chunk to reduce time to first audio; normal sentence chunking resumes immediately afterward. This can slightly change the rhythm or intonation of the first sentence. It is mainly useful when low latency matters; for non-streaming output there is usually little benefit to enabling it. `/tsbk/audio/speech` can override it per request with `early_split`.
 - **`SentencePauseSeconds`** — pause added after completed sentence boundaries and explicit ordered-list markers. Early and emergency continuation chunks do not receive this artificial sentence pause.
 
+Technical identifiers, URLs, email addresses, paths, and attached operators are recognized
+before punctuation normalization. Their symbols are pronounced by name using the loaded
+Piper model's eSpeak voice, then adapted to its phoneme inventory. Unicode symbols prefer
+dictionary descriptions; punctuation uses literal character names. Underscores and dollar
+signs are spoken even though Piper also uses them as structural tokens.
+Ordinary punctuation retains its intonation; standalone decimals, versions, clock times,
+and IPv4 addresses retain normal eSpeak reading. Technical recognition also works when
+`UseLanguageDetector` is disabled. These are structural heuristics, not a code parser.
+
 <details>
-<summary><strong>Advanced: Sentence boundaries and custom rules</strong></summary>
+<summary><strong>Advanced: Add custom abbreviation and punctuation rules</strong></summary>
 
 ### Sentence boundaries
 
@@ -1028,7 +1012,7 @@ Whole-input sentence chunks reuse the input string; slices still own their resul
 
 `Models/TextChunkerRules.cs` is the shared, immutable catalog for abbreviation categories,
 punctuation roles, and model-normalization semantics. The chunker, language tokenizer,
-and punctuation mapper use the same catalog. All additions are resolved once at startup.
+punctuation mapper, and technical recognizer use the same catalog. All additions are resolved once at startup.
 
 `TextChunkerRules.json` is optional. If it does not exist, the complete built-in rules
 remain active and no file is created. To extend a category, copy
@@ -1060,6 +1044,17 @@ prefixes before names, such as `id. Kovács`.
 `AdditionalExclamationMarks` for the corresponding normalization semantics. Clause,
 pause, and closing punctuation have separate extension arrays. Custom punctuation
 entries currently accept individual BMP punctuation marks or line boundaries.
+
+`AdditionalTechnicalTokenMarkers` adds structural markers for technical-token recognition,
+for example `["§"]`. Entries must be individual BMP punctuation or symbol characters.
+Within a recognized technical token, BMP punctuation and symbols are read by name;
+letters, digits, and combining marks stay on the ordinary phonemization path. Names are
+cached after model adaptation and are never submitted to language detection as words.
+Unicode operators, currencies, and connector punctuation are structural evidence;
+other Unicode symbols become evidence when attached to text or numbers. File globs
+and pointers are recognized without treating wrapped Markdown emphasis as technical.
+A lexical hyphen or apostrophe alone does not classify a word as technical. Supplementary
+symbols and whitespace-separated code constructs are outside this character-name heuristic.
 
 </details>
 

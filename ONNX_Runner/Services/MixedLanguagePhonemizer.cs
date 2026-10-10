@@ -23,6 +23,9 @@ public record TextChunk
     // qualify; ambiguous [...] and /.../ forms are admitted only after IPA validation upstream.
     // Skips language detection and eSpeak, going straight to fallback validation.
     public bool IsRawPhonemes { get; init; }
+
+    // Structural syntax is preserved until native character-name pronunciation.
+    public bool IsTechnical { get; init; }
 }
 
 /// <summary>
@@ -53,6 +56,9 @@ public partial class MixedLanguagePhonemizer
 
     private static readonly IReadOnlyList<string> ScriptFallbackDiagnostic =
         ["script fallback"];
+
+    private static readonly IReadOnlyList<string> ModelLanguageFallbackDiagnostic =
+        ["model language fallback"];
 
     private static readonly IReadOnlyList<string> ScriptCapabilityRouteDiagnostic =
         ["script capability route"];
@@ -128,7 +134,7 @@ public partial class MixedLanguagePhonemizer
         { ScriptType.Myanmar, "my" },
     };
 
-    // Strong script-language hints used only after Lingua produced no usable signal.
+    // Strong script-language hints used when Lingua is absent or produced no usable signal.
     // Each subphrase has already been classified by Unicode script, so this table performs one
     // cheap IndexOfAny over a small script-specific set. The markers are deliberately conservative:
     // they need not be mathematically unique, but must strongly narrow the most likely language.
@@ -356,7 +362,7 @@ public partial class MixedLanguagePhonemizer
         ),
     };
 
-    private readonly LanguageDetector _detector;
+    private readonly LanguageDetector? _detector;
     private readonly EspeakLinguaMapper _mapper;
     private readonly string _modelEspeakCode;
 
@@ -382,11 +388,12 @@ public partial class MixedLanguagePhonemizer
     private readonly double _overrideThreshold;
     private readonly int _minSentenceLength;
 
-    // Local Lingua evidence is authoritative only when the winner has both a majority-level
-    // probability and a meaningful lead over the runner-up. Ambiguous tiny fragments can still
+    // Local Lingua evidence is authoritative only when the winner meets the configured
+    // confidence and runner-up margin. Ambiguous tiny fragments can still
     // inherit sentence/model context; convincing short foreign inserts are protected from it.
-    private const double LocalWinnerProbabilityFloor = 0.50;
-    private const double LocalWinnerMarginFloor = 0.08;
+    private readonly double _localWinnerProbabilityFloor;
+    private readonly double _localWinnerMarginFloor;
+    private readonly double _reliabilityProbabilityThreshold;
 
     private readonly TextChunker _textChunker;
     private readonly TextChunkerRules _rules;
@@ -400,6 +407,7 @@ public partial class MixedLanguagePhonemizer
         ILogger<MixedLanguagePhonemizer> logger,
         TextChunker? textChunker = null)
     {
+        settings ??= new PhonemizerSettings();
         _logger = logger;
         _textChunker = textChunker ?? new TextChunker(new ChunkerSettings());
         _rules = _textChunker.Rules;
@@ -420,13 +428,16 @@ public partial class MixedLanguagePhonemizer
         _modelLinguaLang = _mapper.GetLinguaLanguage(baseFamily);
         _modelScript = GetPrimaryScriptForLanguage(_modelLinguaLang);
 
-        // Load bonus configuration (or fallback to safe defaults)
-        _maxBonus = settings?.MaxBonusMultiplier ?? 0.60;
-        _minLimit = settings?.BonusMinLetterCount ?? 8;
-        _maxLimit = settings?.BonusMaxLetterCount ?? 32;
-        _foreignValidationMaxLetters = Math.Max(0, settings?.ForeignValidationMaxLetters ?? 5);
-        _overrideThreshold = settings?.MixedLanguageOverrideThreshold ?? 0.85;
-        _minSentenceLength = settings?.MinSentenceLengthForOverride ?? 20;
+        // Cache tuning once; omitted JSON values use the PhonemizerSettings defaults.
+        _maxBonus = settings.MaxBonusMultiplier;
+        _minLimit = settings.BonusMinLetterCount;
+        _maxLimit = settings.BonusMaxLetterCount;
+        _foreignValidationMaxLetters = Math.Max(0, settings.ForeignValidationMaxLetters);
+        _overrideThreshold = settings.MixedLanguageOverrideThreshold;
+        _minSentenceLength = settings.MinSentenceLengthForOverride;
+        _localWinnerProbabilityFloor = settings.LocalWinnerProbabilityFloor;
+        _localWinnerMarginFloor = settings.LocalWinnerMarginFloor;
+        _reliabilityProbabilityThreshold = settings.ReliabilityProbabilityThreshold;
 
 
         var finalCodesToSupport = new List<string>();
@@ -439,7 +450,7 @@ public partial class MixedLanguagePhonemizer
 
         // Load user-defined supported languages to optimize memory.
         // Lingua takes a lot of RAM if loading all 75 languages.
-        if (settings?.SupportedLanguages != null)
+        if (settings.SupportedLanguages != null)
         {
             foreach (var code in settings.SupportedLanguages)
             {
@@ -459,11 +470,12 @@ public partial class MixedLanguagePhonemizer
         var linguaLangs = _mapper.BuildLinguaList(finalCodesToSupport);
 
 
-        // FALLBACK: If the mapper failed to recognize any languages, default to the model's base or English
-        if (linguaLangs.Length == 0)
+        // Statistical comparison needs at least two distinct recognized languages. Script routing
+        // and model-language fallback remain available without loading any Lingua models.
+        if (linguaLangs.Length < 2)
         {
-            Console.WriteLine($"[WARNING] Mapper could not recognize any languages. Using emergency fallback.");
-            linguaLangs = _modelLinguaLang.HasValue ? [_modelLinguaLang.Value] : [Language.English];
+            Console.WriteLine($"[INFO] {linguaLangs.Length} recognized language candidate(s); using model/script routing without Lingua.");
+            return;
         }
 
         Console.WriteLine($"[INFO] Preloading Lingua language models for {linguaLangs.Length} language(s)...");
@@ -1028,205 +1040,6 @@ public partial class MixedLanguagePhonemizer
         return _textChunker.IsIntraSentencePeriod(text, periodIndex);
     }
 
-    // Recognizes conservative dotted initialisms such as U.S, p.m and S.T.A.L.K.E.R without
-    // classifying short domains such as x.ai or co.uk as abbreviations.
-    private bool LooksLikeDottedAbbreviationForSegmentation(ReadOnlySpan<char> token)
-    {
-        int separatorCount = 0;
-        int segmentLength = 0;
-        int minSegmentLength = int.MaxValue;
-        int maxSegmentLength = 0;
-
-        for (int i = 0; i < token.Length; i++)
-        {
-            if (IsPeriodLike(token[i]))
-            {
-                if (segmentLength == 0)
-                {
-                    return false;
-                }
-
-                separatorCount++;
-                minSegmentLength = Math.Min(minSegmentLength, segmentLength);
-                maxSegmentLength = Math.Max(maxSegmentLength, segmentLength);
-                segmentLength = 0;
-                continue;
-            }
-
-            if (!char.IsLetter(token[i]))
-            {
-                return false;
-            }
-
-            segmentLength++;
-        }
-
-        if (separatorCount == 0 || segmentLength == 0)
-        {
-            return false;
-        }
-
-        minSegmentLength = Math.Min(minSegmentLength, segmentLength);
-        maxSegmentLength = Math.Max(maxSegmentLength, segmentLength);
-
-        if (maxSegmentLength == 1)
-        {
-            return true;
-        }
-
-        return separatorCount >= 2 &&
-               minSegmentLength > 0 &&
-               maxSegmentLength <= 3;
-    }
-
-    // Finds a non-whitespace technical token whose internal punctuation must not become language
-    // boundaries. The rule is deliberately structural rather than product/domain specific.
-    private bool TryGetProtectedTechnicalSpanLength(
-        ReadOnlySpan<char> text,
-        int startIndex,
-        out int length)
-    {
-        length = 0;
-
-        if ((uint)startIndex >= (uint)text.Length || char.IsWhiteSpace(text[startIndex]))
-        {
-            return false;
-        }
-
-        int end = startIndex;
-        while (end < text.Length && !char.IsWhiteSpace(text[end]))
-        {
-            end++;
-        }
-
-        ReadOnlySpan<char> candidate = text[startIndex..end];
-        int protectedLength = candidate.Length;
-
-        // Keep a sentence/clause delimiter available to the ordinary soft-boundary tokenizer.
-        // Internal punctuation remains protected, while a trailing comma in "https://x, then"
-        // still offers a useful language-switch candidate after the URL.
-        while (protectedLength > 0 &&
-               (_rules.TechnicalSuffixMarks.Contains(candidate[protectedLength - 1]) ||
-                _rules.VisualQuotes.Contains(candidate[protectedLength - 1])))
-        {
-            protectedLength--;
-        }
-
-        // A final sentence period after a dotted technical token is not part of the token itself.
-        // Keep internal dots protected while leaving the terminator available to the punctuation path.
-        if (protectedLength > 1 && candidate[protectedLength - 1] == '.')
-        {
-            ReadOnlySpan<char> withoutFinalPeriod = candidate[..(protectedLength - 1)];
-            if (LooksLikeProtectedTechnicalSpan(withoutFinalPeriod))
-            {
-                protectedLength--;
-            }
-        }
-
-        if (protectedLength <= 0)
-        {
-            return false;
-        }
-
-        ReadOnlySpan<char> token = candidate[..protectedLength];
-        if (!LooksLikeProtectedTechnicalSpan(token))
-        {
-            return false;
-        }
-
-        length = protectedLength;
-        return true;
-    }
-
-    private bool LooksLikeProtectedTechnicalSpan(ReadOnlySpan<char> token)
-    {
-        bool dottedCall = token.IndexOf('.') >= 0 &&
-                          token.IndexOf('(') >= 0 &&
-                          token.IndexOf(')') > token.IndexOf('(');
-
-        if (token.IndexOf("://".AsSpan(), StringComparison.Ordinal) >= 0 ||
-            token.StartsWith("www.".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
-            token.IndexOf('@') >= 0 ||
-            token.IndexOf('/') >= 0 ||
-            token.IndexOf('\\') >= 0 ||
-            token.IndexOf('=') >= 0 ||
-            token.IndexOf('&') >= 0 ||
-            token.IndexOf('#') >= 0 ||
-            token.IndexOf("?.".AsSpan(), StringComparison.Ordinal) >= 0 ||
-            token.IndexOf("::".AsSpan(), StringComparison.Ordinal) >= 0 ||
-            token.IndexOf("->".AsSpan(), StringComparison.Ordinal) >= 0 ||
-            token.IndexOf("=>".AsSpan(), StringComparison.Ordinal) >= 0 ||
-            dottedCall ||
-            LooksLikeDottedTechnicalSpan(token))
-        {
-            return true;
-        }
-
-        // A glued colon between token characters is structural rather than a natural clause
-        // separator in this layer: 10:30, host:port, key:value, etc. A spaced colon remains soft.
-        int colonIndex = token.IndexOf(':');
-        return colonIndex > 0 &&
-               colonIndex + 1 < token.Length &&
-               char.IsLetterOrDigit(token[colonIndex - 1]) &&
-               char.IsLetterOrDigit(token[colonIndex + 1]);
-    }
-
-    // Dotted identifiers/domains/files are technical structure, not natural-language punctuation.
-    // Known abbreviations and all-numeric decimals remain on their existing lexical paths.
-    private bool LooksLikeDottedTechnicalSpan(ReadOnlySpan<char> token)
-    {
-        if (token.IndexOf('.') < 0 || token.IsEmpty)
-        {
-            return false;
-        }
-
-        if (_rules.CommonAbbreviations
-            .GetAlternateLookup<ReadOnlySpan<char>>()
-            .Contains(token) ||
-            LooksLikeDottedAbbreviationForSegmentation(token))
-        {
-            return false;
-        }
-
-        bool hasLetter = false;
-        int segmentLength = 0;
-        int separators = 0;
-
-        for (int i = 0; i < token.Length; i++)
-        {
-            char value = token[i];
-
-            if (value == '.')
-            {
-                if (segmentLength == 0)
-                {
-                    return false;
-                }
-
-                separators++;
-                segmentLength = 0;
-                continue;
-            }
-
-            if (char.IsLetter(value))
-            {
-                hasLetter = true;
-                segmentLength++;
-                continue;
-            }
-
-            if (char.IsDigit(value) || value is '_' or '-')
-            {
-                segmentLength++;
-                continue;
-            }
-
-            return false;
-        }
-
-        return separators > 0 && segmentLength > 0 && hasLetter;
-    }
-
     // Quotes are analysis boundaries but never output punctuation.
     private bool IsVisualQuote(Rune rune)
     {
@@ -1410,13 +1223,16 @@ public partial class MixedLanguagePhonemizer
 
         // SENTENCE-LEVEL CONTEXT DETECTOR
         // One heavy Lingua pass determines the strongest language of the complete semantic sentence.
-        // A confident verdict lets short same-script fragments inherit sentence context without paying
-        // for additional statistical detection; weak sentences fall through to chunk-level analysis.
+        // A confident verdict stabilizes ambiguous same-script phrases after their local evidence
+        // has been checked; weak sentences fall through to phrase-level analysis.
         SentenceLanguageContext? sentenceContext = null;
-        if (resolvedForcedCode == null &&
-            CountLetters(text.AsSpan()) >= _minSentenceLength)
+        string sentenceAnalysis = resolvedForcedCode == null && _detector != null
+            ? GetSentenceAnalysisText(text)
+            : text;
+        if (resolvedForcedCode == null && _detector != null &&
+            CountLetters(sentenceAnalysis.AsSpan()) >= _minSentenceLength)
         {
-            var sentenceConfidences = _detector.ComputeLanguageConfidenceValues(text);
+            var sentenceConfidences = _detector.ComputeLanguageConfidenceValues(sentenceAnalysis);
             Language bestSentenceLanguage = Language.Unknown;
             double bestSentenceConfidence = -1;
 
@@ -1459,8 +1275,11 @@ public partial class MixedLanguagePhonemizer
         bool hasSpeakableContent = false;
         bool insideQuote = false;
         int analysisBoundaryIndex = 0;
+        List<(int Offset, string Text)>? technicalParts = null;
 
-        // Helper function to process accumulated content before moving to punctuation or script changes
+        // Technical parts occupy neutral spaces in the analysis phrase. Their original text is
+        // retained separately for speech, so they neither vote in Lingua nor split surrounding prose.
+        // Only punctuation, quote boundaries, and incompatible scripts finish an analysis phrase.
         void FlushPhrase()
         {
             if (currentSubPhrase.Length == 0)
@@ -1469,6 +1288,7 @@ public partial class MixedLanguagePhonemizer
             }
 
             string phrase = currentSubPhrase.ToString();
+            TextChunk decision;
 
             if (hasLetters)
             {
@@ -1476,7 +1296,7 @@ public partial class MixedLanguagePhonemizer
                 if (resolvedForcedCode != null)
                 {
                     // FAST PATH: Language is forced. Bypass Lingua and assign the resolved code directly.
-                    result.Add(new TextChunk
+                    decision = new TextChunk
                     {
                         Text = phrase,
                         DetectedLanguage = resolvedForcedCode,
@@ -1485,24 +1305,27 @@ public partial class MixedLanguagePhonemizer
                         IsPunctuationOrSpace = false,
                         Script = GetScriptName(currentScript),
                         RawTop5 = ForcedLanguageDiagnostic
-                    });
+                    };
                 }
                 else
                 {
-                    // SLOW PATH: Use ML detector and fallback algorithms to guess the language.
-                    ProcessSubPhrase(
+                    // AUTOMATIC PATH: Use available local evidence and model/script fallback.
+                    decision = ProcessSubPhrase(
                         phrase,
                         currentScript,
-                        result,
                         insideQuote ? null : sentenceContext);
                 }
+            }
+            else if (technicalParts is { Count: > 0 })
+            {
+                decision = ResolveTechnicalContext(technicalParts[0].Text, currentScript);
             }
             else if (hasSpeakableContent)
             {
                 // Digits are language-neutral for detection but still need a language for pronunciation.
                 // Standalone numeric content therefore bypasses Lingua and inherits the forced language
                 // when present, otherwise the loaded model's native eSpeak language.
-                result.Add(new TextChunk
+                decision = new TextChunk
                 {
                     Text = phrase,
                     DetectedLanguage = resolvedForcedCode ?? _modelEspeakCode,
@@ -1510,12 +1333,12 @@ public partial class MixedLanguagePhonemizer
                     IsReliable = true,
                     IsPunctuationOrSpace = false,
                     Script = "None"
-                });
+                };
             }
             else
             {
                 // Punctuation, spaces, and non-pronounceable symbols are universal.
-                result.Add(new TextChunk
+                decision = new TextChunk
                 {
                     Text = phrase,
                     DetectedLanguage = "universal",
@@ -1523,14 +1346,66 @@ public partial class MixedLanguagePhonemizer
                     IsReliable = true,
                     IsPunctuationOrSpace = true,
                     Script = "None"
-                });
+                };
+            }
+
+            if (technicalParts is not { Count: > 0 })
+            {
+                result.Add(decision);
+            }
+            else
+            {
+                int start = 0;
+                foreach (var part in technicalParts)
+                {
+                    AppendOrdinarySpeechPart(phrase.AsSpan(start, part.Offset - start), decision);
+                    result.Add(decision with
+                    {
+                        Text = part.Text,
+                        IsTechnical = true,
+                        IsPunctuationOrSpace = false,
+                        RawTop5 = TechnicalContextDiagnostic
+                    });
+
+                    LogTechnicalContext(part.Text, decision.DetectedLanguage);
+
+                    start = part.Offset + 1;
+                }
+
+                AppendOrdinarySpeechPart(phrase.AsSpan(start), decision);
             }
 
             // Reset for the next chunk
             currentSubPhrase.Clear();
+            technicalParts?.Clear();
             currentScript = ScriptType.None;
             hasLetters = false;
             hasSpeakableContent = false;
+        }
+
+        void AppendOrdinarySpeechPart(ReadOnlySpan<char> part, TextChunk decision)
+        {
+            if (part.IsEmpty)
+            {
+                return;
+            }
+
+            AnalyzeSpeakableContent(part, out bool partHasLetters, out bool partHasDigits);
+            if (partHasLetters || partHasDigits)
+            {
+                result.Add(decision with { Text = part.ToString(), IsTechnical = false });
+                return;
+            }
+
+            result.Add(new TextChunk
+            {
+                Text = part.ToString(),
+                DetectedLanguage = "universal",
+                Probability = 1.0,
+                IsReliable = true,
+                IsPunctuationOrSpace = true,
+                Script = "None"
+            });
         }
 
         // Appends one already-classified script run to the current phrase.
@@ -1619,9 +1494,8 @@ public partial class MixedLanguagePhonemizer
             AppendScriptRun(word[runStart..], runScript);
         }
 
-        // Technical spans are structurally protected but language-neutral. They never run an
-        // independent Lingua vote: a trusted sentence/neighbor context wins, otherwise a compatible
-        // model language is safer than a random statistical guess over code, URLs, paths, or domains.
+        // Retain speech boundaries while allowing ordinary words on both sides to share one vote.
+        // Neutral symbols inherit the current script; real script transitions still end the phrase.
         void AppendTechnicalRun(ReadOnlySpan<char> run, ScriptType runScript)
         {
             if (run.IsEmpty)
@@ -1629,8 +1503,47 @@ public partial class MixedLanguagePhonemizer
                 return;
             }
 
-            FlushPhrase();
+            // An explicit language needs no shared analysis buffer or pending speech parts.
+            if (resolvedForcedCode != null)
+            {
+                FlushPhrase();
+                TextChunk forced = ResolveTechnicalContext(run.ToString(), runScript);
+                result.Add(forced);
+                LogTechnicalContext(forced.Text, forced.DetectedLanguage);
+                return;
+            }
 
+            if (runScript != ScriptType.None)
+            {
+                if (currentScript != ScriptType.None &&
+                    !AreScriptsCompatible(currentScript, runScript))
+                {
+                    FlushPhrase();
+                }
+
+                currentScript = runScript;
+            }
+
+            technicalParts ??= new List<(int Offset, string Text)>(4);
+            technicalParts.Add((currentSubPhrase.Length, run.ToString()));
+            currentSubPhrase.Append(' ');
+        }
+
+        void LogTechnicalContext(string run, string code)
+        {
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug(
+                    "[LANG-DEBUG] \"{Text}\" — technical context → {Code}",
+                    run,
+                    code);
+            }
+        }
+
+        // A phrase containing only technical syntax has no lexical evidence for Lingua.
+        // Reuse sentence/neighbor context or the existing script/model fallback in that case.
+        TextChunk ResolveTechnicalContext(string run, ScriptType runScript)
+        {
             string code;
             double probability;
             bool reliable;
@@ -1671,7 +1584,8 @@ public partial class MixedLanguagePhonemizer
                     probability = previous.Probability;
                     reliable = previous.IsReliable;
                 }
-                else if (IsModelScriptCompatible(runScript))
+                else if (IsModelScriptCompatible(runScript) &&
+                         (_detector != null || _modelScript is not (ScriptType.None or ScriptType.Other)))
                 {
                     code = _modelEspeakCode;
                     probability = 1.0;
@@ -1679,47 +1593,24 @@ public partial class MixedLanguagePhonemizer
                 }
                 else
                 {
-                    string? fallbackCode = null;
-
-                    if (StrongLanguageHintsByScript.TryGetValue(runScript, out var hints))
-                    {
-                        int hitIndex = run.IndexOfAny(hints.Chars);
-                        if (hitIndex >= 0 && hints.Map.TryGetValue(run[hitIndex], out string? hinted))
-                        {
-                            fallbackCode = hinted;
-                        }
-                    }
-
-                    fallbackCode ??= ScriptFallbackLanguage.TryGetValue(runScript, out string? byScript)
-                        ? byScript
-                        : null;
-
+                    var (fallbackCode, _) = ResolveScriptFallback(run.AsSpan(), runScript);
                     code = fallbackCode ?? _modelEspeakCode;
                     probability = 0;
                     reliable = false;
                 }
             }
 
-            string runText = run.ToString();
-
-            result.Add(new TextChunk
+            return new TextChunk
             {
-                Text = runText,
+                Text = run,
                 DetectedLanguage = code,
                 Probability = probability,
                 IsReliable = reliable,
                 IsPunctuationOrSpace = false,
                 Script = GetScriptName(runScript),
-                RawTop5 = TechnicalContextDiagnostic
-            });
-
-            if (_logger.IsEnabled(LogLevel.Debug))
-            {
-                _logger.LogDebug(
-                    "[LANG-DEBUG] \"{Text}\" — technical context → {Code}",
-                    runText,
-                    code);
-            }
+                RawTop5 = TechnicalContextDiagnostic,
+                IsTechnical = true
+            };
         }
 
         bool TryGetPreviousTechnicalContext(ScriptType runScript, out TextChunk previous)
@@ -1914,7 +1805,7 @@ public partial class MixedLanguagePhonemizer
 
             // PROTECTED TECHNICAL SPAN: preserve URL/email/path/query/code punctuation as one
             // structural token, but do not let code-like text cast an independent Lingua vote.
-            if (TryGetProtectedTechnicalSpanLength(input, index, out int technicalLength))
+            if (TechnicalTextRecognizer.TryGetSpanLength(input, index, _rules, out int technicalLength))
             {
                 AppendTechnicalSpan(input.Slice(index, technicalLength));
                 index += technicalLength;
@@ -2021,7 +1912,8 @@ public partial class MixedLanguagePhonemizer
 
                 bool isBoundaryPunctuation = IsBoundaryPunctuation(nextRune);
 
-                if (isBoundaryPunctuation || IsVisualQuote(nextRune) || IsWordCoreRune(nextRune))
+                if (isBoundaryPunctuation || IsVisualQuote(nextRune) || IsWordCoreRune(nextRune) ||
+                    TechnicalTextRecognizer.TryGetSpanLength(input, index, _rules, out _))
                 {
                     break;
                 }
@@ -2039,18 +1931,46 @@ public partial class MixedLanguagePhonemizer
         return result;
     }
 
+    // Keep code/URL/file identifiers neutral in sentence context just as they are in local phrases.
+    // Ordinary text is returned by reference; a buffer is created only for the first technical span.
+    private string GetSentenceAnalysisText(string text)
+    {
+        StringBuilder? analysis = null;
+        int start = 0;
+        int index = 0;
+        while (index < text.Length)
+        {
+            if (!TechnicalTextRecognizer.TryGetSpanLength(text.AsSpan(), index, _rules, out int length))
+            {
+                index += DecodeRune(text.AsSpan(index), out _);
+                continue;
+            }
+
+            analysis ??= new StringBuilder(Math.Min(text.Length, 256));
+            analysis.Append(text.AsSpan(start, index - start));
+            analysis.Append(' ');
+            index += length;
+            start = index;
+        }
+
+        if (analysis == null)
+        {
+            return text;
+        }
+
+        analysis.Append(text.AsSpan(start));
+        return analysis.ToString();
+    }
+
     /// <summary>
     /// Analyzes a chunk of text with local detector evidence first. Sentence context and the
     /// loaded-model bias are used only to stabilize short fragments whose local verdict is ambiguous.
     /// </summary>
-    private void ProcessSubPhrase(
+    private TextChunk ProcessSubPhrase(
         string text,
         ScriptType script,
-        List<TextChunk> result,
         SentenceLanguageContext? sentenceContext)
     {
-        if (string.IsNullOrWhiteSpace(text)) return;
-
         string cleanText = text.Trim();
         int letterCount = CountLetters(cleanText.AsSpan());
 
@@ -2068,7 +1988,7 @@ public partial class MixedLanguagePhonemizer
 
         if (capabilityCode != null)
         {
-            result.Add(new TextChunk
+            var capabilityChunk = new TextChunk
             {
                 Text = text,
                 DetectedLanguage = capabilityCode,
@@ -2077,7 +1997,7 @@ public partial class MixedLanguagePhonemizer
                 IsPunctuationOrSpace = false,
                 Script = GetScriptName(script),
                 RawTop5 = ScriptCapabilityRouteDiagnostic
-            });
+            };
 
             if (_logger.IsEnabled(LogLevel.Debug))
             {
@@ -2087,11 +2007,24 @@ public partial class MixedLanguagePhonemizer
                     capabilityCode);
             }
 
-            return;
+            return capabilityChunk;
         }
 
         bool canFavorModelLanguage = IsModelScriptCompatible(script);
         bool debugEnabled = _logger.IsEnabled(LogLevel.Debug);
+
+        if (_detector == null)
+        {
+            // An unmapped model language has no known script; it must not absorb every known script.
+            bool useModelLanguage = _modelScript is not (ScriptType.None or ScriptType.Other) &&
+                canFavorModelLanguage;
+            var (code, diagnostic) = useModelLanguage
+                ? (_modelEspeakCode, ModelLanguageFallbackDiagnostic)
+                : ResolveScriptFallback(cleanText.AsSpan(), script);
+
+            return CreateFallbackChunk(text, script, code ?? _modelEspeakCode,
+                code == null ? ModelLanguageFallbackDiagnostic : diagnostic);
+        }
 
         // LOCAL DETECTOR FIRST:
         // Always inspect the actual chunk before applying sentence/model context. Keeping the
@@ -2163,8 +2096,8 @@ public partial class MixedLanguagePhonemizer
 
         bool hasConvincingLocalWinner =
             rawBestLanguage != Language.Unknown &&
-            rawBestProbability >= LocalWinnerProbabilityFloor &&
-            rawMargin >= LocalWinnerMarginFloor &&
+            rawBestProbability >= _localWinnerProbabilityFloor &&
+            rawMargin >= _localWinnerMarginFloor &&
             survivesModelPrior;
 
         // A convincing local verdict is authoritative. Sentence context and the loaded model
@@ -2174,7 +2107,7 @@ public partial class MixedLanguagePhonemizer
         {
             string localCode = _mapper.MapBackToEspeak(rawBestLanguage, _modelEspeakCode);
 
-            result.Add(new TextChunk
+            var localChunk = new TextChunk
             {
                 Text = text,
                 DetectedLanguage = localCode,
@@ -2183,7 +2116,7 @@ public partial class MixedLanguagePhonemizer
                 IsPunctuationOrSpace = false,
                 Script = GetScriptName(script),
                 RawTop5 = rawTop5
-            });
+            };
 
             if (debugEnabled)
             {
@@ -2197,7 +2130,7 @@ public partial class MixedLanguagePhonemizer
                     string.Join(", ", rawTop5));
             }
 
-            return;
+            return localChunk;
         }
 
         // SENTENCE-CONTEXT OVERRIDE:
@@ -2209,7 +2142,7 @@ public partial class MixedLanguagePhonemizer
             context.Confidence >= _overrideThreshold &&
             IsLanguageScriptCompatible(context.Language, script))
         {
-            result.Add(new TextChunk
+            var contextChunk = new TextChunk
             {
                 Text = text,
                 DetectedLanguage = context.EspeakCode,
@@ -2218,7 +2151,7 @@ public partial class MixedLanguagePhonemizer
                 IsPunctuationOrSpace = false,
                 Script = GetScriptName(script),
                 RawTop5 = rawTop5
-            });
+            };
 
             if (debugEnabled)
             {
@@ -2233,7 +2166,7 @@ public partial class MixedLanguagePhonemizer
                     string.Join(", ", rawTop5));
             }
 
-            return;
+            return contextChunk;
         }
 
         // DYNAMIC MODEL-LANGUAGE BONUS:
@@ -2267,46 +2200,11 @@ public partial class MixedLanguagePhonemizer
         // Try a strong script-language hint first, then the coarse script default.
         if (bestAdjustedScore <= 0)
         {
-            string? fallbackCode = null;
-            string tier = "script";
-
-            if (StrongLanguageHintsByScript.TryGetValue(script, out var hints))
-            {
-                int hitIndex = cleanText.AsSpan().IndexOfAny(hints.Chars);
-                if (hitIndex >= 0 && hints.Map.TryGetValue(cleanText[hitIndex], out var byChar))
-                {
-                    fallbackCode = byChar;
-                    tier = "hint";
-                }
-            }
-
-            fallbackCode ??= ScriptFallbackLanguage.TryGetValue(script, out var byScript) ? byScript : null;
+            var (fallbackCode, diagnostic) = ResolveScriptFallback(cleanText.AsSpan(), script);
 
             if (fallbackCode != null)
             {
-                result.Add(new TextChunk
-                {
-                    Text = text,
-                    DetectedLanguage = fallbackCode,
-                    Probability = 0,
-                    IsReliable = false,
-                    IsPunctuationOrSpace = false,
-                    Script = GetScriptName(script),
-                    RawTop5 = tier == "hint"
-                        ? StrongLanguageHintDiagnostic
-                        : ScriptFallbackDiagnostic
-                });
-
-                if (debugEnabled)
-                {
-                    _logger.LogDebug(
-                        "[LANG-DEBUG] \"{Text}\" — no language matched, using {Tier} fallback → {Code}",
-                        text,
-                        tier,
-                        fallbackCode);
-                }
-
-                return;
+                return CreateFallbackChunk(text, script, fallbackCode, diagnostic);
             }
         }
 
@@ -2316,16 +2214,16 @@ public partial class MixedLanguagePhonemizer
             finalEspeakCode = _mapper.MapBackToEspeak(bestLinguaLang, _modelEspeakCode);
         }
 
-        result.Add(new TextChunk
+        var finalChunk = new TextChunk
         {
             Text = text,
             DetectedLanguage = finalEspeakCode,
             Probability = originalProbabilityOfBest,
-            IsReliable = originalProbabilityOfBest > 0.5,
+            IsReliable = originalProbabilityOfBest > _reliabilityProbabilityThreshold,
             IsPunctuationOrSpace = false,
             Script = GetScriptName(script),
             RawTop5 = rawTop5
-        });
+        };
 
         if (debugEnabled)
         {
@@ -2337,6 +2235,48 @@ public partial class MixedLanguagePhonemizer
                 finalEspeakCode,
                 string.Join(", ", rawTop5));
         }
+
+        return finalChunk;
+    }
+
+    private static (string? Code, IReadOnlyList<string> Diagnostic) ResolveScriptFallback(
+        ReadOnlySpan<char> text,
+        ScriptType script)
+    {
+        if (StrongLanguageHintsByScript.TryGetValue(script, out var hints))
+        {
+            int hitIndex = text.IndexOfAny(hints.Chars);
+            if (hitIndex >= 0 && hints.Map.TryGetValue(text[hitIndex], out string? code))
+            {
+                return (code, StrongLanguageHintDiagnostic);
+            }
+        }
+
+        return (ScriptFallbackLanguage.GetValueOrDefault(script), ScriptFallbackDiagnostic);
+    }
+
+    private TextChunk CreateFallbackChunk(
+        string text,
+        ScriptType script,
+        string code,
+        IReadOnlyList<string> diagnostic)
+    {
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug("[LANG-DEBUG] \"{Text}\" — {Fallback} → {Code}",
+                text, diagnostic[0], code);
+        }
+
+        return new TextChunk
+        {
+            Text = text,
+            DetectedLanguage = code,
+            Probability = 0,
+            IsReliable = false,
+            IsPunctuationOrSpace = false,
+            Script = GetScriptName(script),
+            RawTop5 = diagnostic
+        };
     }
 
 }

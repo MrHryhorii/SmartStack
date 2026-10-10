@@ -182,6 +182,10 @@ var cases = new (string Category, string Name, string Input, string[] Expected)[
     ("Technical tokens", "Identifier with multiple parts", "Variable object.property.method() is valid. Next.", ["Variable object.property.method() is valid.", "Next."]),
     ("Technical tokens", "Mixed-script identifier", "The name Web-розробка-v2 is accepted. Next.", ["The name Web-розробка-v2 is accepted.", "Next."]),
 
+    ("Technical tokens", "Attached inequality", "Check a!=b before continuing. Next.", ["Check a!=b before continuing.", "Next."]),
+    ("Technical tokens", "Null access without spaces", "Use foo?.Bar() here. Next.", ["Use foo?.Bar() here.", "Next."]),
+    ("Technical tokens", "Terminal question following URL", "Is https://example.com/test?q=hello still one URL? Yes.", ["Is https://example.com/test?q=hello still one URL?", "Yes."]),
+
     // Unicode periods
     ("Unicode periods", "Fullwidth title", "Dr． Smith answered. Then left.", ["Dr． Smith answered.", "Then left."]),
     ("Unicode periods", "Small full stop title", "Dr﹒ Smith answered. Then left.", ["Dr﹒ Smith answered.", "Then left."]),
@@ -246,13 +250,15 @@ var cases = new (string Category, string Name, string Input, string[] Expected)[
     ("Line boundaries", "Unicode line separator after title", "Prof.\u2028Smith arrived.", ["Prof.", "Smith arrived."]),
     ("Line boundaries", "Unicode paragraph separator", "First paragraph.\u2029Second paragraph.", ["First paragraph.", "Second paragraph."]),
 
-    // Boundary counterexamples
-    ("Boundary counterexamples", "US is sentence final", "I live in the U.S. Today is sunny.", ["I live in the U.S. Today is sunny."]),
+    // Boundary counterexamples. U.S., Dr., A., and St. before capitalized text are
+    // lexically ambiguous: their conservative expectations document heuristic limits,
+    // not grammatically correct sentence boundaries for every reading of the input.
+    ("Boundary counterexamples", "Ambiguous sentence-final U.S. keeps the initialism heuristic", "I live in the U.S. Today is sunny.", ["I live in the U.S. Today is sunny."]),
     ("Boundary counterexamples", "US introduces organization", "The U.S. Army arrived today. Then left.", ["The U.S. Army arrived today.", "Then left."]),
     ("Boundary counterexamples", "Dr title with person", "I spoke to Dr. Smith yesterday. Then left.", ["I spoke to Dr. Smith yesterday.", "Then left."]),
-    ("Boundary counterexamples", "Dr at fragment end", "I spoke to Dr. Then I left.", ["I spoke to Dr. Then I left."]),
+    ("Boundary counterexamples", "Ambiguous fragment-final Dr. keeps the title heuristic", "I spoke to Dr. Then I left.", ["I spoke to Dr. Then I left."]),
     ("Boundary counterexamples", "Initial before surname", "A. Smith arrived. Then spoke.", ["A. Smith arrived.", "Then spoke."]),
-    ("Boundary counterexamples", "A names plan at sentence end", "We chose Plan A. Tomorrow we try plan B.", ["We chose Plan A. Tomorrow we try plan B."]),
+    ("Boundary counterexamples", "Ambiguous plan label A. keeps the uppercase-initial heuristic", "We chose Plan A. Tomorrow we try plan B.", ["We chose Plan A. Tomorrow we try plan B."]),
     ("Boundary counterexamples", "Etc ends sentence", "This is etc. Next sentence.", ["This is etc.", "Next sentence."]),
     ("Boundary counterexamples", "Etc introduces lowercase continuation", "We bought apples, etc. before leaving. Then went home.", ["We bought apples, etc. before leaving.", "Then went home."]),
     ("Boundary counterexamples", "Short domain ends sentence", "He works for x.ai. Tomorrow he starts a job.", ["He works for x.ai.", "Tomorrow he starts a job."]),
@@ -260,7 +266,7 @@ var cases = new (string Category, string Name, string Input, string[] Expected)[
     ("Boundary counterexamples", "Unit milliseconds not Ms", "It took 5 ms. Smith agreed.", ["It took 5 ms.", "Smith agreed."]),
     ("Boundary counterexamples", "Ms honorific before surname", "Ms. Smith agreed. Later she left.", ["Ms. Smith agreed.", "Later she left."]),
     ("Boundary counterexamples", "Title St before saint name", "We visited St. Olav today. We left.", ["We visited St. Olav today.", "We left."]),
-    ("Boundary counterexamples", "Sentence-final Street", "We stopped on Main St. Peter left.", ["We stopped on Main St. Peter left."]),
+    ("Boundary counterexamples", "Ambiguous St. keeps the name-binding heuristic", "We stopped on Main St. Peter left.", ["We stopped on Main St. Peter left."]),
     ("Boundary counterexamples", "Ordinary word with period", "This is the result. Next we continue.", ["This is the result.", "Next we continue."]),
     ("Boundary counterexamples", "Ordinary abbreviation before uppercase sentence", "It was approx. Next section starts.", ["It was approx.", "Next section starts."]),
 
@@ -276,12 +282,12 @@ var cases = new (string Category, string Name, string Input, string[] Expected)[
     ("Ambiguous letter endings", "Multilingual letter endings cannot be disambiguated lexically — lowercase boundary", "Український текст має літери ї, є та ґ. Російський фрагмент має буквы ъ и э. Беларуская мова мае літару ў. Македонскиот тест содржи ѓ, ѕ и ќ. Српски текст садржи ђ, ћ, љ и њ.", ["Український текст має літери ї, є та ґ.", "Російський фрагмент має буквы ъ и э.", "Беларуская мова мае літару ў.", "Македонскиот тест содржи ѓ, ѕ и ќ.", "Српски текст садржи ђ, ћ, љ и њ."]),
     ("Ambiguous letter endings", "One lowercase Cyrillic letter remains ambiguous — lowercase boundary", "Це літера ґ. Наступний приклад.", ["Це літера ґ.", "Наступний приклад."]),
     ("Ambiguous letter endings", "Latin letter list is ambiguous — lowercase boundary", "The last letters are x, y and z. Continue reading.", ["The last letters are x, y and z.", "Continue reading."]),
-    ("Ambiguous letter endings", "Lowercase Latin initial before surname stays together — lowercase boundary", "a. Brown entered. Next.", ["a.", "Brown entered.", "Next."]),
-    ("Ambiguous letter endings", "Lowercase Cyrillic initial before surname stays together — lowercase boundary", "а. Петренко відповів. Далі.", ["а.", "Петренко відповів.", "Далі."]),
+    ("Ambiguous letter endings", "Unregistered lowercase Latin initial uses the terminal heuristic", "a. Brown entered. Next.", ["a.", "Brown entered.", "Next."]),
+    ("Ambiguous letter endings", "Unregistered lowercase Cyrillic initial uses the terminal heuristic", "а. Петренко відповів. Далі.", ["а.", "Петренко відповів.", "Далі."]),
     ("Ambiguous letter endings", "Uppercase Greek initial before surname stays together", "Ω. Παπαδόπουλος μίλησε. Τέλος.", ["Ω. Παπαδόπουλος μίλησε.", "Τέλος."]),
     ("Ambiguous letter endings", "Uppercase Latin option still ambiguous", "We chose Plan A. Tomorrow we try plan B.", ["We chose Plan A. Tomorrow we try plan B."]),
-    ("Ambiguous letter endings", "Lowercase initial in prose stays with surname — lowercase boundary", "We met a. Brown yesterday. Next meeting.", ["We met a.", "Brown yesterday.", "Next meeting."]),
-    ("Ambiguous letter endings", "Conjunction without letter list protects initial — lowercase boundary", "She spoke and a. Brown replied. Next item.", ["She spoke and a.", "Brown replied.", "Next item."]),
+    ("Ambiguous letter endings", "Unregistered lowercase initial in prose uses the terminal heuristic", "We met a. Brown yesterday. Next meeting.", ["We met a.", "Brown yesterday.", "Next meeting."]),
+    ("Ambiguous letter endings", "Conjunction does not protect an unregistered lowercase initial", "She spoke and a. Brown replied. Next item.", ["She spoke and a.", "Brown replied.", "Next item."]),
     ("Ambiguous letter endings", "Single-letter reference in prose without letter cue remains ambiguous — lowercase boundary", "The document mentions x. Smith agreed.", ["The document mentions x.", "Smith agreed."]),
     ("Ambiguous letter endings", "Capital letter name is ambiguous", "The final letter is Z. Continue reading.", ["The final letter is Z. Continue reading."]),
     ("Ambiguous letter endings", "Single letter after copula is ambiguous", "The letter is Z. Continue reading.", ["The letter is Z. Continue reading."]),

@@ -4,8 +4,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
-// Test structural language segmentation independently of model inference and audio synthesis.
-// The explicit language forces a deterministic route while preserving the real tokenizer.
+// Test structural speech parts independently of model inference and audio synthesis.
+// Forced fixtures verify source layout; TechnicalLanguageChecks separately exercises real Lingua
+// decisions without a forced language, including competing languages with the same script.
 var detector = new MixedLanguagePhonemizer(
     new PhonemizerSettings { SupportedLanguages = ["en", "uk"] },
     "en-us",
@@ -163,7 +164,9 @@ else if (!failuresOnly)
 }
 
 int additionalTotal = 0;
-foreach (var test in SharedRulesChecks.Cases())
+foreach (var test in SharedRulesChecks.Cases().Concat(TechnicalSpeechChecks.Cases())
+    .Concat(TechnicalLanguageChecks.Cases()).Concat(LanguageDetectionSettingsChecks.Cases())
+    .Concat(ScriptOnlyLanguageChecks.Cases()))
 {
     additionalTotal++;
     try

@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -17,6 +18,7 @@ public partial class UnifiedPhonemizer
     private readonly PiperConfig _piperConfig;
     private readonly MixedLanguagePhonemizer? _mixedPhonemizer;
     private readonly PhonemeFallbackMapper? _fallbackMapper;
+    private readonly ConcurrentDictionary<char, string> _technicalCharacterCache = new();
 
     // Cached model language metadata avoids splitting/normalizing the same eSpeak code per request.
     private readonly string _modelEspeakVoice;
@@ -203,14 +205,10 @@ public partial class UnifiedPhonemizer
                 continue;
             }
 
-            tokens.Add(new TextChunk
-            {
-                Text = segmentText,
-                DetectedLanguage = ResolveFallbackLanguage(forcedLanguage),
-                IsPunctuationOrSpace = false
-            });
+            AddFallbackTokens(segmentText, ResolveFallbackLanguage(forcedLanguage), tokens);
         }
 
+        bool previousTechnicalSpeech = false;
         for (int tokenIndex = 0; tokenIndex < tokens.Count; tokenIndex++)
         {
             TextChunk chunk = tokens[tokenIndex];
@@ -220,6 +218,15 @@ public partial class UnifiedPhonemizer
                 // Green channel: bypass eSpeak entirely for pre-written IPA, but still validate
                 // it against the current model so unsupported foreign sounds are adapted safely.
                 AppendValidatedPhonemes(chunk.Text, finalPhonemes);
+                previousTechnicalSpeech = false;
+                continue;
+            }
+
+            if (chunk.IsTechnical &&
+                TechnicalTextRecognizer.ShouldSpeak(chunk.Text.AsSpan(), _punctuationMapper.Rules))
+            {
+                AppendTechnicalPhonemes(chunk.Text, chunk.DetectedLanguage, finalPhonemes);
+                previousTechnicalSpeech = true;
                 continue;
             }
 
@@ -262,6 +269,9 @@ public partial class UnifiedPhonemizer
 
                 if (rawPhonemes != null)
                 {
+                    // A silent quote can abut a technical name without source whitespace.
+                    if (previousTechnicalSpeech) EspeakPhonemePartJoiner.Separate(finalPhonemes, rawPhonemes);
+                    previousTechnicalSpeech = false;
                     if (_fallbackMapper != null)
                     {
                         AppendValidatedPhonemes(rawPhonemes, finalPhonemes);
@@ -277,6 +287,94 @@ public partial class UnifiedPhonemizer
         }
 
         return finalPhonemes.ToString();
+    }
+
+    // Splits a protected token without allocating a list of parts or spelling names.
+    // Number/version/time/IP exceptions are handled before this method.
+    private void AppendTechnicalPhonemes(string text, string detectedLanguage, StringBuilder output)
+    {
+        int start = 0;
+
+        for (int index = 0; index < text.Length; index++)
+        {
+            char character = text[index];
+            if (!_punctuationMapper.Rules.IsTechnicalSpeechSymbol(character))
+            {
+                continue;
+            }
+
+            if (index > start)
+            {
+                AppendTechnicalPart(text[start..index], detectedLanguage, output);
+            }
+
+            if (!_technicalCharacterCache.TryGetValue(character, out string? phonemes))
+            {
+                if (!_espeakWrapper.TryGetCharacterPhonemes(character, _modelEspeakVoice, out string nativeIpa))
+                {
+                    throw new InvalidOperationException(
+                        $"Failed to select configured eSpeak voice '{_modelEspeakVoice}' for technical symbol.");
+                }
+
+                var adapted = new StringBuilder(nativeIpa.Length);
+                AppendValidatedPhonemes(nativeIpa, adapted);
+                phonemes = _technicalCharacterCache.GetOrAdd(character, adapted.ToString());
+            }
+
+            EspeakPhonemePartJoiner.Append(output, phonemes);
+            start = index + 1;
+        }
+
+        if (start < text.Length)
+        {
+            AppendTechnicalPart(text[start..], detectedLanguage, output);
+        }
+    }
+
+    private void AppendTechnicalPart(string text, string language, StringBuilder output)
+    {
+        string? phonemes = TryGetIpaPhonemesSafely(text, language);
+        if (string.IsNullOrWhiteSpace(phonemes))
+        {
+            return;
+        }
+
+        EspeakPhonemePartJoiner.Separate(output, phonemes);
+        AppendValidatedPhonemes(phonemes, output);
+    }
+
+    // The same structural classification is used without creating a statistical detector.
+    private void AddFallbackTokens(string text, string language, List<TextChunk> tokens)
+    {
+        int ordinaryStart = 0;
+        int index = 0;
+        while (index < text.Length)
+        {
+            if (TechnicalTextRecognizer.TryGetSpanLength(text.AsSpan(), index,
+                _punctuationMapper.Rules, out int length))
+            {
+                if (index > ordinaryStart) AddOrdinary(text[ordinaryStart..index]);
+                tokens.Add(new TextChunk
+                {
+                    Text = text.Substring(index, length), DetectedLanguage = language, IsTechnical = true
+                });
+                index += length;
+                ordinaryStart = index;
+                continue;
+            }
+            // Scan each ordinary lexical token once, rather than repeatedly scanning its suffixes.
+            bool boundary = TechnicalTextRecognizer.IsBoundary(text[index], _punctuationMapper.Rules) ||
+                char.GetUnicodeCategory(text[index]) is UnicodeCategory.OpenPunctuation or UnicodeCategory.ClosePunctuation;
+            index++;
+            if (boundary) continue;
+            while (index < text.Length && !TechnicalTextRecognizer.IsBoundary(text[index], _punctuationMapper.Rules)) index++;
+        }
+        if (ordinaryStart < text.Length) AddOrdinary(ordinaryStart == 0 ? text : text[ordinaryStart..]);
+
+        void AddOrdinary(string value) => tokens.Add(new TextChunk
+        {
+            Text = value, DetectedLanguage = language, IsPunctuationOrSpace = false
+        });
     }
 
     // Appends a punctuation token while suppressing title and acronym periods.

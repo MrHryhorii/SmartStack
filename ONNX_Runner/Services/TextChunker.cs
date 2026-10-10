@@ -871,24 +871,8 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         }
         tokenStart++;
 
-        ReadOnlySpan<char> prefix = text[tokenStart..index];
-        if (prefix.IsEmpty)
-        {
-            return false;
-        }
-
-        if (prefix.IndexOf("://".AsSpan(), StringComparison.Ordinal) >= 0 ||
-            prefix.StartsWith("www.".AsSpan(), StringComparison.OrdinalIgnoreCase) ||
-            prefix.IndexOf('@') >= 0)
-        {
-            return true;
-        }
-
-        // Relative paths/query-like tokens such as /search?q=x or api/v1?x=1.
-        bool hasPathMarker = prefix.IndexOf('/') >= 0 || prefix.IndexOf('\\') >= 0;
-        bool hasTechnicalMarker = prefix.IndexOfAny(".@=&#".AsSpan()) >= 0;
-
-        return hasPathMarker || hasTechnicalMarker;
+        return TechnicalTextRecognizer.TryGetSpanLength(text, tokenStart, Rules, out int length) &&
+               index + 1 < tokenStart + length;
     }
 
     private bool IsLineBoundary(char value)

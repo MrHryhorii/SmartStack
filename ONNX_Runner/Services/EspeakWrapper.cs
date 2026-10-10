@@ -207,7 +207,7 @@ public partial class EspeakWrapper : IDisposable
             if (resultPtr != IntPtr.Zero)
             {
                 string part = Marshal.PtrToStringUTF8(resultPtr) ?? string.Empty;
-                output.Append(part);
+                EspeakPhonemePartJoiner.Append(output, part);
             }
         }
     }

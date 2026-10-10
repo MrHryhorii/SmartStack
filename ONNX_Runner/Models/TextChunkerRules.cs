@@ -28,7 +28,7 @@ public sealed class TextChunkerRules
         Pause = 16, Closing = 32, Line = 64, SeparatedTerminal = 128,
         ReportingDash = 256, LexicalHyphen = 512, VisualQuote = 1024,
         FormatControl = 2048, ContextualQuestion = 4096, TechnicalMarker = 8192,
-        LexicalApostrophe = 16384, TechnicalSuffix = 32768
+        LexicalApostrophe = 16384, TechnicalSuffix = 32768, TechnicalToken = 65536, Opening = 131072
     }
 
     private readonly record struct PunctuationGroup(
@@ -80,7 +80,7 @@ public sealed class TextChunkerRules
         new(PunctuationKind.Dash, PunctuationRole.Pause | PunctuationRole.ReportingDash, "—–"),
         new(PunctuationKind.Dash, PunctuationRole.ReportingDash, "―"),
         new(PunctuationKind.Dash, PunctuationRole.None, "‒⸺⸻〜～"),
-        new(PunctuationKind.OpenBracket, PunctuationRole.None, "([{（［｛〈《【〔〖〘〚⟨⟦⟪〈"),
+        new(PunctuationKind.OpenBracket, PunctuationRole.Opening, "([{（［｛〈《【〔〖〘〚⟨⟦⟪〈"),
         new(PunctuationKind.CloseBracket, PunctuationRole.Closing, ")]}）］｝〉》】〕〗〙〛"),
         new(PunctuationKind.CloseBracket, PunctuationRole.None, "⟩⟧⟫〉"),
         new(PunctuationKind.WordSeparator, PunctuationRole.None, "·・･፡"),
@@ -88,10 +88,11 @@ public sealed class TextChunkerRules
         new(PunctuationKind.OpeningExclamation, PunctuationRole.None, "¡𞥞"),
         new(null, PunctuationRole.Line | PunctuationRole.Sentence, "\n\r"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote, "\""),
-        new(null, PunctuationRole.TechnicalMarker, "#&"),
+        new(null, PunctuationRole.TechnicalMarker | PunctuationRole.TechnicalToken, "#&"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote | PunctuationRole.LexicalApostrophe, "'"),
         new(null, PunctuationRole.LexicalHyphen | PunctuationRole.Pause | PunctuationRole.ReportingDash, "-"),
-        new(null, PunctuationRole.TechnicalMarker, "/=@\\"),
+        new(null, PunctuationRole.TechnicalMarker | PunctuationRole.TechnicalToken, "/=@\\"),
+        new(null, PunctuationRole.TechnicalToken, "_+$^<>|~%×÷≤≥≠"),
         new(null, PunctuationRole.Line | PunctuationRole.Sentence, "\u0085"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote, "«»"),
         new(null, PunctuationRole.Clause | PunctuationRole.Pause, "·"),
@@ -268,6 +269,7 @@ public sealed class TextChunkerRules
     public SearchValues<char> ClausePunctuation { get; }
     public SearchValues<char> PauseMarks { get; }
     public SearchValues<char> ClosingPunctuation { get; }
+    public SearchValues<char> OpeningPunctuation { get; }
     public SearchValues<char> LineBoundaries { get; }
     public SearchValues<char> SeparatedTerminals { get; }
     public SearchValues<char> ReportingDashes { get; }
@@ -275,6 +277,7 @@ public sealed class TextChunkerRules
     public SearchValues<char> VisualQuotes { get; }
     public SearchValues<char> BoundaryFormatControls { get; }
     public SearchValues<char> TechnicalMarkers { get; }
+    public SearchValues<char> TechnicalTokenMarkers { get; }
     public SearchValues<char> LexicalApostrophes { get; }
     public SearchValues<char> TechnicalSuffixMarks { get; }
     public FrozenDictionary<Rune, PunctuationKind> SemanticKinds { get; }
@@ -287,6 +290,21 @@ public sealed class TextChunkerRules
     private readonly FrozenDictionary<PunctuationKind, ImmutableArray<Rune>> _semanticMarks;
 
     internal ImmutableArray<Rune> GetSemanticMarks(PunctuationKind kind) => _semanticMarks[kind];
+
+    // Literal syntax is spoken by name only inside a protected technical span.
+    public bool IsTechnicalSpeechSymbol(char value) =>
+        !char.IsSurrogate(value) && (char.IsPunctuation(value) || char.IsSymbol(value));
+
+    // Unicode operators and currencies do not require an exhaustive glyph list.
+    // Other symbols count as technical evidence only when attached to text or numbers.
+    public bool IsTechnicalSymbolMarker(char value, bool hasText)
+    {
+        var category = char.GetUnicodeCategory(value);
+        return category is System.Globalization.UnicodeCategory.MathSymbol
+            or System.Globalization.UnicodeCategory.CurrencySymbol
+            or System.Globalization.UnicodeCategory.ConnectorPunctuation ||
+            (hasText && char.IsSymbol(value));
+    }
 
     private TextChunkerRules(Extensions additions)
     {
@@ -308,6 +326,8 @@ public sealed class TextChunkerRules
         AddMarks(punctuation, additions.AdditionalPauseMarks, PunctuationRole.Pause, PunctuationKind.Comma);
         AddMarks(punctuation, additions.AdditionalClosingPunctuation, PunctuationRole.Closing, PunctuationKind.CloseBracket);
 
+        AddTechnicalMarkers(punctuation, additions.AdditionalTechnicalTokenMarkers);
+
         foreach (var (mark, entry) in punctuation)
         {
             if ((entry.Roles & PunctuationRole.Sentence) != 0 &&
@@ -324,6 +344,7 @@ public sealed class TextChunkerRules
         ClausePunctuation = SelectMarks(punctuation, PunctuationRole.Clause);
         PauseMarks = SelectMarks(punctuation, PunctuationRole.Pause);
         ClosingPunctuation = SelectMarks(punctuation, PunctuationRole.Closing);
+        OpeningPunctuation = SelectMarks(punctuation, PunctuationRole.Opening);
         LineBoundaries = SelectMarks(punctuation, PunctuationRole.Line);
         SeparatedTerminals = SelectMarks(punctuation, PunctuationRole.SeparatedTerminal);
         ReportingDashes = SelectMarks(punctuation, PunctuationRole.ReportingDash);
@@ -331,6 +352,7 @@ public sealed class TextChunkerRules
         VisualQuotes = SelectMarks(punctuation, PunctuationRole.VisualQuote);
         BoundaryFormatControls = SelectMarks(punctuation, PunctuationRole.FormatControl);
         TechnicalMarkers = SelectMarks(punctuation, PunctuationRole.TechnicalMarker);
+        TechnicalTokenMarkers = SelectMarks(punctuation, PunctuationRole.TechnicalToken);
         LexicalApostrophes = SelectMarks(punctuation, PunctuationRole.LexicalApostrophe);
         TechnicalSuffixMarks = SelectMarks(punctuation, PunctuationRole.TechnicalSuffix);
         SemanticKinds = punctuation.Where(pair => pair.Value.Kind.HasValue)
@@ -415,6 +437,21 @@ public sealed class TextChunkerRules
         }
     }
 
+    private static void AddTechnicalMarkers(Dictionary<Rune, PunctuationEntry> punctuation,
+        IEnumerable<string>? additions)
+    {
+        if (additions is null) return;
+        foreach (string? value in additions)
+        {
+            if (value is null || value.Length != 1 || char.IsSurrogate(value[0]) ||
+                !(char.IsPunctuation(value[0]) || char.IsSymbol(value[0])))
+                throw new ArgumentException($"Technical markers must be individual BMP punctuation or symbol characters: '{value}'.");
+            var mark = new Rune(value[0]);
+            punctuation.TryGetValue(mark, out var existing);
+            punctuation[mark] = new PunctuationEntry(existing.Kind, existing.Roles | PunctuationRole.TechnicalToken);
+        }
+    }
+
     private static bool DefaultLineBoundary(char mark)
     {
         return BuiltInPunctuation.Any(group =>
@@ -460,6 +497,7 @@ public sealed class TextChunkerRules
         public List<string>? AdditionalClausePunctuation { get; set; }
         public List<string>? AdditionalPauseMarks { get; set; }
         public List<string>? AdditionalClosingPunctuation { get; set; }
+        public List<string>? AdditionalTechnicalTokenMarkers { get; set; }
         public List<string>? AdditionalAbbreviations { get; set; }
         public List<string>? AdditionalPrefixAbbreviations { get; set; }
         public List<string>? AdditionalNameBindingAbbreviations { get; set; }

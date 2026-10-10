@@ -13,4 +13,14 @@ public sealed class EspeakWrapper
         phonemes = text;
         return true;
     }
+    public List<(char Character, string Voice)> CharacterCalls { get; } = [];
+    public Dictionary<char, string> CharacterResults { get; } = [];
+
+    public bool TryGetCharacterPhonemes(char character, string voice, out string phonemes)
+    {
+        CharacterCalls.Add((character, voice));
+        phonemes = CharacterResults.TryGetValue(character, out string? result) ? result : "s";
+        return true;
+    }
+
 }

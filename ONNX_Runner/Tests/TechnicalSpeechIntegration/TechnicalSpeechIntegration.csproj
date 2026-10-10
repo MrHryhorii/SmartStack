@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -11,11 +12,17 @@
     <Compile Include="../../Models/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
     <Compile Include="../../Models/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
     <Compile Include="../../Models/PhonemizerSettings.cs" Link="PhonemizerSettings.cs" />
-    <Compile Include="../../Models/PiperConfig.cs" Link="PiperConfig.cs" />
     <Compile Include="../../Services/TextChunker.cs" Link="TextChunker.cs" />
     <Compile Include="../../Services/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Services/EspeakLinguaMapper.cs" Link="EspeakLinguaMapper.cs" />
     <Compile Include="../../Services/MixedLanguagePhonemizer.cs" Link="MixedLanguagePhonemizer.cs" />
     <Compile Include="../../Services/DynamicPunctuationMapper.cs" Link="DynamicPunctuationMapper.cs" />
+    <Compile Include="../../Services/UnifiedPhonemizer.cs" Link="UnifiedPhonemizer.cs" />
+    <Compile Include="../../Services/EspeakPhonemePartJoiner.cs" Link="EspeakPhonemePartJoiner.cs" />
+    <Compile Include="../../Services/PiperPhonemizer.cs" Link="PiperPhonemizer.cs" />
+    <Compile Include="../../Services/PhonemeFallbackMapper.cs" Link="PhonemeFallbackMapper.cs" />
+    <Compile Include="../../Models/PiperConfig.cs" Link="PiperConfig.cs" />
+    <Compile Include="../../Services/EspeakWrapper.cs" Link="EspeakWrapper.cs" />
+    <Compile Include="../../Services/EspeakWrapper.Characters.cs" Link="EspeakWrapper.Characters.cs" />
   </ItemGroup>
 </Project>

@@ -23,6 +23,8 @@ var chunker = new TextChunker(new ChunkerSettings { MaxChunkLength = 200 });
 var boundedChunker = new TextChunker(new ChunkerSettings { MaxChunkLength = 64 });
 var detector = new MixedLanguagePhonemizer(new PhonemizerSettings { SupportedLanguages = ["en", "uk"] },
     "en-us", NullLogger<MixedLanguagePhonemizer>.Instance, chunker);
+var scriptOnly = new MixedLanguagePhonemizer(new PhonemizerSettings(),
+    "en-us", NullLogger<MixedLanguagePhonemizer>.Instance, chunker);
 var mapper = new DynamicPunctuationMapper(new PiperConfig
 {
     PhonemeIdMap = new Dictionary<string, int[]>
@@ -36,12 +38,16 @@ const string abbreviations = "Dr. Morgan met Prof. Lee at St. Peter Hospital.";
 const string nameBinding = "id. Kovács spoke.";
 const string reference = "Read Fig. 2 at 3.14, then continue. Next sentence.";
 const string technical = "Please open config.prod.json before the next build.";
+const string technicalSequence = "The variable user_name contains build_output.";
 const string rewritten = "Hello๚ Next… word\"word.";
 string unicode = string.Concat(Enumerable.Repeat("a\u0301", 96)) + "。";
 string[] modelParts = ["en", "us"];
 
 var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
 {
+    ("technical/classification", () => TechnicalTextRecognizer.TryGetSpanLength("user_name".AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("technical/ordinary", () => TechnicalTextRecognizer.TryGetSpanLength("well-known".AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("technical/number-exception", () => TechnicalTextRecognizer.ShouldSpeak("v1.0.9".AsSpan(), TextChunkerRules.Default) ? 1 : 0, 0),
     ("boundary/abbreviation", () => chunker.IsIntraSentencePeriod(abbreviations.AsSpan(), 2) ? 1 : 0, 0),
     ("boundary/name-binding", () => chunker.IsIntraSentencePeriod(nameBinding.AsSpan(), 2) ? 1 : 0, 0),
     ("boundary/lowercase-letter", () => chunker.IsIntraSentencePeriod("Letter z. Continue.".AsSpan(), 8) ? 1 : 0, 0),
@@ -56,7 +62,12 @@ var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
     ("chunker/early", () => chunker.Split(reference, earlySplit: true).Count, null),
     ("chunker/unicode-emergency", () => boundedChunker.Split(unicode).Count, null),
     ("tokenizer/forced-single", () => detector.ProcessTextToLanguageTokens(plain, "en").Count, null),
-    ("tokenizer/forced-technical", () => detector.ProcessTextToLanguageTokens(technical, "en").Count, null)
+    ("tokenizer/forced-technical", () => detector.ProcessTextToLanguageTokens(technical, "en").Count, null),
+    ("tokenizer/forced-technical-sequence", () => detector.ProcessTextToLanguageTokens(technicalSequence, "en").Count, null),
+    ("tokenizer/automatic-single", () => detector.ProcessTextToLanguageTokens(plain).Count, null),
+    ("tokenizer/automatic-technical-sequence", () => detector.ProcessTextToLanguageTokens(technicalSequence).Count, null),
+    ("tokenizer/script-only-single", () => scriptOnly.ProcessTextToLanguageTokens(plain).Count, null),
+    ("tokenizer/script-only-technical-sequence", () => scriptOnly.ProcessTextToLanguageTokens(technicalSequence).Count, null)
 };
 
 Console.WriteLine($"Runtime: {RuntimeInformation.FrameworkDescription}; {RuntimeInformation.ProcessArchitecture}; {RuntimeInformation.OSDescription}");

@@ -15,6 +15,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PunctuationRegression", "Te
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TextAnalysisAllocations", "Tests\TextAnalysisAllocations\TextAnalysisAllocations.csproj", "{3802839A-D7F8-4709-80AF-0210F9C914AD}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TechnicalSpeechIntegration", "Tests\TechnicalSpeechIntegration\TechnicalSpeechIntegration.csproj", "{0B4779C1-4017-418F-A84C-E460C662F3DD}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -85,6 +87,18 @@ Global
 		{3802839A-D7F8-4709-80AF-0210F9C914AD}.Release|x64.Build.0 = Release|Any CPU
 		{3802839A-D7F8-4709-80AF-0210F9C914AD}.Release|x86.ActiveCfg = Release|Any CPU
 		{3802839A-D7F8-4709-80AF-0210F9C914AD}.Release|x86.Build.0 = Release|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Debug|x64.Build.0 = Debug|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Debug|x86.Build.0 = Debug|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Release|x64.ActiveCfg = Release|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Release|x64.Build.0 = Release|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Release|x86.ActiveCfg = Release|Any CPU
+		{0B4779C1-4017-418F-A84C-E460C662F3DD}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -94,6 +108,7 @@ Global
 		{13E734BF-A8AC-430A-8F89-509CE0436622} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{C94DE768-67FD-41C0-9FA2-68728A0B40E0} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{3802839A-D7F8-4709-80AF-0210F9C914AD} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{0B4779C1-4017-418F-A84C-E460C662F3DD} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {EBC3DFD5-4F7A-4871-BB61-992145E4237A}

@@ -102,7 +102,11 @@ internal static class NativeLibraryResolver
     [
         "espeak_Initialize",
         "espeak_SetVoiceByName",
-        "espeak_TextToPhonemes"
+        "espeak_TextToPhonemes",
+        "espeak_Char",
+        "espeak_SetPhonemeCallback",
+        "espeak_SetSynthCallback",
+        "espeak_SetPhonemeTrace"
     ];
 
     // Native loading and resolver registration are process-wide and must be serialized.

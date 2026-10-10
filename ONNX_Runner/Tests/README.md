@@ -4,15 +4,16 @@
 is a local text-to-speech engine built with C# (.NET 10), Piper voice models, and
 ONNX Runtime. These standalone console projects check the text preprocessing
 used before speech synthesis: multilingual sentence boundaries, abbreviations,
-initials, language segmentation, punctuation normalization, and managed allocations.
+initials, language segmentation, punctuation normalization, technical-symbol pronunciation, and managed allocations.
 
 ## What the tests check
 
 | Project | Purpose |
 | --- | --- |
 | [TextChunkerRegression](TextChunkerRegression/) | Check sentence boundaries around abbreviations, initials, names, references, technical addresses, and Unicode punctuation. Verify line boundaries, list markers, chunk limits, completion flags, Unicode text integrity, and optional custom rules. |
-| [LanguageSegmentationRegression](LanguageSegmentationRegression/) | Check that tokenization preserves abbreviations, initials, file names, and lexical connectors. Verify that shared rules remain consistent through chunking, language segmentation, punctuation mapping, and phonemizer preprocessing. |
+| [LanguageSegmentationRegression](LanguageSegmentationRegression/) | Check source preservation, shared rules, abbreviations, initials, and technical phrase boundaries. Exercise real Lingua with competing same-script languages and model/script routing with empty, duplicate, or unmapped candidates. Verify configuration binding, confidence and margin boundaries, technical-context inheritance, dialects, forced languages, and the Latin classification of romaji. |
 | [PunctuationRegression](PunctuationRegression/) | Check Unicode punctuation, including Thai sentence endings, against the symbols supported by a Piper model. Verify custom punctuation rules, compound marks, lexical connectors, normalization idempotence, and model control-token handling. |
+| [TechnicalSpeechIntegration](TechnicalSpeechIntegration/) | Check complete symbol descriptions against explicitly declared spoken names. Preserve literal punctuation names, localized pronunciation, compatible fullwidth characters, native voice state, callbacks, and cached output under concurrent calls. Verify adapted phoneme coverage and complete technical names in Piper IDs. Compare statistical and model/script routing against explicit-language native references. |
 | [TextAnalysisAllocations](TextAnalysisAllocations/) | Detect unexpected managed allocations in text analysis using explicit budgets, and report other scenarios for local investigation. See [Managed allocation checks](#managed-allocation-checks) below. |
 
 Expected boundaries and punctuation are defined by explicit fixtures. Fixed-seed
@@ -21,14 +22,20 @@ size limits, and completion flags. Ambiguous initials and abbreviations have doc
 heuristic expectations; grammatical understanding requires a different kind of analysis.
 
 Pipeline checks use a test double at the native eSpeak boundary to inspect the text
-sent for phonemization. Speech quality, IPA accuracy, and native synthesis behavior
-require separate tests.
+sent for phonemization. Forced-language fixtures test structural speech parts;
+automatic fixtures use real Lingua models or model/script fallback, with independently
+declared language expectations.
+Separate speech parts are allowed within one shared language-analysis phrase.
+The optional `TechnicalSpeechIntegration` runner uses real eSpeak and a model JSON
+inventory. Waveform quality still requires listening tests.
 
 ## Requirements
 
-Use the .NET 10 SDK and the complete `ONNX_Runner` source tree. The test projects
-compile the production text analysis sources directly and run independently of the
-TTS server, voice models, and native speech synthesis binaries.
+Use the .NET 10 SDK and the complete `ONNX_Runner` source tree. The four managed test projects
+compile production sources directly and run independently of the TTS server,
+voice models, and native speech synthesis binaries. The optional native integration
+runner additionally needs eSpeak, its data, and a Piper model JSON; it does not need
+the ONNX weights or start the server.
 
 `dotnet run` builds each project and restores its dependencies. The language
 segmentation and allocation projects use `SearchPioneer.Lingua` from NuGet.
@@ -55,6 +62,30 @@ dotnet run --project Tests/TextChunkerRegression/TextChunkerRegression.csproj -c
 dotnet run --project Tests/TextChunkerRegression/TextChunkerRegression.csproj -c Release -- --failures-only --category="Name binding boundaries"
 ```
 
+## Native technical-speech integration
+
+From the same `ONNX_Runner` directory, using the native dependencies configured for Tsubaki:
+
+```shell
+dotnet run --project Tests/TechnicalSpeechIntegration/TechnicalSpeechIntegration.csproj -c Release -- Model/en_US-hfc_female-medium.onnx.json
+```
+
+Use any compatible Piper model JSON to check its actual phoneme inventory. Windows
+uses the bundled `PiperNative/espeak-ng.dll`; Linux uses `libespeak-ng.so.1` when no
+local library is present. Two optional arguments select an exact native library and
+the parent directory containing `espeak-ng-data`. The runner returns a nonzero exit
+code on failure and prints the individual checks and a summary. It checks phonemes
+and tensor IDs; it does not assert synthesized audio quality.
+
+Symbol checks distinguish ordinary dictionary descriptions from literal character
+names. Multiword descriptions such as `not equal to` and `square root` must remain
+complete. Independent references use the declared words, including pronunciation
+before a following variable; lexical comparisons allow stress differences while
+still checking every spoken phoneme. Literal punctuation and existing localized
+names are compared with direct native character calls. English fallback checks
+apply where the native character path already switches to English. Names absent
+from the installed dictionaries can still use eSpeak's Unicode-code fallback.
+
 ## Managed allocation checks
 
 `--iterations` accepts a positive integer and defaults to `5000` when omitted.
@@ -66,10 +97,11 @@ pass, `1` when a budget fails, and `2` when the iteration argument is invalid.
 
 | Scenarios | Allocation contract |
 | --- | --- |
+| Technical-token classification and numeric pronunciation exceptions | Zero managed bytes allocated during classification. |
 | Abbreviation, name-binding, and lowercase-letter period classification | Zero managed bytes allocated during classification. |
 | Inherited forced-language code and unchanged punctuation | Zero managed bytes allocated for these unchanged paths. |
 | Whole-input sentence chunking, with and without abbreviations | At most 96 managed bytes per call for the returned list and array on .NET 10. The fixtures protect against copying the input string or reserving an unnecessarily large result array. |
-| Punctuation rewriting, early and Unicode emergency splitting, forced-language tokenization | Measurements for local investigation; these scenarios have no enforced allocation budget. |
+| Punctuation rewriting, early and Unicode emergency splitting, forced and automatic language tokenization | Measurements for local investigation; these scenarios have no enforced allocation budget. |
 
 These budgets apply to the runner's fixtures. Chunk lists, rewritten strings,
 and language tokens can require output allocations in other inputs.
@@ -86,8 +118,10 @@ an informational scenario. Timing has no pass/fail threshold.
 
 Compare measurements using the same runtime, architecture, configuration, and inputs.
 The measurements cover current-thread managed allocations; retained memory, native
-allocations, and complete speech synthesis cost need separate measurements. Tokenizer
-scenarios force a language, so statistical language detection is outside the measured path.
+allocations, and complete speech synthesis cost need separate measurements. Forced-language
+tokenizer scenarios bypass statistical detection; automatic comparison scenarios include
+Lingua after model initialization. Script-only scenarios measure routing without Lingua.
+All scenarios use the same per-scenario warmup.
 
 </details>
 

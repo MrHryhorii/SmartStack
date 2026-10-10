@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Services/TextChunker.cs" Link="TextChunker.cs" />
+    <Compile Include="../../Services/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Models/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
     <Compile Include="../../Models/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
   </ItemGroup>

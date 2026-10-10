@@ -355,19 +355,13 @@ if (piperConfig != null && piperModelPath != null)
     // PHONEMIZER & LANGUAGE DETECTION SETUP
     // =================================================================
     MixedLanguagePhonemizer? mixedPhonemizer = null;
-    PhonemeFallbackMapper? fallbackMapper = null;
+    string phoibleDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PHOIBLE"));
+    string phoiblePath = Path.Combine(phoibleDirectory, "phoible.csv");
+    var fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
+    builder.Services.AddSingleton(fallbackMapper);
 
     if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
     {
-        string phoibleDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PHOIBLE"));
-        string phoiblePath = Path.Combine(phoibleDirectory, "phoible.csv");
-        if (!Directory.Exists(phoibleDirectory))
-        {
-            Directory.CreateDirectory(phoibleDirectory);
-        }
-
-        fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
-        builder.Services.AddSingleton(fallbackMapper);
         mixedPhonemizer = new MixedLanguagePhonemizer(
             phonemizerConfig,
             piperConfig.Espeak.Voice ?? "en",

@@ -6,12 +6,26 @@ namespace ONNX_Runner.Models;
 public class PhonemizerSettings
 {
     /// <summary>
-    /// A subset of ISO language codes to load into memory. 
-    /// Limiting this saves RAM compared to loading all 75+ supported languages.
+    /// Additional language candidates; the model language is included automatically.
+    /// Fewer than two distinct recognized languages use model/script routing without Lingua.
     /// </summary>
     public List<string> SupportedLanguages { get; set; } = [];
 
     public bool UseLanguageDetector { get; set; } = true;
+
+    // --- Local Evidence Parameters ---
+
+    /// <summary>Minimum raw confidence required for an authoritative local winner (inclusive).</summary>
+    public double LocalWinnerProbabilityFloor { get; set; } = 0.50;
+
+    /// <summary>Minimum raw confidence lead over the runner-up for a local winner (inclusive).</summary>
+    public double LocalWinnerMarginFloor { get; set; } = 0.08;
+
+    /// <summary>
+    /// Minimum unadjusted confidence (strict) for an ambiguous winner to supply neighboring
+    /// technical context. Does not change its selected language or authoritative results.
+    /// </summary>
+    public double ReliabilityProbabilityThreshold { get; set; } = 0.50;
 
     // --- Dynamic Confidence Bonus Parameters ---
     // Short words are statistically harder for AI to identify. We give a confidence bonus 
@@ -35,10 +49,10 @@ public class PhonemizerSettings
 
     // --- Sentence-Context Override Parameters ---
     // A short/ambiguous word (e.g. a name like "Hermes") can still lose to a rival language 
-    // even with the max bonus above. If the whole sentence is confidently the model's language, 
-    // that verdict overrides the word-level bonus instead of fighting it.
+    // even with the max bonus above. A confident whole-sentence verdict can stabilize an
+    // ambiguous phrase after local confidence, margin, and short-foreign validation are checked.
 
-    /// <summary>Sentence-level confidence in the model's language needed to override a risky sub-phrase.</summary>
+    /// <summary>Sentence-level confidence needed to override an ambiguous compatible-script subphrase.</summary>
     public double MixedLanguageOverrideThreshold { get; set; } = 0.85;
 
     /// <summary>Minimum letters the whole sentence needs before its context is trusted for the override.</summary>
