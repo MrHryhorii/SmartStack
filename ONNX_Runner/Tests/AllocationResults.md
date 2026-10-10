@@ -1,61 +1,57 @@
-# Text analysis allocation measurements
+# Tsubaki TTS Engine managed allocation checks
 
-Measured before and after the second text-analysis pass on .NET 10.0.0, SDK 10.0.100,
-Linux x64 (Ubuntu 24.04.3), Release. Each scenario used 2,048 warmup calls followed by
-10,000 measured synchronous calls. Inputs, delegates, catalogs, punctuation inventories,
-and Lingua initialization were created before measurement.
+`TextAnalysisAllocations` checks managed allocation budgets in the text preprocessing
+used by [Tsubaki TTS Engine](https://github.com/MrHryhorii/SmartStack/tree/main/ONNX_Runner),
+a local C#/.NET text-to-speech engine. It helps detect temporary allocations introduced
+by changes to sentence splitting, abbreviation classification, language codes, and
+punctuation handling.
 
-The abbreviation follow-up repeated these measurements on the same runtime and added
-a name-binding classification scenario. The existing byte counts remained unchanged.
-The new scenario has no recorded before measurement.
+## Run
 
-`GC.GetAllocatedBytesForCurrentThread()` measures managed bytes allocated by these
-calls. It does not report retained memory, native allocations, or complete synthesis cost.
-The tokenizer scenarios force a language and bypass statistical inference. Logging uses
-a null logger. Timing is reported by the runner for local investigation, but no latency
-claim or timing threshold is derived from a shared-host run.
+Use the .NET 10 SDK and run from the `ONNX_Runner` source directory:
 
-## Results
-
-| Scenario | Before, bytes/call | After, bytes/call | Enforced budget |
-| --- | ---: | ---: | ---: |
-| Abbreviation period classification | 0 | 0 | 0 |
-| Name-binding period classification | Not measured | 0 | 0 |
-| Lowercase-letter period classification | 0 | 0 | 0 |
-| Inherited forced-language code | 0 | 0 | 0 |
-| Unchanged punctuation | 0 | 0 | 0 |
-| Punctuation rewriting | 200 | 200 | Reported only |
-| One complete plain sentence | 200 | 72 | 96 |
-| One complete sentence with titles | 240 | 72 | 96 |
-| Early split and multiple sentences | 296 | 296 | Reported only |
-| Unicode emergency splitting | 600 | 600 | Reported only |
-| Forced tokenizer, plain sentence | 448 | 448 | Reported only |
-| Forced tokenizer, technical file name | 728 | 728 | Reported only |
-
-The two whole-input sentence fixtures allocate 64% and 70% fewer bytes respectively.
-`TextChunker` reuses the immutable input string when a chunk spans the entire input.
-For an ordinary whole-input sentence, the result list reserves exactly one element;
-multi-chunk requests keep the established growth behavior. The measured 72 bytes are
-the returned list and its backing array, not a hidden temporary string.
-
-Punctuation rewriting and tokenization still allocate output strings, token records,
-lists, and string builders. Removing all of those would require an API or buffer-lifetime
-change. No pooling, shared mutable buffers, object reuse, or new dependencies were added.
-Catalog-loading allocations remain startup work and were not optimized as request cost.
-
-## Run and regression behavior
-
-```powershell
+```shell
 dotnet run --project Tests/TextAnalysisAllocations/TextAnalysisAllocations.csproj -c Release -- --iterations=10000
 ```
 
-The runner reports every scenario and exits nonzero if any allocation budget fails.
-The 96-byte budgets target the current .NET 10 result layout and reject a reintroduced
-whole-input string copy or the default four-element list reservation for these fixtures.
-They do not claim that chunking can return a mutable result list without allocating.
-Compare measurements on the same runtime, architecture, configuration, and inputs.
+`--iterations` accepts a positive integer and defaults to `5000` when omitted.
+Use Release for measurements. The project restores its NuGet dependencies, including
+`SearchPioneer.Lingua`, and runs independently of voice models and native synthesis.
 
-Functional string-identity checks accompany the budgets. The new emergency tests also
-prevent detached combining marks (including a cut moved before a technical token), lost
-completion flags after oversized final tokens, and ordinary long words bypassing the size
-limit because their terminal punctuation was mistaken for technical syntax.
+## What is checked
+
+| Scenarios | Allocation contract |
+| --- | --- |
+| Abbreviation, name-binding, and lowercase-letter period classification | Zero managed bytes allocated during classification. |
+| Inherited forced-language code and unchanged punctuation | Zero managed bytes allocated for these unchanged paths. |
+| Whole-input sentence chunking, with and without abbreviations | At most 96 managed bytes per call for the returned list and array on .NET 10. The fixtures protect against copying the input string or reserving an unnecessarily large result array. |
+| Punctuation rewriting, early and Unicode emergency splitting, forced-language tokenization | Measurements for local investigation; these scenarios have no enforced allocation budget. |
+
+These budgets are contracts for the runner's fixtures. Chunk lists, rewritten strings,
+and language tokens can require output allocations in other inputs.
+
+## Measurement and output
+
+Inputs, delegates, rule catalogs, punctuation inventories, and language-detector
+initialization are prepared before measurement. Each scenario receives 2048 warmup
+calls, then the requested number of synchronous measured calls.
+
+The runner prints the runtime, architecture, build configuration, and scenario rows:
+
+| Column | Meaning |
+| --- | --- |
+| `B/op` | Managed bytes allocated per operation, measured with `GC.GetAllocatedBytesForCurrentThread()`. |
+| `ns/op` | Elapsed nanoseconds per operation for local investigation. |
+| `Allocation budget` | `PASS` or `FAIL` for an enforced budget, or `reported` for an informational scenario. |
+
+The exit code is `0` when all allocation budgets pass, `1` when a budget fails,
+and `2` when the iteration argument is invalid. Timing has no pass/fail threshold.
+
+Compare measurements using the same runtime, architecture, configuration, and inputs.
+The measurements cover current-thread managed allocations; retained memory, native
+allocations, and complete speech synthesis cost need separate measurements. Tokenizer
+scenarios force a language, so statistical language detection is outside the measured path.
+
+See the [test overview and regression commands](README.md) for functional checks,
+and the [main Tsubaki TTS Engine project](https://github.com/MrHryhorii/SmartStack/tree/main/ONNX_Runner)
+for engine documentation.
