@@ -233,6 +233,7 @@ async function bootEngine() {
     // Disable dependent controls when an override is off.
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum', 'extendTailToggle']);
+    bindToggle('useSampleRate', ['sampleRateNum']);
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
     bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
@@ -300,6 +301,10 @@ async function bootEngine() {
         const text = document.getElementById('textInput').value.trim();
         if (!text) return alert("Please enter text!");
 
+        const useSampleRate = document.getElementById('useSampleRate').checked;
+        const sampleRateInput = document.getElementById('sampleRateNum');
+        if (useSampleRate && !sampleRateInput.reportValidity()) return;
+
         document.getElementById('statusLog').innerHTML = '';
         btn.disabled = true;
         downloadBtn.disabled = true;
@@ -328,6 +333,11 @@ async function bootEngine() {
             early_split: document.getElementById('earlySplitToggle').checked,
             language: document.getElementById('languageSelect').value
         };
+
+        // Omit the override when off; an explicit zero bypasses the server default.
+        if (useSampleRate) {
+            payload.samplerate = sampleRateInput.valueAsNumber;
+        }
 
         // Prime Web Audio before the first await so Safari/other autoplay policies
         // see the context creation/resume as part of the user's Generate click.

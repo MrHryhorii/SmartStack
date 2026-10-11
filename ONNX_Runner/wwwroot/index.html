@@ -195,9 +195,9 @@
                         </div>
                     </div>
                 </details>
-                <!-- Collapsible sections for advanced audio effect controls, initially hidden and disabled until a voice is selected -->
+                <!-- Collapsible controls for character effects, acoustic spaces, and output sample rate -->
                 <details class="advanced-group">
-                    <summary title="Character DSP effects and simulated acoustic spaces.">Audio Effects</summary>
+                    <summary title="Character DSP effects, simulated acoustic spaces, and output sample rate.">Audio Effects</summary>
                     <div class="group-content">
                         <div class="field">
                             <div class="toggle">
@@ -251,6 +251,30 @@
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
                             </div>
+                        </div>
+                        <div class="field">
+                            <div class="toggle">
+                                <input type="checkbox" id="useSampleRate">
+                                <span class="toggle-label-help help-tooltip tooltip-up"
+                                    data-tooltip="Output sample rate in Hz. API field: samplerate. Off uses the server default; 0 keeps the model/codec rate. Nonzero rates are clamped to 8000–48000 Hz; lower rates reduce high-frequency detail. MP3/AAC use the nearest supported rate; Opus decodes at 48000 Hz.">
+                                    <label for="useSampleRate">Sample Rate (Hz)</label>
+                                    <span class="help-mark" aria-hidden="true">ⓘ</span>
+                                </span>
+                            </div>
+                            <input type="number" id="sampleRateNum" min="0" max="48000" step="1" value="0"
+                                list="sampleRateOptions" required disabled aria-label="Output sample rate in Hz">
+                            <datalist id="sampleRateOptions">
+                                <option value="0" label="Model/codec rate"></option>
+                                <option value="8000"></option>
+                                <option value="11025"></option>
+                                <option value="12000"></option>
+                                <option value="16000"></option>
+                                <option value="22050"></option>
+                                <option value="24000"></option>
+                                <option value="32000"></option>
+                                <option value="44100"></option>
+                                <option value="48000"></option>
+                            </datalist>
                         </div>
                     </div>
                 </details>
@@ -322,7 +346,7 @@
     </div>
     <!-- Main application script that handles UI interactions, API communication, and audio processing -->
     <script src="js/accordion.js"></script>
-    <script type="module" src="js/app.js"></script>
+    <script type="module" src="js/app.js?v=samplerate1"></script>
 
 </body>
 
