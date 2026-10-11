@@ -1,7 +1,7 @@
 namespace ONNX_Runner.Models;
 
 /// <summary>
-/// Configuration for the NLP (Natural Language Processing) and language detection module.
+/// Configuration for text phonemization and language detection.
 /// </summary>
 public class PhonemizerSettings
 {
@@ -12,6 +12,9 @@ public class PhonemizerSettings
     public List<string> SupportedLanguages { get; set; } = [];
 
     public bool UseLanguageDetector { get; set; } = true;
+
+    /// <summary>Read supported emoji names using the Piper model's eSpeak language and dialect. Enabled by default.</summary>
+    public bool ReadEmojis { get; set; } = true;
 
     // --- Local Evidence Parameters ---
 

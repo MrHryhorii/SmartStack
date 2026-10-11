@@ -17,5 +17,7 @@
     <Compile Include="../../Services/EspeakLinguaMapper.cs" Link="EspeakLinguaMapper.cs" />
     <Compile Include="../../Services/MixedLanguagePhonemizer.cs" Link="MixedLanguagePhonemizer.cs" />
     <Compile Include="../../Services/DynamicPunctuationMapper.cs" Link="DynamicPunctuationMapper.cs" />
+    <Compile Include="../../Models/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
+    <Compile Include="../../Services/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
   </ItemGroup>
 </Project>

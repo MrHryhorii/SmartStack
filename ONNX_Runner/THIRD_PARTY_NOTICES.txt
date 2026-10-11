@@ -244,3 +244,9 @@ Project artwork
 The project author created tsubaki_img.png, tsubaki-tts.png, tsubaki.ico,
 and wwwroot/tsubaki.svg. They are project-owned artwork; no external image
 license or attribution is required for these files.
+
+Unicode Emoji Property Data (Unicode 17.0)
+Source: https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt
+License: Unicode License V3
+Local license: THIRD_PARTY_LICENSES/Unicode-LICENSE.txt
+Used by Models/UnicodeEmojiData.cs for emoji classification; spoken names remain provided by eSpeak dictionaries.

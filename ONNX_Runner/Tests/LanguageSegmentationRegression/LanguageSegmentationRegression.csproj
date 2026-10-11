@@ -21,5 +21,8 @@
     <Compile Include="../../Services/PiperPhonemizer.cs" Link="PiperPhonemizer.cs" />
     <Compile Include="../../Services/PhonemeFallbackMapper.cs" Link="PhonemeFallbackMapper.cs" />
     <Compile Include="../../Models/PiperConfig.cs" Link="PiperConfig.cs" />
+    <Compile Include="../../Models/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
+    <Compile Include="../../Services/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
+    <Compile Include="../../Services/UnifiedPhonemizer.Emojis.cs" Link="UnifiedPhonemizer.Emojis.cs" />
   </ItemGroup>
 </Project>

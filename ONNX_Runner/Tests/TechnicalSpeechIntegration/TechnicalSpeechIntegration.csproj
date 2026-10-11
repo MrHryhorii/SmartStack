@@ -24,5 +24,9 @@
     <Compile Include="../../Models/PiperConfig.cs" Link="PiperConfig.cs" />
     <Compile Include="../../Services/EspeakWrapper.cs" Link="EspeakWrapper.cs" />
     <Compile Include="../../Services/EspeakWrapper.Characters.cs" Link="EspeakWrapper.Characters.cs" />
+    <Compile Include="../../Models/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
+    <Compile Include="../../Services/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
+    <Compile Include="../../Services/UnifiedPhonemizer.Emojis.cs" Link="UnifiedPhonemizer.Emojis.cs" />
+    <Compile Include="../../Services/EspeakWrapper.Emojis.cs" Link="EspeakWrapper.Emojis.cs" />
   </ItemGroup>
 </Project>

@@ -41,12 +41,21 @@ const string technical = "Please open config.prod.json before the next build.";
 const string technicalSequence = "The variable user_name contains build_output.";
 const string rewritten = "Hello๚ Next… word\"word.";
 string unicode = string.Concat(Enumerable.Repeat("a\u0301", 96)) + "。";
+string largeEmojiToken = new string('x', 300) + "\u2764\uFE0F.json";
 string[] modelParts = ["en", "us"];
 
 var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
 {
+    ("emoji/ordinary-scan", () => EmojiTextRecognizer.FindNext(plain.AsSpan(), TextChunkerRules.Default, out _), 0),
+    ("emoji/composed", () => EmojiTextRecognizer.TryGetSpanLength("\U0001F469\U0001F3FD\u200D\U0001F4BB".AsSpan(), TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("emoji/keycap", () => EmojiTextRecognizer.TryGetSpanLength("1\uFE0F\u20E3".AsSpan(), TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("emoji/text-symbol", () => EmojiTextRecognizer.TryGetSpanLength("\u00A9".AsSpan(), TextChunkerRules.Default, out _) ? 1 : 0, 0),
     ("technical/classification", () => TechnicalTextRecognizer.TryGetSpanLength("user_name".AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
     ("technical/ordinary", () => TechnicalTextRecognizer.TryGetSpanLength("well-known".AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("technical/emoji-neutral", () => TechnicalTextRecognizer.TryGetSpanLength("is\u2764\uFE0Four".AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("technical/emoji-with-syntax", () => TechnicalTextRecognizer.TryGetSpanLength("user_\u2764\uFE0Fname".AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("technical/emoji-keycap", () => TechnicalTextRecognizer.TryGetSpanLength("is1\uFE0F\u20E3our".AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
+    ("technical/emoji-large", () => TechnicalTextRecognizer.TryGetSpanLength(largeEmojiToken.AsSpan(), 0, TextChunkerRules.Default, out int n) ? n : 0, 0),
     ("technical/number-exception", () => TechnicalTextRecognizer.ShouldSpeak("v1.0.9".AsSpan(), TextChunkerRules.Default) ? 1 : 0, 0),
     ("boundary/abbreviation", () => chunker.IsIntraSentencePeriod(abbreviations.AsSpan(), 2) ? 1 : 0, 0),
     ("boundary/name-binding", () => chunker.IsIntraSentencePeriod(nameBinding.AsSpan(), 2) ? 1 : 0, 0),

@@ -1811,6 +1811,15 @@ public partial class MixedLanguagePhonemizer
         {
             int currentLength = DecodeRune(input[index..], out Rune currentRune);
 
+            // Emoji are neutral source text, including presentation selectors on punctuation.
+            // Preserve their full text element without creating a new language-analysis phrase.
+            if (EmojiTextRecognizer.TryGetSpanLength(input[index..], _rules, out int emojiLength))
+            {
+                currentSubPhrase.Append(input.Slice(index, emojiLength));
+                index += emojiLength;
+                continue;
+            }
+
             // PROTECTED TECHNICAL SPAN: preserve URL/email/path/query/code punctuation as one
             // structural token, but do not let code-like text cast an independent Lingua vote.
             if (TechnicalTextRecognizer.TryGetSpanLength(input, index, _rules, out int technicalLength))
@@ -1851,7 +1860,8 @@ public partial class MixedLanguagePhonemizer
                         input[index..],
                         out Rune punctuationRune);
 
-                    if (!IsBoundaryPunctuation(punctuationRune))
+                    if (EmojiTextRecognizer.TryGetSpanLength(input[index..], _rules, out _) ||
+                        !IsBoundaryPunctuation(punctuationRune))
                     {
                         break;
                     }

@@ -15,6 +15,8 @@ public sealed class EspeakWrapper
     }
     public List<(char Character, string Voice)> CharacterCalls { get; } = [];
     public Dictionary<char, string> CharacterResults { get; } = [];
+    public List<(string Emoji, string Voice)> EmojiCalls { get; } = [];
+    public Dictionary<string, string> EmojiResults { get; } = new(StringComparer.Ordinal);
 
     public bool TryGetCharacterPhonemes(char character, string voice, out string phonemes)
     {
@@ -23,4 +25,11 @@ public sealed class EspeakWrapper
         return true;
     }
 
+
+    public bool TryGetEmojiPhonemes(string emoji, string voice, out string phonemes)
+    {
+        EmojiCalls.Add((emoji, voice));
+        phonemes = EmojiResults.TryGetValue(emoji, out string? result) ? result : "e";
+        return true;
+    }
 }

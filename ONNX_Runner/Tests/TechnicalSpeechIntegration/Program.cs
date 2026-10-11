@@ -150,6 +150,7 @@ foreach (var fixture in automaticFixtures)
 }
 
 SymbolPronunciationChecks.Run(bridge, config, detector, adapter, Check);
+EmojiPronunciationChecks.Run(bridge, config, detector, adapter, Check);
 
 // The declared English model language keeps these routing fixtures independent of the
 // supplied Piper inventory. Both routes use that inventory and the same native dictionaries.

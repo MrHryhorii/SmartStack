@@ -166,7 +166,7 @@ else if (!failuresOnly)
 int additionalTotal = 0;
 foreach (var test in SharedRulesChecks.Cases().Concat(TechnicalSpeechChecks.Cases())
     .Concat(TechnicalLanguageChecks.Cases()).Concat(LanguageDetectionSettingsChecks.Cases())
-    .Concat(ScriptOnlyLanguageChecks.Cases()))
+    .Concat(ScriptOnlyLanguageChecks.Cases()).Concat(EmojiChecks.Cases()))
 {
     additionalTotal++;
     try

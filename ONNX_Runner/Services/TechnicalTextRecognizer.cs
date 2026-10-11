@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using ONNX_Runner.Models;
 
@@ -78,6 +79,37 @@ public static class TechnicalTextRecognizer
     }
 
     private static bool IsTechnical(ReadOnlySpan<char> token, TextChunkerRules rules)
+    {
+        int relative = EmojiTextRecognizer.FindNext(token, rules, out int emojiLength);
+        if (relative < 0) return IsTechnicalCore(token, rules);
+
+        // Emoji are neutral even when attached to letters. Classify the remaining syntax,
+        // while preserving the original source span for downstream pronunciation.
+        char[]? rented = null;
+        Span<char> remaining = token.Length <= 256
+            ? stackalloc char[token.Length]
+            : (rented = ArrayPool<char>.Shared.Rent(token.Length));
+        try
+        {
+            int start = 0, written = 0;
+            while (relative >= 0)
+            {
+                token.Slice(start, relative).CopyTo(remaining[written..]);
+                written += relative;
+                start += relative + emojiLength;
+                relative = EmojiTextRecognizer.FindNext(token[start..], rules, out emojiLength);
+            }
+            token[start..].CopyTo(remaining[written..]);
+            written += token.Length - start;
+            return IsTechnicalCore(remaining[..written], rules);
+        }
+        finally
+        {
+            if (rented != null) ArrayPool<char>.Shared.Return(rented);
+        }
+    }
+
+    private static bool IsTechnicalCore(ReadOnlySpan<char> token, TextChunkerRules rules)
     {
         if (token.IndexOfAny(rules.TechnicalTokenMarkers) >= 0 ||
             token.StartsWith("www.".AsSpan(), StringComparison.OrdinalIgnoreCase) ||

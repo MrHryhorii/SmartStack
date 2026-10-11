@@ -20,9 +20,24 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 - No Python, no CUDA dependency hell
 - Windows and Linux support
 
-**Start here:** [Quick Start](#quick-start) · [Essential Settings](#essential-settings) · [Web Dashboard](#web-dashboard)
+**Start here**
 
-**Reference:** [API Endpoints](#api-endpoints) · [Voice Cloning](#voice-cloning-openvoice-v2) · [DSP Defaults](#server-side-dsp-defaults) · [Model Management](#installation--model-management) · [Server Configuration](#server-configuration-appsettingsjson) · [Language Tuning](#language-detection-configuration) · [Text Processing](#text-processing) · [Building and Tests](#building-from-source)
+- [Quick Start](#quick-start)
+- [Essential Settings](#essential-settings)
+- [Web Dashboard](#web-dashboard)
+
+**Reference**
+
+- [API Endpoints](#api-endpoints)
+- [Available Effects](#available-effects)
+- [Available Environments](#available-environments)
+- [Voice Cloning](#voice-cloning-openvoice-v2)
+- [DSP Defaults](#server-side-dsp-defaults)
+- [Model Management](#installation--model-management)
+- [Server Configuration](#server-configuration-appsettingsjson)
+- [Language Tuning](#language-detection-configuration)
+- [Text Processing](#text-processing)
+- [Building and Tests](#building-from-source)
 
 ---
 
@@ -178,15 +193,15 @@ and [ONNX Runtime Optimization](#onnx-runtime-optimization) for execution settin
 | `ModelSettings.ModelDirectory` | Select the folder containing a matching Piper `.onnx` and `.onnx.json` pair. The default is `Model`. |
 | `PhonemizerSettings.SupportedLanguages` | Add languages expected in your text. The model language is included automatically; a shorter candidate list reduces same-script ambiguity. |
 | `PhonemizerSettings.UseLanguageDetector` | Keep `true` for automatic routing; use `false` for the model language by default. A request's `language` still overrides pronunciation. |
+| `PhonemizerSettings.ReadEmojis` | Defaults to `true`: read supported emoji names using the model's language and dialect. Set `false` to skip emoji, including inside technical text. |
 | `ClonerSettings.EnableCloning` | Set `false` for base Piper TTS only. This skips OpenVoice model loading/downloading and voice fingerprint processing. Use `piper_base` in requests. |
 | `DspSettings.DefaultPitch` / `DefaultVolume` | Adjust the default voice pitch or loudness; `1.0` preserves the original scale. The shipped `VolumeBoosterDb: 8.0` adds gain separately. |
 | `ChunkerSettings.SentencePauseSeconds` | Adjust sentence pacing. The default `0.3` seconds scales with reading speed. |
 | `StreamSettings.EnableStreaming` | Enable progressive output for supported formats. WAV is always buffered. |
 | `EffectsSettings.EnableGlobalEffects` | Set `false` to bypass character effects, spatial environments, and their reverb tails. Pitch, volume, and the low-pass filter still work. |
 
-Older configuration files can omit new detector tuning values; their defaults
-remain active. To inspect the running build and its actual capabilities, open
-[`/tsbk/server/status`](http://localhost:5045/tsbk/server/status) locally.
+To inspect the running build and its actual capabilities, open
+`http://localhost:5045/tsbk/server/status` after starting the server.
 
 ---
 
@@ -289,7 +304,7 @@ Recommended server-side streaming configuration in `appsettings.json`:
 }
 ```
 
-`FlushAfterEachSentence: true` flushes each completed internal audio chunk immediately, including an `EarlySplit` first chunk. The setting name is retained for compatibility. This is recommended for AI companions and other latency-sensitive clients.
+`FlushAfterEachSentence: true` flushes each completed internal audio chunk immediately, including an `EarlySplit` first chunk, to reduce playback latency.
 
 > WAV does not support true chunked streaming because its header requires the final file size upfront. `mp3`, `opus`, `flac`, `aac`, `pcm`, and `b64_json` can stream progressively.
 
@@ -304,7 +319,7 @@ Recommended server-side streaming configuration in `appsettings.json`:
 3. Start or restart the server. On startup, Tsubaki extracts the voice fingerprint and creates a `.voice` file next to the sample.
 4. The new voice is then automatically available by that name in API requests and appears in the Web Dashboard voice list.
 
-The `.voice` fingerprint is created only when a source `.wav` is present. Once the fingerprint has been created, the source `.wav` can be removed; the `.voice` file is sufficient for using the cloned voice. If a `.wav` is present without a corresponding `.voice` file, Tsubaki creates the fingerprint automatically at startup.
+After the fingerprint is created, the source `.wav` can be removed; the `.voice` file is sufficient for using the cloned voice.
 
 Use it in any API request:
 
@@ -400,8 +415,6 @@ Tsubaki also exposes `/tsbk/audio/speech` for full per-request control. It uses 
 
 Only `input` is required; omitted optional fields fall back to their engine or server defaults. Use `/v1/...` for OpenAI-shaped clients and `/tsbk/...` when you want Tsubaki-specific controls.
 
-A detailed **Swagger UI** with every parameter is available at `http://localhost:5045/swagger` when running in Development mode.
-
 ### Full Request Example
 
 ```bash
@@ -485,7 +498,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | Parameter     | Type   | Description |
 | ------------- | ------ | ----------- |
 | `language`    | string | Forces an eSpeak language/dialect code (e.g. `"uk"`, `"fr-ca"`). Use `"auto"` or omit it for automatic detection and fallback routing. |
-| `early_split` | bool   | Lets only the first synthesis chunk end at conservative clause punctuation to reduce time to first audio; normal sentence chunking resumes afterward. This can slightly change the rhythm or intonation of the first sentence and is mainly useful for latency-sensitive or streaming output. Overrides `ChunkerSettings.EarlySplit`. |
+| `early_split` | bool   | Overrides `ChunkerSettings.EarlySplit` for this request. Allows one conservative first-clause split to reduce initial latency; later chunks follow normal sentence boundaries. It can change first-sentence intonation. |
 | `pitch`       | float  | Pitch multiplier. `1.0` is unchanged. |
 | `volume`      | float  | Output volume multiplier with soft-knee limiting. `1.0` is unchanged. |
 | `noise_scale` | float  | Pronunciation/intonation variance. Default: `0.667`. |
@@ -588,7 +601,9 @@ Server-wide volume multiplier with soft-knee limiting: `1.0` is unchanged, `0.5`
 
 Applies a fixed gain correction in decibels underneath `DefaultVolume`/`volume`. It is intended as a baseline calibration for the engine's output rather than a per-request volume preference. A value of `0` disables the correction.
 
-The booster and resolved `volume` are combined into a single final gain stage after character and spatial effects, before encoding. It is not an additional audio-processing pass. `VolumeBoosterDb` is server-only; clients that need a different playback level should use `volume`. A client that needs an *exact* absolute level can discover the current combined value via `GET /tsbk/server/status` → `dsp.volumeBoosterDb` / `dsp.defaultTotalGainDb`.
+The booster and `volume` are applied together after character and spatial effects, before encoding.
+`VolumeBoosterDb` is server-only; use `volume` for per-request adjustments.
+`GET /tsbk/server/status` reports the boost and combined default gain.
 
 ---
 
@@ -724,12 +739,13 @@ Tests are excluded from the server's compiled and published files.
 
 Tsubaki provides several build variants for different hardware configurations. You can build a **Lightweight CPU-only** version, or enable **WebGPU, DirectML, or CUDA** for hardware-accelerated configurations, especially voice cloning.
 
-> **Which version should I choose?**
-> For standard TTS generation, the **CPU-only version** is highly recommended. Piper models are designed to be fast and efficient on modern CPUs, making this the simplest option for most users.
+> **Which version should I choose?** Use **CPU-only** for base Piper synthesis.
+> For OpenVoice cloning, **WebGPU** provides GPU acceleration on Windows and Linux;
+> DirectML is an alternative on Windows, and CUDA supports NVIDIA GPUs on Linux.
 >
-> If you plan to use **Voice Cloning (OpenVoice V2)**, GPU acceleration is strongly recommended. WebGPU is the preferred choice for personal and local use because it provides broad GPU compatibility without requiring a vendor-specific runtime. DirectML is available as an alternative on Windows, while CUDA is available for NVIDIA GPUs on Linux.
->
-> **WebGPU and concurrency:** The current WebGPU implementation is optimized for local and personal use. Piper base synthesis remains on the CPU, while OpenVoice voice conversion can use the GPU. GPU cloning requests are currently processed one at a time for stability. This is usually not a limitation for a personal TTS setup, where requests are generated sequentially. If WebGPU is unavailable, the cloning stage automatically falls back to the CPU. Parallel GPU execution is planned for a future release.
+> **WebGPU:** Piper synthesis stays on the CPU. GPU voice conversion runs one request
+> at a time while CPU synthesis can prepare other requests. If WebGPU cannot initialize,
+> cloning falls back to the CPU.
 
 #### 1. Windows (WebGPU + CPU) — Recommended for Voice Cloning
 
@@ -861,7 +877,8 @@ CUDA and cuDNN libraries must also be discoverable by the Linux dynamic linker, 
 
 ## Server Configuration (appsettings.json)
 
-The `appsettings.json` file is completely pre-configured and ready to use out-of-the-box. Most users only ever need to set the model path and the languages list — everything else can safely be left at its defaults.
+Edit `appsettings.json` and restart the server. Start with [Essential Settings](#essential-settings);
+the sections below explain additional controls and tuning.
 
 ---
 
@@ -869,17 +886,12 @@ The `appsettings.json` file is completely pre-configured and ready to use out-of
 
 #### Cross-Language Pronunciation
 
-Tsubaki does not turn a monolingual Piper model into a true multilingual model. Instead, it allows the active voice to **approximate other languages using the sounds that model already knows how to produce**.
-
-When automatic language detection is enabled, Tsubaki can recognize languages listed in `SupportedLanguages` and phonemize each detected part of the text using the appropriate eSpeak language rules. The same behavior can be requested explicitly with the per-request `language` parameter when the language of the text is already known.
-
-The resulting phonemes are checked against the active Piper model. If a sound is not available in that model's phoneme inventory, Tsubaki maps it to the closest supported alternative. This allows foreign-language speech to remain understandable while naturally retaining some accent or losing distinctions that the base model cannot represent.
-
-In simplified form:
+Tsubaki approximates other languages with the active Piper voice. It selects eSpeak
+pronunciation rules automatically or follows the request's `language`, then maps
+unsupported sounds to the model's phoneme inventory. Foreign speech can retain an
+accent or lose distinctions the model cannot produce.
 
 `text → language selection → target-language phonemes → model phoneme adaptation → Piper`
-
-For the most reliable automatic switching, keep the languages you actually expect in `SupportedLanguages`. If the language is already known, passing `language` directly avoids the need to infer it.
 
 #### Inline Phoneme Input
 
@@ -901,8 +913,6 @@ The word is [hello].
 ```
 
 does not automatically bypass normal text pronunciation merely because brackets were used.
-
-This softer handling of single brackets and slashes is intentionally a compatibility safety net for applications or text formats that already use conventional pronunciation notation. Use `[[...]]` when raw phoneme input is intentional and unambiguous.
 
 #### Language Detection Configuration
 
@@ -999,7 +1009,7 @@ Routing selects eSpeak pronunciation rules, while the Piper model retains its vo
 
 - **`Kestrel > Endpoints > Http > Url`** — Defines the port the server listens on. Default is `http://+:5045`.
 
-- **`StartupSettings > OpenBrowserOnStart`** — Controls whether Tsubaki attempts to open the Web Dashboard after startup. The default is `true`. On supported Linux desktop environments the browser is launched independently of the server process, and browser startup is skipped when no graphical session is available. Set it to `false` for headless systems, services, or when you prefer to open `http://localhost:5045` manually. Docker disables automatic browser opening.
+- **`StartupSettings > OpenBrowserOnStart`** — Attempts to open the Web Dashboard after startup (default: `true`). Set `false` for services, headless use, or manual opening at `http://localhost:5045`. Linux skips this without a graphical session; Docker disables it.
 
 - **`CorsSettings`** — Controls which browser origins are allowed to call Tsubaki through CORS. `"AllowAnyOrigin": true` is convenient for a trusted local setup. Setting it to `false` restricts browser-origin requests to `"AllowedOrigins"`. CORS is not authentication or a firewall and does not prevent direct HTTP clients from reaching an exposed server.
 
@@ -1023,14 +1033,13 @@ Routing selects eSpeak pronunciation rules, while the Piper model retains its vo
 - **`EarlySplit`** — allows one conservative clause-level split before the first audio chunk to reduce time to first audio; normal sentence chunking resumes immediately afterward. This can slightly change the rhythm or intonation of the first sentence. It is mainly useful when low latency matters; for non-streaming output there is usually little benefit to enabling it. `/tsbk/audio/speech` can override it per request with `early_split`.
 - **`SentencePauseSeconds`** — pause added after completed sentence boundaries and explicit ordered-list markers. Early and emergency continuation chunks do not receive this artificial sentence pause.
 
-Technical identifiers, URLs, email addresses, paths, and attached operators are recognized
-before punctuation normalization. Their symbols are pronounced by name using the loaded
-Piper model's eSpeak voice, then adapted to its phoneme inventory. Unicode symbols prefer
-dictionary descriptions; punctuation uses literal character names. Underscores and dollar
-signs are spoken even though Piper also uses them as structural tokens.
-Ordinary punctuation retains its intonation; standalone decimals, versions, clock times,
-and IPv4 addresses retain normal eSpeak reading. Technical recognition also works when
-`UseLanguageDetector` is disabled. These are structural heuristics, not a code parser.
+- **Technical text** — Reads supported symbols by name in identifiers, URLs, emails,
+  paths, and attached operators. Ordinary punctuation and numbers keep normal reading.
+- **`PhonemizerSettings.ReadEmojis`** — `true` (default) reads supported emoji names;
+  `false` skips emoji in all text. Unsupported emoji are skipped, preserving surrounding punctuation.
+
+Symbol and emoji names use the model's language and dialect, regardless of the request's
+`language`. Emoji do not create sentence boundaries or language switches.
 
 <details>
 <summary><strong>Advanced: Add custom abbreviation and punctuation rules</strong></summary>
@@ -1095,16 +1104,23 @@ prefixes before names, such as `id. Kovács`.
 pause, and closing punctuation have separate extension arrays. Custom punctuation
 entries currently accept individual BMP punctuation marks or line boundaries.
 
+#### Technical symbol rules
+
+Technical recognition uses structural heuristics and also works with `UseLanguageDetector: false`.
+Unicode symbols prefer dictionary descriptions; punctuation uses literal character names.
+Underscores and dollar signs are spoken despite their structural role in Piper.
+Standalone decimals, versions, clock times, and IPv4 addresses keep normal eSpeak reading.
+
 `AdditionalTechnicalTokenMarkers` adds structural markers for technical-token recognition,
 for example `["§"]`. Entries must be individual BMP punctuation or symbol characters.
 Within a recognized technical token, BMP punctuation and symbols are read by name;
-letters, digits, and combining marks stay on the ordinary phonemization path. Names are
-cached after model adaptation and are never submitted to language detection as words.
+letters, digits, and combining marks stay on the ordinary phonemization path. Spoken
+names do not contribute language-detection votes.
 Unicode operators, currencies, and connector punctuation are structural evidence;
 other Unicode symbols become evidence when attached to text or numbers. File globs
 and pointers are recognized without treating wrapped Markdown emphasis as technical.
-A lexical hyphen or apostrophe alone does not classify a word as technical. Supplementary
-symbols and whitespace-separated code constructs are outside this character-name heuristic.
+A lexical hyphen or apostrophe alone does not classify a word as technical. Non-emoji
+supplementary symbols and whitespace-separated code constructs are outside this character-name heuristic.
 
 </details>
 
@@ -1126,11 +1142,11 @@ symbols and whitespace-separated code constructs are outside this character-name
 
 | Parameter                 | Description                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MaxConcurrentGpuRequests` | Maximum number of requests processed on the GPU simultaneously. **On CUDA (NVIDIA, Linux only), this is primarily a concurrency throttle** — concurrent requests share the same loaded model rather than requiring one full model copy per request. **On DirectML (Windows — NVIDIA, AMD, and Intel all route through this backend), this number is not just a throttle — it is the exact size of the session pool kept resident in VRAM**, because DirectML cannot run one session from multiple threads concurrently. Raising this value on DirectML creates additional resident inference sessions and therefore increases VRAM usage; the exact increase depends on the model and ONNX Runtime/provider overhead. |
+| `MaxConcurrentGpuRequests` | Maximum simultaneous GPU requests. CUDA shares one loaded model; DirectML keeps a resident inference-session pool of this size because one session cannot run concurrently. Raising it on DirectML increases VRAM use. |
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value automatically derives a safe limit from the available logical processors and `OnnxSettings.Cpu.IntraOpNumThreads`. If `IntraOpNumThreads` is also automatic (`0`), Tsubaki uses one concurrent CPU request. |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
 | `OpenVoiceGpuDeviceId`     | Selects the GPU for OpenVoice. In WebGPU builds, Windows uses the DXGI adapter number; Linux uses a zero-based index among WebGPU-compatible GPUs. These indices are specific to each machine and may differ between Windows and Linux. |
-| `ForcePiperToCpu`          | Forces the base Piper model to execute on the CPU regardless of GPU presence. When `true` (Hybrid Routing), the CPU handles parallel Piper text-to-speech generation while the GPU is reserved exclusively for the computationally heavy OpenVoice cloning passes. This keeps CPU synthesis independent from the GPU voice-conversion stage, allowing the CPU to prepare additional requests while the GPU processes a cloned voice. |
+| `ForcePiperToCpu`          | Runs base Piper synthesis on the CPU. With `true`, GPU acceleration is reserved for OpenVoice conversion, so CPU synthesis can prepare other requests while voice conversion runs. |
 
 > **WebGPU note:** GPU voice conversion is currently processed one request at a time for stability, while multiple CPU synthesis requests can still be prepared in parallel.
 
@@ -1209,6 +1225,8 @@ Both settings only affect the CPU execution path — GPU threading and concurren
 
 ## API Endpoints
 
+The paths below are relative to the server's base URL (`http://localhost:5045` by default).
+
 **OpenAI-compatible:**
 
 | Method | Endpoint          | Description                     |
@@ -1230,8 +1248,6 @@ Both settings only affect the CPU execution path — GPU threading and concurren
 | `GET`  | `/tsbk/server/status`      | Version, initialized capabilities, and current defaults |
 
 `/tsbk/server/status` distinguishes configured settings from initialized capabilities.
-Existing defaults remain available, including `dsp.volumeBoosterDb` and
-`dsp.defaultTotalGainDb`; muted default volume reports the latter as `null`.
 
 | Field | Meaning |
 | --- | --- |
@@ -1243,10 +1259,9 @@ Existing defaults remain available, including `dsp.volumeBoosterDb` and
 | `language.supportedLanguages`, `language.detectionLanguages` | Configured extra candidates versus distinct recognized runtime candidates, including the model language. Aliases and dialect duplicates count once. Script fallbacks can still handle scripts outside this candidate list. |
 | `language.tuning` | The nine effective detector tuning values, using camelCase field names. Their effects are explained under [Language Detection Configuration](#language-detection-configuration). |
 | `chunking` | Effective `earlySplit`, `maxChunkLength`, and `sentencePauseSeconds` defaults. |
-
-`effects.enabled` controls both character and spatial effects. Streaming and format
-fields describe server support; WAV output remains buffered. Readiness indicates
-initialization, not that the request queue is empty or every input can be synthesized.
+| `dsp.volumeBoosterDb`, `dsp.defaultTotalGainDb` | Configured gain boost and combined default gain in dB; the latter is `null` when default volume is muted. |
+| `effects.enabled` | Master switch for character and spatial effects. |
+| `streaming`, `formats` | Streaming defaults and currently available output formats. WAV remains buffered. |
 
 **Universal:**
 

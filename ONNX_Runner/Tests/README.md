@@ -4,7 +4,7 @@
 is a local text-to-speech engine built with C# (.NET 10), Piper voice models, and
 ONNX Runtime. These standalone console projects check the text preprocessing
 used before speech synthesis: multilingual sentence boundaries, abbreviations,
-initials, language segmentation, punctuation normalization, technical-symbol pronunciation,
+initials, language segmentation, punctuation normalization, technical-symbol and emoji pronunciation,
 and managed allocations. Server configuration checks also cover capability reporting
 and optional CPU waveform comparisons for DSP controls.
 
@@ -13,9 +13,9 @@ and optional CPU waveform comparisons for DSP controls.
 | Project | Purpose |
 | --- | --- |
 | [TextChunkerRegression](TextChunkerRegression/) | Check sentence boundaries around abbreviations, initials, names, references, technical addresses, and Unicode punctuation. Verify line boundaries, list markers, chunk limits, completion flags, Unicode text integrity, and optional custom rules. |
-| [LanguageSegmentationRegression](LanguageSegmentationRegression/) | Check source preservation, shared rules, abbreviations, initials, and technical phrase boundaries. Exercise real Lingua with competing same-script languages and model/script routing with empty, duplicate, or unmapped candidates. Verify configuration binding, confidence and margin boundaries, technical-context inheritance, dialects, forced languages, and the Latin classification of romaji. |
+| [LanguageSegmentationRegression](LanguageSegmentationRegression/) | Check source preservation, shared rules, abbreviations, initials, and technical phrase boundaries. Exercise real Lingua with competing same-script languages and model/script routing with empty, duplicate, or unmapped candidates. Verify configuration binding, confidence and margin boundaries, technical-context inheritance, dialects, forced languages, and the Latin classification of romaji. Check complete emoji sequences, neutral language analysis, enabled defaults, and explicit disabling in ordinary and technical text. |
 | [PunctuationRegression](PunctuationRegression/) | Check Unicode punctuation, including Thai sentence endings, against the symbols supported by a Piper model. Verify custom punctuation rules, compound marks, lexical connectors, normalization idempotence, and model control-token handling. |
-| [TechnicalSpeechIntegration](TechnicalSpeechIntegration/) | Check complete symbol descriptions against explicitly declared spoken names. Preserve literal punctuation names, localized pronunciation, compatible fullwidth characters, native voice state, callbacks, and cached output under concurrent calls. Verify adapted phoneme coverage and complete technical names in Piper IDs. Compare statistical and model/script routing against explicit-language native references. |
+| [TechnicalSpeechIntegration](TechnicalSpeechIntegration/) | Check complete symbol and emoji descriptions against explicitly declared spoken names. Preserve literal punctuation names, localized pronunciation, compatible fullwidth characters, native voice state, callbacks, and cached output under concurrent calls. Verify adapted phoneme coverage and complete technical names in Piper IDs. Compare statistical and model/script routing against explicit-language native references. Check default emoji reading, explicit disabling, and the model's exact dialect. |
 | [TextAnalysisAllocations](TextAnalysisAllocations/) | Detect unexpected managed allocations in text analysis using explicit budgets, and report other scenarios for local investigation. See [Managed allocation checks](#managed-allocation-checks) below. |
 | [ServerConfigurationRegression](ServerConfigurationRegression/) | Check version consistency, liveness versus readiness, available capabilities, detector candidates and tuning, configuration defaults, named format validation, JSON ranges and request overrides, and effective emergency chunk limits. Optional CPU waveform checks cover the DSP master switch, character/spatial overrides, tails, volume, and safe voice fallback with cloning enabled. |
 

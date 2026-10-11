@@ -45,13 +45,15 @@ public partial class UnifiedPhonemizer
         DynamicPunctuationMapper punctuationMapper,
         PiperConfig piperConfig,
         MixedLanguagePhonemizer? mixedPhonemizer = null,
-        PhonemeFallbackMapper? fallbackMapper = null)
+        PhonemeFallbackMapper? fallbackMapper = null,
+        PhonemizerSettings? settings = null)
     {
         _espeakWrapper = espeakWrapper;
         _punctuationMapper = punctuationMapper;
         _piperConfig = piperConfig;
         _mixedPhonemizer = mixedPhonemizer;
         _fallbackMapper = fallbackMapper;
+        _readEmojis = settings?.ReadEmojis ?? true;
 
         _modelEspeakVoice = _piperConfig.Espeak.Voice ?? "en";
         _modelEspeakCode = _modelEspeakVoice
@@ -222,71 +224,78 @@ public partial class UnifiedPhonemizer
                 continue;
             }
 
-            if (chunk.IsTechnical &&
-                TechnicalTextRecognizer.ShouldSpeak(chunk.Text.AsSpan(), _punctuationMapper.Rules))
-            {
-                AppendTechnicalPhonemes(chunk.Text, chunk.DetectedLanguage, finalPhonemes);
-                previousTechnicalSpeech = true;
-                continue;
-            }
-
-            // Punctuation normalization intentionally happens AFTER language segmentation. The
-            // structural tokenizer therefore sees original technical syntax, while eSpeak/Piper
-            // still receives only punctuation supported (or safely degraded) by the loaded model.
-            string normalizedText = _punctuationMapper.Normalize(chunk.Text);
-            if (normalizedText.Length == 0)
-            {
-                continue;
-            }
-
-            if (chunk.IsPunctuationOrSpace)
-            {
-                AppendPunctuationToken(
-                    chunk,
-                    normalizedText,
-                    tokenIndex,
-                    tokens,
-                    finalPhonemes);
-
-                continue;
-            }
-
-            ReadOnlySpan<char> chunkSpan = normalizedText.AsSpan();
-
-            // PREFIX, CORE, AND SUFFIX EXTRACTION:
-            // Isolates the core word from surrounding punctuation to prevent eSpeak mispronunciations.
-            int start = FindCoreStart(chunkSpan);
-            int end = FindCoreEnd(chunkSpan, start);
-
-            finalPhonemes.Append(chunkSpan[..start]);
-
-            if (start < end)
-            {
-                string core = chunkSpan[start..end].ToString();
-                string? rawPhonemes = TryGetIpaPhonemesSafely(
-                    core,
-                    chunk.DetectedLanguage);
-
-                if (rawPhonemes != null)
-                {
-                    // A silent quote can abut a technical name without source whitespace.
-                    if (previousTechnicalSpeech) EspeakPhonemePartJoiner.Separate(finalPhonemes, rawPhonemes);
-                    previousTechnicalSpeech = false;
-                    if (_fallbackMapper != null)
-                    {
-                        AppendValidatedPhonemes(rawPhonemes, finalPhonemes);
-                    }
-                    else
-                    {
-                        finalPhonemes.Append(rawPhonemes);
-                    }
-                }
-            }
-
-            finalPhonemes.Append(chunkSpan[end..]);
+            if (TryAppendEmojiChunk(chunk, tokenIndex, tokens, finalPhonemes, ref previousTechnicalSpeech)) continue;
+            AppendTextChunk(chunk, tokenIndex, tokens, finalPhonemes, ref previousTechnicalSpeech);
         }
 
         return finalPhonemes.ToString();
+    }
+
+    private void AppendTextChunk(TextChunk chunk, int tokenIndex, List<TextChunk> tokens,
+        StringBuilder finalPhonemes, ref bool previousTechnicalSpeech)
+    {
+        if (chunk.IsTechnical &&
+            TechnicalTextRecognizer.ShouldSpeak(chunk.Text.AsSpan(), _punctuationMapper.Rules))
+        {
+            AppendTechnicalPhonemes(chunk.Text, chunk.DetectedLanguage, finalPhonemes);
+            previousTechnicalSpeech = true;
+            return;
+        }
+
+        // Punctuation normalization intentionally happens AFTER language segmentation. The
+        // structural tokenizer therefore sees original technical syntax, while eSpeak/Piper
+        // still receives only punctuation supported (or safely degraded) by the loaded model.
+        string normalizedText = _punctuationMapper.Normalize(chunk.Text);
+        if (normalizedText.Length == 0)
+        {
+            return;
+        }
+
+        if (chunk.IsPunctuationOrSpace)
+        {
+            AppendPunctuationToken(
+                chunk,
+                normalizedText,
+                tokenIndex,
+                tokens,
+                finalPhonemes);
+
+            return;
+        }
+
+        ReadOnlySpan<char> chunkSpan = normalizedText.AsSpan();
+
+        // PREFIX, CORE, AND SUFFIX EXTRACTION:
+        // Isolates the core word from surrounding punctuation to prevent eSpeak mispronunciations.
+        int start = FindCoreStart(chunkSpan);
+        int end = FindCoreEnd(chunkSpan, start);
+
+        finalPhonemes.Append(chunkSpan[..start]);
+
+        if (start < end)
+        {
+            string core = chunkSpan[start..end].ToString();
+            string? rawPhonemes = TryGetIpaPhonemesSafely(
+                core,
+                chunk.DetectedLanguage);
+
+            if (rawPhonemes != null)
+            {
+                // A silent quote can abut a technical name without source whitespace.
+                if (previousTechnicalSpeech) EspeakPhonemePartJoiner.Separate(finalPhonemes, rawPhonemes);
+                previousTechnicalSpeech = false;
+                if (_fallbackMapper != null)
+                {
+                    AppendValidatedPhonemes(rawPhonemes, finalPhonemes);
+                }
+                else
+                {
+                    finalPhonemes.Append(rawPhonemes);
+                }
+            }
+        }
+
+        finalPhonemes.Append(chunkSpan[end..]);
     }
 
     // Splits a protected token without allocating a list of parts or spelling names.

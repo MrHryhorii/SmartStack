@@ -371,7 +371,8 @@ if (piperConfig != null && piperModelPath != null)
         builder.Services.AddSingleton(mixedPhonemizer);
     }
 
-    var unifiedPhonemizer = new UnifiedPhonemizer(mixedEspeak, punctuationMapper, piperConfig, mixedPhonemizer, fallbackMapper);
+    var unifiedPhonemizer = new UnifiedPhonemizer(mixedEspeak, punctuationMapper, piperConfig,
+        mixedPhonemizer, fallbackMapper, phonemizerConfig);
     builder.Services.AddSingleton(unifiedPhonemizer);
 }
 // =================================================================
