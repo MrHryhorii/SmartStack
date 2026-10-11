@@ -425,6 +425,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
     "input": "This message is coming from an old intercom.",
     "voice": "John",
     "response_format": "mp3",
+    "samplerate": 22050,
     "speed": 1.0,
     "stream": true,
     "stream_format": "audio",
@@ -501,8 +502,14 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | `early_split` | bool   | Overrides `ChunkerSettings.EarlySplit` for this request. Allows one conservative first-clause split to reduce initial latency; later chunks follow normal sentence boundaries. It can change first-sentence intonation. |
 | `pitch`       | float  | Pitch multiplier. `1.0` is unchanged. |
 | `volume`      | float  | Output volume multiplier with soft-knee limiting. `1.0` is unchanged. |
+| `samplerate`  | int    | Output sample rate in Hz. Omit it or use `null` to inherit `DspSettings.DefaultSampleRate`; `0` keeps the normal model/codec rate. Other values are clamped to `8000`–`48000`. |
 | `noise_scale` | float  | Pronunciation/intonation variance. Default: `0.667`. |
 | `noise_w`     | float  | Phoneme-duration/rhythm variance. Default: `0.8`. |
+
+Resampling is applied after effects and voice cloning, before output encoding.
+Lower sample rates reduce high-frequency detail; increasing the rate does not restore it.
+
+> **Format limits:** WAV, PCM, and FLAC use the requested rate within the allowed range. MP3, AAC, and the MP3 inside `b64_json` use the nearest supported codec rate. Opus uses the nearest supported encoder rate; Ogg Opus is reported as `48000` Hz regardless of its encoder input rate. Use the response's `X-Audio-Sample-Rate` header for the actual output rate.
 
 ### Cloning Parameters
 
@@ -542,7 +549,7 @@ Requests can override either default independently.
 
 Set `EnableGlobalEffects: false` to bypass both stages, including spatial reverb
 tails. Per-request effects cannot re-enable them while this switch is off.
-Pitch, volume, gain compensation, and the low-pass filter remain independent.
+Pitch, volume, output resampling, gain compensation, and the low-pass filter remain independent.
 An omitted `DefaultEnvironmentIntensity` uses `0.25`, matching the shipped configuration.
 
 ---
@@ -567,10 +574,11 @@ The extension applies only to spatial `environment` reverb. Character `effect`s 
 
 ---
 
-### Default Pitch & Volume
+### Default Pitch, Volume & Sample Rate
 
 ```json
 "DspSettings": {
+  "DefaultSampleRate": 0,
   "EnableLowPassFilter": true,
   "LowPassCutoffFrequency": 11000.0,
   "LowPassQFactor": 0.577,
@@ -596,6 +604,12 @@ Server-wide pitch multiplier: `1.0` leaves pitch unchanged, while `0.5`/`2.0` sh
 #### DefaultVolume
 
 Server-wide volume multiplier with soft-knee limiting: `1.0` is unchanged, `0.5` is about −6 dB, `2.0` about +6 dB, and `4.0` is the maximum +12 dB setting. Tsubaki requests can override it with `volume`; `VolumeBoosterDb` is applied underneath this multiplier.
+
+#### DefaultSampleRate
+
+Server-wide output sample rate in Hz for both API endpoints. Default: `0`, which keeps the normal model/codec rate. Other values are clamped to `8000`–`48000` and follow the format limits described under [Synthesis Parameters](#synthesis-parameters).
+
+Tsubaki requests override it with `samplerate`; an explicit `0` bypasses the server's rate override for that request. Restart the server after changing this setting in `appsettings.json`.
 
 #### VolumeBoosterDb
 
@@ -1166,7 +1180,7 @@ supplementary symbols and whitespace-separated code constructs are outside this 
 
 - **`EffectsSettings`** — Server-wide default character effect and spatial environment, automatically applied to every request unless overridden by a custom client. See *Server-Side DSP Defaults* above for why this matters specifically for OpenAI-compatible clients.
 
-- **`DspSettings`** — Controls the low-pass cleanup filter used on cloned output, server-wide default pitch and volume, and the fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
+- **`DspSettings`** — Controls the low-pass cleanup filter used on cloned output, server-wide default pitch, volume, and output sample rate, and the fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
 
 - **`ClonerSettings`** — Server defaults for cloning strength, OpenVoice conversion stability, and reference-audio loudness normalization. See *Fine-Tuning Cloning Behavior* and *Cloned Voice Volume* above.
 - **`EnableCloning`** — Enables or disables OpenVoice voice cloning. Leave it `true` to use voices stored in the `Voices/` folder; when enabled, those voices are discovered automatically at server startup and appear in the Web Dashboard voice list.
@@ -1259,6 +1273,7 @@ The paths below are relative to the server's base URL (`http://localhost:5045` b
 | `language.supportedLanguages`, `language.detectionLanguages` | Configured extra candidates versus distinct recognized runtime candidates, including the model language. Aliases and dialect duplicates count once. Script fallbacks can still handle scripts outside this candidate list. |
 | `language.tuning` | The nine effective detector tuning values, using camelCase field names. Their effects are explained under [Language Detection Configuration](#language-detection-configuration). |
 | `chunking` | Effective `earlySplit`, `maxChunkLength`, and `sentencePauseSeconds` defaults. |
+| `dsp.defaultSampleRate` | Configured output sample rate in Hz; `0` keeps the normal model/codec rate. The actual rate for a speech response is given by `X-Audio-Sample-Rate`. |
 | `dsp.volumeBoosterDb`, `dsp.defaultTotalGainDb` | Configured gain boost and combined default gain in dB; the latter is `null` when default volume is muted. |
 | `effects.enabled` | Master switch for character and spatial effects. |
 | `streaming`, `formats` | Streaming defaults and currently available output formats. WAV remains buffered. |
