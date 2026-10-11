@@ -22,6 +22,7 @@ internal static class EmojiPronunciationChecks
         ("1\uFE0F\u20E3", "one")
     ];
 
+    /// <summary>Checks real eSpeak emoji names, unsupported sequences, model dialects, adaptation, and cached concurrent reading.</summary>
     internal static void Run(EspeakWrapper bridge, PiperConfig config, MixedLanguagePhonemizer detector,
         PhonemeFallbackMapper adapter, Action<string, Action> check)
     {
@@ -170,7 +171,9 @@ internal static class EmojiPronunciationChecks
         });
     }
 
+    /// <summary>Removes whitespace and stress marks when comparing spoken phoneme content.</summary>
     private static string Spoken(string value) => string.Concat(value.Where(c => !char.IsWhiteSpace(c) && c is not ('\u02C8' or '\u02CC')));
+    /// <summary>Throws with the supplied diagnostic when a native integration assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

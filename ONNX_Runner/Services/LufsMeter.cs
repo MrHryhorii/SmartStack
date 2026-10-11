@@ -34,6 +34,7 @@ public static class LufsMeter
     {
         private double _z1, _z2;
 
+        /// <summary>Filters one sample through a stateful biquad used by the loudness weighting stages.</summary>
         public double Process(double x)
         {
             double y = b0 * x + _z1;

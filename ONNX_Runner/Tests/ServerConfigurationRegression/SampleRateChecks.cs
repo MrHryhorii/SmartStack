@@ -9,6 +9,7 @@ using ONNX_Runner.Services.Synthesis;
 
 internal static class SampleRateChecks
 {
+    /// <summary>Checks rate binding, codec selection, incremental resampling, continuity, and managed allocation budgets.</summary>
     internal static void Run(Action<string, Action> check, NativeAudioDependencies native)
     {
         foreach (var (value, expected) in new (int?, int?)[]
@@ -139,6 +140,7 @@ internal static class SampleRateChecks
             var resampler = new AudioResampler(22050, 16000);
             var input = new float[1024];
             var output = new float[160];
+            // Feeds all input through the same warmed resampler to measure steady-state allocations.
             void Feed()
             {
                 int offset = 0;
@@ -176,6 +178,7 @@ internal static class SampleRateChecks
         }
     }
 
+    /// <summary>Resamples a signal in varied input partitions and collects the fully drained output.</summary>
     internal static float[] Resample(float[] input, int sourceRate, int targetRate, int[] partitions)
     {
         var resampler = new AudioResampler(sourceRate, targetRate);
@@ -205,6 +208,7 @@ internal static class SampleRateChecks
         return result.ToArray();
     }
 
+    /// <summary>Reads the sample rate from encoded format headers; raw PCM has no embedded rate metadata.</summary>
     internal static int ReadEncodedRate(byte[] data, AudioFormat format)
     {
         if (format == AudioFormat.Pcm) return data.Length > 0 ? -1 : 0;
@@ -226,9 +230,11 @@ internal static class SampleRateChecks
         return Mp3Frame.LoadFromStream(stream)?.SampleRate ?? throw new InvalidOperationException("MP3 frame header is missing.");
     }
 
+    /// <summary>Generates a mono sine wave with fixed amplitude for resampling checks.</summary>
     internal static float[] Tone(int length, int rate, double frequency)
         => Enumerable.Range(0, length).Select(i => (float)(.2 * Math.Sin(2 * Math.PI * frequency * i / rate))).ToArray();
 
+    /// <summary>Calculates root-mean-square amplitude for a nonempty test signal.</summary>
     private static double Rms(ReadOnlySpan<float> data)
     {
         double sum = 0;
@@ -236,6 +242,7 @@ internal static class SampleRateChecks
         return Math.Sqrt(sum / data.Length);
     }
 
+    /// <summary>Measures a frequency component using sine/cosine projection away from signal edges.</summary>
     private static double ToneAmplitude(float[] data, int rate, double frequency)
     {
         double sine = 0, cosine = 0;
@@ -249,6 +256,7 @@ internal static class SampleRateChecks
         return 2 * Math.Sqrt(sine * sine + cosine * cosine) / (end - start);
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

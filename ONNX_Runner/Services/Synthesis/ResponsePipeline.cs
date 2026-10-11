@@ -65,6 +65,7 @@ internal static class ResponsePipeline
         public bool PayloadOpened;
         public bool PayloadClosed;
     }
+    /// <summary>Resolves buffering, payload framing, and streaming policy; WAV uses buffered delivery.</summary>
     public static Plan Resolve(
         SynthesisRequest request,
         SynthesisContext ctx,
@@ -88,6 +89,7 @@ internal static class ResponsePipeline
             useStreaming && streamConfig.FlushAfterEachSentence,
             chunkSize);
     }
+    /// <summary>Creates a memory buffer or a pooled channel transport according to the response plan.</summary>
     public static void CreateTransport(
         ref State state,
         Plan plan)
@@ -106,6 +108,7 @@ internal static class ResponsePipeline
         state.NetworkChannel = Channel.CreateBounded<(byte[] Buffer, int Length)>(channelOptions);
         state.RawStream = new BridgingStream(state.NetworkChannel.Writer, plan.ChunkSize);
     }
+    /// <summary>Sets response codec/rate metadata and the content headers required by the chosen transport.</summary>
     public static void ConfigureHeaders(
         Plan plan,
         SynthesisRequest request,
@@ -134,6 +137,7 @@ internal static class ResponsePipeline
         // B64Json keeps its dedicated application/json MIME type here as well.
         httpContext.Response.ContentType = AudioStreamManager.GetMimeType(request.Format);
     }
+    /// <summary>Starts the asynchronous audio or SSE sender for an already-created network channel.</summary>
     public static void StartNetworkSender(
         ref State state,
         Plan plan,
@@ -158,6 +162,7 @@ internal static class ResponsePipeline
                 httpContext.Response.Body,
                 cancellationToken);
     }
+    /// <summary>Opens the encoder target, adding JSON/Base64 framing only for non-SSE Base64 responses.</summary>
     public static void OpenPayload(
         ref State state,
         Plan plan)
@@ -196,6 +201,7 @@ internal static class ResponsePipeline
         }
     }
 
+    /// <summary>Finalizes payload framing once, including pending Base64 bytes and the closing JSON delimiter.</summary>
     public static void ClosePayload(
         ref State state,
         Plan plan)
@@ -230,6 +236,7 @@ internal static class ResponsePipeline
                 throw new ArgumentOutOfRangeException(nameof(plan), plan.Payload, "Unsupported response payload.");
         }
     }
+    /// <summary>Completes streaming delivery or returns buffered audio, JSON, or SSE after synthesis finishes.</summary>
     public static async Task<IResult> CompleteAsync(
         State state,
         Plan plan,
@@ -289,6 +296,7 @@ internal static class ResponsePipeline
             AudioStreamManager.GetMimeType(request.Format),
             fileName);
     }
+    /// <summary>Aborts network delivery, waits for its sender, and returns queued buffers without flushing abandoned audio.</summary>
     public static async Task AbortAsync(
         State state,
         Exception? error = null)
@@ -317,6 +325,7 @@ internal static class ResponsePipeline
         // that might already have been queued by response framing or cleanup logic.
         DrainQueuedBuffers(state.NetworkChannel.Reader);
     }
+    /// <summary>Disposes owned response streams and clears references after completion or failure.</summary>
     public static void Dispose(ref State state)
     {
         // Normally Base64Stream is already disposed by ClosePayload. This fallback only covers
@@ -336,6 +345,7 @@ internal static class ResponsePipeline
         state.RawStream = null;
     }
 
+    /// <summary>Attempts payload finalization during cleanup without replacing the original pipeline exception.</summary>
     public static void TryClosePayload(
         ref State state,
         Plan plan)
@@ -354,6 +364,7 @@ internal static class ResponsePipeline
             // Best-effort cleanup only. The original pipeline exception remains authoritative.
         }
     }
+    /// <summary>Sends channel chunks to the response body and returns each rented buffer after use.</summary>
     private static async Task SendToNetworkAsync(
         Channel<(byte[] Buffer, int Length)> channel,
         Stream responseBody,
@@ -374,8 +385,7 @@ internal static class ResponsePipeline
                 }
                 finally
                 {
-                    // CRITICAL ZERO-ALLOCATION REQUIREMENT:
-                    // Always return the network chunk array to the shared pool after it has been sent.
+                    // Return the network buffer after a successful write or a transport failure.
                     ArrayPool<byte>.Shared.Return(chunk.Buffer);
                 }
             }
@@ -396,6 +406,7 @@ internal static class ResponsePipeline
             DrainQueuedBuffers(channel.Reader);
         }
     }
+    /// <summary>Sends channel chunks as SSE deltas, returning buffers and emitting the completion event on success.</summary>
     private static async Task SendSseToNetworkAsync(
         Channel<(byte[] Buffer, int Length)> channel,
         PipeWriter responseWriter,
@@ -437,6 +448,7 @@ internal static class ResponsePipeline
             DrainQueuedBuffers(channel.Reader);
         }
     }
+    /// <summary>Frames buffered output as SSE deltas followed by the completion event.</summary>
     private static async Task SendBufferedSseAsync(
         MemoryStream memoryStream,
         PipeWriter responseWriter,
@@ -472,6 +484,7 @@ internal static class ResponsePipeline
         FlushResult doneResult = await responseWriter.FlushAsync(cancellationToken);
         ThrowIfSseTransportClosed(doneResult, cancellationToken);
     }
+    /// <summary>Writes one Base64-encoded audio delta directly into the SSE pipe buffer.</summary>
     private static void WriteSseDelta(
         PipeWriter writer,
         ReadOnlySpan<byte> audio,
@@ -503,6 +516,7 @@ internal static class ResponsePipeline
         offset += suffix.Length;
         writer.Advance(offset);
     }
+    /// <summary>Writes the SSE completion event into the response pipe.</summary>
     private static void WriteSseDone(PipeWriter writer)
     {
         ReadOnlySpan<byte> doneEvent = SseDoneEvent;
@@ -510,6 +524,7 @@ internal static class ResponsePipeline
         doneEvent.CopyTo(destination);
         writer.Advance(doneEvent.Length);
     }
+    /// <summary>Turns a canceled or closed SSE flush result into an exception for transport cleanup.</summary>
     private static void ThrowIfSseTransportClosed(
         FlushResult result,
         CancellationToken cancellationToken)
@@ -523,6 +538,7 @@ internal static class ResponsePipeline
             throw new IOException("The SSE response transport was closed by the client.");
         }
     }
+    /// <summary>Returns any unread channel buffers to the shared pool.</summary>
     private static void DrainQueuedBuffers(
         ChannelReader<(byte[] Buffer, int Length)> reader)
     {
@@ -531,6 +547,7 @@ internal static class ResponsePipeline
             ArrayPool<byte>.Shared.Return(chunk.Buffer);
         }
     }
+    /// <summary>Returns the response codec label, using fixed strings for common formats.</summary>
     private static string GetCodecName(AudioFormat format)
     {
         // Avoid ToString().ToLowerInvariant() allocations for the hot/common formats.

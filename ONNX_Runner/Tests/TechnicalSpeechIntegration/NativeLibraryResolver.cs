@@ -7,6 +7,7 @@ internal static class NativeLibraryResolver
 {
     internal const string EspeakImportName = "espeak-ng";
 
+    /// <summary>Pins engine eSpeak imports to the explicitly supplied native library for this test process.</summary>
     internal static void Initialize(string libraryPath)
     {
         NativeLibrary.SetDllImportResolver(

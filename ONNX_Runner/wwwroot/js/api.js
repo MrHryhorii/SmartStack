@@ -1,6 +1,7 @@
 // Uses same-origin Tsubaki routes so the dashboard follows the server host and port.
 const BASE_URL = '/tsbk/audio';
 
+// Fetches available voice IDs, falling back to the base Piper voice on failure.
 export async function getVoices() {
     try {
         const res = await fetch(`${BASE_URL}/voices`);
@@ -12,6 +13,7 @@ export async function getVoices() {
     }
 }
 
+// Fetches available voice effects, falling back to None on failure.
 export async function getEffects() {
     try {
         const res = await fetch(`${BASE_URL}/effects`);
@@ -23,6 +25,7 @@ export async function getEffects() {
     }
 }
 
+// Fetches available spatial environments, falling back to None on failure.
 export async function getEnvironments() {
     try {
         const res = await fetch(`${BASE_URL}/environments`);
@@ -34,6 +37,7 @@ export async function getEnvironments() {
     }
 }
 
+// Posts a speech request and returns its response, surfacing server validation errors.
 export async function synthesizeSpeech(payload) {
     const res = await fetch(`${BASE_URL}/speech`, {
         method: 'POST',

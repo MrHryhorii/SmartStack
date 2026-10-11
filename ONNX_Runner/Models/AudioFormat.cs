@@ -19,6 +19,7 @@ public enum AudioFormat
 /// <summary>Parses named wire formats without accepting numeric or composite enum values.</summary>
 internal static class AudioFormatParser
 {
+    /// <summary>Parses a named audio format, defaulting null to MP3 and rejecting numeric or composite enum values.</summary>
     public static bool TryParse(string? value, out AudioFormat format)
     {
         ReadOnlySpan<char> candidate = value is null ? "mp3" : value.AsSpan().Trim();

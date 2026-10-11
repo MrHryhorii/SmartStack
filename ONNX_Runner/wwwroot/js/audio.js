@@ -5,6 +5,7 @@ import {
 
 const DEFAULT_SAMPLE_RATE = 22050;
 
+// Accepts a positive numeric sample rate or uses the playback default.
 function resolveSampleRate(sampleRate) {
     const value = Number(sampleRate);
 
@@ -190,6 +191,7 @@ export const AudioEngine = {
         );
     },
 
+    // Connects live playback gain to the player's current volume and mute controls.
     bindLiveOutput(
         gainNode,
         player
@@ -234,6 +236,7 @@ export const AudioEngine = {
                 : resolvedVolume;
     },
 
+    // Checks whether an active or prepared live playback context can respond to controls.
     hasLiveControl() {
         return Boolean(
             (
@@ -561,6 +564,7 @@ export const AudioEngine = {
     }
 };
 
+// Creates an AudioContext at the requested rate, falling back to the browser default if rejected.
 function createAudioContextForRate(
     AudioContextClass,
     sampleRate
@@ -578,6 +582,7 @@ function createAudioContextForRate(
     }
 }
 
+// Creates a silent media stream so the audio element can expose live playback controls.
 function createSilentControlDestination(
     audioContext,
     player
@@ -612,6 +617,7 @@ function createSilentControlDestination(
     }
 }
 
+// Attempts to start the player's silent control stream without interrupting audio delivery.
 function ensureControlStreamPlaying(
     player,
     controlDestination
@@ -640,6 +646,7 @@ function ensureControlStreamPlaying(
     );
 }
 
+// Detaches the silent control stream only when it still belongs to this playback session.
 function detachControlDestination(
     player,
     controlDestination

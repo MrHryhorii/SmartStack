@@ -62,6 +62,7 @@ public partial class OpenVoiceRunner : IDisposable
     // int.MaxValue for CUDA/CPU). Single source of truth, mirroring PiperRunner.ConcurrencyCapacity.
     public int ColorConcurrencyCapacity { get; private set; }
 
+    /// <summary>Initializes tone extraction/color sessions and their concurrency gate from model and hardware settings.</summary>
     public OpenVoiceRunner(string extractPath, string colorPath, ToneConfig config, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<OpenVoiceRunner> logger)
     {
         _config = config;
@@ -357,11 +358,9 @@ public partial class OpenVoiceRunner : IDisposable
     // --- EMBEDDING EXTRACTION & FINGERPRINT MANAGEMENT ---
 
     /// <summary>
-    /// Extracts a 256-dimensional tone embedding (fingerprint) from a provided audio spectrogram.
-    /// This acts as the mathematical 'DNA' of a specific voice.
-    /// NOTE: Only ever called sequentially at startup under the current architecture,
-    /// so it talks directly to the single _extractSession without any pool routing.
-    /// </summary>
+/// Extracts a voice embedding matching the configured channel count from a [frames, bins] spectrogram.
+/// Called sequentially during startup before the single extractor session is unloaded.
+/// </summary>
     public float[] ExtractToneColor(float[,] spectrogram)
     {
         ArgumentNullException.ThrowIfNull(spectrogram);
@@ -446,6 +445,7 @@ public partial class OpenVoiceRunner : IDisposable
 
     // --- MODEL INSPECTION & DSP ---
 
+    /// <summary>Logs model configuration and tensor metadata during startup, before pooled sessions can be used concurrently.</summary>
     private void PrintModelMetadata()
     {
         _logger.LogInformation("=========================================");
@@ -500,9 +500,9 @@ public partial class OpenVoiceRunner : IDisposable
     }
 
     /// <summary>
-    /// Applies tone-color conversion using a flat spectrogram already arranged in the
-    /// [bins, frames] layout required by the ONNX model. Ownership remains with the caller.
-    /// </summary>
+/// Converts a caller-owned [bins, frames] spectrogram using the source and target voice embeddings.
+/// Returns pooled mono PCM; the caller must return Buffer to ArrayPool&lt;float&gt;.Shared.
+/// </summary>
     public (float[] Buffer, int Length) ApplyToneColor(
         float[] transposedSpectrogram,
         int frames,
@@ -714,37 +714,47 @@ public partial class OpenVoiceRunner : IDisposable
     }
 
     // =========================================================================
-    // HIGH-PERFORMANCE SOURCE GENERATED LOGGERS (Zero-Allocation)
+    // SOURCE GENERATED LOGGERS
     // =========================================================================
 
+    /// <summary>Logs successful OpenVoice loading on the selected CUDA device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (CUDA, Device ID: {DeviceId})")]
     private static partial void LogCudaLoaded(ILogger logger, int deviceId);
 
+    /// <summary>Logs successful OpenVoice loading on the selected DirectML device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (DirectML, Device ID: {DeviceId})")]
     private static partial void LogDmlLoaded(ILogger logger, int deviceId);
 
+    /// <summary>Logs successful OpenVoice loading on the selected WebGPU device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (WebGPU, Device ID: {DeviceId})")]
     private static partial void LogWebGpuLoaded(ILogger logger, int deviceId);
 
+    /// <summary>Logs GPU initialization failure with the device ID and original exception.</summary>
     [LoggerMessage(Level = LogLevel.Debug, Message = "[DEBUG] OpenVoice failed on GPU {DeviceId}")]
     private static partial void LogGpuInitFailed(ILogger logger, Exception ex, int deviceId);
 
 
+    /// <summary>Logs the target audio sample rate declared by the tone model.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "  Target Sample Rate: {SampleRate} Hz")]
     private partial void LogSampleRate(int sampleRate);
 
+    /// <summary>Logs the tone model's FFT filter length.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "  Filter Length:      {FilterLength}")]
     private partial void LogFilterLength(int filterLength);
 
+    /// <summary>Logs the tone model's analysis hop length.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "  Hop Length:         {HopLength}")]
     private partial void LogHopLength(int hopLength);
 
+    /// <summary>Logs the tone model's speaker embedding channel count.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "  Gin Channels:       {GinChannels}")]
     private partial void LogGinChannels(int ginChannels);
 
+    /// <summary>Logs one ONNX tensor's name, shape, and element type.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "    - {Name}: [{Shape}] ({ElementType})")]
     private partial void LogTensorMetadata(string name, string shape, Type elementType);
 
+    /// <summary>Labels the following tensor metadata with its ONNX session name.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = ">>> {SessionName}:")]
     private partial void LogSessionName(string sessionName);
 }

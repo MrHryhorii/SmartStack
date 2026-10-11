@@ -125,6 +125,7 @@ public partial class PiperPhonemizer(PiperConfig config, ILogger<PiperPhonemizer
     [LoggerMessage(Level = LogLevel.Debug, Message = "Input Phonemes: {Phonemes}")]
     private static partial void LogInputPhonemes(ILogger logger, string phonemes);
 
+    /// <summary>Logs the number of IDs in the generated Piper input tensor.</summary>
     [LoggerMessage(Level = LogLevel.Debug, Message = "Target Tensor Size: {TensorSize}")]
     private static partial void LogTensorSize(ILogger logger, int tensorSize);
 }

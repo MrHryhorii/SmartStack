@@ -178,6 +178,7 @@ export function addWavHeader(
     const view =
         new DataView(buffer);
 
+    // Writes ASCII chunk labels into the constructed WAV header.
     const writeString = (
         offset,
         string

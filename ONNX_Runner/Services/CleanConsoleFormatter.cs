@@ -14,6 +14,7 @@ internal static class RequestLogContext
 
     public static long? RequestId => CurrentRequestId.Value;
 
+    /// <summary>Sets the request ID for the current async context and returns a scope that restores the previous value.</summary>
     public static Scope Push(long requestId)
     {
         long? previousRequestId = CurrentRequestId.Value;
@@ -23,6 +24,7 @@ internal static class RequestLogContext
 
     public readonly struct Scope(long? previousRequestId) : IDisposable
     {
+        /// <summary>Restores the request ID captured before this logging scope.</summary>
         public void Dispose()
         {
             CurrentRequestId.Value = previousRequestId;
@@ -37,8 +39,10 @@ internal static class RequestLogContext
 /// </summary>
 public sealed class CleanConsoleFormatter : ConsoleFormatter
 {
+    /// <summary>Registers the formatter under the clean console format name.</summary>
     public CleanConsoleFormatter() : base("clean") { }
 
+    /// <summary>Writes compact log messages with request context and exception details when present.</summary>
     public override void Write<TState>(
         in LogEntry<TState> logEntry,
         IExternalScopeProvider? scopeProvider,

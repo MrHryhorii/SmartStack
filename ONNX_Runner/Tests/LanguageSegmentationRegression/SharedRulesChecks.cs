@@ -4,6 +4,7 @@ using ONNX_Runner.Services;
 
 internal static class SharedRulesChecks
 {
+    /// <summary>Provides cases verifying that chunking, language routing, and punctuation share one rule catalog.</summary>
     internal static IEnumerable<(string Name, Action Check)> Cases()
     {
         var rules = LoadRules();
@@ -131,10 +132,12 @@ internal static class SharedRulesChecks
         });
     }
 
+    /// <summary>Creates a detector using the supplied chunker's rule instance.</summary>
     private static MixedLanguagePhonemizer Detector(TextChunker chunker) => new(
         new PhonemizerSettings { SupportedLanguages = ["en", "uk"] }, "en-us",
         NullLogger<MixedLanguagePhonemizer>.Instance, chunker);
 
+    /// <summary>Creates a minimal model inventory for punctuation adaptation checks.</summary>
     private static PiperConfig Config() => new()
     {
         Espeak = new EspeakConfig { Voice = "en-us" },
@@ -144,6 +147,7 @@ internal static class SharedRulesChecks
         }
     };
 
+    /// <summary>Loads custom rules from a temporary JSON file and deletes the file afterward.</summary>
     private static TextChunkerRules LoadRules()
     {
         string path = Path.Combine(Path.GetTempPath(), $"tsubaki-pipeline-rules-{Guid.NewGuid():N}.json");
@@ -171,6 +175,7 @@ internal static class SharedRulesChecks
         finally { File.Delete(path); }
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

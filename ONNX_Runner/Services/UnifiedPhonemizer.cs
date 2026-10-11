@@ -40,6 +40,7 @@ public partial class UnifiedPhonemizer
     private static readonly SearchValues<char> IpaSearchValues = SearchValues.Create(
         "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʐʑʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʲʷˠˤ");
 
+    /// <summary>Connects native phonemization, model punctuation/phoneme adaptation, and optional language routing.</summary>
     public UnifiedPhonemizer(
         EspeakWrapper espeakWrapper,
         DynamicPunctuationMapper punctuationMapper,
@@ -231,6 +232,7 @@ public partial class UnifiedPhonemizer
         return finalPhonemes.ToString();
     }
 
+    /// <summary>Appends a chunk using technical named reading or ordinary punctuation-aware phonemization.</summary>
     private void AppendTextChunk(TextChunk chunk, int tokenIndex, List<TextChunk> tokens,
         StringBuilder finalPhonemes, ref bool previousTechnicalSpeech)
     {
@@ -340,6 +342,7 @@ public partial class UnifiedPhonemizer
         }
     }
 
+    /// <summary>Phonemizes a technical text fragment in its selected language and appends validated model-compatible phonemes.</summary>
     private void AppendTechnicalPart(string text, string language, StringBuilder output)
     {
         string? phonemes = TryGetIpaPhonemesSafely(text, language);
@@ -380,6 +383,7 @@ public partial class UnifiedPhonemizer
         }
         if (ordinaryStart < text.Length) AddOrdinary(ordinaryStart == 0 ? text : text[ordinaryStart..]);
 
+        // Adds an ordinary fragment using the explicitly selected language.
         void AddOrdinary(string value) => tokens.Add(new TextChunk
         {
             Text = value, DetectedLanguage = language, IsPunctuationOrSpace = false

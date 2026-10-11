@@ -112,6 +112,7 @@ if (nativeMapper.Normalize("Hello.") != "Helloà¹š" || nativeMapper.Normalize("à¸
 }
 
 int additionalTotal = 0;
+// Counts a punctuation assertion and reports its diagnostic when normalization differs.
 void Check(string name, bool passed)
 {
     additionalTotal++;

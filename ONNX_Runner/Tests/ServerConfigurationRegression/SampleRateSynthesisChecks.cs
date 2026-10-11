@@ -10,9 +10,11 @@ using ONNX_Runner.Services;
 
 internal static class SampleRateSynthesisChecks
 {
+    /// <summary>Checks real Piper output rates, codec constraints, DSP timing, and server/request precedence.</summary>
     internal static async Task Run(SpeechSynthesisService synthesis, IServiceProvider services,
         PiperConfig config, NativeAudioDependencies native, Func<string, Func<Task>, Task> check)
     {
+        // Synthesizes into memory with the chosen request, server rate, and optional spatial effects.
         async Task<(byte[] Audio, int HeaderRate)> Read(AudioFormat format, int? rate = null,
             bool stream = false, bool sse = false, string effect = "None", string environment = "None",
             float pitch = 1, float speed = 1, bool openAi = false)
@@ -201,6 +203,7 @@ internal static class SampleRateSynthesisChecks
         finally { dsp.DefaultSampleRate = originalDefault; }
     }
 
+    /// <summary>Finds the WAV data chunk and decodes its validated PCM16 samples for signal comparisons.</summary>
     internal static float[] WavSamples(byte[] data)
     {
         Require(data.AsSpan(0, 4).SequenceEqual("RIFF"u8) && data.AsSpan(8, 4).SequenceEqual("WAVE"u8), "Invalid WAV response.");
@@ -222,6 +225,7 @@ internal static class SampleRateSynthesisChecks
         throw new InvalidOperationException("WAV contains no PCM data.");
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

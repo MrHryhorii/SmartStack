@@ -5,6 +5,7 @@ using ONNX_Runner.Services;
 
 internal static class TechnicalSpeechChecks
 {
+    /// <summary>Provides recording-bridge cases for symbol reading, ordinary punctuation, and model-language priority.</summary>
     internal static IEnumerable<(string Name, Action Check)> Cases()
     {
         var rules = TextChunkerRules.Default;
@@ -232,6 +233,7 @@ internal static class TechnicalSpeechChecks
         });
     }
 
+    /// <summary>Creates the small Piper inventory used by technical pronunciation routing cases.</summary>
     private static PiperConfig Config() => new()
     {
         Espeak = new EspeakConfig { Voice = "en-us" },
@@ -244,6 +246,7 @@ internal static class TechnicalSpeechChecks
         }
     };
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

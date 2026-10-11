@@ -47,10 +47,10 @@ public partial class EspeakWrapper : IDisposable
     [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
     private static partial IntPtr espeak_TextToPhonemes(ref IntPtr textptr, int textmode, int phonememode);
 
+    /// <summary>Initializes eSpeak with its data directory and starting voice, using a Windows short path when available.</summary>
     public EspeakWrapper(string dataDirectory, string voice)
     {
-        // MAGIC: If we are on Windows, convert potentially problematic paths (like Cyrillic or spaces) 
-        // into safe 8.3 ASCII short paths before passing them to the C++ library.
+        // Use an available Windows short path to avoid native path-encoding limitations.
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
             var shortPath = new System.Text.StringBuilder(255);
@@ -212,6 +212,7 @@ public partial class EspeakWrapper : IDisposable
         }
     }
 
+    /// <summary>Suppresses finalization without terminating the process-wide shared eSpeak instance.</summary>
     public void Dispose()
     {
         GC.SuppressFinalize(this);

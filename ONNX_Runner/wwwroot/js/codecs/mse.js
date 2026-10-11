@@ -60,6 +60,7 @@ export async function streamMSE({
 
     let isFirstChunk = true;
 
+    // Appends one encoded audio chunk and waits for SourceBuffer completion.
     const appendChunk =
         chunk =>
             new Promise(
@@ -67,12 +68,14 @@ export async function streamMSE({
                     resolve,
                     reject
                 ) => {
+                    // Resolves a successful append and removes its temporary listeners.
                     const onUpdateEnd =
                         () => {
                             cleanup();
                             resolve();
                         };
 
+                    // Rejects a failed append and removes its temporary listeners.
                     const onError =
                         () => {
                             cleanup();
@@ -84,6 +87,7 @@ export async function streamMSE({
                             );
                         };
 
+                    // Removes SourceBuffer listeners after the pending append settles.
                     const cleanup =
                         () => {
                             sourceBuffer

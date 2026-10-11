@@ -4,6 +4,7 @@
 const BitsPerSample = 16;
 const MaxUnaryZeros = 1 << 20;
 
+// Decodes the server's supported mono PCM16 FLAC subframes after validating the frame checksum.
 export function decodeTsubakiFlacFrame(
     frame,
     frameInfo
@@ -71,6 +72,7 @@ export function decodeTsubakiFlacFrame(
     );
 }
 
+// Expands a constant FLAC subframe into normalized float samples.
 function decodeConstant(reader, blockSize) {
     const sample = reader.readSigned(BitsPerSample);
     const normalized = sample / 32768;
@@ -79,6 +81,7 @@ function decodeConstant(reader, blockSize) {
     return output;
 }
 
+// Reads a verbatim PCM16 FLAC subframe into normalized float samples.
 function decodeVerbatim(reader, blockSize) {
     const output = new Float32Array(blockSize);
 
@@ -91,6 +94,7 @@ function decodeVerbatim(reader, blockSize) {
     return output;
 }
 
+// Reconstructs fixed-predictor samples from warm-up values and Rice-coded residuals.
 function decodeFixed(
     reader,
     blockSize,
@@ -169,6 +173,7 @@ function decodeFixed(
     return output;
 }
 
+// Reads and unfolds one signed Rice residual, limiting malformed unary runs.
 function readRiceSigned(reader, riceParameter) {
     let quotient = 0;
 
@@ -194,6 +199,7 @@ function readRiceSigned(reader, riceParameter) {
         : -((folded + 1) / 2);
 }
 
+// Rejects incomplete frames or a mismatched FLAC frame CRC-16.
 function validateFrameCrc(frame) {
     if (frame.length < 3) {
         throw new Error('Incomplete FLAC frame.');
@@ -215,6 +221,7 @@ function validateFrameCrc(frame) {
     }
 }
 
+// Calculates the FLAC frame CRC-16 over the selected byte range.
 function computeCrc16(buffer, start, end) {
     let crc = 0;
 
@@ -233,12 +240,14 @@ function computeCrc16(buffer, start, end) {
 }
 
 class BitReader {
+    // Creates a bit reader restricted to the frame's supplied payload byte range.
     constructor(buffer, startByte, endByte) {
         this.buffer = buffer;
         this.bitPosition = startByte * 8;
         this.endBit = endByte * 8;
     }
 
+    // Reads a signed field using its two's-complement bit width.
     readSigned(bitCount) {
         const value = this.readBits(bitCount);
         const signBit = 2 ** (bitCount - 1);
@@ -249,6 +258,7 @@ class BitReader {
             : value;
     }
 
+    // Reads a bounded unsigned field most significant bit first and rejects truncated payloads.
     readBits(bitCount) {
         if (
             bitCount < 0 ||

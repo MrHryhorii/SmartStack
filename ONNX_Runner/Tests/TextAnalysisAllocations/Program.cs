@@ -105,6 +105,7 @@ int contracts = scenarios.Count(s => s.ByteBudget.HasValue);
 Console.WriteLine($"Result: {contracts - failures}/{contracts} allocation budgets passed; checksum: {checksum}");
 return failures == 0 ? 0 : 1;
 
+// Labels the build mode so allocation results are not mistaken for Release measurements in Debug.
 static string BuildConfiguration()
 {
 #if DEBUG

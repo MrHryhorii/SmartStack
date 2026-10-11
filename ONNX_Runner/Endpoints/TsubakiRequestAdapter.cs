@@ -8,6 +8,7 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class TsubakiRequestAdapter
 {
+    /// <summary>Validates wire formats and normalizes the language override while preserving optional engine controls.</summary>
     public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(TsubakiSpeechRequest dto)
     {
         if (!AudioFormatParser.TryParse(dto.ResponseFormat, out AudioFormat format))

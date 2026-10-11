@@ -25,6 +25,7 @@ internal sealed class LameMp3Encoder : IDisposable
     private bool _flushed;
     private bool _disposed;
 
+    /// <summary>Creates and configures a mono native LAME encoder with pooled output, optionally enforcing the output rate.</summary>
     public LameMp3Encoder(
         Stream output,
         int sampleRate,
@@ -110,6 +111,7 @@ internal sealed class LameMp3Encoder : IDisposable
         }
     }
 
+    /// <summary>Encodes valid mono PCM16 samples and writes produced MP3 bytes to the caller-owned stream.</summary>
     public unsafe void WriteSamples(
         short[] samples,
         int sampleCount)
@@ -175,6 +177,7 @@ internal sealed class LameMp3Encoder : IDisposable
         }
     }
 
+    /// <summary>Sets LAME input, output, channel, and bitrate parameters before finalizing encoder configuration.</summary>
     private void Configure(
         int sampleRate,
         int bitRateKbps,
@@ -228,6 +231,7 @@ internal sealed class LameMp3Encoder : IDisposable
             "lame_init_params");
     }
 
+    /// <summary>Drains LAME's delayed MP3 frames once and writes any final bytes.</summary>
     private unsafe void FlushEncoder()
     {
         // LAME buffers delayed samples internally; flush is required to emit the final MP3 frames.
@@ -273,6 +277,7 @@ internal sealed class LameMp3Encoder : IDisposable
             true;
     }
 
+    /// <summary>Ensures the pooled output buffer can hold LAME's bound for the next input block.</summary>
     private void EnsureOutputCapacity(
         int sampleCount)
     {
@@ -300,6 +305,7 @@ internal sealed class LameMp3Encoder : IDisposable
             replacement;
     }
 
+    /// <summary>Ensures the output buffer can hold the final LAME flush.</summary>
     private void EnsureOutputCapacityForFlush()
     {
         if (
@@ -321,6 +327,7 @@ internal sealed class LameMp3Encoder : IDisposable
             replacement;
     }
 
+    /// <summary>Calculates LAME's required output capacity with checked integer bounds.</summary>
     private static int GetRequiredOutputBufferSize(
         int sampleCount)
     {
@@ -336,6 +343,7 @@ internal sealed class LameMp3Encoder : IDisposable
                 required));
     }
 
+    /// <summary>Converts a negative native configuration result into an operation-specific failure.</summary>
     private static void EnsureConfigurationSuccess(
         int result,
         string operation)
@@ -349,6 +357,7 @@ internal sealed class LameMp3Encoder : IDisposable
             $"{operation} failed with LAME error code {result}.");
     }
 
+    /// <summary>Maps a LAME encoding error code to a readable exception.</summary>
     private static Exception CreateEncodingException(
         string operation,
         int result)
@@ -367,6 +376,7 @@ internal sealed class LameMp3Encoder : IDisposable
             $"{operation} failed with error code {result}: {detail}.");
     }
 
+    /// <summary>Releases the per-encoder native context without unloading the shared LAME library.</summary>
     private void CloseContext()
     {
         // lame_close releases only per-encoder native state; the shared library stays loaded.
@@ -406,6 +416,7 @@ internal sealed class LameMp3Encoder : IDisposable
         }
     }
 
+    /// <summary>Flushes pending audio and releases native and pooled resources even when finalization fails.</summary>
     public void Dispose()
     {
         if (_disposed)
@@ -535,11 +546,13 @@ internal static unsafe class LameNative
             NativeLibraryResolver.GetLameExport(
                 "lame_close");
 
+    /// <summary>Allocates a native LAME encoder context; its caller must close the returned handle.</summary>
     public static IntPtr Initialize()
     {
         return InitializePointer();
     }
 
+    /// <summary>Sets the native encoder's input PCM sample rate in Hz.</summary>
     public static int SetInputSampleRate(
         IntPtr context,
         int sampleRate)
@@ -549,11 +562,13 @@ internal static unsafe class LameNative
             sampleRate);
     }
 
+    /// <summary>Sets the native encoder's requested output sample rate in Hz.</summary>
     public static int SetOutputSampleRate(IntPtr context, int sampleRate)
     {
         return SetOutputSampleRatePointer(context, sampleRate);
     }
 
+    /// <summary>Sets the number of input channels before parameter initialization.</summary>
     public static int SetChannelCount(
         IntPtr context,
         int channels)
@@ -563,6 +578,7 @@ internal static unsafe class LameNative
             channels);
     }
 
+    /// <summary>Sets the native MPEG channel mode before parameter initialization.</summary>
     public static int SetMode(
         IntPtr context,
         int mode)
@@ -572,6 +588,7 @@ internal static unsafe class LameNative
             mode);
     }
 
+    /// <summary>Sets the native encoder's target bitrate in kilobits per second.</summary>
     public static int SetBitRate(
         IntPtr context,
         int bitRateKbps)
@@ -581,6 +598,7 @@ internal static unsafe class LameNative
             bitRateKbps);
     }
 
+    /// <summary>Enables or disables the seek-dependent VBR metadata tag.</summary>
     public static int SetWriteVbrTag(
         IntPtr context,
         int writeTag)
@@ -590,6 +608,7 @@ internal static unsafe class LameNative
             writeTag);
     }
 
+    /// <summary>Finalizes native encoding parameters after all configuration setters.</summary>
     public static int InitializeParameters(
         IntPtr context)
     {
@@ -597,6 +616,7 @@ internal static unsafe class LameNative
             context);
     }
 
+    /// <summary>Encodes planar PCM16 input into the supplied output region and returns bytes written or an error code.</summary>
     public static int EncodeBuffer(
         IntPtr context,
         short* left,
@@ -614,6 +634,7 @@ internal static unsafe class LameNative
             outputSize);
     }
 
+    /// <summary>Flushes delayed native frames into the supplied buffer and returns bytes written or an error code.</summary>
     public static int Flush(
         IntPtr context,
         byte* output,
@@ -625,6 +646,7 @@ internal static unsafe class LameNative
             outputSize);
     }
 
+    /// <summary>Releases one native LAME encoder context.</summary>
     public static int Close(
         IntPtr context)
     {

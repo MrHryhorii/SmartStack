@@ -15,12 +15,15 @@ public partial class EspeakWrapper
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     private delegate int NativeSynthCallback(IntPtr samples, int count, IntPtr events);
 
+    /// <summary>Sets or clears the native callback that receives generated phoneme fragments.</summary>
     [DllImport(DllPath, CallingConvention = CallingConvention.Cdecl)]
     private static extern void espeak_SetPhonemeCallback(NativePhonemeCallback? callback);
 
+    /// <summary>Sets or clears the native synthesis callback used while spelling a character.</summary>
     [DllImport(DllPath, CallingConvention = CallingConvention.Cdecl)]
     private static extern void espeak_SetSynthCallback(NativeSynthCallback? callback);
 
+    /// <summary>Configures native phoneme tracing and its C FILE output stream.</summary>
     [DllImport(DllPath, CallingConvention = CallingConvention.Cdecl)]
     private static extern void espeak_SetPhonemeTrace(int phonemeMode, IntPtr stream);
 
@@ -30,11 +33,13 @@ public partial class EspeakWrapper
         [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string mode);
 
+    /// <summary>Opens a C FILE stream with the Linux runtime for native trace output.</summary>
     [DllImport("libc", EntryPoint = "fopen", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr LinuxFopen(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string mode);
 
+    /// <summary>Opens a C FILE stream with the macOS runtime for native trace output.</summary>
     [DllImport("libSystem.B.dylib", EntryPoint = "fopen", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr MacFopen(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,

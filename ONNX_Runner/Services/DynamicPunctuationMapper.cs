@@ -43,6 +43,7 @@ public sealed class DynamicPunctuationMapper
 
     private readonly bool _supportsSpace;
 
+    /// <summary>Builds the active model's punctuation mappings from its phoneme inventory and the shared rules.</summary>
     public DynamicPunctuationMapper(PiperConfig config, TextChunkerRules? rules = null)
     {
         Rules = rules ?? TextChunkerRules.Default;

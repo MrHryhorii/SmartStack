@@ -10,6 +10,7 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public class LocalHostOnlyFilter : IEndpointFilter
 {
+    /// <summary>Rejects non-loopback callers before invoking the protected endpoint.</summary>
     public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext context, EndpointFilterDelegate next)
     {
         var remoteIp = context.HttpContext.Connection.RemoteIpAddress;
@@ -62,6 +63,7 @@ public static class InfoEndpoints
             .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToArray();
     }
 
+    /// <summary>Checks that eSpeak, the Piper model, and the phonemizer are available for synthesis.</summary>
     private static bool IsSynthesisReady(
         IServiceProvider services, NativeAudioDependencies nativeAudioDependencies)
     {
@@ -71,6 +73,7 @@ public static class InfoEndpoints
             services.GetService<UnifiedPhonemizer>() != null;
     }
 
+    /// <summary>Checks cloning prerequisites, including the loaded base voice fingerprint.</summary>
     private static bool IsCloningAvailable(
         IServiceProvider services, ClonerSettings cloner, OpenVoiceRunner? openVoice, bool synthesisReady)
     {

@@ -5,6 +5,7 @@ namespace ONNX_Runner.Services;
 
 public static class BrowserLauncher
 {
+    /// <summary>Tries the platform browser launcher and reports startup failures without terminating the server.</summary>
     public static bool TryOpen(string url, out string? error)
     {
         error = null;
@@ -42,6 +43,7 @@ public static class BrowserLauncher
         }
     }
 
+    /// <summary>Opens a URL in a detached graphical Linux session, rejecting headless or incomplete environments.</summary>
     private static bool TryOpenLinux(string url, out string? error)
     {
         error = null;
@@ -77,6 +79,7 @@ public static class BrowserLauncher
         return Process.Start(startInfo) != null;
     }
 
+    /// <summary>Returns the first matching file on PATH, or null when none exists.</summary>
     private static string? FindExecutable(string name)
     {
         string? path = Environment.GetEnvironmentVariable("PATH");

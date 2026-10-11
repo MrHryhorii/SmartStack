@@ -80,6 +80,7 @@ public sealed class PhonemeFallbackMapper
             {"aɪ", "ai"}, {"aʊ", "au"}, {"eɪ", "ei"}, {"oʊ", "ou"}, {"ɔɪ", "ɔi"}
         };
 
+    /// <summary>Loads phonetic features and prepares fallback matching against the active Piper phoneme inventory.</summary>
     public PhonemeFallbackMapper(string csvPath, PiperConfig piperConfig)
     {
         _supportedModelPhonemes = piperConfig?.PhonemeIdMap != null

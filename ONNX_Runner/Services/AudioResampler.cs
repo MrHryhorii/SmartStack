@@ -25,6 +25,7 @@ public sealed class AudioResampler
     private bool _streamCompleted;
     private bool _streamDrained;
 
+    /// <summary>Validates positive rates and configures WDL, using a copy path when the rates match.</summary>
     public AudioResampler(int sourceRate, int targetRate)
     {
         if (sourceRate <= 0)
@@ -228,6 +229,7 @@ public sealed class AudioResampler
         return written;
     }
 
+    /// <summary>Validates the fixed output block and initializes streaming state on its first use.</summary>
     private void ValidateStreamingOutput(float[] output, int outputLength)
     {
         ArgumentNullException.ThrowIfNull(output);
@@ -247,6 +249,7 @@ public sealed class AudioResampler
         }
     }
 
+    /// <summary>Obtains WDL's next input region unless a partially filled region is already pending.</summary>
     private void PrepareStreamingInput(int outputLength)
     {
         if (_streamInputNeeded != 0)
@@ -260,6 +263,7 @@ public sealed class AudioResampler
         }
     }
 
+    /// <summary>Grows a rented output buffer while preserving valid samples and returning the old array to the pool.</summary>
     private static void EnsureOutputSpace(ref float[] buffer, int used, int additional)
     {
         int required = checked(used + Math.Max(additional, 1));

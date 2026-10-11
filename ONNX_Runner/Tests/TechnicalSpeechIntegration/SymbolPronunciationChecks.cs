@@ -31,6 +31,7 @@ internal static class SymbolPronunciationChecks
         ('°', ["degrees", "degree"])
     ];
 
+    /// <summary>Checks full symbol names, localized/native state, phoneme adaptation, and technical language routing.</summary>
     internal static void Run(
         EspeakWrapper bridge,
         PiperConfig config,
@@ -178,6 +179,7 @@ internal static class SymbolPronunciationChecks
         });
     }
 
+    /// <summary>Obtains nonempty reference IPA in the requested voice and removes native language labels.</summary>
     private static string ReadText(EspeakWrapper bridge, string text, string voice)
     {
         Require(bridge.TryGetIpaPhonemes(text, voice, out string ipa) && ipa.Length > 0,
@@ -185,6 +187,7 @@ internal static class SymbolPronunciationChecks
         return WithoutLanguageLabels(ipa);
     }
 
+    /// <summary>Obtains a symbol name and verifies that native language labels do not leak into its IPA.</summary>
     private static string ReadSymbol(EspeakWrapper bridge, char symbol, string voice)
     {
         Require(bridge.TryGetCharacterPhonemes(symbol, voice, out string ipa) && ipa.Length > 0,
@@ -211,11 +214,14 @@ internal static class SymbolPronunciationChecks
         return descriptions.Distinct(StringComparer.Ordinal).ToArray();
     }
 
+    /// <summary>Compares phoneme content while ignoring stress-marker differences.</summary>
     private static bool SameSpokenContent(string left, string right) =>
         left.Replace("ˈ", "").Replace("ˌ", "") == right.Replace("ˈ", "").Replace("ˌ", "");
 
+    /// <summary>Removes native language-switch metadata from reference IPA.</summary>
     private static string WithoutLanguageLabels(string ipa) => Regex.Replace(ipa, @"\([a-z][a-z0-9-]*\)", "");
 
+    /// <summary>Throws with the supplied diagnostic when a native integration assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

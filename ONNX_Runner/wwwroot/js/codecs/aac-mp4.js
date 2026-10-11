@@ -6,6 +6,7 @@ const AAC_SAMPLE_RATES = [
     22050, 16000, 12000, 11025, 8000, 7350
 ];
 
+// Checks browser support for the dashboard's mono AAC-LC fragmented-MP4 playback path.
 export function supportsAacMp4Mse(sampleRate, channelCount = 1) {
     if (!globalThis.MediaSource || channelCount !== 1 || sampleRate > 48000) {
         return false;
@@ -18,6 +19,7 @@ export function supportsAacMp4Mse(sampleRate, channelCount = 1) {
     }
 }
 
+// Builds the MP4 initialization segment for supported mono AAC-LC configuration.
 export function createAacMp4InitSegment(sampleRate, channelCount = 1, bitrate = 96000) {
     validateAudioConfig(sampleRate, channelCount);
 
@@ -202,6 +204,7 @@ export function createAacMp4InitSegment(sampleRate, channelCount = 1, bitrate = 
     return concat(ftyp, moov);
 }
 
+// Builds one timed MP4 media fragment from encoded AAC samples.
 export function createAacMp4Fragment(sequenceNumber, baseDecodeTime, samples) {
     if (!Number.isInteger(sequenceNumber) || sequenceNumber <= 0) {
         throw new RangeError('sequenceNumber must be a positive integer.');
@@ -221,6 +224,7 @@ export function createAacMp4Fragment(sequenceNumber, baseDecodeTime, samples) {
     const tfhd = fullBox('tfhd', 0, 0x020000, u32(1));
     const tfdt = fullBox('tfdt', 1, 0, u64(BigInt(baseDecodeTime)));
 
+    // Builds the track-run box with each sample's duration, size, and media-data offset.
     const buildTrun = dataOffset => fullBox(
         'trun',
         0,
@@ -245,6 +249,7 @@ export function createAacMp4Fragment(sequenceNumber, baseDecodeTime, samples) {
     return concat(moof, mdat);
 }
 
+// Returns the AAC payload after validating and removing its ADTS header.
 export function adtsPayload(frame, headerLength) {
     if (!(frame instanceof Uint8Array)) {
         throw new TypeError('frame must be a Uint8Array.');
@@ -261,6 +266,7 @@ export function adtsPayload(frame, headerLength) {
     return frame.slice(headerLength);
 }
 
+// Packs the AAC-LC object type, sample-rate index, and channel count into decoder configuration bytes.
 function createAudioSpecificConfig(sampleRate, channelCount) {
     const sampleRateIndex = AAC_SAMPLE_RATES.indexOf(sampleRate);
 
@@ -276,6 +282,7 @@ function createAudioSpecificConfig(sampleRate, channelCount) {
     );
 }
 
+// Rejects unsupported AAC rates and non-mono configurations before MP4 remuxing.
 function validateAudioConfig(sampleRate, channelCount) {
     if (!AAC_SAMPLE_RATES.includes(sampleRate)) {
         throw new RangeError(`Unsupported AAC sample rate: ${sampleRate}.`);
@@ -286,6 +293,7 @@ function validateAudioConfig(sampleRate, channelCount) {
     }
 }
 
+// Wraps descriptor payload bytes with their MPEG-4 tag and variable-length size.
 function descriptor(tag, payload) {
     return concat(
         u8(tag),
@@ -294,6 +302,7 @@ function descriptor(tag, payload) {
     );
 }
 
+// Encodes a validated MPEG-4 descriptor length in continuation bytes.
 function descriptorLength(length) {
     if (!Number.isInteger(length) || length < 0 || length > 0x0FFFFFFF) {
         throw new RangeError('Invalid MPEG-4 descriptor length.');
@@ -310,6 +319,7 @@ function descriptorLength(length) {
     return Uint8Array.from(bytes);
 }
 
+// Builds an MP4 full box with its version, flags, and payload.
 function fullBox(type, version, flags, ...payloads) {
     return box(
         type,
@@ -323,12 +333,14 @@ function fullBox(type, version, flags, ...payloads) {
     );
 }
 
+// Builds an MP4 box with its size, four-character type, and concatenated payload.
 function box(type, ...payloads) {
     const payload = concat(...payloads);
     const size = 8 + payload.length;
     return concat(u32(size), ascii(type), payload);
 }
 
+// Encodes box labels as one-byte character values.
 function ascii(value) {
     const bytes = new Uint8Array(value.length);
     for (let i = 0; i < value.length; i++) {
@@ -337,14 +349,17 @@ function ascii(value) {
     return bytes;
 }
 
+// Creates zero-filled reserved fields of the requested byte length.
 function zeros(length) {
     return new Uint8Array(length);
 }
 
+// Encodes the low eight bits as one byte.
 function u8(value) {
     return Uint8Array.of(value & 0xFF);
 }
 
+// Encodes an unsigned 16-bit field in big-endian order.
 function u16(value) {
     return Uint8Array.of(
         (value >>> 8) & 0xFF,
@@ -352,6 +367,7 @@ function u16(value) {
     );
 }
 
+// Encodes an unsigned 24-bit field in big-endian order.
 function u24(value) {
     return Uint8Array.of(
         (value >>> 16) & 0xFF,
@@ -360,6 +376,7 @@ function u24(value) {
     );
 }
 
+// Encodes an unsigned 32-bit field in big-endian order.
 function u32(value) {
     const v = Number(value) >>> 0;
     return Uint8Array.of(
@@ -370,10 +387,12 @@ function u32(value) {
     );
 }
 
+// Encodes a signed 32-bit field using its two's-complement byte representation.
 function i32(value) {
     return u32(value);
 }
 
+// Encodes a 64-bit field in big-endian order using BigInt.
 function u64(value) {
     const v = BigInt(value);
     return Uint8Array.of(
@@ -388,6 +407,7 @@ function u64(value) {
     );
 }
 
+// Copies byte arrays into one contiguous MP4 payload buffer.
 function concat(...parts) {
     const total = parts.reduce((sum, part) => sum + part.length, 0);
     const result = new Uint8Array(total);

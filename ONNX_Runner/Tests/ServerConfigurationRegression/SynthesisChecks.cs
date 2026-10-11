@@ -9,6 +9,7 @@ using ONNX_Runner.Services;
 
 internal static class SynthesisChecks
 {
+    /// <summary>Checks real synthesis defaults, DSP switches, pause timing, and spatial effect tails.</summary>
     internal static async Task Run(string modelPath, string configPath, NativeAudioDependencies native,
         Func<string, Func<Task>, Task> check, string? clonerDirectory = null, string? voicesDirectory = null)
     {
@@ -37,6 +38,7 @@ internal static class SynthesisChecks
         using var gate = new SemaphoreSlim(1);
         var synthesis = new SpeechSynthesisService(gate, services, native, NullLogger<SpeechSynthesisService>.Instance);
 
+        // Runs a synthesis fixture into memory for comparisons of effect and environment behavior.
         async Task<byte[]> ReadAudio(string? effect = null, string? environment = null, float volume = 1)
         {
             var request = new SynthesisRequest
@@ -115,6 +117,7 @@ internal static class SynthesisChecks
             await CloningChecks.Run(config, piper, phonemizer, native, clonerDirectory, voicesDirectory, check);
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

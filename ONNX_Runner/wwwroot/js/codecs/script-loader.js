@@ -29,9 +29,11 @@ export async function loadCodecLibrary(
                 script.src = url;
                 script.async = true;
 
+                // Resolves the shared decoder-script loading promise after the script loads.
                 script.onload =
                     () => resolve();
 
+                // Rejects decoder-script loading with the failed library URL.
                 script.onerror =
                     () => {
                         reject(

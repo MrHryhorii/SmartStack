@@ -9,6 +9,7 @@ namespace ONNX_Runner.Models;
 /// </summary>
 public sealed class VoiceIdJsonConverter : JsonConverter<string>
 {
+    /// <summary>Reads a string, numeric ID, or object ID while preserving the exact text of numeric selectors.</summary>
     public override string Read(
         ref Utf8JsonReader reader,
         Type typeToConvert,
@@ -48,6 +49,7 @@ public sealed class VoiceIdJsonConverter : JsonConverter<string>
         };
     }
 
+    /// <summary>Writes the normalized voice ID as a JSON string.</summary>
     public override void Write(
         Utf8JsonWriter writer,
         string value,
@@ -56,6 +58,7 @@ public sealed class VoiceIdJsonConverter : JsonConverter<string>
         writer.WriteStringValue(value);
     }
 
+    /// <summary>Preserves a numeric JSON token verbatim without integer overflow or floating-point rounding.</summary>
     private static string ReadNumericId(ref Utf8JsonReader reader)
     {
         // Parse the token as JSON instead of converting through Int64/Double so large IDs

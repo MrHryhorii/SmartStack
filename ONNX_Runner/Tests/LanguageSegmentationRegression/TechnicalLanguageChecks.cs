@@ -4,6 +4,7 @@ using ONNX_Runner.Services;
 
 internal static class TechnicalLanguageChecks
 {
+    /// <summary>Provides mixed prose/technical cases that preserve shared language context and real script boundaries.</summary>
     internal static IEnumerable<(string Name, Action Check)> Cases()
     {
         var logger = new AnalysisLogger();
@@ -188,8 +189,10 @@ internal static class TechnicalLanguageChecks
         });
     }
 
+    /// <summary>Creates competing Latin and Cyrillic language candidates for context regression checks.</summary>
     private static PhonemizerSettings Settings() => new() { SupportedLanguages = ["en", "fr", "es", "uk"] };
 
+    /// <summary>Creates a model inventory containing text and Piper structural symbols for technical-reading checks.</summary>
     private static PiperConfig Config() => new()
     {
         Espeak = new EspeakConfig { Voice = "en-us" },
@@ -197,12 +200,15 @@ internal static class TechnicalLanguageChecks
             .Distinct().ToDictionary(c => c.ToString(), c => new[] { (int)c })
     };
 
+    /// <summary>Normalizes whitespace when comparing reconstructed ordinary prose.</summary>
     private static string Words(string text) => string.Join(" ", text.Split((char[]?)null,
         StringSplitOptions.RemoveEmptyEntries));
 
+    /// <summary>Formats token languages and source text for readable assertion diagnostics.</summary>
     private static string Describe(IEnumerable<TextChunk> tokens) => string.Join(" | ",
         tokens.Select(t => $"{t.DetectedLanguage}:{t.Text}"));
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
@@ -211,9 +217,12 @@ internal static class TechnicalLanguageChecks
     private sealed class AnalysisLogger : ILogger<MixedLanguagePhonemizer>
     {
         internal List<string> Phrases { get; } = [];
+        /// <summary>Leaves logging scopes unused because this test records only structured language diagnostics.</summary>
         public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        /// <summary>Enables debug diagnostics so the test can inspect language-analysis phrases.</summary>
         public bool IsEnabled(LogLevel logLevel) => logLevel == LogLevel.Debug;
 
+        /// <summary>Records phrase-analysis text from structured debug fields, excluding unrelated log entries.</summary>
         public void Log<TState>(LogLevel logLevel, EventId eventId, TState state,
             Exception? exception, Func<TState, Exception?, string> formatter)
         {

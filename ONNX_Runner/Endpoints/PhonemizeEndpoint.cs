@@ -11,6 +11,7 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class PhonemizeEndpoint
 {
+    /// <summary>Validates and limits input, then returns the processed text and its phonemes without generating audio.</summary>
     public static async Task<IResult> HandlePhonemizeRequest(
         [FromBody] PhonemizeRequest request,
         [FromServices] UnifiedPhonemizer unifiedPhonemizer,
@@ -25,9 +26,7 @@ public static class PhonemizeEndpoint
         // =================================================================
         // TEXT LENGTH LIMITATION (RESOURCE PROTECTION)
         // =================================================================
-        // Even though phonemization doesn't use the GPU, heavy Regex operations 
-        // and deep dictionary lookups on massive texts can cause CPU thread starvation.
-        // We gracefully truncate the input to the configured maximum length.
+        // Apply the configured input length limit before language analysis and phonemization.
         if (apiSettings.MaxTextLength > 0 && request.Input.Length > apiSettings.MaxTextLength)
         {
             request.Input = request.Input[..apiSettings.MaxTextLength];
@@ -38,9 +37,7 @@ public static class PhonemizeEndpoint
             // =================================================================
             // CPU-BOUND TASK OFFLOADING
             // =================================================================
-            // Phonemization can involve language detection, regex parsing, and heavy dictionary lookups.
-            // We wrap it in Task.Run to offload this CPU-bound work to the background thread pool, 
-            // ensuring the primary ASP.NET Core request threads remain responsive under high load.
+            // Execute CPU-bound analysis and native phonemization on the thread pool.
             string phonemes = await Task.Run(() => unifiedPhonemizer.GetPhonemes(request.Input));
 
             return Results.Ok(new { text = request.Input, phonemes });

@@ -249,12 +249,14 @@
         const player = document.getElementById('player');
         const btn = document.getElementById('generateBtn');
 
+        // Appends a timestamped message to the demo log and keeps the latest entry visible.
         function log(message) {
             const time = new Date().toISOString().split('T')[1].substring(0, 8);
             logBox.innerHTML += `[${time}] ${message}<br>`;
             logBox.scrollTop = logBox.scrollHeight;
         }
 
+        // Builds the demo speech request, sends it, and chooses streamed or buffered playback.
         async function generateAudio() {
             logBox.innerHTML = '';
             player.removeAttribute('src');
@@ -321,6 +323,7 @@
             }
         }
 
+        // Feeds encoded response chunks to MediaSource in order as they arrive.
         async function handleStreamedResponse(reader, mimeType) {
             const mediaSource = new MediaSource();
             player.src = URL.createObjectURL(mediaSource);
@@ -331,6 +334,7 @@
             let totalBytes = 0;
             let isFirstChunk = true;
 
+            // Appends one encoded chunk after registering its SourceBuffer completion listener.
             const appendChunk = async (chunk) => {
                 return new Promise((resolve) => {
                     sourceBuffer.addEventListener('updateend', resolve, { once: true });
@@ -362,6 +366,7 @@
             }
         }
 
+        // Creates a playable audio URL from the completed response and attempts autoplay.
         async function handleBufferedResponse(blobPromise, mimeType) {
             log("⏳ Buffering...");
             const blob = await blobPromise;

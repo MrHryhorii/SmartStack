@@ -15,6 +15,7 @@ public enum SpeechStreamFormat : byte
 /// </summary>
 internal static class SpeechStreamFormatParser
 {
+    /// <summary>Parses audio or SSE transport names, treating missing or blank values as audio.</summary>
     public static bool TryParse(string? value, out SpeechStreamFormat format)
     {
         format = SpeechStreamFormat.Audio;

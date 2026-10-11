@@ -283,6 +283,7 @@ public partial class SpeechSynthesisService(
             }
         }
     }
+    /// <summary>Logs request metadata after the caller checks the information log level.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "Request received | chars={CharacterCount} | voice={Voice} | format={Format} | stream_format={StreamFormat} | stream={Stream}",
@@ -294,6 +295,7 @@ public partial class SpeechSynthesisService(
         AudioFormat format,
         SpeechStreamFormat streamFormat,
         string stream);
+    /// <summary>Logs audio duration, generation speed, and queue timings after the caller checks the log level.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "Generation completed | audio={AudioSeconds:F3} s | generation={GenerationSeconds:F3} s | RTF={Rtf:F3} | speed={Speed:F2}x | queue={QueueMs:F1} ms | total={TotalSeconds:F3} s",
@@ -306,6 +308,7 @@ public partial class SpeechSynthesisService(
         double speed,
         double queueMs,
         double totalSeconds);
+    /// <summary>Labels a failure as queue, setup, or generation according to the reached pipeline stage.</summary>
     private static string GetStage(bool gateAcquired, bool generationStarted)
     {
         if (!gateAcquired)

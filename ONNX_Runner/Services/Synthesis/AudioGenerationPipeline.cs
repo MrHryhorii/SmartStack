@@ -131,7 +131,7 @@ internal static class AudioGenerationPipeline
         using var streamManager = new AudioStreamManager(ctx.AudioFormat, ctx.FinalSampleRate, targetStream,
             enforceSampleRate: ctx.EnforceSampleRate);
         // =================================================================
-        // PRE-CALCULATE VOICE BLEND (Zero-Allocation Optimization)
+        // PRE-CALCULATE VOICE BLEND
         // =================================================================
         // Calculate the latent space blending strictly once per request,
         // rather than re-calculating it for every audio chunk inside the loop.
@@ -179,43 +179,32 @@ internal static class AudioGenerationPipeline
                     string chunk = textChunk.Text;
                     ReadOnlySpan<char> cleanChunk = chunk.AsSpan().Trim();
                     // =========================================================
-                    // ULTIMATE DEFENSIVE PARANOIA
+                    // EMPTY INPUT GUARD
                     // =========================================================
-                    // If the chunk is empty (e.g., due to a chunker edge case or specific input),
-                    // we skip it to save GPU resources and preserve the current state.
+                    // Skip empty chunks without changing sentence continuation state.
                     if (cleanChunk.IsEmpty)
                     {
                         continue;
                     }
                     // =========================================================
-                    // MULTILINGUAL SMART CONTEXT DETECTION FOR STREAMING
+                    // SENTENCE CONTINUATION
                     // =========================================================
                     bool isContinuation = false;
                     bool isFinished = textChunk.IsSentenceFinished;
-                    // Ignore leading punctuation (e.g., quotes, dashes) to find the first actual
-                    // content character (letter OR digit). Stopping at a digit rather than skipping
-                    // past it matters: a sentence like "2024 was a good year." would otherwise have
-                    // its case check applied to "was" instead of "2024", wrongly reading a fresh
-                    // sentence as a continuation just because the word after the leading number
-                    // happens to be lowercase.
+                    // Find the first letter or digit after prose punctuation. Leading numbers must
+                    // participate so a lowercase word after a number does not imply continuation.
                     int firstLetterIdx = 0;
                     while (firstLetterIdx < cleanChunk.Length && !char.IsLetterOrDigit(cleanChunk[firstLetterIdx]))
                     {
                         firstLetterIdx++;
                     }
-                    // Determine if this chunk is a continuation of the previous thought
-                    // If the previous chunk ended with an EmergencyGlue or lacked a terminator,
-                    // this is 100% a continuation, regardless of case.
+                    // A chunk following an unfinished sentence remains a continuation regardless of case.
                     if (!previousChunkWasFinished)
                     {
                         isContinuation = true;
                     }
-                    // Otherwise, rely on the lowercase heuristic for bicameral scripts (Latin,
-                    // Cyrillic, Greek...). For unicameral scripts with no case distinction at all
-                    // (Chinese, Japanese, Thai, Arabic, Hebrew, Devanagari...), IsLower always
-                    // returns false, which safely defaults to "fresh thought" — there is no
-                    // orthographic signal available there either way, so this is the correct
-                    // fallback, not a workaround.
+                    // Otherwise, a lowercase first content character suggests continuation.
+                    // Without that signal, a completed previous chunk starts a fresh thought.
                     else if (firstLetterIdx < cleanChunk.Length)
                     {
                         isContinuation = char.IsLower(cleanChunk[firstLetterIdx]);
@@ -461,8 +450,7 @@ internal static class AudioGenerationPipeline
                     }
                     finally
                     {
-                        // ZERO-ALLOCATION PATTERN:
-                        // Always return rented memory arrays to the shared pool to prevent Garbage Collector (GC) pressure and memory leaks.
+                        // Return every temporary buffer even when generation or output fails.
                         ArrayPool<float>.Shared.Return(chunk.Buffer);
                         if (rentedBuffer1 != null) ArrayPool<float>.Shared.Return(rentedBuffer1);
                         if (rentedBuffer2 != null) ArrayPool<float>.Shared.Return(rentedBuffer2);
@@ -483,7 +471,7 @@ internal static class AudioGenerationPipeline
                     int probeSamples = ctx.ProcessingSampleRate / 50; // 20ms probe blocks
                     int maxSamples = (int)(ctx.ProcessingSampleRate * maxTailSeconds);
                     int written = 0;
-                    // ZERO-ALLOCATION PATTERN: rent the probe buffer instead of `new float[]`.
+                    // Reuse a pooled buffer for the silent reverb-tail probes.
                     // Rent() may return an array larger than requested, so every access below
                     // is explicitly bounded to probeSamples.
                     float[] tailProbe = ArrayPool<float>.Shared.Rent(probeSamples);
@@ -565,6 +553,7 @@ internal static class AudioGenerationPipeline
             ctx.FinalSampleRate);
     }
 
+    /// <summary>Writes processed PCM through optional output resampling, applying the cloning filter before rate conversion.</summary>
     private static void WriteOutput(Span<float> samples, AudioStreamManager manager,
         AudioOutputResampler? resampler, NAudio.Dsp.BiQuadFilter? filter)
     {
@@ -577,11 +566,9 @@ internal static class AudioGenerationPipeline
     }
 
     /// <summary>
-    /// Drains ready SoundTouch output directly into the pooled destination buffer.
-    /// This avoids the extra 8K intermediate receive buffer and per-segment copy used by
-    /// the previous implementation. The buffer grows only when SoundTouch has more ready
-    /// output than the current pooled array can hold.
-    /// </summary>
+/// Drains ready SoundTouch samples into the rented destination, growing it when required.
+/// The caller retains ownership of the updated pooled buffer.
+/// </summary>
     private static void DrainPitch(
         PitchShifter pitchShifter,
         ref float[] buffer,
@@ -607,7 +594,7 @@ internal static class AudioGenerationPipeline
         }
     }
 
-    // Auxiliary interpolation method
+    /// <summary>Blends equal-length speaker fingerprints with SLERP, using linear interpolation for nearly collinear vectors or extrapolation.</summary>
     private static float[] Slerp(float[] source, float[] target, float t)
     {
         float[] result = new float[source.Length];

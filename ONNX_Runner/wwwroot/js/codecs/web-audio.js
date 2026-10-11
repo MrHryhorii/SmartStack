@@ -260,6 +260,7 @@ export function scheduleReplay(
 
     let replayScheduled = false;
 
+    // Finishes live playback once and prepares the retained audio for replay controls.
     const finishLivePlayback =
         async () => {
             if (replayScheduled) {
@@ -343,6 +344,7 @@ export function scheduleReplay(
     );
 }
 
+// Creates an AudioContext at the stream rate, falling back to the browser default when needed.
 function createAudioContextForRate(
     AudioContextClass,
     sampleRate
@@ -360,6 +362,7 @@ function createAudioContextForRate(
     }
 }
 
+// Accepts a positive sample rate or returns the supplied playback fallback.
 function resolveSampleRate(
     sampleRate,
     fallback = DEFAULT_SAMPLE_RATE
@@ -384,6 +387,7 @@ function resolveSampleRate(
         : DEFAULT_SAMPLE_RATE;
 }
 
+// Calculates a minimum scheduling batch size from the stream sample rate.
 function getAccumulatorFrameCount(
     sampleRate
 ) {
@@ -399,6 +403,7 @@ function getAccumulatorFrameCount(
     );
 }
 
+// Schedules accumulated sample blocks, including the final partial block when forced.
 function drainAccumulator(
     session,
     force
@@ -432,6 +437,7 @@ function drainAccumulator(
     return scheduled;
 }
 
+// Builds and schedules one WebAudio buffer while consuming the session's pending channel samples.
 function schedulePendingBlock(
     session,
     length
@@ -576,6 +582,7 @@ function schedulePendingBlock(
         audioBuffer.duration;
 }
 
+// Checks the playback token and context identity so stale sessions cannot affect current playback.
 function isSessionCurrent(
     engine,
     session

@@ -21,6 +21,7 @@ public sealed class Base64EncodingStream : Stream
     private bool _finalized;
     private bool _disposed;
 
+    /// <summary>Wraps an output stream with pooled incremental Base64 encoding and configurable inner-stream ownership.</summary>
     public Base64EncodingStream(Stream inner, bool leaveInnerOpen = false)
     {
         _inner = inner ?? throw new ArgumentNullException(nameof(inner));

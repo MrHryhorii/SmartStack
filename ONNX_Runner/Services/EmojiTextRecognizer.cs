@@ -34,6 +34,7 @@ internal static class EmojiTextRecognizer
         return true;
     }
 
+    /// <summary>Finds the next complete emoji span without splitting UTF-16 surrogate pairs; returns -1 when absent.</summary>
     internal static int FindNext(ReadOnlySpan<char> text, TextChunkerRules rules, out int length)
     {
         for (int index = 0; index < text.Length; index++)

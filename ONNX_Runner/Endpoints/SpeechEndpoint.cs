@@ -13,6 +13,7 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class SpeechEndpoint
 {
+    /// <summary>Validates an OpenAI speech request and delegates synthesis with the client cancellation token.</summary>
     public static async Task<IResult> HandleOpenAiRequest(
         HttpContext httpContext,
         [FromBody] OpenAiSpeechRequest request,
@@ -35,6 +36,7 @@ public static class SpeechEndpoint
             httpContext,
             cancellationToken);
     }
+    /// <summary>Validates a Tsubaki speech request and delegates synthesis with its optional engine controls.</summary>
     public static async Task<IResult> HandleTsubakiRequest(
         HttpContext httpContext,
         [FromBody] TsubakiSpeechRequest request,

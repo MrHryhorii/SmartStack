@@ -11,6 +11,7 @@ public static class PiperModelBootstrapper
     private const string FallbackModelFileName = "fallback.onnx";
     private const string FallbackConfigFileName = "fallback.onnx.json";
 
+    /// <summary>Loads an existing fallback model or downloads it when configured or accepted interactively.</summary>
     public static async Task<(string? OnnxFilePath, PiperConfig? Config)> TryLoadFallbackAsync(ModelSettings settings)
     {
         string fallbackDirectory = Path.Combine(ModelLoader.GetModelDirectoryPath(settings), FallbackDirectoryName);
@@ -61,6 +62,7 @@ public static class PiperModelBootstrapper
         return TryLoad(modelPath, configPath);
     }
 
+    /// <summary>Resolves fallback download permission without prompting in a non-interactive process.</summary>
     private static bool ShouldDownload(ModelSettings settings)
     {
         if (settings.AutoDownloadFallbackModel)
@@ -88,6 +90,7 @@ public static class PiperModelBootstrapper
                string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>Loads the fallback ONNX/config pair and returns an empty result after reporting load failures.</summary>
     private static (string? OnnxFilePath, PiperConfig? Config) TryLoad(string modelPath, string configPath)
     {
         try

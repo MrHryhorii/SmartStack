@@ -11,6 +11,7 @@ internal static class LanguageDetectionSettingsChecks
     private const string MixedSentence =
         "The English report contains the requested information and all the expected values remain available, bonjour.";
 
+    /// <summary>Provides configuration binding and language-confidence threshold boundary cases.</summary>
     internal static IEnumerable<(string Name, Action Check)> Cases()
     {
         yield return ("Detector settings: omitted JSON thresholds retain previous defaults", () =>
@@ -217,6 +218,7 @@ internal static class LanguageDetectionSettingsChecks
         });
     }
 
+    /// <summary>Binds phonemizer settings through the real JSON configuration provider.</summary>
     private static PhonemizerSettings ReadSettings(string json)
     {
         using var stream = new MemoryStream(Encoding.UTF8.GetBytes("{\"PhonemizerSettings\":" + json + "}"));
@@ -224,6 +226,7 @@ internal static class LanguageDetectionSettingsChecks
         return configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
     }
 
+    /// <summary>Creates restrictive thresholds so individual confidence controls can be tested in isolation.</summary>
     private static PhonemizerSettings BoundarySettings() => new()
     {
         MaxBonusMultiplier = 0.0,
@@ -233,19 +236,23 @@ internal static class LanguageDetectionSettingsChecks
         MinSentenceLengthForOverride = int.MaxValue
     };
 
+    /// <summary>Creates a two-candidate English/French detector with the supplied thresholds.</summary>
     private static MixedLanguagePhonemizer Create(PhonemizerSettings settings)
     {
         settings.SupportedLanguages = ["en", "fr"];
         return new MixedLanguagePhonemizer(settings, "en-us", NullLogger<MixedLanguagePhonemizer>.Instance);
     }
 
+    /// <summary>Returns the foreign-word token whose language decision is under test.</summary>
     private static TextChunk FindWord(MixedLanguagePhonemizer detector, string input) =>
         detector.ProcessTextToLanguageTokens(input).Single(token => token.Text.Trim() == ForeignWord);
 
+    /// <summary>Captures decision fields for comparisons that exclude unrelated diagnostic data.</summary>
     private static (string, string, double, bool, bool, bool, string) Decision(TextChunk token) =>
         (token.Text, token.DetectedLanguage, token.Probability, token.IsReliable,
             token.IsTechnical, token.IsPunctuationOrSpace, token.Script);
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

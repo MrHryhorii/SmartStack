@@ -9,6 +9,7 @@ namespace ONNX_Runner.Services.Synthesis;
 /// </summary>
 internal static class SynthesisContextBuilder
 {
+    /// <summary>Resolves request defaults, cloning availability, and processing/output rates into one synthesis context.</summary>
     public static SynthesisContext Build(
         SynthesisRequest request,
         IServiceProvider services,
@@ -77,6 +78,7 @@ internal static class SynthesisContextBuilder
         };
     }
 
+    /// <summary>Maps the Base64 JSON wrapper to its underlying MP3 audio codec.</summary>
     private static AudioFormat ResolveAudioFormat(AudioFormat requestedFormat)
     {
         if (requestedFormat == AudioFormat.B64Json)

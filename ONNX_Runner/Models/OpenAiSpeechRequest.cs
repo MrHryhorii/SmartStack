@@ -80,6 +80,7 @@ public class OpenAiSpeechRequest
 [JsonConverter(typeof(OpenAiVoiceJsonConverter))]
 public sealed class OpenAiVoice
 {
+    /// <summary>Stores the OpenAI voice ID without interpreting it as a model or cloning setting.</summary>
     public OpenAiVoice(string id)
     {
         Id = id;
@@ -94,6 +95,7 @@ public sealed class OpenAiVoice
 /// </summary>
 public sealed class OpenAiVoiceJsonConverter : JsonConverter<OpenAiVoice>
 {
+    /// <summary>Reads a voice string or an object containing a string ID; rejects other JSON shapes.</summary>
     public override OpenAiVoice Read(
         ref Utf8JsonReader reader,
         Type typeToConvert,
@@ -121,6 +123,7 @@ public sealed class OpenAiVoiceJsonConverter : JsonConverter<OpenAiVoice>
             "The 'voice' field must be either a string or an object containing a string 'id'.");
     }
 
+    /// <summary>Writes the voice selector as its string ID.</summary>
     public override void Write(
         Utf8JsonWriter writer,
         OpenAiVoice value,

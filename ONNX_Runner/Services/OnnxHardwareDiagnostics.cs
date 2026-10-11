@@ -11,6 +11,7 @@ namespace ONNX_Runner.Services;
 /// </summary>
 internal static partial class OnnxHardwareDiagnostics
 {
+    /// <summary>Logs the CPU architecture and logical processor count for a loaded component.</summary>
     public static void LogCpuDevice(ILogger logger, string component)
     {
         LogCpuLoaded(
@@ -20,6 +21,7 @@ internal static partial class OnnxHardwareDiagnostics
             Environment.ProcessorCount);
     }
 
+    /// <summary>Logs a loaded DirectML adapter, retaining its index when optional device metadata is unavailable.</summary>
     public static void LogDirectMlDevice(ILogger logger, string component, int adapterIndex)
     {
         if (TryGetDxgiAdapter(adapterIndex, out var hardwareDevice))
@@ -39,6 +41,7 @@ internal static partial class OnnxHardwareDiagnostics
         LogDirectMlLoadedWithoutMetadata(logger, component, adapterIndex);
     }
 
+    /// <summary>Logs a loaded CUDA device using its provider ordinal and available hardware metadata.</summary>
     public static void LogCudaDevice(ILogger logger, string component, int deviceId)
     {
         if (TryGetCudaDevice(deviceId, out var epDevice))
@@ -58,6 +61,7 @@ internal static partial class OnnxHardwareDiagnostics
         LogCudaLoadedWithoutMetadata(logger, component, deviceId);
     }
 
+    /// <summary>Logs a loaded WebGPU adapter, using Linux PCI data when ONNX Runtime omits its vendor.</summary>
     public static void LogWebGpuDevice(
         ILogger logger,
         string component,
@@ -80,6 +84,7 @@ internal static partial class OnnxHardwareDiagnostics
             hardwareDevice.DeviceId);
     }
 
+    /// <summary>Looks up an unambiguous Linux PCI vendor for a hardware device ID; returns null when unavailable.</summary>
     private static string? TryGetLinuxPciVendor(uint deviceId)
     {
         if (!OperatingSystem.IsLinux())
@@ -136,6 +141,7 @@ internal static partial class OnnxHardwareDiagnostics
         };
     }
 
+    /// <summary>Reads a hexadecimal PCI attribute from sysfs into an unsigned integer.</summary>
     private static bool TryReadPciHex(string path, out uint value)
     {
         value = default;
@@ -155,6 +161,7 @@ internal static partial class OnnxHardwareDiagnostics
                 out value);
     }
 
+    /// <summary>Finds ONNX Runtime GPU metadata matching a DirectML DXGI adapter index.</summary>
     private static bool TryGetDxgiAdapter(int adapterIndex, out OrtHardwareDevice hardwareDevice)
     {
         // Use GetEpDevices() instead of GetHardwareDevices(). GetEpDevices() is
@@ -196,6 +203,7 @@ internal static partial class OnnxHardwareDiagnostics
         return false;
     }
 
+    /// <summary>Finds the CUDA provider device matching an ordinal, allowing a sole candidate when metadata is absent.</summary>
     private static bool TryGetCudaDevice(int deviceId, out OrtEpDevice epDevice)
     {
         OrtEpDevice? onlyCudaDevice = null;
@@ -240,6 +248,7 @@ internal static partial class OnnxHardwareDiagnostics
         return false;
     }
 
+    /// <summary>Reads the CUDA ordinal from either supported provider option spelling.</summary>
     private static bool TryGetCudaOrdinal(OrtEpDevice device, out int deviceId)
     {
         IReadOnlyDictionary<string, string> entries = device.EpOptions.Entries;
@@ -258,6 +267,7 @@ internal static partial class OnnxHardwareDiagnostics
             out deviceId);
     }
 
+    /// <summary>Emits the CPU load message through the source-generated logger.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "[HARDWARE] {Component} loaded successfully on CPU (Architecture: {Architecture}, Logical Processors: {LogicalProcessors})")]
@@ -267,6 +277,7 @@ internal static partial class OnnxHardwareDiagnostics
         Architecture architecture,
         int logicalProcessors);
 
+    /// <summary>Emits DirectML adapter identity and hardware metadata.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "[HARDWARE] {Component} loaded successfully on GPU (DirectML, Adapter: {AdapterIndex}, Vendor: {Vendor}, HardwareDeviceId: {HardwareDeviceId})")]
@@ -277,6 +288,7 @@ internal static partial class OnnxHardwareDiagnostics
         string vendor,
         uint hardwareDeviceId);
 
+    /// <summary>Emits the DirectML adapter index when hardware metadata is unavailable.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "[HARDWARE] {Component} loaded successfully on GPU (DirectML, Adapter: {AdapterIndex})")]
@@ -285,6 +297,7 @@ internal static partial class OnnxHardwareDiagnostics
         string component,
         int adapterIndex);
 
+    /// <summary>Emits CUDA device identity and hardware metadata.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "[HARDWARE] {Component} loaded successfully on GPU (CUDA, Device ID: {DeviceId}, Vendor: {Vendor}, HardwareDeviceId: {HardwareDeviceId})")]
@@ -295,6 +308,7 @@ internal static partial class OnnxHardwareDiagnostics
         string vendor,
         uint hardwareDeviceId);
 
+    /// <summary>Emits the CUDA ordinal when hardware metadata is unavailable.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "[HARDWARE] {Component} loaded successfully on GPU (CUDA, Device ID: {DeviceId})")]
@@ -303,6 +317,7 @@ internal static partial class OnnxHardwareDiagnostics
         string component,
         int deviceId);
 
+    /// <summary>Emits WebGPU adapter identity and hardware metadata.</summary>
     [LoggerMessage(
         Level = LogLevel.Information,
         Message = "[HARDWARE] {Component} loaded successfully on GPU (WebGPU, Adapter: {AdapterIndex}, Vendor: {Vendor}, HardwareDeviceId: {HardwareDeviceId})")]

@@ -1,3 +1,4 @@
+// Binds the theme toggle and persists manual light/dark selections.
 export function initTheme() {
     const htmlEl = document.documentElement;
     const themeBtn = document.getElementById('themeToggle');

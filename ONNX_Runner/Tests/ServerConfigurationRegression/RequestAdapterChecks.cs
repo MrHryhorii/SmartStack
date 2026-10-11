@@ -4,6 +4,7 @@ using ONNX_Runner.Models;
 
 internal static class RequestAdapterChecks
 {
+    /// <summary>Checks accepted wire defaults, format validation, voice normalization, and optional request mapping.</summary>
     internal static void Run(Action<string, Action> check)
     {
         foreach (var (name, expected) in new (string, AudioFormat)[]
@@ -131,6 +132,7 @@ internal static class RequestAdapterChecks
         }
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

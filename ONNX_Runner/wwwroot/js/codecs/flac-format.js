@@ -63,6 +63,7 @@ export function tryExtractFlacMetadata(buffer) {
     }
 }
 
+// Finds the next valid candidate frame header matching the expected FLAC frame number.
 export function findFlacFrameStart(
     buffer,
     startOffset,
@@ -94,6 +95,7 @@ export function findFlacFrameStart(
     return -1;
 }
 
+// Parses and validates the supported FLAC frame header, including its header checksum.
 export function parseFlacFrameHeader(
     buffer,
     offset,
@@ -194,6 +196,7 @@ export function parseFlacFrameHeader(
     };
 }
 
+// Combines pending and newly received FLAC bytes in source order.
 export function concatBytes(left, right) {
     if (left.length === 0) {
         return right.slice();
@@ -315,6 +318,7 @@ export function countFlacSamples(fileBytes) {
     return totalSamples;
 }
 
+// Updates the STREAMINFO total-sample field in buffered FLAC bytes for browser decoding.
 function patchStreamInfoTotalSamples(
     bytes,
     totalSamples
@@ -366,6 +370,7 @@ function patchStreamInfoTotalSamples(
     return true;
 }
 
+// Collects enough leading chunks to inspect the required FLAC metadata prefix.
 function collectHeaderPrefix(
     chunks,
     requiredBytes
@@ -409,6 +414,7 @@ function collectHeaderPrefix(
     };
 }
 
+// Copies retained response chunks into one contiguous FLAC byte array.
 function concatChunkList(chunks) {
     let totalLength = 0;
 
@@ -429,6 +435,7 @@ function concatChunkList(chunks) {
     return result;
 }
 
+// Unpacks sample rate, channel count, bit depth, and total samples from STREAMINFO.
 function parseStreamInfo(buffer, bodyOffset) {
     let combined = 0n;
 
@@ -450,6 +457,7 @@ function parseStreamInfo(buffer, bodyOffset) {
     };
 }
 
+// Reads the FLAC UTF-8-style frame/sample integer without consuming incomplete input.
 function readUtf8Integer(buffer, offset) {
     if (buffer.length <= offset) {
         return null;
@@ -498,6 +506,7 @@ function readUtf8Integer(buffer, offset) {
     return { value, length };
 }
 
+// Calculates the FLAC header CRC-8 over the selected byte range.
 function computeCrc8(buffer, start, end) {
     let crc = 0;
 

@@ -10,6 +10,7 @@ internal static class EmojiChecks
     private const string Heart = "\u2764\uFE0F";
     private const string Technologist = "\U0001F469\u200D\U0001F4BB";
 
+    /// <summary>Provides emoji recognition, language neutrality, and enabled/disabled pronunciation regression cases.</summary>
     internal static IEnumerable<(string Name, Action Check)> Cases()
     {
         yield return ("Emoji settings: omitted and explicit JSON values", () =>
@@ -170,6 +171,7 @@ internal static class EmojiChecks
         }
     }
 
+    /// <summary>Creates a phonemizer with a recording eSpeak bridge, chosen model voice, and explicit emoji setting.</summary>
     private static UnifiedPhonemizer Create(EspeakWrapper bridge, MixedLanguagePhonemizer? detector,
         bool read, string voice = "en-us")
     {
@@ -177,12 +179,15 @@ internal static class EmojiChecks
         return new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config, detector,
             settings: new PhonemizerSettings { ReadEmojis = read });
     }
+    /// <summary>Creates the small model phoneme inventory needed by emoji routing checks.</summary>
     private static PiperConfig Config(string voice) => new()
     {
         Espeak = new() { Voice = voice },
         PhonemeIdMap = new() { [" "] = [1], ["."] = [2], ["?"] = [3], ["!"] = [4], ["e"] = [5], ["s"] = [6] }
     };
+    /// <summary>Normalizes repeated spaces before comparing recorded text fragments.</summary>
     private static string NormalizeSpaces(string value) => string.Join(' ', value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

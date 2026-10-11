@@ -7,6 +7,7 @@ using ONNX_Runner.Services;
 
 internal static class AdditionalChecks
 {
+    /// <summary>Provides additional sentence, Unicode, protected-token, and custom-rule regression cases.</summary>
     internal static IEnumerable<(string Category, string Name, Action Check)> Cases()
     {
         const string unicodeCategory = "Unicode emergency invariants";
@@ -215,6 +216,7 @@ internal static class AdditionalChecks
         }
     }
 
+    /// <summary>Checks emergency-split progress, source preservation, Unicode validity, and sentence-completion flags.</summary>
     private static void CheckEmergency(string input, int limit, bool early, bool finished,
         string? protectedToken = null, bool requireValidUnicode = true)
     {
@@ -258,6 +260,7 @@ internal static class AdditionalChecks
             "A complete technical token gained an emergency hyphen.");
     }
 
+    /// <summary>Checks that every UTF-16 sequence decodes to a valid Unicode scalar.</summary>
     private static bool IsValidUtf16(string text)
     {
         ReadOnlySpan<char> remaining = text.AsSpan();
@@ -269,6 +272,7 @@ internal static class AdditionalChecks
         return true;
     }
 
+    /// <summary>Loads rule extensions from a temporary JSON file and deletes the fixture afterward.</summary>
     private static TextChunkerRules Load(string json)
     {
         string path = Path.Combine(Path.GetTempPath(), $"tsubaki-extra-rules-{Guid.NewGuid():N}.json");
@@ -280,6 +284,7 @@ internal static class AdditionalChecks
         finally { File.Delete(path); }
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message = "The configured behavior did not match the fixture.")
     {
         if (!condition) throw new InvalidOperationException(message);

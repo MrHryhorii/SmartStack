@@ -42,6 +42,7 @@ export async function receiveBase64Json(
     };
 }
 
+// Reads incremental JSON bytes and forwards audio decoded by the Base64 payload parser.
 async function readStreamedJson(
     body,
     onChunk
@@ -82,6 +83,7 @@ async function readStreamedJson(
     );
 }
 
+// Parses a buffered JSON response and reports invalid or incomplete payloads.
 async function parseJsonBlob(jsonBlob) {
     const text =
         await jsonBlob.text();
@@ -96,6 +98,7 @@ async function parseJsonBlob(jsonBlob) {
     }
 }
 
+// Validates and decodes Base64 audio into a Blob with the requested MIME type.
 function base64ToBlob(
     base64,
     mimeType

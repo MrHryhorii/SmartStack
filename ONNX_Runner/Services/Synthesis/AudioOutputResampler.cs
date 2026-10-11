@@ -11,6 +11,7 @@ internal sealed class AudioOutputResampler : IDisposable
     private readonly int _blockLength;
     private float[]? _output;
 
+    /// <summary>Creates request-local resampling state and rents a fixed-size output block.</summary>
     internal AudioOutputResampler(int sourceRate, int targetRate)
     {
         _resampler = new AudioResampler(sourceRate, targetRate);
@@ -18,6 +19,7 @@ internal sealed class AudioOutputResampler : IDisposable
         _output = ArrayPool<float>.Shared.Rent(_blockLength);
     }
 
+    /// <summary>Filters input in place when needed, then writes converted blocks while retaining resampler history.</summary>
     internal void Write(Span<float> samples, AudioStreamManager manager, BiQuadFilter? filter)
     {
         ObjectDisposedException.ThrowIf(_output == null, this);
@@ -37,6 +39,7 @@ internal sealed class AudioOutputResampler : IDisposable
         }
     }
 
+    /// <summary>Drains the final partial output before the audio encoder is finalized.</summary>
     internal void Complete(AudioStreamManager manager)
     {
         ObjectDisposedException.ThrowIf(_output == null, this);
@@ -48,6 +51,7 @@ internal sealed class AudioOutputResampler : IDisposable
         } while (written == _blockLength);
     }
 
+    /// <summary>Returns the rented output block once; the audio stream manager remains caller-owned.</summary>
     public void Dispose()
     {
         if (_output == null)

@@ -185,6 +185,7 @@ foreach (var fixture in new (string Text, string Language, string? Forced)[]
 Console.WriteLine($"Result: {total - failures}/{total} passed");
 return failures == 0 ? 0 : 1;
 
+// Runs one native integration case and records its outcome without stopping later checks.
 void Check(string name, Action action)
 {
     total++;
@@ -192,6 +193,7 @@ void Check(string name, Action action)
     catch (Exception error) { failures++; Console.Error.WriteLine($"FAIL {name}: {error.Message}"); }
 }
 
+// Throws with the supplied diagnostic when a native integration assertion fails.
 static void Require(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);

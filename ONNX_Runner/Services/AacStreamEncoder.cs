@@ -163,6 +163,7 @@ internal sealed class AacStreamEncoder : IDisposable
     private bool _finalized;
     private bool _buffersReturned;
 
+    /// <summary>Creates a mono AAC-LC/ADTS encoder and rents its working buffers without taking ownership of the target stream.</summary>
     public AacStreamEncoder(
         Stream stream,
         int sampleRate,
@@ -258,6 +259,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Transforms and quantizes one overlapping audio frame, then writes its ADTS packet.</summary>
     private void EncodeFrame(
         ReadOnlySpan<float> previous,
         ReadOnlySpan<float> current)
@@ -305,6 +307,7 @@ internal sealed class AacStreamEncoder : IDisposable
             frameLength);
     }
 
+    /// <summary>Calculates the frame payload bit budget from bitrate and sample rate, excluding the ADTS header.</summary>
     private int GetTargetRawBits()
     {
         int totalTargetBits = checked((int)Math.Round(
@@ -319,6 +322,7 @@ internal sealed class AacStreamEncoder : IDisposable
             rawTargetBits);
     }
 
+    /// <summary>Searches for a global quantization gain that fits the frame bit budget without coefficient overflow.</summary>
     private int SelectGlobalGain(int targetRawBits)
     {
         int low = 0;
@@ -358,6 +362,7 @@ internal sealed class AacStreamEncoder : IDisposable
             : 255;
     }
 
+    /// <summary>Precomputes spectral magnitudes raised to three quarters for AAC quantization.</summary>
     private void BuildPow34()
     {
         for (int i = 0; i < FrameSamples; i++)
@@ -370,6 +375,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Quantizes the spectrum at the selected gain and reports values beyond the supported magnitude range.</summary>
     private void Quantize(
         int globalGain,
         out bool overflow)
@@ -397,6 +403,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Assigns zero or spectral codebooks to scalefactor bands and returns the active band count.</summary>
     private int BuildBandCodebooks()
     {
         int maxSfb = 0;
@@ -432,6 +439,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return maxSfb;
     }
 
+    /// <summary>Counts the bits needed for the current single-channel raw data block.</summary>
     private int CountRawDataBits(int maxSfb)
     {
         // SCE ID + element tag + global_gain + long-window ICS info.
@@ -502,6 +510,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return (bits + 7) & ~7;
     }
 
+    /// <summary>Counts Huffman, sign, and escape bits for one quantized spectral pair.</summary>
     private static int CountSpectralPairBits(
         int first,
         int second)
@@ -531,6 +540,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return bits;
     }
 
+    /// <summary>Counts additional escape bits for a spectral magnitude not represented directly by the codebook.</summary>
     private static int CountEscapeBits(int magnitude)
     {
         if (magnitude < 16)
@@ -544,6 +554,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return 2 * exponent - 3;
     }
 
+    /// <summary>Writes the mono AAC raw data block with its gain, band sections, and spectral payload.</summary>
     private void WriteRawDataBlock(
         ref AacBitWriter writer,
         int globalGain,
@@ -584,6 +595,7 @@ internal sealed class AacStreamEncoder : IDisposable
         writer.WriteBits(7, 3); // ID_END.
     }
 
+    /// <summary>Groups consecutive bands sharing a codebook into AAC section records.</summary>
     private void WriteSections(
         ref AacBitWriter writer,
         int maxSfb)
@@ -623,6 +635,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Writes quantized spectral pairs for nonzero scalefactor bands.</summary>
     private void WriteSpectralData(
         ref AacBitWriter writer,
         int maxSfb)
@@ -647,6 +660,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Writes one Huffman-coded spectral pair with its signs and any escape extensions.</summary>
     private static void WriteSpectralPair(
         ref AacBitWriter writer,
         int first,
@@ -686,6 +700,7 @@ internal sealed class AacStreamEncoder : IDisposable
             secondMagnitude);
     }
 
+    /// <summary>Writes the AAC escape extension for a large spectral magnitude.</summary>
     private static void WriteEscape(
         ref AacBitWriter writer,
         int magnitude)
@@ -713,6 +728,7 @@ internal sealed class AacStreamEncoder : IDisposable
             exponent);
     }
 
+    /// <summary>Computes the long-window MDCT from overlapping PCM frames using the precomputed FFT tables.</summary>
     private void ComputeMdct(
         ReadOnlySpan<float> previous,
         ReadOnlySpan<float> current)
@@ -766,6 +782,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Reads the appropriate overlapping PCM sample and applies the sine analysis window.</summary>
     private static double GetWindowedSample(
         ReadOnlySpan<float> previous,
         ReadOnlySpan<float> current,
@@ -783,6 +800,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return sample * PcmScale * SineWindow[index];
     }
 
+    /// <summary>Runs the in-place forward FFT used by the MDCT calculation.</summary>
     private void ForwardFft()
     {
         for (int i = 0; i < FftSize; i++)
@@ -837,6 +855,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Writes the seven-byte mono MPEG-4 AAC-LC ADTS header for the complete packet length.</summary>
     private void WriteAdtsHeader(
         Span<byte> header,
         int frameLength)
@@ -865,6 +884,7 @@ internal sealed class AacStreamEncoder : IDisposable
         header[6] = 0xFC; // fullness low bits + one raw_data_block.
     }
 
+    /// <summary>Encodes the final pending samples and overlap tail once, then returns working buffers.</summary>
     private void EnsureFinalized()
     {
         if (_finalized)
@@ -913,6 +933,7 @@ internal sealed class AacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Returns every rented encoder buffer once.</summary>
     private void ReturnBuffers()
     {
         if (_buffersReturned)
@@ -946,12 +967,14 @@ internal sealed class AacStreamEncoder : IDisposable
         ReturnBuffers();
     }
 
+    /// <summary>Finalizes pending AAC output while leaving the caller-owned target stream open.</summary>
     public void Dispose()
     {
         EnsureFinalized();
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>Selects the AAC long-window scalefactor band boundaries for the configured sample rate.</summary>
     private static int[] GetScalefactorBands(int sampleRate)
     {
         return sampleRate switch
@@ -967,6 +990,7 @@ internal sealed class AacStreamEncoder : IDisposable
         };
     }
 
+    /// <summary>Precomputes the sine window used by overlapping AAC frames.</summary>
     private static double[] BuildSineWindow()
     {
         var table = new double[WindowSamples];
@@ -980,6 +1004,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return table;
     }
 
+    /// <summary>Precomputes real MDCT rotation factors.</summary>
     private static double[] BuildMdctTwiddleReal()
     {
         var table = new double[FftSize];
@@ -993,6 +1018,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return table;
     }
 
+    /// <summary>Precomputes imaginary MDCT rotation factors.</summary>
     private static double[] BuildMdctTwiddleImag()
     {
         var table = new double[FftSize];
@@ -1006,6 +1032,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return table;
     }
 
+    /// <summary>Precomputes real forward-FFT rotation factors.</summary>
     private static double[] BuildFftTwiddleReal()
     {
         var table = new double[FftSize / 2];
@@ -1019,6 +1046,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return table;
     }
 
+    /// <summary>Precomputes imaginary forward-FFT rotation factors.</summary>
     private static double[] BuildFftTwiddleImag()
     {
         var table = new double[FftSize / 2];
@@ -1032,6 +1060,7 @@ internal sealed class AacStreamEncoder : IDisposable
         return table;
     }
 
+    /// <summary>Precomputes bit-reversed indices for the fixed FFT size.</summary>
     private static ushort[] BuildFftBitReverse()
     {
         var table = new ushort[FftSize];
@@ -1063,6 +1092,7 @@ internal sealed class AacStreamEncoder : IDisposable
         private int _byteIndex;
         private int _bitsUsed;
 
+        /// <summary>Starts a bit writer at the payload offset in the supplied encoder buffer.</summary>
         public AacBitWriter(
             byte[] buffer,
             int startIndex)
@@ -1072,6 +1102,7 @@ internal sealed class AacStreamEncoder : IDisposable
             _bitsUsed = 0;
         }
 
+        /// <summary>Writes the requested low-order bits most significant bit first, rejecting buffer overflow.</summary>
         public void WriteBits(
             uint value,
             int bitCount)
@@ -1111,6 +1142,7 @@ internal sealed class AacStreamEncoder : IDisposable
             }
         }
 
+        /// <summary>Pads a partial output byte and returns the next available byte offset.</summary>
         public int AlignToByte()
         {
             if (_bitsUsed != 0)

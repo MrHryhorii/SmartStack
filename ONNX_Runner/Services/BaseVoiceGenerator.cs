@@ -61,6 +61,7 @@ public class BaseVoiceGenerator(
     //        Cherokee syllabary / plain romanized text is not a fully supported input path.
     private static readonly Dictionary<string, string> _referenceTexts = CreateReferenceTexts();
 
+    /// <summary>Builds language-specific reference passages and aliases for generating the base voice fingerprint.</summary>
     private static Dictionary<string, string> CreateReferenceTexts()
     {
         var texts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -225,6 +226,7 @@ public class BaseVoiceGenerator(
         return texts;
     }
 
+    /// <summary>Assigns additional voice codes to an existing reference passage.</summary>
     private static void AddAliases(
         Dictionary<string, string> texts,
         string sourceCode,
@@ -245,6 +247,7 @@ public class BaseVoiceGenerator(
         "The quick brown fox jumps over the lazy dog while a calm speaker reads several varied phrases. " +
         LatinProbe;
 
+    /// <summary>Synthesizes a varied reference passage and caches the base Piper fingerprint for voice cloning.</summary>
     public void GenerateAndCacheBaseFingerprint()
     {
         string configuredVoice = _piperConfig.Espeak.Voice ?? "en";
@@ -359,6 +362,7 @@ public class BaseVoiceGenerator(
         Console.ResetColor();
     }
 
+    /// <summary>Chooses a reference passage by exact voice code, progressively shorter parent codes, then the fallback.</summary>
     private static string ResolveReferenceText(
         string normalizedVoice,
         out string resolvedCode)
@@ -395,6 +399,7 @@ public class BaseVoiceGenerator(
         return FallbackText;
     }
 
+    /// <summary>Normalizes voice codes to lowercase hyphenated form, defaulting empty input to English.</summary>
     private static string NormalizeVoiceCode(string voiceCode)
     {
         string normalized = voiceCode

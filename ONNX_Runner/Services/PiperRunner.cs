@@ -39,6 +39,7 @@ public partial class PiperRunner : IDisposable
     // Represents the engine's technical concurrency limit (pool size for DML, int.MaxValue for CUDA/CPU)
     public int ConcurrencyCapacity { get; private set; }
 
+    /// <summary>Selects the model speaker and creates inference sessions and concurrency controls for the chosen hardware.</summary>
     public PiperRunner(
         string modelPath,
         PiperConfig config,
@@ -235,9 +236,9 @@ public partial class PiperRunner : IDisposable
     }
 
     /// <summary>
-    /// Performs raw inference. Converts phonemes into a float array of audio samples.
-    /// Handles zero-allocation tensor extraction and safe Object Pool routing.
-    /// </summary>
+/// Runs Piper inference and returns pooled mono PCM with its valid sample count.
+/// The caller must return Buffer to ArrayPool&lt;float&gt;.Shared; session routing is handled here.
+/// </summary>
     public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, bool isContinuation = false, bool isFinished = true, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
         float safeSpeed = Math.Clamp(speed, 0.1f, 10.0f);
@@ -296,7 +297,7 @@ public partial class PiperRunner : IDisposable
 
             int length = (int)outputTensor.Length;
 
-            // ZERO-ALLOCATION: Rent a buffer instead of creating a new array to save GC cycles.
+            // Reuse a pooled output array; the caller returns it after consuming valid samples.
             float[] buffer = ArrayPool<float>.Shared.Rent(length);
 
             if (outputTensor is DenseTensor<float> denseTensor)
@@ -403,6 +404,7 @@ public partial class PiperRunner : IDisposable
         return memoryStream.ToArray();
     }
 
+    /// <summary>Disposes the shared or pooled inference sessions and their concurrency gate.</summary>
     public void Dispose()
     {
         _sharedSession?.Dispose();
@@ -418,27 +420,35 @@ public partial class PiperRunner : IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>Logs that speaker selection is unnecessary for a single-speaker model.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Single-speaker model detected. Speaker selection is not required.")]
     private static partial void LogSingleSpeakerModel(ILogger logger);
 
+    /// <summary>Reports a missing speaker map and the fallback to speaker ID zero.</summary>
     [LoggerMessage(Level = LogLevel.Warning, Message = "[PIPER] Model reports {SpeakerCount} speakers but speaker_id_map is empty. Falling back to sid=0.")]
     private static partial void LogEmptySpeakerMap(ILogger logger, int speakerCount);
 
+    /// <summary>Logs the configured speaker name and resolved model ID.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Multi-speaker model detected. Using configured speaker '{Speaker}' (sid={SpeakerId}).")]
     private static partial void LogConfiguredSpeaker(ILogger logger, string speaker, int speakerId);
 
+    /// <summary>Reports an unknown configured speaker before selecting an available fallback.</summary>
     [LoggerMessage(Level = LogLevel.Warning, Message = "[PIPER] Configured speaker '{Speaker}' was not found in speaker_id_map. Falling back to the first available speaker.")]
     private static partial void LogSpeakerNotFound(ILogger logger, string speaker);
 
+    /// <summary>Logs the fallback speaker name and model ID.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Using fallback speaker '{Speaker}' (sid={SpeakerId}).")]
     private static partial void LogFallbackSpeaker(ILogger logger, string speaker, int speakerId);
 
+    /// <summary>Logs successful Piper loading on the selected CUDA device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {DeviceId})")]
     private static partial void LogCudaLoaded(ILogger logger, int deviceId);
 
+    /// <summary>Logs successful Piper loading on the selected DirectML device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (DirectML, Device ID: {DeviceId})")]
     private static partial void LogDmlLoaded(ILogger logger, int deviceId);
 
+    /// <summary>Logs successful Piper loading on the selected WebGPU device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (WebGPU, Device ID: {DeviceId})")]
     private static partial void LogWebGpuLoaded(ILogger logger, int deviceId);
 }

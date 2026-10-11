@@ -5,6 +5,7 @@ namespace ONNX_Runner.Models;
 // Distributed under Unicode License V3; see THIRD_PARTY_LICENSES/Unicode-LICENSE.txt.
 internal static class UnicodeEmojiData
 {
+    /// <summary>Checks the Unicode Emoji property; presentation and sequence validity are handled by the recognizer.</summary>
     internal static bool Contains(int value) => value is
         0x0023
         or 0x002A
@@ -158,5 +159,6 @@ internal static class UnicodeEmojiData
         or >= 0x1FADF and <= 0x1FAEA
         or >= 0x1FAEF and <= 0x1FAF8;
 
+    /// <summary>Checks whether a Unicode scalar is one of the five emoji skin-tone modifiers.</summary>
     internal static bool IsSkinToneModifier(int value) => value is >= 0x1F3FB and <= 0x1F3FF;
 }

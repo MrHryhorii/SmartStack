@@ -418,6 +418,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // HOST DISPATCH & SETUP
     // =========================================================================
 
+    /// <summary>Selects the wet/dry routing policy used to mix each voice effect with the source signal.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static RoutingMode GetRoutingMode(VoiceEffectType type) => type switch
     {
@@ -445,6 +446,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _filterCount = 0;
 
         float nyq = _sampleRate * 0.45f;
+        // Caps filter frequencies at the configured Nyquist safety limit.
         float Safe(float f) => Math.Min(f, nyq);
 
         // Standard LFO phase increment: 2pi * f / fs.
@@ -588,6 +590,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
+    /// <summary>Dispatches one sample to the selected voice effect, retaining its per-request DSP state.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float Process(VoiceEffectType type, float x, float amount) => type switch
     {
@@ -1075,6 +1078,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return decoded / 32768f;
     }
 
+    /// <summary>Finds the magnitude segment used by G.711 A-law companding.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int FindALawSegment(int value)
     {
@@ -1089,6 +1093,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return 8;
     }
 
+    /// <summary>Finds the magnitude segment used by G.711 mu-law companding.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static int FindMuLawSegment(int value)
     {

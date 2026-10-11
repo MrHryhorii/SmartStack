@@ -38,6 +38,7 @@ internal sealed class FlacStreamEncoder : IDisposable
     private bool _finalized;
     private bool _buffersReturned;
 
+    /// <summary>Creates a mono 16-bit FLAC encoder with pooled buffers and writes its initial stream metadata.</summary>
     public FlacStreamEncoder(Stream stream, int sampleRate)
     {
         ArgumentNullException.ThrowIfNull(stream);
@@ -100,6 +101,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Writes the native FLAC marker and STREAMINFO block, recording the seekable sample-count field.</summary>
     private void WriteStreamHeader()
     {
         Span<byte> header = stackalloc byte[42];
@@ -131,6 +133,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         _stream.Write(header);
     }
 
+    /// <summary>Packs sample rate, channel count, bit depth, and total samples into the STREAMINFO field.</summary>
     private ulong BuildStreamInfoCombinedField(ulong totalSamples)
     {
         return ((ulong)_sampleRate << 44) |
@@ -139,6 +142,7 @@ internal sealed class FlacStreamEncoder : IDisposable
                (totalSamples & MaxTotalSamples);
     }
 
+    /// <summary>Writes one FLAC frame with a header, encoded subframe, and CRC checksums.</summary>
     private void EncodeFrame(ReadOnlySpan<short> samples)
     {
         if (samples.IsEmpty)
@@ -208,6 +212,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         _frameNumber++;
     }
 
+    /// <summary>Writes fixed-predictor Rice data when smaller, otherwise preserving samples in a verbatim subframe.</summary>
     private void WriteCompressedOrVerbatimSubframe(
         ref FrameBitWriter writer,
         ReadOnlySpan<short> samples)
@@ -259,6 +264,7 @@ internal sealed class FlacStreamEncoder : IDisposable
             riceParameter);
     }
 
+    /// <summary>Writes a constant subframe representing a repeated 16-bit sample.</summary>
     private static void WriteConstantSubframe(ref FrameBitWriter writer, short sample)
     {
         writer.WriteBits(0, 1);
@@ -267,6 +273,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         writer.WriteSigned(sample, BitsPerSample);
     }
 
+    /// <summary>Writes every sample directly in a lossless verbatim subframe.</summary>
     private static void WriteVerbatimSubframe(
         ref FrameBitWriter writer,
         ReadOnlySpan<short> samples)
@@ -332,6 +339,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return bestOrder;
     }
 
+    /// <summary>Compares residual averages by cross multiplication without floating-point division.</summary>
     private static bool IsLowerAverage(
         long candidateSum,
         int candidateCount,
@@ -341,6 +349,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return candidateSum * currentCount < currentSum * candidateCount;
     }
 
+    /// <summary>Calculates fixed-predictor residuals after the warm-up samples and returns their count.</summary>
     private static int BuildResiduals(
         ReadOnlySpan<short> samples,
         int order,
@@ -364,6 +373,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return destination;
     }
 
+    /// <summary>Chooses the Rice parameter with the smallest encoded residual bit count.</summary>
     private static int SelectRiceParameter(
         ReadOnlySpan<int> residuals,
         out ulong encodedBits)
@@ -408,6 +418,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return bestParameter;
     }
 
+    /// <summary>Writes signed residuals as folded unsigned Rice codes in one partition.</summary>
     private static void WriteRiceResiduals(
         ref FrameBitWriter writer,
         ReadOnlySpan<int> residuals,
@@ -431,6 +442,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Maps signed residuals to the unsigned interleaving used by Rice coding.</summary>
     private static uint FoldSigned(int value)
     {
         return value >= 0
@@ -438,6 +450,7 @@ internal sealed class FlacStreamEncoder : IDisposable
             : ((uint)(-value) << 1) - 1u;
     }
 
+    /// <summary>Checks whether a nonempty frame contains only one repeated sample value.</summary>
     private static bool IsConstant(ReadOnlySpan<short> samples)
     {
         short first = samples[0];
@@ -453,6 +466,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return true;
     }
 
+    /// <summary>Selects a FLAC block-size code and the number of explicit size bytes required.</summary>
     private static byte GetBlockSizeCode(int blockSize, out int extraBytes)
     {
         extraBytes = 0;
@@ -484,6 +498,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return 7;
     }
 
+    /// <summary>Selects a FLAC sample-rate code and any explicit rate field length.</summary>
     private static byte GetSampleRateCode(int sampleRate, out int extraBytes)
     {
         extraBytes = 0;
@@ -526,6 +541,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return 0;
     }
 
+    /// <summary>Writes an explicit sample-rate field when required and returns the next byte offset.</summary>
     private static int WriteSampleRateExtra(
         byte[] buffer,
         int position,
@@ -555,6 +571,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return position + 2;
     }
 
+    /// <summary>Writes the FLAC UTF-8-style frame number and returns the next byte offset.</summary>
     private static int WriteUtf8UInt31(byte[] buffer, int position, uint value)
     {
         if (value < 0x80)
@@ -602,6 +619,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return position;
     }
 
+    /// <summary>Calculates the FLAC header CRC-8 checksum.</summary>
     private static byte ComputeCrc8(ReadOnlySpan<byte> data)
     {
         byte crc = 0;
@@ -621,6 +639,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return crc;
     }
 
+    /// <summary>Calculates the FLAC frame CRC-16 checksum.</summary>
     private static ushort ComputeCrc16(ReadOnlySpan<byte> data)
     {
         ushort crc = 0;
@@ -640,6 +659,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         return crc;
     }
 
+    /// <summary>Patches total samples in seekable STREAMINFO metadata while restoring the stream position.</summary>
     private void PatchTotalSamples()
     {
         if (_streamInfoCombinedFieldPosition < 0 ||
@@ -667,6 +687,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Writes a pending final frame, patches metadata when possible, and returns buffers once.</summary>
     private void EnsureFinalized()
     {
         if (_finalized)
@@ -692,6 +713,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         }
     }
 
+    /// <summary>Returns the rented frame, residual, and encoded-output buffers once.</summary>
     private void ReturnBuffers()
     {
         if (_buffersReturned)
@@ -717,6 +739,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         ReturnBuffers();
     }
 
+    /// <summary>Finalizes pending FLAC output while leaving the caller-owned target stream open.</summary>
     public void Dispose()
     {
         EnsureFinalized();
@@ -732,6 +755,7 @@ internal sealed class FlacStreamEncoder : IDisposable
         private int _byteIndex;
         private int _bitsUsed;
 
+        /// <summary>Starts a bit writer at the subframe offset in the supplied output buffer.</summary>
         public FrameBitWriter(byte[] buffer, int startIndex)
         {
             _buffer = buffer;
@@ -739,12 +763,14 @@ internal sealed class FlacStreamEncoder : IDisposable
             _bitsUsed = 0;
         }
 
+        /// <summary>Writes a signed value using the requested two's-complement bit width.</summary>
         public void WriteSigned(int value, int bitCount)
         {
             ulong mask = (1UL << bitCount) - 1UL;
             WriteBits((ulong)(long)value & mask, bitCount);
         }
 
+        /// <summary>Writes a unary code consisting of the requested zero count followed by one.</summary>
         public void WriteUnary(uint zeroCount)
         {
             while (zeroCount >= 32)
@@ -761,11 +787,13 @@ internal sealed class FlacStreamEncoder : IDisposable
             WriteBits(1, 1);
         }
 
+        /// <summary>Writes a 32-bit value through the shared most-significant-bit-first writer.</summary>
         public void WriteBits(uint value, int bitCount)
         {
             WriteBits((ulong)value, bitCount);
         }
 
+        /// <summary>Writes the requested low-order bits most significant bit first, rejecting frame buffer overflow.</summary>
         public void WriteBits(ulong value, int bitCount)
         {
             while (bitCount > 0)
@@ -801,6 +829,7 @@ internal sealed class FlacStreamEncoder : IDisposable
             }
         }
 
+        /// <summary>Pads a partial output byte and returns the next available byte offset.</summary>
         public int AlignToByte()
         {
             if (_bitsUsed != 0)

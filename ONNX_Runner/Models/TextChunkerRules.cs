@@ -289,6 +289,7 @@ public sealed class TextChunkerRules
     public FrozenSet<string> KnownAbbreviations { get; }
     private readonly FrozenDictionary<PunctuationKind, ImmutableArray<Rune>> _semanticMarks;
 
+    /// <summary>Returns the immutable marks assigned to one punctuation meaning.</summary>
     internal ImmutableArray<Rune> GetSemanticMarks(PunctuationKind kind) => _semanticMarks[kind];
 
     // Literal syntax is spoken by name only inside a protected technical span.
@@ -306,6 +307,7 @@ public sealed class TextChunkerRules
             (hasText && char.IsSymbol(value));
     }
 
+    /// <summary>Merges validated extensions into the built-in catalog and prepares immutable lookup tables.</summary>
     private TextChunkerRules(Extensions additions)
     {
         var punctuation = new Dictionary<Rune, PunctuationEntry>();
@@ -405,6 +407,7 @@ public sealed class TextChunkerRules
         }
     }
 
+    /// <summary>Builds a BMP character lookup for entries matching any requested punctuation role.</summary>
     private static SearchValues<char> SelectMarks(
         Dictionary<Rune, PunctuationEntry> punctuation, PunctuationRole roles)
     {
@@ -413,6 +416,7 @@ public sealed class TextChunkerRules
             .Select(pair => (char)pair.Key.Value).ToArray());
     }
 
+    /// <summary>Validates additional punctuation and merges roles, rejecting incompatible meanings when required.</summary>
     private static void AddMarks(Dictionary<Rune, PunctuationEntry> punctuation,
         IEnumerable<string>? additions, PunctuationRole roles, PunctuationKind kind, bool strictKind = false)
     {
@@ -437,6 +441,7 @@ public sealed class TextChunkerRules
         }
     }
 
+    /// <summary>Adds validated BMP punctuation or symbol characters as technical token markers.</summary>
     private static void AddTechnicalMarkers(Dictionary<Rune, PunctuationEntry> punctuation,
         IEnumerable<string>? additions)
     {
@@ -452,12 +457,14 @@ public sealed class TextChunkerRules
         }
     }
 
+    /// <summary>Checks whether the built-in catalog treats a character as a line boundary.</summary>
     private static bool DefaultLineBoundary(char mark)
     {
         return BuiltInPunctuation.Any(group =>
             (group.Roles & PunctuationRole.Line) != 0 && group.Marks.Contains(mark));
     }
 
+    /// <summary>Normalizes and validates abbreviation additions, then freezes the case-insensitive union.</summary>
     private FrozenSet<string> MergeAbbreviations(IEnumerable<string> builtIn, IEnumerable<string>? additions)
     {
         var merged = new HashSet<string>(builtIn, StringComparer.OrdinalIgnoreCase);

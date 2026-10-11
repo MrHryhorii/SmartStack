@@ -249,6 +249,7 @@ public struct DcBlocker(int sampleRate)
     private float _y1 = 0f;
     private readonly float _r = 1f - (2f * MathF.PI * 35f / sampleRate);
 
+    /// <summary>Removes DC offset from one sample while retaining the previous input and output.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Process(float x)
     {
@@ -258,6 +259,7 @@ public struct DcBlocker(int sampleRate)
         return y;
     }
 
+    /// <summary>Clears the DC blocker's input and output history.</summary>
     public void Reset() => _x1 = _y1 = 0f;
 }
 
@@ -274,6 +276,7 @@ public class DelayBuffer
     private readonly int _mask;
     private int _writePos;
 
+    /// <summary>Allocates a circular delay buffer with a power-of-two capacity for masked indexing.</summary>
     public DelayBuffer(int capacity = 4096)
     {
         if ((capacity & (capacity - 1)) != 0)
@@ -333,6 +336,7 @@ public struct TapeDropout
     private float _targetDepth;
     private float _currentDepth;
 
+    /// <summary>Clears the oscillator phase and smoothed modulation depth.</summary>
     public void Reset() => _phase = _targetDepth = _currentDepth = 0f;
 
     /// <summary>
@@ -388,6 +392,7 @@ public struct FeedForwardCompressor
 {
     private float _envelope;
 
+    /// <summary>Clears the tracked envelope before processing a new signal.</summary>
     public void Reset() => _envelope = 0f;
 
     /// <summary>
@@ -459,6 +464,7 @@ public class CombFilter(int bufferSize)
     /// </summary>
     public float Damp { get; set; }
 
+    /// <summary>Clears the comb delay and feedback filter history.</summary>
     public void Clear()
     {
         Array.Clear(_buf, 0, _buf.Length);
@@ -466,6 +472,7 @@ public class CombFilter(int bufferSize)
         _idx = 0;
     }
 
+    /// <summary>Processes one comb-filter sample with damped feedback and circular delay state.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Process(float input)
     {
@@ -501,12 +508,14 @@ public class AllPassFilter(int bufferSize)
     /// <summary>Feedback/feedforward gain. Must satisfy |Feedback| &lt; 1.</summary>
     public float Feedback { get; set; } = 0.5f;
 
+    /// <summary>Clears the all-pass delay buffer and resets its write position.</summary>
     public void Clear()
     {
         Array.Clear(_buf, 0, _buf.Length);
         _idx = 0;
     }
 
+    /// <summary>Processes one sample through the Schroeder all-pass delay structure.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public float Process(float input)
     {

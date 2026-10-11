@@ -18,6 +18,7 @@ public class BridgingStream : Stream
     private int _bufferPosition;
     private long _totalBytesWritten;
 
+    /// <summary>Creates a pooled write buffer whose completed chunks transfer ownership to the channel reader.</summary>
     public BridgingStream(
         ChannelWriter<(byte[] Buffer, int Length)> writer,
         int minChunkSizeBytes = 8192)

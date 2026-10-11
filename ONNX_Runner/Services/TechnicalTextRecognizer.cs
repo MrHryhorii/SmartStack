@@ -10,6 +10,7 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public static class TechnicalTextRecognizer
 {
+    /// <summary>Finds a protected technical token at a lexical boundary, excluding trailing prose punctuation and wrappers.</summary>
     public static bool TryGetSpanLength(ReadOnlySpan<char> text, int start,
         TextChunkerRules rules, out int length)
     {
@@ -66,10 +67,12 @@ public static class TechnicalTextRecognizer
         return true;
     }
 
+    /// <summary>Checks whitespace, visual quotes, and non-lexical reporting dashes as technical-token boundaries.</summary>
     public static bool IsBoundary(char value, TextChunkerRules rules) =>
         char.IsWhiteSpace(value) || rules.VisualQuotes.Contains(value) ||
         (rules.ReportingDashes.Contains(value) && !rules.LexicalHyphens.Contains(value));
 
+    /// <summary>Checks whether technical symbols need named reading, preserving ordinary numeric versions, times, and IPv4 endpoints.</summary>
     public static bool ShouldSpeak(ReadOnlySpan<char> text, TextChunkerRules rules)
     {
         if (IsNumericVersion(text) || IsNumericTime(text) || IsIpv4Endpoint(text)) return false;
@@ -78,6 +81,7 @@ public static class TechnicalTextRecognizer
         return false;
     }
 
+    /// <summary>Classifies the remaining syntax after removing neutral emoji from the candidate span.</summary>
     private static bool IsTechnical(ReadOnlySpan<char> token, TextChunkerRules rules)
     {
         int relative = EmojiTextRecognizer.FindNext(token, rules, out int emojiLength);
@@ -109,6 +113,7 @@ public static class TechnicalTextRecognizer
         }
     }
 
+    /// <summary>Recognizes technical structure from markers, dotted identifiers, attached syntax, and Unicode symbols.</summary>
     private static bool IsTechnicalCore(ReadOnlySpan<char> token, TextChunkerRules rules)
     {
         if (token.IndexOfAny(rules.TechnicalTokenMarkers) >= 0 ||
@@ -141,6 +146,7 @@ public static class TechnicalTextRecognizer
             char.IsLetterOrDigit(token[colon - 1]) && char.IsLetterOrDigit(token[colon + 1]);
     }
 
+    /// <summary>Recognizes dotted identifiers while preserving known abbreviations and dotted initial forms.</summary>
     private static bool IsDottedIdentifier(ReadOnlySpan<char> token, TextChunkerRules rules)
     {
         if (token.IndexOf('.') < 0 ||
@@ -173,6 +179,7 @@ public static class TechnicalTextRecognizer
         return hasLetter && segmentLength > 0;
     }
 
+    /// <summary>Recognizes short letter segments separated by periods as conservative dotted abbreviations.</summary>
     private static bool IsDottedAbbreviation(ReadOnlySpan<char> token, TextChunkerRules rules)
     {
         int separators = 0, segmentLength = 0, minLength = int.MaxValue, maxLength = 0;
@@ -196,6 +203,7 @@ public static class TechnicalTextRecognizer
         return maxLength == 1 || (separators >= 2 && minLength > 0 && maxLength <= 3);
     }
 
+    /// <summary>Recognizes digit groups separated by dots, optionally prefixed with v, for ordinary numeric reading.</summary>
     private static bool IsNumericVersion(ReadOnlySpan<char> text)
     {
         if (text.IsEmpty) return false;
@@ -211,6 +219,7 @@ public static class TechnicalTextRecognizer
         return sawDot && sawDigit;
     }
 
+    /// <summary>Recognizes digit groups separated by colons for ordinary time-like reading.</summary>
     private static bool IsNumericTime(ReadOnlySpan<char> text)
     {
         bool sawColon = false, sawDigit = false;
@@ -224,6 +233,7 @@ public static class TechnicalTextRecognizer
         return sawColon && sawDigit;
     }
 
+    /// <summary>Validates four IPv4 octets and an optional numeric port for ordinary address reading.</summary>
     private static bool IsIpv4Endpoint(ReadOnlySpan<char> text)
     {
         int index = 0;

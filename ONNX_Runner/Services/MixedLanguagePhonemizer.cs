@@ -407,6 +407,7 @@ public partial class MixedLanguagePhonemizer
     // logger
     private readonly ILogger<MixedLanguagePhonemizer> _logger;
 
+    /// <summary>Prepares shared text rules, model/script routing, and Lingua only when at least two recognized candidates exist.</summary>
     public MixedLanguagePhonemizer(
         PhonemizerSettings settings,
         string modelEspeakCode,
@@ -1391,6 +1392,7 @@ public partial class MixedLanguagePhonemizer
             hasSpeakableContent = false;
         }
 
+        // Adds ordinary speech with its shared language decision; punctuation-only parts remain universal.
         void AppendOrdinarySpeechPart(ReadOnlySpan<char> part, TextChunk decision)
         {
             if (part.IsEmpty)
@@ -1537,6 +1539,7 @@ public partial class MixedLanguagePhonemizer
             currentSubPhrase.Append(' ');
         }
 
+        // Logs an inherited technical language decision only when debug diagnostics are enabled.
         void LogTechnicalContext(string run, string code)
         {
             if (_logger.IsEnabled(LogLevel.Debug))
@@ -1621,6 +1624,7 @@ public partial class MixedLanguagePhonemizer
             };
         }
 
+        // Finds reliable preceding context within the current analysis boundary and matching script.
         bool TryGetPreviousTechnicalContext(ScriptType runScript, out TextChunk previous)
         {
             string scriptName = GetScriptName(runScript);
@@ -1655,6 +1659,7 @@ public partial class MixedLanguagePhonemizer
             return false;
         }
 
+        // Splits technical syntax only at real script changes while keeping universal symbols with their run.
         void AppendTechnicalSpan(ReadOnlySpan<char> span)
         {
             if (span.IsEmpty)
@@ -2257,6 +2262,7 @@ public partial class MixedLanguagePhonemizer
         return finalChunk;
     }
 
+    /// <summary>Chooses a language from distinctive script letters or the script's default fallback.</summary>
     private static (string? Code, IReadOnlyList<string> Diagnostic) ResolveScriptFallback(
         ReadOnlySpan<char> text,
         ScriptType script)
@@ -2273,6 +2279,7 @@ public partial class MixedLanguagePhonemizer
         return (ScriptFallbackLanguage.GetValueOrDefault(script), ScriptFallbackDiagnostic);
     }
 
+    /// <summary>Creates a script-routed chunk with diagnostic provenance and no statistical confidence.</summary>
     private TextChunk CreateFallbackChunk(
         string text,
         ScriptType script,

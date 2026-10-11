@@ -60,6 +60,7 @@ public partial class UnifiedPhonemizer
         AppendPart(text.AsSpan(start));
         return output.ToString();
 
+        // Appends retained text, separating lexical words that would join after emoji removal.
         void AppendPart(ReadOnlySpan<char> part)
         {
             if (part.IsEmpty) return;
@@ -70,6 +71,7 @@ public partial class UnifiedPhonemizer
         }
     }
 
+    /// <summary>Caches and appends emoji-name phonemes in the model voice, preserving silence for unsupported names.</summary>
     private void AppendEmojiPhonemes(string emoji, StringBuilder output)
     {
         if (!_emojiCache.TryGetValue(emoji, out string? phonemes))

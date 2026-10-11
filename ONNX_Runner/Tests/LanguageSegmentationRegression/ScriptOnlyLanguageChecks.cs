@@ -6,6 +6,7 @@ internal static class ScriptOnlyLanguageChecks
 {
     private const string EnglishSentence = "The English report contains all the requested information.";
 
+    /// <summary>Provides model/script fallback, candidate normalization, and explicit-language routing cases.</summary>
     internal static IEnumerable<(string Name, Action Check)> Cases()
     {
         var configurations = new (string Name, List<string>? Languages)[]
@@ -181,9 +182,11 @@ internal static class ScriptOnlyLanguageChecks
         });
     }
 
+    /// <summary>Creates a detector with the requested model voice and a silent test logger.</summary>
     private static MixedLanguagePhonemizer Create(PhonemizerSettings settings, string model = "en-us") =>
         new(settings, model, NullLogger<MixedLanguagePhonemizer>.Instance);
 
+    /// <summary>Binds script-routing settings from JSON through the production configuration types.</summary>
     private static TextChunk[] Read(MixedLanguagePhonemizer detector, string input, string? language = null)
     {
         var tokens = detector.ProcessTextToLanguageTokens(input, language);
@@ -193,6 +196,7 @@ internal static class ScriptOnlyLanguageChecks
         return speech;
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition)

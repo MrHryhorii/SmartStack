@@ -11,7 +11,7 @@ namespace ONNX_Runner.Services;
 /// <summary>
 /// High-performance audio processing engine.
 /// Handles I/O operations, format normalization, and heavy DSP tasks like FFT and Spectrogram extraction.
-/// Heavily utilizes ArrayPool to achieve Zero-Allocation during active processing.
+/// Reuses pooled temporary buffers to reduce allocation pressure during processing.
 /// </summary>
 public class AudioProcessor
 {
@@ -25,6 +25,7 @@ public class AudioProcessor
     // OpenVoice uses torch.hann_window(periodic: true), so the denominator is N rather than N - 1.
     private readonly float[] _hanningWindow;
 
+    /// <summary>Validates OpenVoice FFT/hop dimensions and prepares its window and magnitude scaling.</summary>
     public AudioProcessor(ToneConfig toneConfig)
     {
         _fftSize = toneConfig.Data.FilterLength;
@@ -50,9 +51,9 @@ public class AudioProcessor
     }
 
     /// <summary>
-    /// Reads a WAV file, enforces mono channel mapping, and returns pooled PCM
-    /// at the requested sample rate. All sample-rate conversion is delegated to AudioResampler.
-    /// </summary>
+/// Reads WAV audio as mono PCM and resamples it to the requested rate.
+/// The caller owns the returned Buffer and must return it to ArrayPool&lt;float&gt;.Shared.
+/// </summary>
     public (float[] Buffer, int Length) LoadAndNormalizeWav(string path, int targetSampleRate)
     {
         using var reader = new AudioFileReader(path);
@@ -269,6 +270,7 @@ public class AudioProcessor
         return padded;
     }
 
+    /// <summary>Returns the number of complete STFT frames in the padded signal.</summary>
     private int GetFrameCount(int paddedLength)
     {
         if (paddedLength < _fftSize) return 0;
@@ -276,6 +278,7 @@ public class AudioProcessor
         return ((paddedLength - _fftSize) / _hopSize) + 1;
     }
 
+    /// <summary>Applies the analysis window and fills a real-valued FFT frame, using vectors where possible.</summary>
     private void FillWindowedFrame(
         ReadOnlySpan<float> frame,
         Span<NAudio.Dsp.Complex> complex,
@@ -303,6 +306,7 @@ public class AudioProcessor
         }
     }
 
+    /// <summary>Converts an FFT bin to the magnitude convention expected by OpenVoice.</summary>
     private float GetOpenVoiceMagnitude(NAudio.Dsp.Complex value)
     {
         float power = (value.X * value.X) + (value.Y * value.Y) + _scaledMagnitudeEpsilon;

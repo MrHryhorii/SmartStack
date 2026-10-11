@@ -10,6 +10,7 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public sealed class NativeAudioDependencies
 {
+    /// <summary>Captures native library availability and the locations selected during startup.</summary>
     private NativeAudioDependencies(
         bool espeakAvailable,
         bool mp3Available,
@@ -30,6 +31,7 @@ public sealed class NativeAudioDependencies
 
     public string? LameLoadedFrom { get; }
 
+    /// <summary>Loads and validates native audio libraries once, returning a capability snapshot for requests.</summary>
     public static NativeAudioDependencies Detect()
     {
         // Detect native capabilities once at startup. Request handling only reads this snapshot.
@@ -50,6 +52,7 @@ public sealed class NativeAudioDependencies
             lameLoadedFrom);
     }
 
+    /// <summary>Checks whether a format can be encoded with the detected native dependencies.</summary>
     public bool IsFormatAvailable(
         AudioFormat format)
     {
@@ -58,6 +61,7 @@ public sealed class NativeAudioDependencies
                Mp3Available;
     }
 
+    /// <summary>Identifies MP3-based responses that require the native LAME encoder.</summary>
     public static bool RequiresLame(
         AudioFormat format)
     {
@@ -124,6 +128,7 @@ internal static class NativeLibraryResolver
     private static IntPtr _espeakHandle;
     private static string? _espeakLoadedFrom;
 
+    /// <summary>Registers the assembly's eSpeak import resolver once under the shared loader lock.</summary>
     public static void Initialize()
     {
         lock (Sync)
@@ -143,6 +148,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Loads and caches a LAME library exposing all required exports, returning its selected location.</summary>
     public static bool TryLoadLame(
         out string? loadedFrom)
     {
@@ -173,6 +179,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Loads and caches a compatible eSpeak library, returning its selected location.</summary>
     public static bool TryLoadEspeak(
         out string? loadedFrom)
     {
@@ -203,6 +210,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Returns an export from the validated LAME handle or throws when the library is unavailable.</summary>
     public static IntPtr GetLameExport(
         string exportName)
     {
@@ -220,6 +228,7 @@ internal static class NativeLibraryResolver
             exportName);
     }
 
+    /// <summary>Resolves known eSpeak imports to the cached handle; unrelated imports use the default loader.</summary>
     private static IntPtr ResolveImport(
         string libraryName,
         Assembly assembly,
@@ -240,6 +249,7 @@ internal static class NativeLibraryResolver
         return IntPtr.Zero;
     }
 
+    /// <summary>Recognizes the eSpeak import names used across supported platforms.</summary>
     private static bool IsEspeakImportName(
         string libraryName)
     {
@@ -252,6 +262,7 @@ internal static class NativeLibraryResolver
             "libespeak-ng.1.dylib";
     }
 
+    /// <summary>Enumerates LAME candidates in override, application-local, then system-loader order.</summary>
     private static IEnumerable<string>
         GetLameCandidates()
     {
@@ -296,6 +307,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Enumerates eSpeak candidates in override, application-local, then system-loader order.</summary>
     private static IEnumerable<string>
         GetEspeakCandidates()
     {
@@ -340,6 +352,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Lists platform-specific LAME files shipped beside the application.</summary>
     private static IEnumerable<string>
         GetAppLocalLameCandidates()
     {
@@ -382,6 +395,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Lists platform-specific eSpeak files shipped with the application.</summary>
     private static IEnumerable<string>
         GetAppLocalEspeakCandidates()
     {
@@ -423,6 +437,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Selects the first distinct library candidate that loads and provides the complete required ABI.</summary>
     private static bool TryLoadFirst(
         IEnumerable<string> candidates,
         IReadOnlyList<string> requiredExports,
@@ -461,6 +476,7 @@ internal static class NativeLibraryResolver
         return false;
     }
 
+    /// <summary>Tries one library candidate and releases its handle if loading or export validation fails.</summary>
     private static bool TryLoadCandidate(
         string candidate,
         IReadOnlyList<string> requiredExports,
@@ -537,6 +553,7 @@ internal static class NativeLibraryResolver
         }
     }
 
+    /// <summary>Distinguishes explicit filesystem paths from names delegated to the platform loader.</summary>
     private static bool LooksLikePath(
         string value)
     {

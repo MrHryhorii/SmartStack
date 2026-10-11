@@ -11,6 +11,7 @@ public static class HuggingFaceDownloader
     // Reusing a single HttpClient instance is a C# best practice to prevent socket exhaustion
     private static readonly HttpClient _httpClient = CreateHttpClient();
 
+    /// <summary>Creates the shared model-download client with the project's identifying User-Agent.</summary>
     private static HttpClient CreateHttpClient()
     {
         var client = new HttpClient();
@@ -111,6 +112,7 @@ public static class HuggingFaceDownloader
         }
     }
 
+    /// <summary>Updates the console progress bar from downloaded and expected byte counts.</summary>
     private static void DrawProgressBar(long current, long total)
     {
         const int barSize = 50;

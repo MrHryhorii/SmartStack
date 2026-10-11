@@ -21,6 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
 
+        // Animates the details element down to its summary height before closing it.
         function shrink() {
             isClosing = true;
             const startHeight = `${details.offsetHeight}px`;
@@ -35,13 +36,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
             });
 
+            // Closes the details element after the collapse animation and clears animation state.
             animation.onfinish = () => {
                 details.open = false;
                 onAnimationFinish();
             };
+            // Clears the closing flag when the collapse animation is canceled.
             animation.oncancel = () => isClosing = false;
         }
 
+        // Opens the details element and animates it to the full content height.
         function open() {
             details.style.height = `${details.offsetHeight}px`;
             details.open = true;
@@ -59,11 +63,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     easing: 'cubic-bezier(0.4, 0, 0.2, 1)'
                 });
 
+                // Clears animation state after expansion finishes.
                 animation.onfinish = () => onAnimationFinish();
+                // Clears the expanding flag when the expansion animation is canceled.
                 animation.oncancel = () => isExpanding = false;
             });
         }
 
+        // Releases animation references and temporary dimensions after a transition.
         function onAnimationFinish() {
             animation = null;
             isClosing = false;

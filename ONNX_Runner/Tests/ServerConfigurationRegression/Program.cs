@@ -35,6 +35,7 @@ if (!synthesisOnly)
     var chunker = new ChunkerSettings();
     var phonemizer = new PhonemizerSettings();
     var rateLimit = new RateLimitSettings();
+    // Builds the server status JSON using the supplied readiness, configuration, and optional service fixtures.
     JsonElement Status(IServiceProvider? services = null) => Read(InfoEndpoints.GetServerStatus(
         api, effects, cloner, dsp, stream, chunker, phonemizer, rateLimit, native, services ?? emptyServices));
 
@@ -184,6 +185,7 @@ if (paths.Length >= 2) await SynthesisChecks.Run(paths[0], paths[1], native, Che
 Console.WriteLine($"Result: {total - failures}/{total} passed");
 return failures == 0 ? 0 : 1;
 
+// Runs one synchronous assertion and records its pass/failure without stopping later cases.
 void Check(string name, Action action)
 {
     total++;
@@ -191,6 +193,7 @@ void Check(string name, Action action)
     catch (Exception error) { failures++; Console.Error.WriteLine($"FAIL {name}: {error.Message}"); }
 }
 
+// Runs one asynchronous assertion and records its pass/failure without stopping later cases.
 async Task CheckAsync(string name, Func<Task> action)
 {
     total++;
@@ -198,7 +201,9 @@ async Task CheckAsync(string name, Func<Task> action)
     catch (Exception error) { failures++; Console.Error.WriteLine($"FAIL {name}: {error.Message}"); }
 }
 
+// Deserializes a request fixture through the shared JSON options.
 static JsonElement Read(IResult result) => JsonSerializer.SerializeToElement(((IValueHttpResult)result).Value);
+// Throws with the supplied diagnostic when a regression assertion fails.
 static void Require(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);

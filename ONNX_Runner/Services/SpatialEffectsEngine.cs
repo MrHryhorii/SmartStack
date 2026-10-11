@@ -137,11 +137,13 @@ public class SpatialEffectsEngine
     // CONSTRUCTOR
     // =========================================================================
 
+    /// <summary>Allocates sample-rate-scaled reflection, comb, and all-pass state for one synthesis request.</summary>
     public SpatialEffectsEngine(int sampleRate)
     {
         _sampleRate = sampleRate;
 
         float scale = sampleRate / 44100f;
+        // Scales a reference delay length and chooses a prime length to reduce coincident reflections.
         int ScaleToPrime(int baseSize) => GetNextPrime((int)(baseSize * scale));
 
         int[] combSizes =
@@ -179,14 +181,17 @@ public class SpatialEffectsEngine
     // HELPERS
     // =========================================================================
 
+    /// <summary>Converts an RT60 decay target and feedback delay into the per-round-trip gain.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float Rt60ToFeedback(float rt60Seconds, float delaySeconds)
         => MathF.Pow(10f, -3f * delaySeconds / rt60Seconds);
 
+    /// <summary>Converts an acoustic round-trip distance in meters to a delay in samples.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float DistanceToRoundTripSamples(float distanceMeters)
         => (2f * distanceMeters / SpeedOfSound) * _sampleRate;
 
+    /// <summary>Calculates delay capacity for a target duration, including headroom and power-of-two rounding.</summary>
     private int SamplesFor(float targetMs)
     {
         int required = (int)MathF.Ceiling(targetMs * 0.001f * _sampleRate * 1.25f);
@@ -197,6 +202,7 @@ public class SpatialEffectsEngine
     // PUBLIC API
     // =========================================================================
 
+    /// <summary>Clears delay, filter, modulation, and tail state before reusing the environment processor.</summary>
     public void Reset()
     {
         foreach (var c in _combs) c.Clear();
@@ -396,6 +402,7 @@ public class SpatialEffectsEngine
     // SETUP
     // =========================================================================
 
+    /// <summary>Configures environment-specific filters and reflection parameters without retaining the previous environment's EQ.</summary>
     private void Setup(SpatialEnvironment env)
     {
         // Nullify all specific EQ filters to prevent state leakage between environments.
@@ -422,6 +429,7 @@ public class SpatialEffectsEngine
         _hasModulation = false;
 
         float nyq = _sampleRate * 0.45f;
+        // Caps environment filter frequencies at the configured Nyquist safety limit.
         float Safe(float f) => Math.Min(f, nyq);
 
         switch (env)
@@ -566,6 +574,7 @@ public class SpatialEffectsEngine
     // ACOUSTIC ALGORITHMS
     // =========================================================================
 
+    /// <summary>Processes one sample through the reverb input EQ, parallel comb bank, and all-pass diffusion stages.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float AlgorithmicReverb(float input)
     {
@@ -737,6 +746,7 @@ public class SpatialEffectsEngine
     // HELPERS
     // =========================================================================
 
+    /// <summary>Sets uniform feedback and sample-rate-adjusted damping across the comb bank.</summary>
     private void ConfigureCombs(float feedback, float scaledDamp)
     {
         foreach (var c in _combs)
@@ -746,6 +756,7 @@ public class SpatialEffectsEngine
         }
     }
 
+    /// <summary>Sets comb feedback from the target RT60 and scales damping for the current sample rate.</summary>
     private void ConfigureCombsByRt60(float rt60Seconds, float damp)
     {
         float scaledDamp = Dsp.ScaleCoeff(damp, _sampleRate);
@@ -757,6 +768,7 @@ public class SpatialEffectsEngine
         }
     }
 
+    /// <summary>Returns the first prime number greater than or equal to the requested delay length.</summary>
     private static int GetNextPrime(int start)
     {
         if (start < 2) start = 2;
@@ -771,6 +783,7 @@ public class SpatialEffectsEngine
         }
     }
 
+    /// <summary>Returns the smallest power-of-two buffer size that can hold the requested capacity.</summary>
     private static int NextPowerOf2(int minSize)
     {
         int size = 1;

@@ -18,6 +18,7 @@ import {
     decodeTsubakiFlacFrame
 } from './flac-tiny.js';
 
+// Streams FLAC with native or server-specific decoding, retaining complete-response playback as a fallback.
 export async function streamFLAC({
     engine,
     reader,
@@ -38,6 +39,7 @@ export async function streamFLAC({
     let decodedSampleOffset = 0;
     let streamSampleRate = sampleRate;
 
+    // Creates a WebAudio session when live decoded FLAC output first needs it.
     const ensureWebAudioSession = () => {
         if (session) {
             return true;
@@ -58,6 +60,7 @@ export async function streamFLAC({
         }
     };
 
+    // Closes the native decoder and live audio session before switching playback modes.
     const closeLiveSession = async () => {
         nativeDecoder?.close();
         nativeDecoder = null;
@@ -86,6 +89,7 @@ export async function streamFLAC({
         session = null;
     };
 
+    // Collects the remaining response and plays buffered FLAC after live decoding becomes unavailable.
     const fallbackToBufferedPlayback = async () => {
         mode = 'buffered';
         await closeLiveSession();
@@ -124,6 +128,7 @@ export async function streamFLAC({
         );
     };
 
+    // Checks and configures the browser's native FLAC decoder from parsed stream metadata.
     const configureNativeDecoder = async () => {
         if (
             typeof AudioDecoder === 'undefined' ||
@@ -152,6 +157,7 @@ export async function streamFLAC({
         }
 
         nativeDecoder = new AudioDecoder({
+            // Copies decoded channels into probe storage or live playback and closes the AudioData object.
             output: audioData => {
                 try {
                     const channels = copyAudioData(audioData);
@@ -177,6 +183,7 @@ export async function streamFLAC({
                     audioData.close();
                 }
             },
+            // Records an asynchronous native decoder failure for the stream control path.
             error: error => {
                 nativeError = error;
             }
@@ -193,6 +200,7 @@ export async function streamFLAC({
         }
     };
 
+    // Decodes a supported server FLAC frame and queues its samples for live WebAudio playback.
     const queueTinyFrame = (frame, frameInfo) => {
         if (!ensureWebAudioSession()) {
             throw new Error(
@@ -214,6 +222,7 @@ export async function streamFLAC({
         );
     };
 
+    // Tests native decoding with the first frame before committing to that playback path.
     const probeNativeWithFrame = async (
         frame,
         frameInfo
@@ -263,6 +272,7 @@ export async function streamFLAC({
         }
     };
 
+    // Chooses native or small-decoder playback and routes each FLAC frame through the selected mode.
     const processFrame = async (
         frame,
         frameInfo
@@ -313,6 +323,7 @@ export async function streamFLAC({
         expectedFrameNumber++;
     };
 
+    // Extracts complete numbered FLAC frames while retaining incomplete network fragments.
     const drainFrames = async final => {
         while (pending.length > 0) {
             const current =
@@ -480,6 +491,7 @@ export async function streamFLAC({
     }
 }
 
+// Copies each AudioData channel before releasing its native decoder buffer.
 function copyAudioData(audioData) {
     const channels = [];
 
@@ -507,6 +519,7 @@ function copyAudioData(audioData) {
     return channels;
 }
 
+// Submits a FLAC frame to WebCodecs with timestamps derived from its sample offset.
 function decodeNativeFrame(
     decoder,
     frame,

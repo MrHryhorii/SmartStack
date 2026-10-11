@@ -41,6 +41,7 @@ const AAC_SAMPLE_RATES = [
     7350
 ];
 
+// Streams AAC through supported live playback paths, retaining buffered playback as a fallback.
 export async function streamAAC({
     engine,
     reader,
@@ -66,6 +67,7 @@ export async function streamAAC({
 
     let mp4State = null;
 
+    // Creates the WebAudio output session when live decoded playback first needs it.
     const ensureWebAudioSession = () => {
         if (session) {
             return true;
@@ -89,6 +91,7 @@ export async function streamAAC({
         }
     };
 
+    // Closes the native decoder and its live session before switching playback paths.
     const closeWebCodecsPath = async () => {
         if (
             decoder &&
@@ -118,6 +121,7 @@ export async function streamAAC({
         session = null;
     };
 
+    // Ends and releases the current fragmented-MP4 playback state when possible.
     const closeMp4Path = () => {
         if (!mp4State) {
             return;
@@ -136,6 +140,7 @@ export async function streamAAC({
         mp4State = null;
     };
 
+    // Stops live decoding/remuxing and switches to the retained complete-response fallback.
     const switchToBufferedMode = async error => {
         if (mode === 'buffered') {
             return;
@@ -154,11 +159,13 @@ export async function streamAAC({
         await engine.releasePreparedPlayback?.();
     };
 
+    // Appends one MSE segment and resolves only after SourceBuffer completion.
     const appendSourceBuffer = (
         sourceBuffer,
         bytes
     ) =>
         new Promise((resolve, reject) => {
+            // Removes append completion/error listeners after the pending MSE operation settles.
             const cleanup = () => {
                 sourceBuffer.removeEventListener(
                     'updateend',
@@ -171,11 +178,13 @@ export async function streamAAC({
                 );
             };
 
+            // Resolves the MSE append and removes its temporary listeners.
             const onUpdateEnd = () => {
                 cleanup();
                 resolve();
             };
 
+            // Rejects a failed MSE append and removes its temporary listeners.
             const onError = () => {
                 cleanup();
                 reject(
@@ -205,6 +214,7 @@ export async function streamAAC({
             }
         });
 
+    // Creates a supported mono AAC-LC MSE track and appends its MP4 initialization segment.
     const configureMp4Mse = async frameInfo => {
         if (
             frameInfo.audioObjectType !== 2 ||
@@ -230,11 +240,13 @@ export async function streamAAC({
             );
 
         await new Promise((resolve, reject) => {
+            // Resolves MediaSource startup and removes its temporary listeners.
             const onOpen = () => {
                 cleanup();
                 resolve();
             };
 
+            // Rejects MediaSource startup failure and removes its temporary listeners.
             const onError = () => {
                 cleanup();
                 reject(
@@ -244,6 +256,7 @@ export async function streamAAC({
                 );
             };
 
+            // Removes MediaSource startup listeners once opening succeeds or fails.
             const cleanup = () => {
                 mediaSource.removeEventListener(
                     'sourceopen',
@@ -316,6 +329,7 @@ export async function streamAAC({
         return true;
     };
 
+    // Packages queued AAC samples into an MP4 fragment when enough data is ready or finalization forces it.
     const flushMp4Fragment = async force => {
         if (!mp4State) {
             return;
@@ -371,6 +385,7 @@ export async function streamAAC({
         }
     };
 
+    // Queues an ADTS payload with its AAC sample duration and flushes a ready MP4 fragment.
     const queueMp4Frame = async frameInfo => {
         mp4State.pendingSamples.push({
             data:
@@ -385,6 +400,7 @@ export async function streamAAC({
         await flushMp4Fragment(false);
     };
 
+    // Checks native AAC decoder support and configures WebCodecs with the parsed stream parameters.
     const configureNativeDecoder = async frameInfo => {
         if (
             typeof AudioDecoder === 'undefined' ||
@@ -433,6 +449,7 @@ export async function streamAAC({
 
         decoder =
             new AudioDecoder({
+                // Queues decoded channel samples for WebAudio playback and releases the AudioData object.
                 output:
                     audioData => {
                         try {
@@ -456,6 +473,7 @@ export async function streamAAC({
                         }
                     },
 
+                // Records the first asynchronous decoder error for the stream control path.
                 error:
                     error => {
                         decoderError =
@@ -480,6 +498,7 @@ export async function streamAAC({
         }
     };
 
+    // Submits one encoded AAC frame, applying decoder backpressure and surfacing deferred errors.
     const decodeFrame = async frameInfo => {
         if (
             !decoder ||
@@ -531,6 +550,7 @@ export async function streamAAC({
         }
     };
 
+    // Selects a playback path from the first frame and routes later frames consistently.
     const processFrame = async frameInfo => {
         if (mode === 'buffered') {
             return;
@@ -601,6 +621,7 @@ export async function streamAAC({
         }
     };
 
+    // Consumes complete ADTS frames from pending bytes, enforcing final-response completeness.
     const drainFrames = async final => {
         while (pending.length > 0) {
             const parsed =
@@ -758,6 +779,7 @@ export async function streamAAC({
     );
 }
 
+// Parses one complete ADTS frame and its audio configuration, returning null when more bytes are needed.
 function tryTakeAdtsFrame(bytes) {
     if (bytes.length < 7) {
         return null;
@@ -851,6 +873,7 @@ function tryTakeAdtsFrame(bytes) {
     };
 }
 
+// Copies each decoded AudioData channel into an owned float array before the native object is closed.
 function copyAudioData(audioData) {
     const channels = [];
 
@@ -878,6 +901,7 @@ function copyAudioData(audioData) {
     return channels;
 }
 
+// Combines pending and newly received AAC bytes while preserving their order.
 function concatBytes(left, right) {
     if (!left.length) {
         return right.slice();
@@ -899,6 +923,7 @@ function concatBytes(left, right) {
     return combined;
 }
 
+// Accepts a positive stream sample rate or uses the AAC playback fallback.
 function normalizeSampleRate(sampleRate) {
     const value = Number(sampleRate);
 

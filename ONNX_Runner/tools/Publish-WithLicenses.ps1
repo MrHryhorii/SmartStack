@@ -1,4 +1,6 @@
-﻿param(
+﻿# Publishes selected runtime/provider bundles with project, NuGet, and runtime-pack notices.
+# References the pinned corresponding-source archive prepared by the companion script.
+param(
     [ValidateSet('All', 'Windows-CPU', 'Windows-DML', 'Windows-WebGPU', 'Linux-CPU', 'Linux-CUDA', 'Linux-WebGPU')]
     [string]$Variant = 'All',
     [string]$ProjectDirectory,

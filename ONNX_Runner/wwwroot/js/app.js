@@ -21,6 +21,7 @@ function log(msg) {
     logger.scrollTop = logger.scrollHeight;
 }
 
+// Formats a positive duration for the player, returning null when it is unavailable.
 function formatDuration(seconds) {
     if (!Number.isFinite(seconds) || seconds <= 0) {
         return null;
@@ -44,7 +45,9 @@ function formatDuration(seconds) {
         : `${minutes}:${remainingSeconds.toFixed(3).padStart(6, '0')}`;
 }
 
+// Returns a known player duration or waits briefly for metadata, error, or timeout.
 async function getPlayerDuration(player) {
+    // Reads the player duration only when it is finite and positive.
     const readDuration = () =>
         Number.isFinite(player.duration) &&
         player.duration > 0
@@ -61,6 +64,7 @@ async function getPlayerDuration(player) {
     return await new Promise(resolve => {
         let settled = false;
 
+        // Removes duration listeners and the timeout after the metadata wait settles.
         const cleanup = () => {
             player.removeEventListener(
                 'loadedmetadata',
@@ -80,6 +84,7 @@ async function getPlayerDuration(player) {
             clearTimeout(timeoutId);
         };
 
+        // Resolves the duration wait once and releases its listeners.
         const finish = duration => {
             if (settled) {
                 return;
@@ -90,6 +95,7 @@ async function getPlayerDuration(player) {
             resolve(duration);
         };
 
+        // Completes the wait when the player exposes a usable duration.
         const tryResolve = () => {
             const duration =
                 readDuration();
@@ -99,6 +105,7 @@ async function getPlayerDuration(player) {
             }
         };
 
+        // Completes the wait without a duration after an error or timeout.
         const resolveWithoutDuration = () =>
             finish(null);
 
@@ -130,6 +137,7 @@ async function getPlayerDuration(player) {
     });
 }
 
+// Keeps the slider and numeric input synchronized in both directions.
 function syncInputs(sliderId, numId) {
     const slider = document.getElementById(sliderId);
     const num = document.getElementById(numId);
@@ -137,12 +145,14 @@ function syncInputs(sliderId, numId) {
     num.addEventListener('input', (e) => slider.value = e.target.value);
 }
 
+// Enables or disables dependent controls when their override checkbox changes.
 function bindToggle(chkId, elementsToToggle) {
     document.getElementById(chkId).addEventListener('change', (e) => {
         elementsToToggle.forEach(id => document.getElementById(id).disabled = !e.target.checked);
     });
 }
 
+// Replaces select options with server-provided text and applies the requested selection.
 function populateSelect(selectId, values, selectedValue = null) {
     const select = document.getElementById(selectId);
 
@@ -174,6 +184,7 @@ function populateLanguageSelector() {
         return option;
     }));
 
+    // Shows the selected language's pronunciation note in the control tooltip.
     const updateTooltip = () => {
         const selected = SUPPORTED_LANGUAGES.find(
             language => language.code === select.value

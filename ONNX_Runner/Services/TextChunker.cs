@@ -413,6 +413,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return true;
     }
 
+    /// <summary>Recognizes a separated one-to-three-digit ordered-list marker in its permitted line context.</summary>
     private bool IsOrderedListMarker(ReadOnlySpan<char> text, int periodIndex)
     {
         int numberStart = periodIndex;
@@ -462,6 +463,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return TryGetInitialLetter(token, out _);
     }
 
+    /// <summary>Checks the single-letter lowercase boundary rule, excluding Georgian letters without the relevant case distinction.</summary>
     private bool IsLowercaseCasedLetter(ReadOnlySpan<char> token)
     {
         return TryGetInitialLetter(token, out Rune letter) &&
@@ -469,6 +471,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
             letter.Value is not (>= 0x10D0 and <= 0x10FF);
     }
 
+    /// <summary>Accepts exactly one Unicode letter followed only by combining marks.</summary>
     private static bool TryGetInitialLetter(ReadOnlySpan<char> token, out Rune letter)
     {
         if (Rune.DecodeFromUtf16(token, out letter, out int consumed) != OperationStatus.Done ||
@@ -487,6 +490,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return true;
     }
 
+    /// <summary>Treats a semicolon as a Greek question mark only when preceding letter context supports it.</summary>
     private bool IsGreekQuestionSemicolon(ReadOnlySpan<char> text, int index)
     {
         int previous = index - 1;
@@ -504,6 +508,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return value is >= '\u0370' and <= '\u03FF' or >= '\u1F00' and <= '\u1FFF';
     }
 
+    /// <summary>Checks a registered name prefix for an initial capital and otherwise lowercase cased letters.</summary>
     private bool IsCapitalizedPrefixAbbreviation(ReadOnlySpan<char> token)
     {
         if (!Rules.PrefixAbbreviations
@@ -540,6 +545,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return !hasCasedLetter;
     }
 
+    /// <summary>Checks whether an abbreviation contains uppercase or titlecase letters.</summary>
     private bool ContainsUppercaseLetter(ReadOnlySpan<char> token)
     {
         for (int i = 0; i < token.Length; i++)
@@ -553,6 +559,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return false;
     }
 
+    /// <summary>Recognizes the al part of a preceding et al abbreviation.</summary>
     private bool IsEtAlAbbreviation(
         ReadOnlySpan<char> text,
         int periodIndex,
@@ -726,6 +733,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return -1;
     }
 
+    /// <summary>Validates an early clause split using punctuation, spacing, and the remaining sentence context.</summary>
     private bool IsValidEarlySplitBoundary(
         ReadOnlySpan<char> text,
         int candidateIndex,
@@ -771,6 +779,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return end;
     }
 
+    /// <summary>Checks Unicode punctuation categories that may join a terminal punctuation cluster.</summary>
     private bool IsPunctuationClusterChar(char value)
     {
         UnicodeCategory category = char.GetUnicodeCategory(value);
@@ -792,6 +801,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return Rules.SeparatedTerminals.Contains(value);
     }
 
+    /// <summary>Checks whether a terminal cluster is separated from following text or crosses a line boundary.</summary>
     private bool HasBoundarySeparationAfterTerminalCluster(ReadOnlySpan<char> text, int boundaryIndex)
     {
         int clusterEnd = ConsumeTerminalCluster(text, boundaryIndex, out bool crossedLineBoundary);
@@ -875,11 +885,13 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
                index + 1 < tokenStart + length;
     }
 
+    /// <summary>Checks the shared catalog for a hard line boundary.</summary>
     private bool IsLineBoundary(char value)
     {
         return Rules.LineBoundaries.Contains(value);
     }
 
+    /// <summary>Checks letters, digits, and combining marks as word continuation after a period.</summary>
     private bool IsWordLikeAfterPeriod(char value)
     {
         return char.IsLetterOrDigit(value) ||
@@ -888,6 +900,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
                    or UnicodeCategory.EnclosingMark;
     }
 
+    /// <summary>Advances past catalogued closing punctuation without consuming following content.</summary>
     private int SkipClosingPunctuation(ReadOnlySpan<char> text, int index)
     {
         while (index < text.Length && Rules.ClosingPunctuation.Contains(text[index]))
@@ -929,11 +942,13 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return index;
     }
 
+    /// <summary>Checks invisible format controls allowed to separate sentence boundaries.</summary>
     private bool IsBoundaryFormatControl(char value)
     {
         return Rules.BoundaryFormatControls.Contains(value);
     }
 
+    /// <summary>Returns the whitespace-delimited token ending at the supplied exclusive position without allocating.</summary>
     private ReadOnlySpan<char> GetTokenBefore(ReadOnlySpan<char> text, int endExclusive)
     {
         int start = endExclusive - 1;
@@ -945,6 +960,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return text[(start + 1)..endExclusive];
     }
 
+    /// <summary>Removes leading token punctuation while preserving period-like abbreviation markers.</summary>
     private ReadOnlySpan<char> TrimLeadingTokenPunctuation(ReadOnlySpan<char> token)
     {
         int start = 0;
@@ -958,6 +974,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return token[start..];
     }
 
+    /// <summary>Recognizes dotted initials and short multi-part letter abbreviations conservatively.</summary>
     private bool LooksLikeDottedAbbreviation(ReadOnlySpan<char> token)
     {
         int separatorCount = 0;
@@ -1173,6 +1190,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return text.TrimEnd();
     }
 
+    /// <summary>Checks whether an emergency cut would divide a protected technical token.</summary>
     private bool IsProtectedEmergencyBoundary(ReadOnlySpan<char> text, int startIndex, int splitIndex)
     {
         if (splitIndex <= startIndex || splitIndex >= text.Length ||
@@ -1210,6 +1228,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         return token.IndexOfAny(Rules.TechnicalMarkers) >= 0;
     }
 
+    /// <summary>Checks whether a proposed whitespace cut follows a complete protected token.</summary>
     private bool EndsWithProtectedEmergencyToken(
         ReadOnlySpan<char> text,
         int currentIndex,
@@ -1225,6 +1244,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
             IsProtectedEmergencyBoundary(text, currentIndex, splitIndex - 1);
     }
 
+    /// <summary>Moves an emergency cut to a technical token edge, allowing the token to exceed the length cap.</summary>
     private int MoveEmergencyBoundaryOutsideTechnicalToken(
         ReadOnlySpan<char> text,
         int currentIndex,

@@ -23,17 +23,20 @@ $workRoot = Join-Path $cacheRoot 'Tsubaki/SourceCache'
 New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
 $completed = $false
 
+# Checks that a cached artifact exists and matches its pinned SHA-256 before reuse.
 function Assert-Hash([string]$Path, [string]$Expected) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Missing file: $Path" }
     $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $Expected) { throw "Unexpected SHA-256 for $Path`: $actual" }
 }
 
+# Runs git with the supplied arguments and fails the script on a nonzero exit code.
 function Invoke-Git([string[]]$Arguments) {
     & git @Arguments
     if ($LASTEXITCODE -ne 0) { throw "git failed: $($Arguments -join ' ')" }
 }
 
+# Downloads a missing artifact through a temporary file and removes incomplete downloads on failure.
 function Save-Download([string]$Url, [string]$Path) {
     if (Test-Path -LiteralPath $Path -PathType Leaf) { return }
     $partial = "$Path.partial"
@@ -46,6 +49,7 @@ function Save-Download([string]$Url, [string]$Path) {
     }
 }
 
+# Verifies a cached source checkout against its pinned commit before building corresponding sources.
 function Assert-Revision([string]$Directory, [string]$Expected) {
     $actual = (& git -C $Directory rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $actual -ne $Expected) {

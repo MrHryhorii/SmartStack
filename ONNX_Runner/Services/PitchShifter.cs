@@ -11,6 +11,7 @@ public sealed class PitchShifter : IDisposable
     private readonly SoundTouchProcessor _soundTouch;
     private bool _disposed;
 
+    /// <summary>Creates a mono SoundTouch pitch processor for a positive sample rate with unchanged tempo.</summary>
     public PitchShifter(int sampleRate)
     {
         if (sampleRate <= 0)
@@ -104,6 +105,7 @@ public sealed class PitchShifter : IDisposable
         _soundTouch.Clear();
     }
 
+    /// <summary>Clears the pitch processor's pending samples once.</summary>
     public void Dispose()
     {
         if (_disposed)

@@ -777,6 +777,7 @@ if (selectedRulesConfiguration)
     int rulesTotal = 0;
     int rulesPassed = 0;
 
+    // Counts and reports one rule-catalog assertion within its current test category.
     void CheckRules(string name, bool passed)
     {
         rulesTotal++;
@@ -858,6 +859,7 @@ if (selectedRulesConfiguration)
         CheckRules("Custom ellipses remain contextual", ellipsisChunker.Split("Wait⁖ maybe. Next.")
             .Select(c => c.Text).SequenceEqual(["Wait⁖ maybe.", "Next."]));
 
+        // Checks that an invalid rules fixture is rejected with the expected load exception.
         bool Rejects(string json)
         {
             File.WriteAllText(path, json);

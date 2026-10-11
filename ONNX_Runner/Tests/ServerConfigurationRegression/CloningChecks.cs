@@ -8,6 +8,7 @@ using ONNX_Runner.Services;
 
 internal static class CloningChecks
 {
+    /// <summary>Checks real OpenVoice cloning, fallback behavior, and output-rate precedence with the supplied models.</summary>
     internal static async Task Run(PiperConfig config, PiperRunner piper, UnifiedPhonemizer phonemizer,
         NativeAudioDependencies native, string clonerDirectory, string voicesDirectory,
         Func<string, Func<Task>, Task> check)
@@ -33,6 +34,7 @@ internal static class CloningChecks
         using var gate = new SemaphoreSlim(1);
         var synthesis = new SpeechSynthesisService(gate, services, native, NullLogger<SpeechSynthesisService>.Instance);
 
+        // Runs a configured synthesis request into memory for cloned-audio comparisons.
         async Task<byte[]> ReadAudio(string voice = "piper_base", float? intensity = null, int? sampleRate = null)
         {
             var request = new SynthesisRequest
@@ -98,6 +100,7 @@ internal static class CloningChecks
         });
     }
 
+    /// <summary>Throws with the supplied diagnostic when a regression assertion fails.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

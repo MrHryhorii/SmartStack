@@ -75,6 +75,7 @@ public partial class EspeakWrapper
         return components.Length > 0 && components.Equals(spoken);
     }
 
+    /// <summary>Appends spoken content without whitespace or stress marks for component-fallback comparison.</summary>
     private static void AppendSpokenContent(StringBuilder output, ReadOnlySpan<char> text)
     {
         foreach (char character in text)

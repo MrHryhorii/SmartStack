@@ -6,6 +6,7 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public static class VolumeShifter
 {
+    /// <summary>Applies gain in place and soft-limits peaks above the knee to reduce clipping.</summary>
     public static void ApplyVolume(Span<float> buffer, float volume)
     {
         if (MathF.Abs(volume - 1.0f) < 0.001f) return;

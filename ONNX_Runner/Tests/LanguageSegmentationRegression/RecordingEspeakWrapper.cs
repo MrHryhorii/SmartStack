@@ -7,6 +7,7 @@ public sealed class EspeakWrapper
 {
     public List<(string Text, string Voice)> Calls { get; } = [];
 
+    /// <summary>Records ordinary text and voice selection, returning the text as a test phoneme payload.</summary>
     public bool TryGetIpaPhonemes(string text, string voice, out string phonemes)
     {
         Calls.Add((text, voice));
@@ -18,6 +19,7 @@ public sealed class EspeakWrapper
     public List<(string Emoji, string Voice)> EmojiCalls { get; } = [];
     public Dictionary<string, string> EmojiResults { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>Records character-name requests and returns configured or default test phonemes.</summary>
     public bool TryGetCharacterPhonemes(char character, string voice, out string phonemes)
     {
         CharacterCalls.Add((character, voice));
@@ -26,6 +28,7 @@ public sealed class EspeakWrapper
     }
 
 
+    /// <summary>Records emoji-name requests and returns configured or default test phonemes.</summary>
     public bool TryGetEmojiPhonemes(string emoji, string voice, out string phonemes)
     {
         EmojiCalls.Add((emoji, voice));

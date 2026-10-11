@@ -11,9 +11,11 @@ internal static class AudioSampleRate
     private static readonly int[] AacRates =
         [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000];
 
+    /// <summary>Preserves null and zero sentinels; clamps every other rate to the supported request range.</summary>
     internal static int? Clamp(int? value)
         => value is null or 0 ? value : Math.Clamp(value.Value, Minimum, Maximum);
 
+    /// <summary>Selects the nearest codec input rate, choosing the lower rate on ties; unrestricted formats retain the input.</summary>
     internal static int Resolve(int sampleRate, AudioFormat format)
     {
         ReadOnlySpan<int> rates = format switch

@@ -8,6 +8,7 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class OpenAiRequestAdapter
 {
+    /// <summary>Validates wire formats and maps OpenAI fields to a synthesis request, leaving engine extensions at server defaults.</summary>
     public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(
         OpenAiSpeechRequest dto)
     {
