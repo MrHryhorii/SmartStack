@@ -153,8 +153,12 @@ public partial class SpeechSynthesisService(
             if (logger.IsEnabled(LogLevel.Debug))
             {
                 float effectivePitch = request.Pitch ?? ctx.DspConfig.DefaultPitch;
-                string effectiveEffect = request.Effect ?? ctx.EffectsConfig.DefaultEffect;
-                string effectiveEnvironment = request.Environment ?? ctx.EffectsConfig.DefaultEnvironment;
+                string effectiveEffect = ctx.EffectsConfig.EnableGlobalEffects
+                    ? request.Effect ?? ctx.EffectsConfig.DefaultEffect
+                    : "None";
+                string effectiveEnvironment = ctx.EffectsConfig.EnableGlobalEffects
+                    ? request.Environment ?? ctx.EffectsConfig.DefaultEnvironment
+                    : "None";
                 logger.LogDebug(
                     "Generation started | queue={QueueMs:F1} ms | clone={Clone} | stream={Stream} | stream_format={StreamFormat} | speed={SpeechSpeed:F2} | pitch={Pitch:F2} | effect={Effect} | environment={Environment} | sample_rate={SampleRate} Hz",
                     queueElapsed.TotalMilliseconds,

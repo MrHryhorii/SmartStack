@@ -36,6 +36,12 @@ public record TextChunk
 /// </summary>
 public partial class MixedLanguagePhonemizer
 {
+    /// <summary>Whether this instance loaded Lingua for statistical comparison.</summary>
+    public bool UsesStatisticalDetection => _detector != null;
+
+    /// <summary>Distinct recognized candidates after model inclusion and alias deduplication.</summary>
+    public IReadOnlyList<string> DetectionLanguages { get; private set; } = Array.Empty<string>();
+
     // Tokenizer classification is intentionally implemented with a single ReadOnlySpan<char>
     // scan instead of Regex.Matches(). This removes MatchCollection / Match / match.Value
     // allocations from the hot path while keeping structural roles explicit: protected technical
@@ -468,7 +474,9 @@ public partial class MixedLanguagePhonemizer
         }
 
         var linguaLangs = _mapper.BuildLinguaList(finalCodesToSupport);
-
+        DetectionLanguages = Array.AsReadOnly(linguaLangs
+            .Select(language => _mapper.MapBackToEspeak(language, _modelEspeakCode))
+            .ToArray());
 
         // Statistical comparison needs at least two distinct recognized languages. Script routing
         // and model-language fallback remain available without loading any Lingua models.

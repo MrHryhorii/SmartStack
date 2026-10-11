@@ -1,6 +1,27 @@
 @ONNX_Runner_HostAddress = http://localhost:5045
 
-GET {{ONNX_Runner_HostAddress}}/weatherforecast/
+GET {{ONNX_Runner_HostAddress}}/health
 Accept: application/json
 
 ###
+
+GET {{ONNX_Runner_HostAddress}}/tsbk/server/status
+Accept: application/json
+
+###
+
+GET {{ONNX_Runner_HostAddress}}/tsbk/audio/voices
+Accept: application/json
+
+###
+
+POST {{ONNX_Runner_HostAddress}}/tsbk/audio/speech
+Content-Type: application/json
+
+{
+  "input": "Dr. Smith checked user_name in config.prod.json.",
+  "voice": "piper_base",
+  "language": "en-us",
+  "response_format": "wav",
+  "stream": false
+}

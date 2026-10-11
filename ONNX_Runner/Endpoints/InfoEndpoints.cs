@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
@@ -26,44 +27,56 @@ public class LocalHostOnlyFilter : IEndpointFilter
 /// </summary>
 public static class InfoEndpoints
 {
+    private const string ServiceName = "Tsubaki TTS Engine";
+    private static readonly string ServiceVersion =
+        typeof(InfoEndpoints).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion.Split('+', 2)[0]
+        ?? typeof(InfoEndpoints).Assembly.GetName().Version?.ToString(3)
+        ?? "unknown";
     private static readonly string[] SupportedStreamFormats = ["audio", "sse"];
     /// <summary>
-    /// Dynamically scans the 'Voices' directory and returns all available voice fingerprints.
-    /// Supports real-time discovery (e.g., when Docker volumes are updated).
+    /// Returns voices usable by the initialized synthesis pipeline.
+    /// Voice fingerprints are loaded at startup; adding one requires a restart.
     /// </summary>
-    public static IResult GetVoices()
+    public static IResult GetVoices(
+        ClonerSettings cloner,
+        NativeAudioDependencies nativeAudioDependencies,
+        IServiceProvider services)
     {
-        try
-        {
-            return Results.Ok(new { voices = GetAvailableVoiceNames() });
-        }
-        catch (Exception ex)
-        {
-            // Protect against file system access permission issues
-            return Results.Problem($"Failed to read voices directory: {ex.Message}", statusCode: 500);
-        }
+        bool synthesisReady = IsSynthesisReady(services, nativeAudioDependencies);
+        var openVoice = services.GetService<OpenVoiceRunner>();
+        bool cloningAvailable = IsCloningAvailable(services, cloner, openVoice, synthesisReady);
+        return Results.Ok(new { voices = GetAvailableVoiceNames(synthesisReady, cloningAvailable, openVoice) });
     }
     /// <summary>
-    /// Shared by GetVoices and GetServerStatus so both report the exact same voice list from
-    /// a single source of truth instead of two independent directory scans drifting apart.
+    /// Shared by voice discovery and server status; unreadable or disabled fingerprints
+    /// must not be advertised as usable voices.
     /// </summary>
-    private static IEnumerable<string> GetAvailableVoiceNames()
+    private static IReadOnlyList<string> GetAvailableVoiceNames(
+        bool synthesisReady, bool cloningAvailable, OpenVoiceRunner? openVoice)
     {
-        var voices = new List<string> { "piper_base" };
-        // The 'Voices' directory is expected to be in the same location as the server executable.
-        string voicesDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Voices");
-        if (Directory.Exists(voicesDirectory))
-        {
-            // Read all files with the .voice extension directly from the disk
-            var voiceFiles = Directory.GetFiles(voicesDirectory, "*.voice");
-            foreach (var file in voiceFiles)
-            {
-                voices.Add(Path.GetFileNameWithoutExtension(file));
-            }
-        }
+        if (!synthesisReady) return Array.Empty<string>();
+        if (!cloningAvailable || openVoice == null) return ["piper_base"];
 
-        // Distinct() removes potential duplicates, OrderBy() sorts alphabetically
-        return voices.Distinct().OrderBy(v => v);
+        return openVoice.VoiceLibrary.Keys.Append("piper_base")
+            .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(name => name).ToArray();
+    }
+
+    private static bool IsSynthesisReady(
+        IServiceProvider services, NativeAudioDependencies nativeAudioDependencies)
+    {
+        return nativeAudioDependencies.EspeakAvailable &&
+            services.GetService<PiperConfig>() != null &&
+            services.GetService<PiperRunner>() != null &&
+            services.GetService<UnifiedPhonemizer>() != null;
+    }
+
+    private static bool IsCloningAvailable(
+        IServiceProvider services, ClonerSettings cloner, OpenVoiceRunner? openVoice, bool synthesisReady)
+    {
+        return synthesisReady && cloner.EnableCloning && openVoice != null &&
+            services.GetService<AudioProcessor>() != null &&
+            openVoice.VoiceLibrary.ContainsKey("piper_base");
     }
     /// <summary>
     /// Retrieves all available audio effects dynamically from the system enumeration.
@@ -124,11 +137,9 @@ public static class InfoEndpoints
         });
     }
     /// <summary>
-    /// Reports what's enabled server-side and its configured defaults, so a frontend can
-    /// tailor its own UI (e.g. hide cloning controls entirely when ClonerSettings.EnableCloning
-    /// is false) instead of showing menus with no effect on the actual synthesis result.
-    /// Curated from appsettings.json — internal-only fields (hardware/ONNX/CORS tuning, exact
-    /// model file paths) are intentionally left out as not relevant to a synthesis UI.
+    /// Reports engine version, initialized capabilities, and configured synthesis defaults.
+    /// Enabled settings remain distinct from runtime availability. Internal hardware and
+    /// filesystem paths are omitted; detector tuning is included for configuration diagnostics.
     /// </summary>
     public static IResult GetServerStatus(
         ApiSettings api,
@@ -145,8 +156,20 @@ public static class InfoEndpoints
         // PiperConfig is only registered if a base model loaded successfully at startup —
         // resolved manually so a missing model reports null here instead of throwing.
         var piperConfig = services.GetService<PiperConfig>();
+        bool synthesisReady = IsSynthesisReady(services, nativeAudioDependencies);
+        var openVoice = services.GetService<OpenVoiceRunner>();
+        bool cloningAvailable = IsCloningAvailable(services, cloner, openVoice, synthesisReady);
+        var mixedPhonemizer = services.GetService<MixedLanguagePhonemizer>();
+        string detectionMode = !phonemizer.UseLanguageDetector ? "disabled" :
+            !synthesisReady || mixedPhonemizer == null ? "unavailable" :
+            mixedPhonemizer.UsesStatisticalDetection ? "lingua" : "model_script";
+
         return Results.Ok(new
         {
+            service = ServiceName,
+            version = ServiceVersion,
+            status = synthesisReady ? "ready" : "degraded",
+            synthesisReady,
             model = piperConfig == null ? null : new
             {
                 baseVoiceDialect = piperConfig.Espeak.Voice,
@@ -155,6 +178,7 @@ public static class InfoEndpoints
             voiceCloning = new
             {
                 enabled = cloner.EnableCloning,
+                available = cloningAvailable,
                 defaults = new
                 {
                     cloneIntensity = cloner.CloneIntensity,
@@ -205,12 +229,28 @@ public static class InfoEndpoints
             },
             chunking = new
             {
-                earlySplit = chunker.EarlySplit
+                earlySplit = chunker.EarlySplit,
+                maxChunkLength = chunker.MaxChunkLength,
+                sentencePauseSeconds = chunker.SentencePauseSeconds
             },
             language = new
             {
                 autoDetectEnabled = phonemizer.UseLanguageDetector,
-                supportedLanguages = phonemizer.SupportedLanguages
+                detectionMode,
+                supportedLanguages = phonemizer.SupportedLanguages,
+                detectionLanguages = mixedPhonemizer?.DetectionLanguages ?? Array.Empty<string>(),
+                tuning = new
+                {
+                    localWinnerProbabilityFloor = phonemizer.LocalWinnerProbabilityFloor,
+                    localWinnerMarginFloor = phonemizer.LocalWinnerMarginFloor,
+                    reliabilityProbabilityThreshold = phonemizer.ReliabilityProbabilityThreshold,
+                    foreignValidationMaxLetters = phonemizer.ForeignValidationMaxLetters,
+                    maxBonusMultiplier = phonemizer.MaxBonusMultiplier,
+                    bonusMinLetterCount = phonemizer.BonusMinLetterCount,
+                    bonusMaxLetterCount = phonemizer.BonusMaxLetterCount,
+                    mixedLanguageOverrideThreshold = phonemizer.MixedLanguageOverrideThreshold,
+                    minSentenceLengthForOverride = phonemizer.MinSentenceLengthForOverride
+                }
             },
             limits = new
             {
@@ -224,19 +264,22 @@ public static class InfoEndpoints
                     queueLimit = rateLimit.QueueLimit
                 }
             },
-            availableVoices = GetAvailableVoiceNames()
+            availableVoices = GetAvailableVoiceNames(synthesisReady, cloningAvailable, openVoice)
         });
     }
     /// <summary>
-    /// Health check endpoint to verify that the server is running and responsive.
+    /// Liveness probe: HTTP 200 confirms the server is responsive. Synthesis readiness is
+    /// reported separately so a missing model does not look like a dead HTTP process.
     /// </summary>
-    public static IResult GetHealth()
+    public static IResult GetHealth(
+        NativeAudioDependencies nativeAudioDependencies, IServiceProvider services)
     {
         return Results.Ok(new
         {
             status = "ok",
-            service = "Tsubaki TTS Engine",
-            version = "1.0.9",
+            service = ServiceName,
+            version = ServiceVersion,
+            synthesisReady = IsSynthesisReady(services, nativeAudioDependencies),
             timestamp = DateTimeOffset.UtcNow
         });
     }

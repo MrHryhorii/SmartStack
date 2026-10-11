@@ -63,6 +63,7 @@ internal static class AudioGenerationPipeline
             effectType != VoiceEffectType.None &&
             effectAmount > 0.001f;
         bool useEnvironment =
+            ctx.EffectsConfig.EnableGlobalEffects &&
             envType != SpatialEnvironment.None &&
             envIntensity > 0.001f;
 
@@ -469,7 +470,7 @@ internal static class AudioGenerationPipeline
                 // =================================================================
                 // REVERB TAIL EXTENSION (Flushes spatial acoustics once at the end)
                 // =================================================================
-                // Drains residual reverb by feeding silence until output drops below -60 dBFS.
+                // Drains residual reverb until output drops below the configured silence floor.
                 // Strictly spatial-only: excludes character effects to avoid spinning on static noise floors.
                 // Priority: request.ExtendReverbTail -> ctx.EffectsConfig.ExtendReverbTailOnFinish.
                 bool extendTail = request.ExtendReverbTail ?? ctx.EffectsConfig.ExtendReverbTailOnFinish;

@@ -1,4 +1,4 @@
-# Tsubaki TTS Engine v1.0.9
+# Tsubaki TTS Engine v1.0.10
 
 Production-grade local Text-to-Speech engine for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
@@ -20,6 +20,10 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 - No Python, no CUDA dependency hell
 - Windows and Linux support
 
+**Start here:** [Quick Start](#quick-start) · [Essential Settings](#essential-settings) · [Web Dashboard](#web-dashboard)
+
+**Reference:** [API Endpoints](#api-endpoints) · [Voice Cloning](#voice-cloning-openvoice-v2) · [DSP Defaults](#server-side-dsp-defaults) · [Model Management](#installation--model-management) · [Server Configuration](#server-configuration-appsettingsjson) · [Language Tuning](#language-detection-configuration) · [Text Processing](#text-processing) · [Building and Tests](#building-from-source)
+
 ---
 
 ## Web Dashboard
@@ -38,15 +42,15 @@ Dashboard features:
 
 ---
 
-# Download
+## Download
 
-**[Tsubaki TTS Engine v1.0.9 (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.9)**
+**[Tsubaki TTS Engine packaged builds (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases)**
 
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
 ---
 
-# Why Tsubaki Instead of Python TTS Stacks?
+## Why Tsubaki Instead of Python TTS Stacks?
 
 Most modern open-source TTS engines are written in Python. This often leads to "dependency hell": CUDA version conflicts, gigabytes of PyTorch libraries, and virtual environment nightmares.
 
@@ -71,7 +75,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 
 ---
 
-# Key Features
+## Key Features
 
 | Feature                    | Description                                                                                                                                                        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -86,7 +90,7 @@ Tsubaki is built with an engineering-first approach to distribution:
 
 ---
 
-# Who Is This For?
+## Who Is This For?
 
 Tsubaki is designed for:
 
@@ -100,25 +104,25 @@ Tsubaki is designed for:
 
 ---
 
-# Quick Start
+## Quick Start
 
-## 1. Download the Release
+### 1. Download the Release
 
 Download the build for your OS from:
 
-https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.9
+[GitHub Releases](https://github.com/MrHryhorii/SmartStack/releases)
 
 Extract the complete ZIP. For a first run, the CPU build is the simplest choice.
 
 ---
 
-## 2. Add a Piper Voice Model (Optional)
+### 2. Add a Piper Voice Model (Optional)
 
 The release includes a default Piper voice model. If no usable Piper model is available, Tsubaki can use the configured fallback model; normal interactive launches ask before downloading it unless automatic fallback downloading is enabled. If you want to use a different voice, download its `.onnx` and `.onnx.json` files from [Piper voices](https://huggingface.co/rhasspy/piper-voices/tree/main) and put both in the `Model/` folder next to the executable. See *Piper Voice Models* below for details.
 
 ---
 
-## 3. Run the Server
+### 3. Run the Server
 
 On Windows, open the extracted folder and double-click `TsubakiTTS.exe`.
 
@@ -146,7 +150,7 @@ Tsubaki opens the browser dashboard automatically when possible. You can also op
 
 ---
 
-## 4. Test Speech Synthesis
+### 4. Test Speech Synthesis
 
 Type some text in the dashboard and click **Generate**. You can play the result there or click **Download** to save it. No terminal command is needed for this first test.
 
@@ -162,7 +166,31 @@ a language yourself. Try both to hear the difference.
 
 ---
 
-# OpenAI API Compatibility
+## Essential Settings
+
+Edit `appsettings.json` next to the executable and restart the server. The shipped
+configuration works without tuning. Start with these controls; use
+[Server Configuration](#server-configuration-appsettingsjson) for advanced routing
+and [ONNX Runtime Optimization](#onnx-runtime-optimization) for execution settings.
+
+| Section / setting | When to change it |
+| --- | --- |
+| `ModelSettings.ModelDirectory` | Select the folder containing a matching Piper `.onnx` and `.onnx.json` pair. The default is `Model`. |
+| `PhonemizerSettings.SupportedLanguages` | Add languages expected in your text. The model language is included automatically; a shorter candidate list reduces same-script ambiguity. |
+| `PhonemizerSettings.UseLanguageDetector` | Keep `true` for automatic routing; use `false` for the model language by default. A request's `language` still overrides pronunciation. |
+| `ClonerSettings.EnableCloning` | Set `false` for base Piper TTS only. This skips OpenVoice model loading/downloading and voice fingerprint processing. Use `piper_base` in requests. |
+| `DspSettings.DefaultPitch` / `DefaultVolume` | Adjust the default voice pitch or loudness; `1.0` preserves the original scale. The shipped `VolumeBoosterDb: 8.0` adds gain separately. |
+| `ChunkerSettings.SentencePauseSeconds` | Adjust sentence pacing. The default `0.3` seconds scales with reading speed. |
+| `StreamSettings.EnableStreaming` | Enable progressive output for supported formats. WAV is always buffered. |
+| `EffectsSettings.EnableGlobalEffects` | Set `false` to bypass character effects, spatial environments, and their reverb tails. Pitch, volume, and the low-pass filter still work. |
+
+Older configuration files can omit new detector tuning values; their defaults
+remain active. To inspect the running build and its actual capabilities, open
+[`/tsbk/server/status`](http://localhost:5045/tsbk/server/status) locally.
+
+---
+
+## OpenAI API Compatibility
 
 Tsubaki mimics the standard OpenAI `/v1/audio/speech` endpoint. Clients that use the standard OpenAI TTS request fields can usually connect to Tsubaki by changing only the base URL.
 
@@ -176,7 +204,7 @@ Compatible with:
 - AutoGen
 - any custom OpenAI client
 
-## Standard Request
+### Standard Request
 
 ```bash
 curl -o speech.mp3 http://localhost:5045/v1/audio/speech \
@@ -190,7 +218,7 @@ curl -o speech.mp3 http://localhost:5045/v1/audio/speech \
   }'
 ```
 
-## Standard Parameters
+### Standard Parameters
 
 | Field             | Type          | Description |
 | ----------------- | ------------- | ----------- |
@@ -206,7 +234,7 @@ curl -o speech.mp3 http://localhost:5045/v1/audio/speech \
 The Tsubaki endpoint reuses the same core fields and output formats where applicable, so they are not repeated below. Use `/tsbk/audio/speech` when you need Tsubaki-specific per-request controls.
 
 
-### Base64 JSON Response
+#### Base64 JSON Response
 
 Set `"response_format": "b64_json"` when a client needs audio embedded in JSON instead of a binary audio response.
 
@@ -228,7 +256,7 @@ Clients should Base64-decode each `audioContent` value separately and concatenat
 
 ---
 
-# Real-Time Streaming
+## Real-Time Streaming
 
 Tsubaki supports HTTP chunked streaming and Server-Sent Events (SSE). Audio playback can begin before the full synthesis finishes — useful for AI companions, streaming agent pipelines, and real-time conversations.
 
@@ -267,9 +295,9 @@ Recommended server-side streaming configuration in `appsettings.json`:
 
 ---
 
-# Voice Cloning (OpenVoice V2)
+## Voice Cloning (OpenVoice V2)
 
-## Adding a Voice
+### Adding a Voice
 
 1. Place a clean voice sample (`.wav`, 5–15 seconds) into the `Voices/` folder.
 2. The filename becomes the voice ID: `John.wav` → `"voice": "John"`.
@@ -290,7 +318,7 @@ For the base Piper voice without cloning: `"voice": "piper_base"`.
 
 If `voice` is omitted or the requested cloned voice is unavailable, Tsubaki uses the base voice of the active Piper model. When a cloned voice is selected, Tsubaki first synthesizes speech with the active Piper model and then applies the cloned voice characteristics through OpenVoice V2.
 
-## Recommended Sample Quality
+### Recommended Sample Quality
 
 - 5–15 seconds of clean speech
 - minimal background noise
@@ -298,7 +326,7 @@ If `voice` is omitted or the requested cloned voice is unavailable, Tsubaki uses
 - no clipping — clipped source audio has already lost waveform detail, and loudness normalization cannot restore it
 - **Recommended peak level: around −6 to −3 dBFS** — loud enough to fully capture the voice character, with just enough headroom to avoid distortion
 
-## OpenVoice Cloning Models
+### OpenVoice Cloning Models
 
 The voice cloning engine requires separate OpenVoice ONNX models. When voice cloning is enabled, Tsubaki automatically downloads any missing model files from HuggingFace during startup.
 
@@ -318,7 +346,7 @@ Place all three files into the `Cloner/` folder:
 
 > **Performance Note:** Voice cloning is substantially heavier than base Piper synthesis. On CPU, increasing `IntraOpNumThreads` can reduce cloning latency; the shipped value is intentionally moderate so Tsubaki can share CPU time with other applications.
 
-## Fine-Tuning Cloning Behavior
+### Fine-Tuning Cloning Behavior
 
 Both settings can be configured server-wide in `ClonerSettings` or overridden per request on the Tsubaki endpoint.
 
@@ -336,7 +364,7 @@ Both settings can be configured server-wide in `ClonerSettings` or overridden pe
 
 If a clone develops trembling or warbling, lower `tone_temperature` first.
 
-## Cloned Voice Volume
+### Cloned Voice Volume
 
 The perceived loudness of a cloned voice is shaped by **reference loudness normalization**, the **remaining characteristics of the recording**, and the **natural pitch of the cloned voice**.
 
@@ -366,7 +394,7 @@ The volume adjustment is applied as a final gain stage with soft-knee limiting *
 
 ---
 
-# Tsubaki Endpoint
+## Tsubaki Endpoint
 
 Tsubaki also exposes `/tsbk/audio/speech` for full per-request control. It uses the same synthesis engine and core request fields described above, while adding DSP, spatial environments, pitch/volume, cloning controls, language routing, pronunciation variance, and synthesis chunk control.
 
@@ -374,7 +402,7 @@ Only `input` is required; omitted optional fields fall back to their engine or s
 
 A detailed **Swagger UI** with every parameter is available at `http://localhost:5045/swagger` when running in Development mode.
 
-## Full Request Example
+### Full Request Example
 
 ```bash
 curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
@@ -409,7 +437,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
   }'
 ```
 
-## DSP Effect Parameters
+### DSP Effect Parameters
 
 | Parameter               | Type   | Description                                                |
 | ----------------------- | ------ | ---------------------------------------------------------- |
@@ -419,7 +447,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | `environment_intensity` | float  | Reverb intensity. `0.25` is recommended.                   |
 | `extend_reverb_tail`    | bool   | Lets the active `environment` reverb decay fully at the end of the request instead of being cut off. Overrides the server's `ExtendReverbTailOnFinish` default for this request only. Has no effect on character `effect`s. See *Reverb Tail Extension* in Server-Side DSP Defaults below. |
 
-### Available Effects
+#### Available Effects
 
 | Value           | Description                                                                                  |
 | --------------- | -------------------------------------------------------------------------------------------- |
@@ -437,7 +465,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | `G711MuLaw`     | G.711 μ-law digital telephony codec simulation                                               |
 | `G711ALaw`      | G.711 A-law digital telephony codec simulation                                               |
 
-### Available Environments
+#### Available Environments
 
 | Value          | Description                                                                   |
 | -------------- | ------------------------------------------------------------------------------ |
@@ -452,7 +480,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | `Underwater`   | Muffled acoustics with high-frequency roll-off and slapback echo              |
 | `InnerVoice`   | Micro-delay and dynamic low-pass to pull the voice inside the listener's head |
 
-## Synthesis Parameters
+### Synthesis Parameters
 
 | Parameter     | Type   | Description |
 | ------------- | ------ | ----------- |
@@ -463,7 +491,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | `noise_scale` | float  | Pronunciation/intonation variance. Default: `0.667`. |
 | `noise_w`     | float  | Phoneme-duration/rhythm variance. Default: `0.8`. |
 
-## Cloning Parameters
+### Cloning Parameters
 
 | Parameter             | Type  | Description |
 | --------------------- | ----- | ----------- |
@@ -475,11 +503,11 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 
 ---
 
-# Server-Side DSP Defaults
+## Server-Side DSP Defaults
 
 Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect parameters, Tsubaki allows you to set a **Default Effect** in `appsettings.json`. This effect will be automatically applied to all incoming API requests unless explicitly overridden by a custom client (like the built-in web dashboard).
 
-## Default Effects & Environments
+### Default Effects & Environments
 
 The following is an example configuration that enables LoFiTape and LivingRoom as server-wide defaults. The shipped defaults keep both the effect and environment disabled (`None`).
 
@@ -495,19 +523,26 @@ The following is an example configuration that enables LoFiTape and LivingRoom a
 }
 ```
 
-Set `"DefaultEffect": "None"` to bypass effects entirely.
+`DefaultEffect: "None"` disables the default character effect only;
+`DefaultEnvironment: "None"` disables the default spatial environment only.
+Requests can override either default independently.
+
+Set `EnableGlobalEffects: false` to bypass both stages, including spatial reverb
+tails. Per-request effects cannot re-enable them while this switch is off.
+Pitch, volume, gain compensation, and the low-pass filter remain independent.
+An omitted `DefaultEnvironmentIntensity` uses `0.25`, matching the shipped configuration.
 
 ---
 
-### Reverb Tail Extension
+#### Reverb Tail Extension
 
 The pause between sentences is designed for natural speech pacing, not for reverb decay. With long environments at high intensity, the reverb may still be audible when the generated speech reaches the end of the request. `ExtendReverbTailOnFinish` allows the active `environment` reverb to decay naturally after the generated voice ends, until the measured output level falls below the configured threshold.
 
-`ReverbTailSilenceFloor` controls that threshold using linear amplitude. The default `0.005` is roughly −46 dBFS. Lower values allow the reverb to decay further; higher values end playback sooner.
+`ReverbTailSilenceFloor` controls that threshold using linear amplitude. The default `0.005` is roughly −46 dBFS. Lower values allow the reverb to decay further; higher values end playback sooner. Tail extension stops after at most 4 seconds, even if the environment has not reached that floor.
 
 The extension applies only to spatial `environment` reverb. Character `effect`s such as `LoFiTape` or `Telephone` are not extended.
 
-**Effect on audio length:** Long-tail environments such as `Cave` and `ConcreteHall` can noticeably increase the final duration at high `environment_intensity`. At lower intensity (`0.25`, the shipped default), the additional time is usually small or zero.
+**Effect on audio length:** Long-tail environments such as `Cave` and `ConcreteHall` can noticeably increase the final duration at high `environment_intensity`. Lower intensity can shorten the tail; its length also depends on the environment, final signal, and silence floor. The shipped intensity is `0.25`.
 
 > **Chunked requests:** Tsubaki can split a single large request into internal chunks for more predictable model load while carrying the reverb state between them. However, if an agent splits one logical turn into multiple separate `/tsbk/audio/speech` requests, each request has its own completion point and will wait for its own reverb tail to decay, creating unnatural gaps (dead air) between fragments. **To avoid this:**
 >
@@ -519,7 +554,7 @@ The extension applies only to spatial `environment` reverb. Character `effect`s 
 
 ---
 
-## Default Pitch & Volume
+### Default Pitch & Volume
 
 ```json
 "DspSettings": {
@@ -532,7 +567,7 @@ The extension applies only to spatial `environment` reverb. Character `effect`s 
 }
 ```
 
-### LowPassQFactor
+#### LowPassQFactor
 
 Controls the resonance and roll-off curve of the low-pass filter used for cloned voices. It is primarily used to clean up high-frequency artifacts (metallic "sand") generated during OpenVoice cloning.
 
@@ -541,15 +576,15 @@ Controls the resonance and roll-off curve of the low-pass filter used for cloned
 
 > In practice, both curves target the same few dB of artifact energy near the cutoff — the difference is measurable, not something most listeners will notice by ear. Treat this as a fine-tuning knob for controlled A/B comparisons, not a dramatic quality switch.
 
-### DefaultPitch
+#### DefaultPitch
 
 Server-wide pitch multiplier: `1.0` leaves pitch unchanged, while `0.5`/`2.0` shift it one octave down/up. Tsubaki requests can override it per request with `pitch`; OpenAI-only clients use the server default.
 
-### DefaultVolume
+#### DefaultVolume
 
 Server-wide volume multiplier with soft-knee limiting: `1.0` is unchanged, `0.5` is about −6 dB, `2.0` about +6 dB, and `4.0` is the maximum +12 dB setting. Tsubaki requests can override it with `volume`; `VolumeBoosterDb` is applied underneath this multiplier.
 
-### VolumeBoosterDb
+#### VolumeBoosterDb
 
 Applies a fixed gain correction in decibels underneath `DefaultVolume`/`volume`. It is intended as a baseline calibration for the engine's output rather than a per-request volume preference. A value of `0` disables the correction.
 
@@ -557,9 +592,9 @@ The booster and resolved `volume` are combined into a single final gain stage af
 
 ---
 
-# Piper Voice Models
+## Piper Voice Models
 
-## Finding Voice Models
+### Finding Voice Models
 
 All official Piper voices are hosted on HuggingFace:
 
@@ -567,7 +602,7 @@ All official Piper voices are hosted on HuggingFace:
 
 The repository contains **35 languages**, each in its own folder (`en`, `de`, `fr`, `uk`, `cmn`, etc.).
 
-## What to Download
+### What to Download
 
 For each voice you need to download exactly **2 files**:
 
@@ -576,7 +611,7 @@ For each voice you need to download exactly **2 files**:
 | Model weights | `.onnx`      | The neural network — this is the large file    |
 | Model config  | `.onnx.json` | Metadata: sample rate, phonemes, speaker IDs  |
 
-### How to Download a Voice
+#### How to Download a Voice
 
 1. Browse to your language folder, e.g. [`/en`](https://huggingface.co/rhasspy/piper-voices/tree/main/en)
 2. Navigate into a voice subfolder (e.g. `en_US/lessac/medium/`)
@@ -585,7 +620,7 @@ For each voice you need to download exactly **2 files**:
 
 > Both files **must be present** — the engine will fail to load without the accompanying `.json` config.
 
-## Available Quality Tiers
+### Available Quality Tiers
 
 Most voices come in multiple quality levels. Higher quality = larger model and higher memory usage:
 
@@ -600,17 +635,17 @@ Most voices come in multiple quality levels. Higher quality = larger model and h
 
 ---
 
-# Installation & Model Management
+## Installation & Model Management
 
-## Adding a Piper Model
+### Adding a Piper Model
 
 The server features a highly flexible model discovery system. There are **3 ways** to specify the path to your `.onnx` and `.json` files:
 
-### Option A — Out of the Box (Recommended)
+#### Option A — Out of the Box (Recommended)
 
 Place your model files into the `Model/` folder exactly next to the compiled executable. The server will automatically find them on startup.
 
-### Option B — Change Directory
+#### Option B — Change Directory
 
 If you store models on a different drive, open `appsettings.json` and change the `ModelDirectory`:
 
@@ -625,7 +660,7 @@ If you store models on a different drive, open `appsettings.json` and change the
 
 `Speaker` selects a speaker only for multi-speaker Piper models. Set it to a key from the model's `speaker_id_map` (for example, `"3922"`). Leave it empty to use the model's first available speaker. If the configured key is not found, Tsubaki also falls back to the first available speaker. The setting is ignored for single-speaker models.
 
-### Option C — Exact File Paths (Advanced)
+#### Option C — Exact File Paths (Advanced)
 
 If your files have custom names or are scattered across the system, you can specify exact paths:
 
@@ -638,7 +673,7 @@ If your files have custom names or are scattered across the system, you can spec
 
 > **Windows users:** When writing absolute paths in JSON, you must use double backslashes (`\\`).
 
-## Fallback Model Settings
+### Fallback Model Settings
 
 The normal model paths above remain the primary source. These settings only control the fallback used when no usable configured or local Piper model can be loaded:
 
@@ -660,11 +695,11 @@ Downloaded fallback files are cached and reused on later starts.
 
 ---
 
-# Building From Source
+## Building From Source
 
 Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
-## Clone Only the ONNX_Runner Folder (Recommended)
+### Clone Only the ONNX_Runner Folder (Recommended)
 
 ```bash
 git clone --filter=blob:none --sparse https://github.com/MrHryhorii/SmartStack.git
@@ -680,7 +715,12 @@ git clone https://github.com/MrHryhorii/SmartStack.git
 cd SmartStack/ONNX_Runner
 ```
 
-## Compiling the Server
+### Compiling the Server
+
+Requires the .NET 10 SDK. Build or publish `ONNX_Runner.csproj` for the server;
+building `ONNX_Runner.sln` also compiles the separate test runners. See
+[Tests/README.md](Tests/README.md) for their purpose, prerequisites, and commands.
+Tests are excluded from the server's compiled and published files.
 
 Tsubaki provides several build variants for different hardware configurations. You can build a **Lightweight CPU-only** version, or enable **WebGPU, DirectML, or CUDA** for hardware-accelerated configurations, especially voice cloning.
 
@@ -691,7 +731,7 @@ Tsubaki provides several build variants for different hardware configurations. Y
 >
 > **WebGPU and concurrency:** The current WebGPU implementation is optimized for local and personal use. Piper base synthesis remains on the CPU, while OpenVoice voice conversion can use the GPU. GPU cloning requests are currently processed one at a time for stability. This is usually not a limitation for a personal TTS setup, where requests are generated sequentially. If WebGPU is unavailable, the cloning stage automatically falls back to the CPU. Parallel GPU execution is planned for a future release.
 
-### 1. Windows (WebGPU + CPU) — Recommended for Voice Cloning
+#### 1. Windows (WebGPU + CPU) — Recommended for Voice Cloning
 
 Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
 
@@ -699,7 +739,7 @@ Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
 dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-webgpu
 ```
 
-### 2. Windows (DirectML + CPU)
+#### 2. Windows (DirectML + CPU)
 
 Alternative Windows GPU acceleration with support for NVIDIA, AMD, and Intel GPUs.
 
@@ -707,13 +747,13 @@ Alternative Windows GPU acceleration with support for NVIDIA, AMD, and Intel GPU
 dotnet publish -c Release -r win-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-directml
 ```
 
-### 3. Windows (Lightweight: CPU Only) — Recommended for Base TTS
+#### 3. Windows (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
 dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-cpu
 ```
 
-### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
+#### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
 
 Uses WebGPU through Vulkan for hardware-accelerated OpenVoice voice cloning. A working Vulkan driver is required for GPU acceleration; if WebGPU cannot initialize, Tsubaki falls back to CPU.
 
@@ -721,13 +761,13 @@ Uses WebGPU through Vulkan for hardware-accelerated OpenVoice voice cloning. A w
 dotnet publish -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
 ```
 
-### 5. Linux (Lightweight: CPU Only) — Recommended for Base TTS
+#### 5. Linux (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
 dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cpu
 ```
 
-### 6. Linux (CUDA + CPU) — Advanced Users Only
+#### 6. Linux (CUDA + CPU) — Advanced Users Only
 
 Builds the NVIDIA CUDA version. See the Linux Deployment section for strict hardware and software requirements:
 
@@ -735,7 +775,7 @@ Builds the NVIDIA CUDA version. See the Linux Deployment section for strict hard
 dotnet publish -c Release -r linux-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cuda
 ```
 
-### 7. Docker (Lightweight CPU)
+#### 7. Docker (Lightweight CPU)
 
 The provided `Dockerfile` is pre-configured to build the lightweight CPU version to keep your container small and stable:
 
@@ -744,7 +784,7 @@ docker-compose up --build -d
 ```
 
 
-## Packaging a Binary Release
+### Packaging a Binary Release
 
 For a downloadable release with license notices, run this command from
 `ONNX_Runner`. Regular users can use the ready-made release above.
@@ -773,9 +813,9 @@ kept separate so the same source archive is not duplicated inside every build.
 
 ---
 
-# Docker & Linux Deployment
+## Docker & Linux Deployment
 
-## Docker (Recommended for Servers)
+### Docker (Recommended for Servers)
 
 The provided `docker-compose.yml` and `Dockerfile` are highly optimized and pre-configured to build the **Lightweight CPU** version. All native dependencies are handled automatically:
 
@@ -785,7 +825,7 @@ docker-compose up --build -d
 
 Docker Compose mounts `Model/`, `Cloner/`, and `Voices/` from the project directory, so downloaded models and voice data persist there between container recreations. The Docker image enables `ModelSettings__AutoDownloadFallbackModel=true` and disables `StartupSettings__OpenBrowserOnStart`, so a missing fallback model can be recovered without an interactive prompt and no browser is launched inside the container.
 
-## Bare-Metal Linux (CPU)
+### Bare-Metal Linux (CPU)
 
 For bare-metal Linux, **eSpeak NG is required** for phonemization. LAME is optional and only needed for `mp3` and `b64_json`; without it, `wav`, `flac`, `opus`, `aac`, and `pcm` remain available.
 
@@ -797,7 +837,7 @@ sudo apt-get install -y libmp3lame0   # optional, but recommended for MP3 client
 
 Tsubaki detects these native libraries at startup and reports which audio formats are available.
 
-## Bare-Metal Linux (CUDA GPU) — Not Recommended
+### Bare-Metal Linux (CUDA GPU) — Not Recommended
 
 Tsubaki supports NVIDIA GPU acceleration on Linux, but we **strongly advise against using it** unless absolutely necessary.
 
@@ -819,15 +859,15 @@ CUDA and cuDNN libraries must also be discoverable by the Linux dynamic linker, 
 
 ---
 
-# Server Configuration (appsettings.json)
+## Server Configuration (appsettings.json)
 
 The `appsettings.json` file is completely pre-configured and ready to use out-of-the-box. Most users only ever need to set the model path and the languages list — everything else can safely be left at its defaults.
 
 ---
 
-## Phonemizer & Language Settings
+### Phonemizer & Language Settings
 
-### Cross-Language Pronunciation
+#### Cross-Language Pronunciation
 
 Tsubaki does not turn a monolingual Piper model into a true multilingual model. Instead, it allows the active voice to **approximate other languages using the sounds that model already knows how to produce**.
 
@@ -841,7 +881,7 @@ In simplified form:
 
 For the most reliable automatic switching, keep the languages you actually expect in `SupportedLanguages`. If the language is already known, passing `language` directly avoids the need to infer it.
 
-### Inline Phoneme Input
+#### Inline Phoneme Input
 
 Tsubaki can also accept phonemes directly inside normal input text.
 
@@ -864,9 +904,28 @@ does not automatically bypass normal text pronunciation merely because brackets 
 
 This softer handling of single brackets and slashes is intentionally a compatibility safety net for applications or text formats that already use conventional pronunciation notation. Use `[[...]]` when raw phoneme input is intentional and unambiguous.
 
-### Language Detection Configuration
+#### Language Detection Configuration
 
 `PhonemizerSettings` controls automatic pronunciation-language routing. The Piper model's language is always included; `SupportedLanguages` adds statistical candidates.
+
+```json
+"PhonemizerSettings": {
+  "SupportedLanguages": ["en", "uk", "fr"],
+  "UseLanguageDetector": true
+}
+```
+
+- `UseLanguageDetector: true` keeps automatic routing enabled. With **two or more distinct recognized languages**, it loads Lingua for statistical comparison.
+- With fewer than two candidates, including `SupportedLanguages: []`, it starts **without Lingua**. Compatible scripts use the model language; other scripts use existing letter hints and script defaults. Han routes to Mandarin and Hiragana/Katakana to Japanese in both modes.
+- `UseLanguageDetector: false` disables both statistical detection and automatic script routing. A per-request `language` can still select pronunciation explicitly.
+
+Keep the candidate list limited to expected languages. Base codes (`"en"`, `"uk"`, `"fr"`) and eSpeak dialect tags (`"en-us"`, `"fr-ca"`) are accepted; duplicates and aliases count as one statistical language. Unknown codes add no Lingua candidate. Omitted values retain defaults; restart after configuration changes.
+
+<details>
+<summary><strong>Advanced: How language detection works and how to tune it</strong></summary>
+
+Add only the tuning values you want to change inside `PhonemizerSettings`.
+This complete example shows the defaults:
 
 ```json
 "PhonemizerSettings": {
@@ -883,15 +942,6 @@ This softer handling of single brackets and slashes is intentionally a compatibi
   "MinSentenceLengthForOverride": 20
 }
 ```
-
-- `UseLanguageDetector: true` keeps automatic routing enabled. With **two or more distinct recognized languages**, it loads Lingua for statistical comparison.
-- With fewer than two candidates, including `SupportedLanguages: []`, it starts **without Lingua**. Compatible scripts use the model language; other scripts use existing letter hints and script defaults. Han routes to Mandarin and Hiragana/Katakana to Japanese in both modes.
-- `UseLanguageDetector: false` disables both statistical detection and automatic script routing. A per-request `language` can still select pronunciation explicitly.
-
-Keep the candidate list limited to expected languages. Base codes (`"en"`, `"uk"`, `"fr"`) and eSpeak dialect tags (`"en-us"`, `"fr-ca"`) are accepted; duplicates and aliases count as one statistical language. Unknown codes add no Lingua candidate. Omitted values retain defaults; restart after configuration changes.
-
-<details>
-<summary><strong>Advanced: How language detection works and how to tune it</strong></summary>
 
 Ordinary text around technical spans shares one analysis phrase until punctuation, quotes, or a script change separates it. Technical syntax adds no statistical votes.
 
@@ -915,7 +965,7 @@ The margin is an absolute difference: `0.53 - 0.44 = 0.09` passes the default fl
 
 Sentence overrides require phrases shorter than `BonusMaxLetterCount` and compatible scripts. Quoted phrases use independent local evidence. Technical-only phrases can inherit reliable same-script context within the current allowed boundary. Statistical tuning has no effect when Lingua is absent; ordinary model/script fallbacks do not report statistical confidence.
 
-#### Tuning by symptom
+##### Tuning by symptom
 
 | Observed behavior | Adjustment | Trade-off |
 | --- | --- | --- |
@@ -927,7 +977,7 @@ Sentence overrides require phrases shorter than `BonusMaxLetterCount` and compat
 
 `ReliabilityProbabilityThreshold` applies to ambiguous neighboring results, not technical parts inside a phrase that already contains ordinary prose. Those parts share the phrase's language; tune its local evidence or sentence context instead.
 
-#### Numerical examples
+##### Numerical examples
 
 These scores illustrate the rules; they are not fixed outputs for particular words.
 
@@ -945,7 +995,7 @@ Routing selects eSpeak pronunciation rules, while the Piper model retains its vo
 
 ---
 
-## Network & Access
+### Network & Access
 
 - **`Kestrel > Endpoints > Http > Url`** — Defines the port the server listens on. Default is `http://+:5045`.
 
@@ -957,7 +1007,7 @@ Routing selects eSpeak pronunciation rules, while the Piper model retains its vo
 
 ---
 
-## Text Processing
+### Text Processing
 
 - **`ChunkerSettings`** — Controls sentence chunking and the optional low-latency first split. Normal text is split at sentence boundaries; `MaxChunkLength` is only an emergency cap for unusually long single sentences.
 
@@ -985,7 +1035,7 @@ and IPv4 addresses retain normal eSpeak reading. Technical recognition also work
 <details>
 <summary><strong>Advanced: Add custom abbreviation and punctuation rules</strong></summary>
 
-### Sentence boundaries
+#### Sentence boundaries
 
 Unknown single lowercase letters in cased writing systems can end a sentence after a
 period, including decomposed accented letters. This single-letter exception does not
@@ -1008,7 +1058,7 @@ They include shared-rule preprocessing checks up to the native eSpeak boundary, 
 emergency-split invariants, optional JSON edge cases, and managed allocation budgets.
 Whole-input sentence chunks reuse the input string; slices still own their result strings.
 
-### Custom rules
+#### Custom rules
 
 `Models/TextChunkerRules.cs` is the shared, immutable catalog for abbreviation categories,
 punctuation roles, and model-normalization semantics. The chunker, language tokenizer,
@@ -1060,7 +1110,7 @@ symbols and whitespace-separated code constructs are outside this character-name
 
 ---
 
-## Resource Management
+### Resource Management
 
 - **`HardwareSettings`** — Tells the server's internal queueing system how many generation requests are allowed to run at the same time, and handles hardware routing. **For home use, you can completely ignore this section and leave the defaults.**
 
@@ -1096,7 +1146,7 @@ symbols and whitespace-separated code constructs are outside this character-name
 
 ---
 
-## Audio & DSP
+### Audio & DSP
 
 - **`EffectsSettings`** — Server-wide default character effect and spatial environment, automatically applied to every request unless overridden by a custom client. See *Server-Side DSP Defaults* above for why this matters specifically for OpenAI-compatible clients.
 
@@ -1107,7 +1157,7 @@ symbols and whitespace-separated code constructs are outside this character-name
 
 ---
 
-# ONNX Runtime Optimization
+## ONNX Runtime Optimization
 
 This section provides low-level ONNX Runtime execution settings. CPU and GPU paths use independent threading and memory profiles because their workloads have different requirements. The shipped values are conservative defaults for Tsubaki's tested workload. **If you are not tuning performance, leave this section unchanged.**
 
@@ -1139,7 +1189,7 @@ This section provides low-level ONNX Runtime execution settings. CPU and GPU pat
 | `EnableCpuMemArena`   | Enables ONNX Runtime's native CPU memory arena for tensor allocations. It can reduce repeated native allocation overhead, but it does **not** bypass the C# garbage collector for the rest of Tsubaki; managed buffers are optimized separately. The shipped GPU profile keeps it disabled. |
 | `ExecutionMode`       | Selects sequential or parallel ONNX graph execution. Tsubaki ships with `"Sequential"`, which is the tested and recommended mode for its Piper/OpenVoice workload. |
 
-## Concurrency & CPU Bottlenecks
+### Concurrency & CPU Bottlenecks
 
 The TTS engine and API are fully thread-safe and natively support concurrent HTTP requests. Two settings control CPU concurrency:
 
@@ -1157,7 +1207,7 @@ Both settings only affect the CPU execution path — GPU threading and concurren
 
 ---
 
-# API Endpoints
+## API Endpoints
 
 **OpenAI-compatible:**
 
@@ -1166,7 +1216,7 @@ Both settings only affect the CPU execution path — GPU threading and concurren
 | `POST` | `/v1/audio/speech` | Main TTS endpoint                |
 | `GET`  | `/v1/models`       | OpenAI-compatible model listing  |
 | `GET`  | `/v1/models/{id}`  | OpenAI-compatible model by ID    |
-| `GET`  | `/v1/health`       | Server health check              |
+| `GET`  | `/v1/health`       | Liveness, version, and synthesis readiness |
 
 **Tsubaki Endpoint:**
 
@@ -1177,17 +1227,38 @@ Both settings only affect the CPU execution path — GPU threading and concurren
 | `GET`  | `/tsbk/audio/voices`       | List available voices                               |
 | `GET`  | `/tsbk/audio/effects`      | List available DSP effects                          |
 | `GET`  | `/tsbk/audio/environments` | List available acoustic environments                |
-| `GET`  | `/tsbk/server/status`      | Reports what's enabled and current server defaults  |
+| `GET`  | `/tsbk/server/status`      | Version, initialized capabilities, and current defaults |
 
-`/tsbk/server/status` returns the server's current configuration as JSON — which features are enabled (`voiceCloning.enabled`, `effects.enabled`, `streaming.enabled`), the resolved defaults every request falls back to (`dsp.defaultPitch`, `dsp.defaultVolume`, `effects.defaultEnvironment`, ...), and the exact combined gain `VolumeBoosterDb` currently applies (`dsp.volumeBoosterDb`, `dsp.defaultTotalGainDb`). Intended for building a frontend that adapts its own UI to what the server actually supports — e.g. hiding cloning controls entirely when `voiceCloning.enabled` is `false` — and for a client that wants an exact absolute output level to discover and counteract the always-on volume booster instead of guessing.
+`/tsbk/server/status` distinguishes configured settings from initialized capabilities.
+Existing defaults remain available, including `dsp.volumeBoosterDb` and
+`dsp.defaultTotalGainDb`; muted default volume reports the latter as `null`.
+
+| Field | Meaning |
+| --- | --- |
+| `service`, `version` | Engine name and compiled version. Health and status use the version declared in `ONNX_Runner.csproj`. |
+| `status`, `synthesisReady` | `ready` / `true` when the base Piper and phonemizer pipeline is initialized; otherwise `degraded` / `false`. A degraded process can answer HTTP requests but cannot synthesize. |
+| `voiceCloning.enabled`, `voiceCloning.available` | Requested configuration versus an initialized cloning pipeline with its base fingerprint. Use `available` when deciding whether to offer cloning. |
+| `availableVoices` | Voices loaded and usable at startup. Empty without a synthesis pipeline; only `piper_base` when cloning is unavailable. `/tsbk/audio/voices` uses the same list. Adding a fingerprint requires a restart. |
+| `language.autoDetectEnabled`, `language.detectionMode` | Configured routing switch and actual mode: `lingua`, `model_script`, `disabled`, or `unavailable`. `model_script` means automatic script routing without statistical comparison. |
+| `language.supportedLanguages`, `language.detectionLanguages` | Configured extra candidates versus distinct recognized runtime candidates, including the model language. Aliases and dialect duplicates count once. Script fallbacks can still handle scripts outside this candidate list. |
+| `language.tuning` | The nine effective detector tuning values, using camelCase field names. Their effects are explained under [Language Detection Configuration](#language-detection-configuration). |
+| `chunking` | Effective `earlySplit`, `maxChunkLength`, and `sentencePauseSeconds` defaults. |
+
+`effects.enabled` controls both character and spatial effects. Streaming and format
+fields describe server support; WAV output remains buffered. Readiness indicates
+initialization, not that the request queue is empty or every input can be synthesized.
 
 **Universal:**
 
 | Method | Endpoint  | Description         |
 | ------ | --------- | -------------------- |
-| `GET`  | `/health` | Server health check  |
+| `GET`  | `/health` | Liveness, version, and synthesis readiness |
 
-## Swagger UI
+Both health routes return HTTP `200` with `status: "ok"` while the process responds,
+including when no model is loaded. Check `synthesisReady` before sending speech
+requests; the response also includes `service`, `version`, and a UTC `timestamp`.
+
+### Swagger UI
 
 A detailed Swagger UI with every parameter (Pitch, Volume, NoiseScale, CloneIntensity, etc.) is available at:
 
@@ -1199,17 +1270,17 @@ Swagger is enabled in Development mode.
 
 ---
 
-# Open Source Credits & Acknowledgements
+## Open Source Credits & Acknowledgements
 
 Tsubaki TTS Engine stands on the shoulders of giants. A massive thank you to the authors of the original models and open-source libraries that made this possible.
 
-## AI Models & Datasets
+### AI Models & Datasets
 
 - [**Piper TTS**](https://github.com/rhasspy/piper) — The core VITS neural network architecture by Rhasspy.
 - [**OpenVoice V2**](https://github.com/myshell-ai/OpenVoice) — The tone-color voice cloning architecture by MyShell.
 - [**PHOIBLE 2.0**](https://phoible.org/) — Cross-linguistic phonological data used for fallback phoneme matching. Edited by Steven Moran and Daniel McCloy; CC BY-SA 3.0.
 
-## C# / .NET Libraries
+### C# / .NET Libraries
 
 - [**Microsoft.ML.OnnxRuntime**](https://github.com/microsoft/onnxruntime) — CPU and GPU neural network inference.
 - [**NAudio & NAudio.Lame**](https://github.com/naudio/NAudio) — Audio processing and the .NET LAME integration.
@@ -1217,14 +1288,14 @@ Tsubaki TTS Engine stands on the shoulders of giants. A massive thank you to the
 - [**SoundTouch.Net**](https://github.com/owoudenberg/soundtouch.net) — High-quality pitch and tempo shifting (WSOLA algorithm).
 - [**SearchPioneer.Lingua**](https://github.com/searchpioneer/lingua-dotnet) — Fast, offline language detection for foreign word pronunciation.
 
-## Native Components
+### Native Components
 
 - [**eSpeak NG**](https://github.com/espeak-ng/espeak-ng) — Phonemization and language/dialect pronunciation rules.
 - [**LAME**](https://lame.sourceforge.io/) — MP3 encoding backend used through NAudio.Lame.
 
 Additional third-party license and attribution information is listed in `THIRD_PARTY_NOTICES.txt`.
 
-## Voice Sources & Attribution
+### Voice Sources & Attribution
 
 The 13 named voice fingerprints (`alloy`, `ash`, `ballad`, `cedar`,
 `coral`, `echo`, `fable`, `marin`, `nova`, `onyx`, `sage`, `shimmer`, and `verse`)
@@ -1240,13 +1311,15 @@ retained, so attribution is given to the corpus:
 The remaining two bundled voices use CC0 recordings: `female` from
 [vero.marengere](https://freesound.org/people/vero.marengere/sounds/514877/)
 and `male` from [aarongbuk](https://freesound.org/people/aarongbuk/sounds/222599/).
-The original WAVs and generated `.voice` files are included in `Voices/`.
+Packaged builds include the original WAV samples and generated `.voice`
+fingerprints in `Voices/`. The source repository stores the fingerprints;
+the original WAVs are supplied with the builds.
 File hashes and further provenance are in `VOICE_PROVENANCE.txt`.
 
 No audio, model output, or vocal characteristics from a commercial TTS
 provider were used to create these fingerprints.
 
-### A note on voice naming
+#### A note on voice naming
 
 Some bundled voice names (e.g. `alloy`, `echo`, `nova`) intentionally match
 names used by OpenAI's text-to-speech API. This is purely a **compatibility
@@ -1259,7 +1332,7 @@ will sound different from OpenAI's official voices.
 
 ---
 
-# License & Usage
+## License & Usage
 
 Tsubaki TTS Engine's original code is licensed under **GPL-3.0-or-later**;
 see `LICENSE`. Bundled components and voices retain their own licenses and

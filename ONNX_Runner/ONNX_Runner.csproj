@@ -8,6 +8,7 @@
     <DefaultItemExcludes>$(DefaultItemExcludes);Publish-Licensed/**;Tests/**</DefaultItemExcludes>
 
     <AssemblyName>TsubakiTTS</AssemblyName>
+    <Version>1.0.10</Version>
     <ApplicationIcon>tsubaki.ico</ApplicationIcon>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
   </PropertyGroup>

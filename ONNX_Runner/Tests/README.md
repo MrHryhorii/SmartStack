@@ -1,10 +1,12 @@
-# Tsubaki TTS Engine text analysis tests
+# Tsubaki TTS Engine regression tests
 
 [Tsubaki TTS Engine](https://github.com/MrHryhorii/SmartStack/tree/main/ONNX_Runner)
 is a local text-to-speech engine built with C# (.NET 10), Piper voice models, and
 ONNX Runtime. These standalone console projects check the text preprocessing
 used before speech synthesis: multilingual sentence boundaries, abbreviations,
-initials, language segmentation, punctuation normalization, technical-symbol pronunciation, and managed allocations.
+initials, language segmentation, punctuation normalization, technical-symbol pronunciation,
+and managed allocations. Server configuration checks also cover capability reporting
+and optional CPU waveform comparisons for DSP controls.
 
 ## What the tests check
 
@@ -15,6 +17,7 @@ initials, language segmentation, punctuation normalization, technical-symbol pro
 | [PunctuationRegression](PunctuationRegression/) | Check Unicode punctuation, including Thai sentence endings, against the symbols supported by a Piper model. Verify custom punctuation rules, compound marks, lexical connectors, normalization idempotence, and model control-token handling. |
 | [TechnicalSpeechIntegration](TechnicalSpeechIntegration/) | Check complete symbol descriptions against explicitly declared spoken names. Preserve literal punctuation names, localized pronunciation, compatible fullwidth characters, native voice state, callbacks, and cached output under concurrent calls. Verify adapted phoneme coverage and complete technical names in Piper IDs. Compare statistical and model/script routing against explicit-language native references. |
 | [TextAnalysisAllocations](TextAnalysisAllocations/) | Detect unexpected managed allocations in text analysis using explicit budgets, and report other scenarios for local investigation. See [Managed allocation checks](#managed-allocation-checks) below. |
+| [ServerConfigurationRegression](ServerConfigurationRegression/) | Check version consistency, liveness versus readiness, configured versus available capabilities, detector candidates and modes, tuning values, and configuration defaults. With a real Piper model, compare buffered CPU WAV output to verify the DSP master switch, independent character/spatial overrides, reverb tails, and volume control. |
 
 Expected boundaries and punctuation are defined by explicit fixtures. Fixed-seed
 generated cases check source preservation, Unicode text elements, splitting progress,
@@ -37,6 +40,16 @@ voice models, and native speech synthesis binaries. The optional native integrat
 runner additionally needs eSpeak, its data, and a Piper model JSON; it does not need
 the ONNX weights or start the server.
 
+`ServerConfigurationRegression` references the actual CPU engine assembly. Its
+default checks need no model weights or native synthesis library. Optional waveform
+checks need a matching Piper `.onnx` / `.onnx.json` pair and the native eSpeak
+dependencies used by the engine. They run the public synthesis pipeline without
+starting the HTTP server or enabling voice cloning.
+
+The engine project excludes `Tests/**` from compilation and publishing. Listing
+test projects in the solution adds build work when building the whole solution;
+it does not load or execute tests in a running TTS server.
+
 `dotnet run` builds each project and restores its dependencies. The language
 segmentation and allocation projects use `SearchPioneer.Lingua` from NuGet.
 
@@ -49,6 +62,7 @@ dotnet run --project Tests/TextChunkerRegression/TextChunkerRegression.csproj -c
 dotnet run --project Tests/LanguageSegmentationRegression/LanguageSegmentationRegression.csproj -c Release -- --failures-only
 dotnet run --project Tests/PunctuationRegression/PunctuationRegression.csproj -c Release -- --failures-only
 dotnet run --project Tests/TextAnalysisAllocations/TextAnalysisAllocations.csproj -c Release -- --iterations=10000
+dotnet run --project Tests/ServerConfigurationRegression/ServerConfigurationRegression.csproj -c Release -p:CpuOnly=true -- --failures-only
 ```
 
 The regression runners print failures and a summary. Omit `--failures-only` to
@@ -85,6 +99,30 @@ still checking every spoken phoneme. Literal punctuation and existing localized
 names are compared with direct native character calls. English fallback checks
 apply where the native character path already switches to English. Names absent
 from the installed dictionaries can still use eSpeak's Unicode-code fallback.
+
+## Server configuration and CPU synthesis
+
+Run the default `ServerConfigurationRegression` command above for managed status
+and configuration checks. To include real waveform checks, pass both model paths:
+
+```shell
+dotnet run --project Tests/ServerConfigurationRegression/ServerConfigurationRegression.csproj -c Release -p:CpuOnly=true -- --failures-only Model/en_US-hfc_female-medium.onnx Model/en_US-hfc_female-medium.onnx.json
+```
+
+`-p:CpuOnly=true` selects the lightweight CPU engine for this runner. When building
+the whole solution, the test reference follows the same build variant as the server.
+The runner uses bundled eSpeak data from `PiperNative/` and the engine's native
+library resolver. On Linux, install eSpeak NG; `TSUBAKI_ESPEAK_LIBRARY` can select
+an explicit compatible library. Keep the working directory at `ONNX_Runner` so
+`PiperNative/` and `PHOIBLE/` resolve correctly.
+
+Waveform comparisons use one CPU inference thread, zero synthesis noise, and
+the same technical text. Disabled effects must return the same dry PCM and length,
+even with configured or requested spatial effects. Enabled spatial processing must
+change the output and extend a long reverb tail; volume control must still work
+with effects disabled. These checks validate observable behavior, not perceived
+voice quality. `--synthesis-only` runs only these optional checks and requires both
+model paths. No synthesized files are written by the runner.
 
 ## Managed allocation checks
 

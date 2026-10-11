@@ -50,6 +50,7 @@ public enum VoiceEffectType
 /// </summary>
 public class EffectsSettings
 {
+    /// <summary>Master switch for character effects and spatial environments, including reverb tails.</summary>
     public bool EnableGlobalEffects { get; set; } = true;
 
     // Character Effects (Voice)
@@ -58,7 +59,7 @@ public class EffectsSettings
 
     // Spatial Effects (Environment)
     public string DefaultEnvironment { get; set; } = "None";
-    public float DefaultEnvironmentIntensity { get; set; } = 1.0f;
+    public float DefaultEnvironmentIntensity { get; set; } = 0.25f;
 
     /// <summary>
     /// Allows the active spatial reverb tail to decay naturally to silence instead of cutting off abruptly.
