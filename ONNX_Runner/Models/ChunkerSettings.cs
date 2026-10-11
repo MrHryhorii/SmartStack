@@ -5,11 +5,16 @@ namespace ONNX_Runner.Models;
 /// </summary>
 public class ChunkerSettings
 {
+    public const int DefaultMaxChunkLength = 200;
+
     /// <summary>
     /// The maximum character length of a single text chunk before forcing an emergency split.
     /// Prevents GPU/CPU timeouts or memory overloads on extremely long, run-on sentences.
     /// </summary>
-    public int MaxChunkLength { get; set; } = 200;
+    public int MaxChunkLength { get; set; } = DefaultMaxChunkLength;
+
+    /// <summary>Positive configured cap, or the declared default for invalid values.</summary>
+    public int EffectiveMaxChunkLength => MaxChunkLength > 0 ? MaxChunkLength : DefaultMaxChunkLength;
 
     /// <summary>
     /// Allows one conservative punctuation split before the first generated audio chunk

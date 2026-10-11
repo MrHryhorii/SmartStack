@@ -10,7 +10,7 @@ using ONNX_Runner.Services;
 internal static class SynthesisChecks
 {
     internal static async Task Run(string modelPath, string configPath, NativeAudioDependencies native,
-        Func<string, Func<Task>, Task> check)
+        Func<string, Func<Task>, Task> check, string? clonerDirectory = null, string? voicesDirectory = null)
     {
         if (!native.EspeakAvailable) throw new InvalidOperationException("Native eSpeak is required for synthesis checks.");
         var config = JsonSerializer.Deserialize<PiperConfig>(File.ReadAllText(configPath))!;
@@ -108,6 +108,9 @@ internal static class SynthesisChecks
             byte[] actual = await ReadAudio(effect: "None");
             Require(spatial != null && actual.SequenceEqual(spatial), "Character override also changed the spatial stage.");
         });
+
+        if (clonerDirectory != null && voicesDirectory != null)
+            await CloningChecks.Run(config, piper, phonemizer, native, clonerDirectory, voicesDirectory, check);
     }
 
     private static void Require(bool condition, string message)

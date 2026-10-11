@@ -10,13 +10,7 @@ public static class TsubakiRequestAdapter
 {
     public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(TsubakiSpeechRequest dto)
     {
-        AudioFormat format;
-        string formatStr = dto.ResponseFormat?.Trim().ToLowerInvariant() ?? "mp3";
-        if (formatStr == "b64_json")
-        {
-            format = AudioFormat.B64Json;
-        }
-        else if (!Enum.TryParse(formatStr, true, out format))
+        if (!AudioFormatParser.TryParse(dto.ResponseFormat, out AudioFormat format))
         {
             return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, aac, flac, pcm, b64_json.");
         }

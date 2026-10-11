@@ -230,7 +230,7 @@ public static class InfoEndpoints
             chunking = new
             {
                 earlySplit = chunker.EarlySplit,
-                maxChunkLength = chunker.MaxChunkLength,
+                maxChunkLength = chunker.EffectiveMaxChunkLength,
                 sentencePauseSeconds = chunker.SentencePauseSeconds
             },
             language = new

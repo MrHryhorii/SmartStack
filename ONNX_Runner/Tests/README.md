@@ -17,7 +17,7 @@ and optional CPU waveform comparisons for DSP controls.
 | [PunctuationRegression](PunctuationRegression/) | Check Unicode punctuation, including Thai sentence endings, against the symbols supported by a Piper model. Verify custom punctuation rules, compound marks, lexical connectors, normalization idempotence, and model control-token handling. |
 | [TechnicalSpeechIntegration](TechnicalSpeechIntegration/) | Check complete symbol descriptions against explicitly declared spoken names. Preserve literal punctuation names, localized pronunciation, compatible fullwidth characters, native voice state, callbacks, and cached output under concurrent calls. Verify adapted phoneme coverage and complete technical names in Piper IDs. Compare statistical and model/script routing against explicit-language native references. |
 | [TextAnalysisAllocations](TextAnalysisAllocations/) | Detect unexpected managed allocations in text analysis using explicit budgets, and report other scenarios for local investigation. See [Managed allocation checks](#managed-allocation-checks) below. |
-| [ServerConfigurationRegression](ServerConfigurationRegression/) | Check version consistency, liveness versus readiness, configured versus available capabilities, detector candidates and modes, tuning values, and configuration defaults. With a real Piper model, compare buffered CPU WAV output to verify the DSP master switch, independent character/spatial overrides, reverb tails, and volume control. |
+| [ServerConfigurationRegression](ServerConfigurationRegression/) | Check version consistency, liveness versus readiness, available capabilities, detector candidates and tuning, configuration defaults, named format validation, JSON ranges and request overrides, and effective emergency chunk limits. Optional CPU waveform checks cover the DSP master switch, character/spatial overrides, tails, volume, and safe voice fallback with cloning enabled. |
 
 Expected boundaries and punctuation are defined by explicit fixtures. Fixed-seed
 generated cases check source preservation, Unicode text elements, splitting progress,
@@ -40,11 +40,13 @@ voice models, and native speech synthesis binaries. The optional native integrat
 runner additionally needs eSpeak, its data, and a Piper model JSON; it does not need
 the ONNX weights or start the server.
 
-`ServerConfigurationRegression` references the actual CPU engine assembly. Its
+`ServerConfigurationRegression` references the actual engine assembly; the commands
+below select the CPU build. Its
 default checks need no model weights or native synthesis library. Optional waveform
 checks need a matching Piper `.onnx` / `.onnx.json` pair and the native eSpeak
 dependencies used by the engine. They run the public synthesis pipeline without
-starting the HTTP server or enabling voice cloning.
+starting the HTTP server. The two-path mode leaves cloning disabled; adding the
+OpenVoice and voice directories enables the optional cloning checks below.
 
 The engine project excludes `Tests/**` from compilation and publishing. Listing
 test projects in the solution adds build work when building the whole solution;
@@ -123,6 +125,21 @@ change the output and extend a long reverb tail; volume control must still work
 with effects disabled. These checks validate observable behavior, not perceived
 voice quality. `--synthesis-only` runs only these optional checks and requires both
 model paths. No synthesized files are written by the runner.
+
+To also test voice cloning and its fallback, pass the OpenVoice model directory
+and the directory containing `female.voice`:
+
+```shell
+dotnet run --project Tests/ServerConfigurationRegression/ServerConfigurationRegression.csproj -c Release -p:CpuOnly=true -- --failures-only Model/en_US-hfc_female-medium.onnx Model/en_US-hfc_female-medium.onnx.json Cloner Voices
+```
+
+`Cloner` must contain `tone_extract.onnx`, `tone_color.onnx`, and `tone_config.json`.
+The runner generates the model's source fingerprint in memory, loads the target
+fingerprint, and checks that an unavailable voice or missing source fingerprint
+preserves dry base audio even with the cloning-only low-pass filter enabled.
+Zero clone intensity and disabled cloning must also bypass conversion and filtering.
+The global DSP switch must still allow actual voice conversion. These optional
+checks load real OpenVoice models on CPU; the default managed checks do not.
 
 ## Managed allocation checks
 

@@ -12,9 +12,10 @@ bool synthesisOnly = args.Contains("--synthesis-only", StringComparer.OrdinalIgn
 string[] paths = args.Where(argument => !argument.StartsWith("--", StringComparison.Ordinal)).ToArray();
 if (args.Any(argument => argument.StartsWith("--", StringComparison.Ordinal) &&
         argument is not ("--failures-only" or "--synthesis-only")) ||
-    paths.Length is not (0 or 2) || paths.Any(path => !File.Exists(path)) || synthesisOnly && paths.Length != 2)
+    paths.Length is not (0 or 2 or 4) || paths.Take(2).Any(path => !File.Exists(path)) ||
+    paths.Skip(2).Any(path => !Directory.Exists(path)) || synthesisOnly && paths.Length == 0)
 {
-    Console.Error.WriteLine("Usage: [--failures-only] [--synthesis-only] [<model.onnx> <model.onnx.json>]");
+    Console.Error.WriteLine("Usage: [--failures-only] [--synthesis-only] [<model.onnx> <model.onnx.json> [<cloner-directory> <voices-directory>]]");
     return 2;
 }
 
@@ -23,6 +24,7 @@ var native = NativeAudioDependencies.Detect();
 
 if (!synthesisOnly)
 {
+    RequestAdapterChecks.Run(Check);
     using var emptyServices = new ServiceCollection().BuildServiceProvider();
     var api = new ApiSettings();
     var effects = new EffectsSettings();
@@ -124,6 +126,12 @@ if (!synthesisOnly)
             chunking.GetProperty("maxChunkLength").GetInt32() == 144 &&
             chunking.GetProperty("sentencePauseSeconds").GetSingle() == .125f, "Chunk defaults were not reported.");
     });
+    Check("Status reports the effective fallback for an invalid chunk limit", () =>
+    {
+        chunker.MaxChunkLength = 0;
+        Require(Status().GetProperty("chunking").GetProperty("maxChunkLength").GetInt32() == ChunkerSettings.DefaultMaxChunkLength,
+            "Status advertised a different cap from the chunker.");
+    });
     Check("Muted default volume stays valid JSON", () =>
     {
         dsp.DefaultVolume = 0;
@@ -161,7 +169,8 @@ if (!synthesisOnly)
     }
 }
 
-if (paths.Length == 2) await SynthesisChecks.Run(paths[0], paths[1], native, CheckAsync);
+if (paths.Length >= 2) await SynthesisChecks.Run(paths[0], paths[1], native, CheckAsync,
+    paths.ElementAtOrDefault(2), paths.ElementAtOrDefault(3));
 Console.WriteLine($"Result: {total - failures}/{total} passed");
 return failures == 0 ? 0 : 1;
 

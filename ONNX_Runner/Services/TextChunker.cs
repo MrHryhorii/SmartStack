@@ -13,7 +13,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
 {
     public TextChunkerRules Rules { get; } = rules ?? TextChunkerRules.Default;
 
-    private readonly int _maxLength = settings.MaxChunkLength > 50 ? settings.MaxChunkLength : 250;
+    private readonly int _maxLength = settings.EffectiveMaxChunkLength;
     private const string EmergencyGlue = "-";
 
     /// <summary>

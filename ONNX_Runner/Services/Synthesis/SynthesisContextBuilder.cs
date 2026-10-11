@@ -35,6 +35,8 @@ internal static class SynthesisContextBuilder
                         && useOpenVoice
                         && openVoice != null
                         && audioProc != null
+                        && openVoice.VoiceLibrary.ContainsKey(request.Voice)
+                        && openVoice.VoiceLibrary.ContainsKey("piper_base")
                         && Math.Abs(requestedIntensity) > 0.001f;
 
         // B64Json is a response representation, not an audio codec. Its payload currently

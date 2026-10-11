@@ -1019,7 +1019,7 @@ Routing selects eSpeak pronunciation rules, while the Piper model retains its vo
 }
 ```
 
-- **`MaxChunkLength`** — emergency cap for one already-detected sentence. Long sentences prefer a natural pause mark, then whitespace, then a safe Unicode text-element boundary. Protected URLs, email addresses, and paths remain intact; one indivisible technical token may exceed the cap.
+- **`MaxChunkLength`** — positive emergency cap for one already-detected sentence; `0` or a negative value uses the default `200`. Long sentences prefer a natural pause mark, then whitespace, then a safe Unicode text-element boundary. Protected URLs, email addresses, paths, and indivisible Unicode text elements remain intact and may exceed the cap.
 - **`EarlySplit`** — allows one conservative clause-level split before the first audio chunk to reduce time to first audio; normal sentence chunking resumes immediately afterward. This can slightly change the rhythm or intonation of the first sentence. It is mainly useful when low latency matters; for non-streaming output there is usually little benefit to enabling it. `/tsbk/audio/speech` can override it per request with `early_split`.
 - **`SentencePauseSeconds`** — pause added after completed sentence boundaries and explicit ordered-list markers. Early and emergency continuation chunks do not receive this artificial sentence pause.
 

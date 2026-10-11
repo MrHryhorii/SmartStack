@@ -11,13 +11,7 @@ public static class OpenAiRequestAdapter
     public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(
         OpenAiSpeechRequest dto)
     {
-        AudioFormat format;
-        string formatStr = dto.ResponseFormat?.Trim().ToLowerInvariant() ?? "mp3";
-        if (formatStr == "b64_json")
-        {
-            format = AudioFormat.B64Json;
-        }
-        else if (!Enum.TryParse(formatStr, true, out format))
+        if (!AudioFormatParser.TryParse(dto.ResponseFormat, out AudioFormat format))
         {
             return (
                 null,
