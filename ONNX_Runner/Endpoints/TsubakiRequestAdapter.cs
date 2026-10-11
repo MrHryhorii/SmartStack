@@ -33,6 +33,7 @@ public static class TsubakiRequestAdapter
         {
             Input = dto.Input,
             Format = format,
+            SampleRate = dto.SampleRate,
             Voice = dto.Voice,
             Speed = dto.Speed,
             StreamFormat = streamFormat,

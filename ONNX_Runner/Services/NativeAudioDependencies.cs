@@ -87,6 +87,7 @@ internal static class NativeLibraryResolver
     [
         "lame_init",
         "lame_set_in_samplerate",
+        "lame_set_out_samplerate",
         "lame_set_num_channels",
         "lame_set_mode",
         "lame_set_brate",

@@ -53,7 +53,7 @@ public class AudioStreamManager : IDisposable
     /// Initializes the audio output path for the selected format and configures
     /// the required encoder or raw PCM writer.
     /// </summary>
-    public AudioStreamManager(AudioFormat format, int sampleRate, Stream targetStream)
+    public AudioStreamManager(AudioFormat format, int sampleRate, Stream targetStream, bool enforceSampleRate = false)
     {
         _format = format;
         _baseStream = targetStream;
@@ -63,7 +63,8 @@ public class AudioStreamManager : IDisposable
             _lameEncoder = new LameMp3Encoder(
                 _baseStream,
                 sampleRate,
-                128);
+                128,
+                enforceSampleRate);
 
             return;
         }

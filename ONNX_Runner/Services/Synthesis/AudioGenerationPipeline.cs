@@ -68,10 +68,10 @@ internal static class AudioGenerationPipeline
             envIntensity > 0.001f;
 
         AudioEffectsEngine? effectsEngine = useEffect
-            ? new AudioEffectsEngine(ctx.EffectsConfig, ctx.FinalSampleRate)
+            ? new AudioEffectsEngine(ctx.EffectsConfig, ctx.ProcessingSampleRate)
             : null;
         SpatialEffectsEngine? spatialEngine = useEnvironment
-            ? new SpatialEffectsEngine(ctx.FinalSampleRate)
+            ? new SpatialEffectsEngine(ctx.ProcessingSampleRate)
             : null;
 
         // Pitch Priority: explicit request value → server default from config → fallback 1.0 (no shift)
@@ -84,17 +84,19 @@ internal static class AudioGenerationPipeline
 
         pitchShifter?.SetPitch(targetPitch);
 
-        // Runtime resamplers are request-local and reused for every chunk. They deliberately
-        // reset their DSP state per chunk to preserve the existing boundary semantics while
-        // avoiding repeated provider/resampler construction in the consumer hot path.
+        // Model/codec input resamplers preserve the established per-chunk resets.
+        // Output conversion below retains its DSP state across the complete response.
         var cloneResampler =
             ctx.CanClone && ctx.PiperConfig.Audio.SampleRate != ctx.OutSampleRate
                 ? new AudioResampler(ctx.PiperConfig.Audio.SampleRate, ctx.OutSampleRate)
                 : null;
-        var finalResampler =
-            ctx.OutSampleRate != ctx.FinalSampleRate
-                ? new AudioResampler(ctx.OutSampleRate, ctx.FinalSampleRate)
+        var processingResampler =
+            ctx.OutSampleRate != ctx.ProcessingSampleRate
+                ? new AudioResampler(ctx.OutSampleRate, ctx.ProcessingSampleRate)
                 : null;
+        using var outputResampler = ctx.ProcessingSampleRate != ctx.FinalSampleRate
+            ? new AudioOutputResampler(ctx.ProcessingSampleRate, ctx.FinalSampleRate)
+            : null;
 
         // Volume Priority: explicit request value → server default from config → fallback 1.0 (no change)
         float requestedVolume = request.Volume ?? ctx.DspConfig.DefaultVolume;
@@ -105,14 +107,14 @@ internal static class AudioGenerationPipeline
         bool useVolumeShift = MathF.Abs(targetVolume - 1.0f) > 0.001f;
         // =================================================================
         float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
-        int silenceSamplesCount = (int)(ctx.FinalSampleRate * (ctx.ChunkerConfig.SentencePauseSeconds / currentSpeed));
+        int silenceSamplesCount = (int)(ctx.ProcessingSampleRate * (ctx.ChunkerConfig.SentencePauseSeconds / currentSpeed));
         float[] absoluteSilence = new float[silenceSamplesCount];
         // Optional anti-aliasing low-pass filter to clean up cloning artifacts
         NAudio.Dsp.BiQuadFilter? filter = null;
         if (ctx.CanClone && ctx.DspConfig.EnableLowPassFilter)
         {
             // Find the Nyquist frequency (half of the Sample Rate)
-            float nyquistFrequency = ctx.FinalSampleRate / 2.0f;
+            float nyquistFrequency = ctx.ProcessingSampleRate / 2.0f;
             // Limit the cutoff frequency, leaving a small margin of safety (e.g. 10 Hz),
             // so that the BiQuad filter math never approaches a critical limit.
             float safeCutoff = Math.Min(ctx.DspConfig.LowPassCutoffFrequency, nyquistFrequency - 10f);
@@ -120,13 +122,14 @@ internal static class AudioGenerationPipeline
             // Q-Factor Priority: explicit request value → server default from config
             float targetQFactor = request.LowPassQFactor ?? ctx.DspConfig.LowPassQFactor;
             filter = NAudio.Dsp.BiQuadFilter.LowPassFilter(
-                ctx.FinalSampleRate,
+                ctx.ProcessingSampleRate,
                 safeCutoff,
                 targetQFactor
             );
         }
 
-        using var streamManager = new AudioStreamManager(ctx.AudioFormat, ctx.FinalSampleRate, targetStream);
+        using var streamManager = new AudioStreamManager(ctx.AudioFormat, ctx.FinalSampleRate, targetStream,
+            enforceSampleRate: ctx.EnforceSampleRate);
         // =================================================================
         // PRE-CALCULATE VOICE BLEND (Zero-Allocation Optimization)
         // =================================================================
@@ -409,11 +412,10 @@ internal static class AudioGenerationPipeline
                                 currentLength = cloneInputLength;
                             }
                         }
-                        // Final resampling to match codec-supported output rates.
-                        // Opus and AAC both require one of their defined sample rates.
-                        if (finalResampler != null)
+                        // Preserve the established DSP input rate before applying effects.
+                        if (processingResampler != null)
                         {
-                            var r2 = finalResampler.Resample(currentBuffer, currentLength);
+                            var r2 = processingResampler.Resample(currentBuffer, currentLength);
                             rentedBuffer2 = r2.Buffer;
                             currentBuffer = rentedBuffer2;
                             currentLength = r2.Length;
@@ -432,7 +434,7 @@ internal static class AudioGenerationPipeline
                             VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume);
                         }
 
-                        streamManager.WriteChunk(currentBuffer.AsSpan(0, currentLength), filter);
+                        WriteOutput(currentBuffer.AsSpan(0, currentLength), streamManager, outputResampler, filter);
                         // SentencePauseSeconds belongs only to real sentence boundaries.
                         // EarlySplit and emergency chunks already carry their own punctuation/context.
                         if (chunk.IsSentenceFinished)
@@ -448,7 +450,7 @@ internal static class AudioGenerationPipeline
                                 VolumeShifter.ApplyVolume(absoluteSilence.AsSpan(), targetVolume);
                             }
 
-                            streamManager.WriteChunk(absoluteSilence.AsSpan(), filter);
+                            WriteOutput(absoluteSilence.AsSpan(), streamManager, outputResampler, filter);
                         }
                         // Keep flushing every generated chunk so an EarlySplit chunk reaches the client
                         // immediately. The setting name is retained for configuration compatibility.
@@ -478,8 +480,8 @@ internal static class AudioGenerationPipeline
                 {
                     float silenceFloor = ctx.EffectsConfig.ReverbTailSilenceFloor;     // perceptual silence threshold
                     const float maxTailSeconds = 4.0f;          // safety cap for environments that never fully settle
-                    int probeSamples = ctx.FinalSampleRate / 50; // 20ms probe blocks
-                    int maxSamples = (int)(ctx.FinalSampleRate * maxTailSeconds);
+                    int probeSamples = ctx.ProcessingSampleRate / 50; // 20ms probe blocks
+                    int maxSamples = (int)(ctx.ProcessingSampleRate * maxTailSeconds);
                     int written = 0;
                     // ZERO-ALLOCATION PATTERN: rent the probe buffer instead of `new float[]`.
                     // Rent() may return an array larger than requested, so every access below
@@ -500,7 +502,7 @@ internal static class AudioGenerationPipeline
                                 VolumeShifter.ApplyVolume(probeSpan, targetVolume);
                             }
 
-                            streamManager.WriteChunk(probeSpan, filter);
+                            WriteOutput(probeSpan, streamManager, outputResampler, filter);
                             written += probeSamples;
                             float peak = 0f;
                             for (int i = 0; i < probeSamples; i++)
@@ -520,6 +522,8 @@ internal static class AudioGenerationPipeline
                         targetStream.Flush();
                     }
                 }
+                // Flush the final fractional output block before the encoder is finalized.
+                outputResampler?.Complete(streamManager);
             }
             catch (Exception ex)
             {
@@ -559,6 +563,17 @@ internal static class AudioGenerationPipeline
         return new GenerationResult(
             streamManager.SamplesWritten,
             ctx.FinalSampleRate);
+    }
+
+    private static void WriteOutput(Span<float> samples, AudioStreamManager manager,
+        AudioOutputResampler? resampler, NAudio.Dsp.BiQuadFilter? filter)
+    {
+        if (resampler == null)
+        {
+            manager.WriteChunk(samples, filter);
+            return;
+        }
+        resampler.Write(samples, manager, filter);
     }
 
     /// <summary>

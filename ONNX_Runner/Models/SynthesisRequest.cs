@@ -18,6 +18,13 @@ public class SynthesisRequest
     /// may use different naming per external API) is the adapter's job, not the service's.
     /// </summary>
     public required AudioFormat Format { get; set; }
+    private int? _sampleRate;
+    /// <summary>Optional output rate in Hz. Null uses the server default; zero bypasses it.</summary>
+    public int? SampleRate
+    {
+        get => _sampleRate;
+        set => _sampleRate = AudioSampleRate.Clamp(value);
+    }
     /// <summary>
     /// The voice to use. For OpenVoice cloning, this should match a saved voice fingerprint name.
     /// If empty or "piper_base", it defaults to the base Piper voice.

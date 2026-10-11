@@ -33,13 +33,13 @@ internal static class CloningChecks
         using var gate = new SemaphoreSlim(1);
         var synthesis = new SpeechSynthesisService(gate, services, native, NullLogger<SpeechSynthesisService>.Instance);
 
-        async Task<byte[]> ReadAudio(string voice = "piper_base", float? intensity = null)
+        async Task<byte[]> ReadAudio(string voice = "piper_base", float? intensity = null, int? sampleRate = null)
         {
             var request = new SynthesisRequest
             {
                 Input = "The variable user_name is ready.", Voice = voice, Speed = 1, Format = AudioFormat.Wav,
                 Stream = false, EarlySplit = false, NoiseScale = 0, NoiseW = 0, Language = config.Espeak.Voice,
-                CloneIntensity = intensity, Effect = "None", Environment = "None"
+                CloneIntensity = intensity, SampleRate = sampleRate, Effect = "None", Environment = "None"
             };
             IResult result = await synthesis.SynthesizeAsync(request, new DefaultHttpContext { RequestServices = services }, CancellationToken.None);
             if (result is not FileContentHttpResult file) throw new InvalidOperationException("Cloning check did not return buffered audio.");
@@ -54,11 +54,36 @@ internal static class CloningChecks
         }
         await check("Zero clone intensity bypasses conversion and its low-pass filter", async () =>
             Require((await ReadAudio("female", 0)).SequenceEqual(dry), "Zero-intensity cloning changed base audio."));
+        byte[]? nativeClone = null;
         await check("A loaded cloned voice remains active with global DSP effects disabled", async () =>
         {
-            byte[] cloned = await ReadAudio("female");
-            Require(cloned.Length > 44 && !cloned.SequenceEqual(dry), "The global DSP switch incorrectly disabled voice conversion.");
+            nativeClone = await ReadAudio("female");
+            Require(nativeClone.Length > 44 && !nativeClone.SequenceEqual(dry), "The global DSP switch incorrectly disabled voice conversion.");
         });
+        foreach (var (configured, rate) in new (int, int?)[]
+        {
+            (0, 0), (0, 8000), (0, 48000), (8000, null), (8000, 0), (8000, 48000)
+        })
+        {
+            await check($"Cloned audio preserves alignment: server={configured}, request={rate?.ToString() ?? "omitted"}", async () =>
+            {
+                dsp.DefaultSampleRate = configured;
+                try
+                {
+                    byte[] data = await ReadAudio("female", sampleRate: rate);
+                    int requested = rate ?? configured;
+                    int expectedRate = requested == 0 ? tone.Data.SamplingRate : requested;
+                    Require(SampleRateChecks.ReadEncodedRate(data, AudioFormat.Wav) == expectedRate && nativeClone != null,
+                        "Output samplerate replaced the OpenVoice model rate.");
+                    float[] samples = SampleRateSynthesisChecks.WavSamples(data);
+                    double expected = SampleRateSynthesisChecks.WavSamples(nativeClone!).Length *
+                        (double)expectedRate / tone.Data.SamplingRate;
+                    Require(Math.Abs(samples.Length - expected) <= 1 && samples.Any(value => MathF.Abs(value) > .001f),
+                        "Cloning lost audio or changed duration while adapting the output rate.");
+                }
+                finally { dsp.DefaultSampleRate = 0; }
+            });
+        }
         await check("A missing source fingerprint falls back without cloning-only processing", async () =>
         {
             float[] source = openVoice.VoiceLibrary["piper_base"];

@@ -23,6 +23,8 @@ internal sealed class SynthesisContext
     public required AudioProcessor? AudioProc;
     public required AudioFormat AudioFormat;
     public required int OutSampleRate;
+    public required int ProcessingSampleRate;
     public required int FinalSampleRate;
+    public required bool EnforceSampleRate;
     public required int DisplaySampleRate;
 }

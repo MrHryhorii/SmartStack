@@ -9,16 +9,13 @@ namespace ONNX_Runner.Services.Synthesis;
 /// </summary>
 internal static class SynthesisContextBuilder
 {
-    private static readonly int[] ValidOpusRates = [8000, 12000, 16000, 24000, 48000];
-    private static readonly int[] ValidAacRates =
-        [8000, 11025, 12000, 16000, 22050, 24000, 32000, 44100, 48000, 64000, 88200, 96000];
-
     public static SynthesisContext Build(
         SynthesisRequest request,
         IServiceProvider services,
         PiperConfig piperConfig)
     {
         var clonerConfig = services.GetRequiredService<ClonerSettings>();
+        var dspConfig = services.GetRequiredService<DspSettings>();
 
         bool useOpenVoice = !string.IsNullOrEmpty(request.Voice) &&
             !string.Equals(request.Voice, "piper_base", StringComparison.OrdinalIgnoreCase);
@@ -44,18 +41,16 @@ internal static class SynthesisContextBuilder
         AudioFormat audioFormat = ResolveAudioFormat(request.Format);
 
         int outSampleRate = canClone ? openVoice!.GetTargetSamplingRate() : piperConfig.Audio.SampleRate;
-        int finalSampleRate = outSampleRate;
-
-        if (audioFormat == AudioFormat.Opus)
-        {
-            // Ogg Opus strictly requires specific sample rates (e.g., 24kHz, 48kHz).
-            finalSampleRate = GetNearestOpusSampleRate(outSampleRate);
-        }
-        else if (audioFormat == AudioFormat.Aac)
-        {
-            // AAC-LC uses a fixed set of sampling-frequency indices in ADTS/AudioSpecificConfig.
-            finalSampleRate = GetNearestSampleRate(outSampleRate, ValidAacRates);
-        }
+        // Keep the established DSP rate independent from an output-rate override.
+        // A resolved zero retains the same buffers, effects, and encoder path.
+        int processingSampleRate = audioFormat is AudioFormat.Opus or AudioFormat.Aac
+            ? AudioSampleRate.Resolve(outSampleRate, audioFormat)
+            : outSampleRate;
+        int requestedSampleRate = request.SampleRate ?? dspConfig.DefaultSampleRate;
+        bool enforceSampleRate = requestedSampleRate > 0;
+        int finalSampleRate = enforceSampleRate
+            ? AudioSampleRate.Resolve(requestedSampleRate, audioFormat)
+            : processingSampleRate;
 
         int displaySampleRate = audioFormat == AudioFormat.Opus ? 48000 : finalSampleRate;
 
@@ -64,7 +59,7 @@ internal static class SynthesisContextBuilder
             Request = request,
             PiperConfig = piperConfig,
             ClonerConfig = clonerConfig,
-            DspConfig = services.GetRequiredService<DspSettings>(),
+            DspConfig = dspConfig,
             EffectsConfig = services.GetRequiredService<EffectsSettings>(),
             ChunkerConfig = services.GetRequiredService<ChunkerSettings>(),
             TextChunker = services.GetRequiredService<TextChunker>(),
@@ -75,7 +70,9 @@ internal static class SynthesisContextBuilder
             AudioProc = audioProc,
             AudioFormat = audioFormat,
             OutSampleRate = outSampleRate,
+            ProcessingSampleRate = processingSampleRate,
             FinalSampleRate = finalSampleRate,
+            EnforceSampleRate = enforceSampleRate,
             DisplaySampleRate = displaySampleRate
         };
     }
@@ -90,32 +87,4 @@ internal static class SynthesisContextBuilder
         return requestedFormat;
     }
 
-    private static int GetNearestOpusSampleRate(int sampleRate)
-    {
-        return GetNearestSampleRate(sampleRate, ValidOpusRates);
-    }
-
-    private static int GetNearestSampleRate(
-        int sampleRate,
-        ReadOnlySpan<int> validRates)
-    {
-        int nearest = validRates[0];
-        int nearestDistance = Math.Abs(nearest - sampleRate);
-
-        for (int i = 1; i < validRates.Length; i++)
-        {
-            int candidate = validRates[i];
-            int distance = Math.Abs(candidate - sampleRate);
-
-            if (distance >= nearestDistance)
-            {
-                continue;
-            }
-
-            nearest = candidate;
-            nearestDistance = distance;
-        }
-
-        return nearest;
-    }
 }

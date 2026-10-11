@@ -6,6 +6,17 @@ namespace ONNX_Runner.Models;
 /// </summary>
 public class DspSettings
 {
+    private int _defaultSampleRate;
+    /// <summary>
+    /// Server-wide output sample rate in Hz, overridden by a request's samplerate.
+    /// Zero keeps the established model/codec rate; nonzero values are clamped to 8000-48000 Hz.
+    /// </summary>
+    public int DefaultSampleRate
+    {
+        get => _defaultSampleRate;
+        set => _defaultSampleRate = AudioSampleRate.Clamp(value).GetValueOrDefault();
+    }
+
     /// <summary>
     /// Global toggle for the anti-aliasing low-pass filter.
     /// </summary>

@@ -28,7 +28,8 @@ internal sealed class LameMp3Encoder : IDisposable
     public LameMp3Encoder(
         Stream output,
         int sampleRate,
-        int bitRateKbps = 128)
+        int bitRateKbps = 128,
+        bool enforceSampleRate = false)
     {
         ArgumentNullException.ThrowIfNull(
             output);
@@ -93,7 +94,8 @@ internal sealed class LameMp3Encoder : IDisposable
         {
             Configure(
                 sampleRate,
-                bitRateKbps);
+                bitRateKbps,
+                enforceSampleRate);
         }
         catch
         {
@@ -175,7 +177,8 @@ internal sealed class LameMp3Encoder : IDisposable
 
     private void Configure(
         int sampleRate,
-        int bitRateKbps)
+        int bitRateKbps,
+        bool enforceSampleRate)
     {
         // All parameters must be set before lame_init_params finalizes encoder configuration.
         EnsureConfigurationSuccess(
@@ -183,6 +186,15 @@ internal sealed class LameMp3Encoder : IDisposable
                 _context,
                 sampleRate),
             "lame_set_in_samplerate");
+
+        if (enforceSampleRate)
+        {
+            // The request resolver already selected a legal MP3 rate. Do not let
+            // LAME silently choose another one after response headers have been sent.
+            EnsureConfigurationSuccess(
+                LameNative.SetOutputSampleRate(_context, sampleRate),
+                "lame_set_out_samplerate");
+        }
 
         EnsureConfigurationSuccess(
             LameNative.SetChannelCount(
@@ -447,6 +459,12 @@ internal static unsafe class LameNative
                 "lame_set_in_samplerate");
 
     private static readonly delegate* unmanaged[Cdecl]<IntPtr, int, int>
+        SetOutputSampleRatePointer =
+            (delegate* unmanaged[Cdecl]<IntPtr, int, int>)
+            NativeLibraryResolver.GetLameExport(
+                "lame_set_out_samplerate");
+
+    private static readonly delegate* unmanaged[Cdecl]<IntPtr, int, int>
         SetChannelCountPointer =
             (delegate* unmanaged[Cdecl]<IntPtr, int, int>)
             NativeLibraryResolver.GetLameExport(
@@ -529,6 +547,11 @@ internal static unsafe class LameNative
         return SetInputSampleRatePointer(
             context,
             sampleRate);
+    }
+
+    public static int SetOutputSampleRate(IntPtr context, int sampleRate)
+    {
+        return SetOutputSampleRatePointer(context, sampleRate);
     }
 
     public static int SetChannelCount(

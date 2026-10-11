@@ -109,6 +109,8 @@ internal static class SynthesisChecks
             Require(spatial != null && actual.SequenceEqual(spatial), "Character override also changed the spatial stage.");
         });
 
+        await SampleRateSynthesisChecks.Run(synthesis, services, config, native, check);
+
         if (clonerDirectory != null && voicesDirectory != null)
             await CloningChecks.Run(config, piper, phonemizer, native, clonerDirectory, voicesDirectory, check);
     }

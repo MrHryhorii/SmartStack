@@ -187,6 +187,7 @@ public static class InfoEndpoints
             },
             dsp = new
             {
+                defaultSampleRate = dsp.DefaultSampleRate,
                 lowPassFilterEnabled = dsp.EnableLowPassFilter,
                 lowPassCutoffHz = dsp.LowPassCutoffFrequency,
                 lowPassQFactor = dsp.LowPassQFactor,

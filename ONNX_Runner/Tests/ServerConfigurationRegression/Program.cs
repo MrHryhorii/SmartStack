@@ -25,6 +25,7 @@ var native = NativeAudioDependencies.Detect();
 if (!synthesisOnly)
 {
     RequestAdapterChecks.Run(Check);
+    SampleRateChecks.Run(Check, native);
     using var emptyServices = new ServiceCollection().BuildServiceProvider();
     var api = new ApiSettings();
     var effects = new EffectsSettings();
@@ -131,6 +132,15 @@ if (!synthesisOnly)
         chunker.MaxChunkLength = 0;
         Require(Status().GetProperty("chunking").GetProperty("maxChunkLength").GetInt32() == ChunkerSettings.DefaultMaxChunkLength,
             "Status advertised a different cap from the chunker.");
+    });
+    Check("Status reports the configured output sample rate and its zero default", () =>
+    {
+        Require(Status().GetProperty("dsp").GetProperty("defaultSampleRate").GetInt32() == 0,
+            "Status lost the default output-rate sentinel.");
+        dsp.DefaultSampleRate = 12345;
+        Require(Status().GetProperty("dsp").GetProperty("defaultSampleRate").GetInt32() == 12345,
+            "Status advertised a different output sample-rate default.");
+        dsp.DefaultSampleRate = 0;
     });
     Check("Muted default volume stays valid JSON", () =>
     {

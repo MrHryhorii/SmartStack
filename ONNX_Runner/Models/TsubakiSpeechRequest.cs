@@ -36,6 +36,19 @@ public class TsubakiSpeechRequest
     /// </summary>
     [JsonPropertyName("response_format")]
     public string ResponseFormat { get; set; } = "mp3";
+    private int? _sampleRate;
+    /// <summary>
+    /// Optional output sample rate in Hz. Missing or null uses the server default;
+    /// zero bypasses that default and keeps the established model/codec rate.
+    /// Nonzero values are clamped to 8000-48000 Hz; codecs may select a nearby supported rate.
+    /// </summary>
+    [JsonPropertyName("samplerate")]
+    [JsonNumberHandling(JsonNumberHandling.Strict)]
+    public int? SampleRate
+    {
+        get => _sampleRate;
+        set => _sampleRate = AudioSampleRate.Clamp(value);
+    }
     /// <summary>
     /// Controls response framing while preserving the selected response_format.
     /// "audio" or an omitted value keeps the existing binary/JSON response behavior.
