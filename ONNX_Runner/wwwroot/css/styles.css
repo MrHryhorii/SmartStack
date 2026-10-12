@@ -28,6 +28,7 @@
     --space-2: 8px;
     --space-3: 16px;
     --space-4: 24px;
+    --group-gap: 12px;
     --space-5: 32px;
 
     --radius-sm: 4px;
@@ -170,11 +171,12 @@ body {
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow);
-    padding: clamp(var(--space-2), 1.5vw, var(--space-3));
+    --panel-padding: clamp(var(--space-2), 1.5vw, var(--space-3));
+    padding: var(--panel-padding);
 }
 
 .panel-main { grid-area: main; display: flex; flex-direction: column; }
-.panel-log  { grid-area: log; display: flex; flex-direction: column; min-height: 0; padding-bottom: var(--space-4); }
+.panel-log  { grid-area: log; display: flex; flex-direction: column; min-height: 0; padding-bottom: calc(var(--panel-padding) + var(--group-gap)); }
 .panel-side { grid-area: side; }
 
 
@@ -202,7 +204,7 @@ body {
 }
 
 details.advanced-group {
-    margin-bottom: 12px;
+    margin-bottom: var(--group-gap);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--input-bg);
@@ -753,10 +755,8 @@ textarea, .log {
     pointer-events: none;
 }
 
-.help-tooltip:hover::after,
-.help-tooltip:focus-visible::after,
-.help-tooltip:focus-within::after,
-.help-tooltip:active::after {
+/* Help follows pointer hover; clicking must not pin it through focus. */
+.help-tooltip:hover::after {
     opacity: 1;
     visibility: visible;
     transform: translateY(0);
