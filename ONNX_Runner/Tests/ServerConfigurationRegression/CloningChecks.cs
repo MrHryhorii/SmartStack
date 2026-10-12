@@ -35,13 +35,15 @@ internal static class CloningChecks
         var synthesis = new SpeechSynthesisService(gate, services, native, NullLogger<SpeechSynthesisService>.Instance);
 
         // Runs a configured synthesis request into memory for cloned-audio comparisons.
-        async Task<byte[]> ReadAudio(string voice = "piper_base", float? intensity = null, int? sampleRate = null)
+        async Task<byte[]> ReadAudio(string voice = "piper_base", float? intensity = null, int? sampleRate = null,
+            string?[]? profiles = null, float? temperature = null)
         {
             var request = new SynthesisRequest
             {
                 Input = "The variable user_name is ready.", Voice = voice, Speed = 1, Format = AudioFormat.Wav,
                 Stream = false, EarlySplit = false, NoiseScale = 0, NoiseW = 0, Language = config.Espeak.Voice,
-                CloneIntensity = intensity, SampleRate = sampleRate, Effect = "None", Environment = "None"
+                CloneIntensity = intensity, SampleRate = sampleRate, Equalizer = profiles, ToneTemperature = temperature,
+                Effect = "None", Environment = "None"
             };
             IResult result = await synthesis.SynthesizeAsync(request, new DefaultHttpContext { RequestServices = services }, CancellationToken.None);
             if (result is not FileContentHttpResult file) throw new InvalidOperationException("Cloning check did not return buffered audio.");
@@ -86,6 +88,51 @@ internal static class CloningChecks
                 finally { dsp.DefaultSampleRate = 0; }
             });
         }
+        // Zero tau is an internal deterministic fixture, not a new public request range.
+        // Ordinary cloning checks above retain the configured nonzero temperature.
+        var effects = services.GetRequiredService<EffectsSettings>();
+        bool savedEnabled = effects.EnableGlobalEffects;
+        bool savedCleanup = dsp.EnableLowPassFilter;
+        try
+        {
+            dsp.EnableLowPassFilter = false;
+            effects.EnableGlobalEffects = true;
+            await check("Equalizer filters the completed OpenVoice conversion", async () =>
+            {
+                byte[] original = await ReadAudio("female", temperature: 0);
+                float[] expected = SampleRateSynthesisChecks.WavSamples(original);
+                AudioEqualizer.Create(["telephony-class-application"], tone.Data.SamplingRate)!.Apply(expected);
+                byte[] filtered = await ReadAudio("female", profiles: ["telephony-class-application"], temperature: 0);
+                float[] actual = SampleRateSynthesisChecks.WavSamples(filtered);
+                Require(filtered.Length == original.Length && !filtered.SequenceEqual(original),
+                    "Cloned voice bypassed the profile or changed its duration.");
+                Require(actual.Length == expected.Length, "Cloning/profile order changed the output length.");
+                float maximum = 0;
+                for (int i = 0; i < actual.Length; i++) maximum = Math.Max(maximum, Math.Abs(actual[i] - expected[i]));
+                Require(maximum < .0001f, $"Equalizer precedes cloning or resets its filters: {maximum:F7}.");
+            });
+            await check("Zero-intensity cloning keeps the independent equalizer active", async () =>
+            {
+                byte[] expected = await ReadAudio(profiles: ["telephony-class-application"]);
+                byte[] actual = await ReadAudio("female", 0, profiles: ["telephony-class-application"]);
+                Require(actual.SequenceEqual(expected) && !actual.SequenceEqual(dry),
+                    "Bypassing cloning also bypassed the profile.");
+            });
+            await check("Disabled global effects bypass the profile while preserving real cloning", async () =>
+            {
+                effects.EnableGlobalEffects = false;
+                byte[] original = await ReadAudio("female", temperature: 0);
+                byte[] actual = await ReadAudio("female", profiles: ["telephony-class-application"], temperature: 0);
+                Require(actual.SequenceEqual(original) && !actual.SequenceEqual(dry),
+                    "The DSP switch retained the profile or disabled voice cloning.");
+            });
+        }
+        finally
+        {
+            effects.EnableGlobalEffects = savedEnabled;
+            dsp.EnableLowPassFilter = savedCleanup;
+        }
+
         await check("A missing source fingerprint falls back without cloning-only processing", async () =>
         {
             float[] source = openVoice.VoiceLibrary["piper_base"];

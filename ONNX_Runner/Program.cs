@@ -544,6 +544,10 @@ app.MapGet("/tsbk/audio/effects", InfoEndpoints.GetEffects)
    .WithName("GetEffects")
    .RequireRateLimiting("ip_limit");
 //.AddEndpointFilter<LocalHostOnlyFilter>();
+app.MapGet("/tsbk/audio/equalizers", InfoEndpoints.GetEqualizers)
+   .WithName("GetEqualizers")
+   .RequireRateLimiting("ip_limit");
+
 app.MapGet("/tsbk/audio/environments", InfoEndpoints.GetEnvironments)
    .WithName("GetEnvironments")
    .RequireRateLimiting("ip_limit");

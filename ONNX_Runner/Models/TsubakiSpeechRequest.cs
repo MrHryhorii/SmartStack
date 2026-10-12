@@ -113,6 +113,21 @@ public class TsubakiSpeechRequest
         // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings that could break the model.
         set => _noiseW = value.HasValue ? Math.Clamp(value.Value, 0f, 1.0f) : null;
     }
+    private string?[]? _equalizer;
+    /// <summary>
+    /// Optional ordered device-profile IDs applied after cloning and before character effects.
+    /// Missing, null, or empty bypasses equalization; unsupported entries are ignored.
+    /// Only the first MaxProfilesPerRequest entries are retained, including unknown IDs and nulls.
+    /// </summary>
+    [JsonPropertyName("equalizer")]
+    public string?[]? Equalizer
+    {
+        get => _equalizer;
+        set => _equalizer = value is { Length: > AudioEqualizerProfiles.MaxProfilesPerRequest }
+            ? value[..AudioEqualizerProfiles.MaxProfilesPerRequest]
+            : value;
+    }
+
     /// <summary>
     /// Specifies an artistic DSP effect to apply (e.g., "Overdrive", "Telephone").
     /// </summary>

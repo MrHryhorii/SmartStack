@@ -50,7 +50,7 @@ public enum VoiceEffectType
 /// </summary>
 public class EffectsSettings
 {
-    /// <summary>Master switch for character effects and spatial environments, including reverb tails.</summary>
+    /// <summary>Master switch for equalizer profiles, character effects, and spatial environments, including reverb tails.</summary>
     public bool EnableGlobalEffects { get; set; } = true;
 
     // Character Effects (Voice)

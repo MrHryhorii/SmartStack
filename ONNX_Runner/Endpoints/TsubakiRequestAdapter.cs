@@ -42,6 +42,7 @@ public static class TsubakiRequestAdapter
             EarlySplit = dto.EarlySplit,
             NoiseScale = dto.NoiseScale,
             NoiseW = dto.NoiseW,
+            Equalizer = dto.Equalizer,
             Effect = dto.Effect,
             EffectIntensity = dto.EffectIntensity,
             Environment = dto.Environment,

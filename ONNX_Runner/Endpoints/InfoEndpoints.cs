@@ -91,6 +91,9 @@ public static class InfoEndpoints
 
         return Results.Ok(new { effects });
     }
+    /// <summary>Lists the device-profile IDs supported by the equalizer catalog.</summary>
+    public static IResult GetEqualizers() => Results.Ok(new { equalizers = AudioEqualizerProfiles.Ids });
+
     /// <summary>
     /// Retrieves all available spatial environments dynamically from the system enumeration.
     /// </summary>
@@ -212,7 +215,8 @@ public static class InfoEndpoints
                 defaultEnvironmentIntensity = effects.DefaultEnvironmentIntensity,
                 extendReverbTailOnFinish = effects.ExtendReverbTailOnFinish,
                 available = Enum.GetNames<VoiceEffectType>(),
-                availableEnvironments = Enum.GetNames<SpatialEnvironment>()
+                availableEnvironments = Enum.GetNames<SpatialEnvironment>(),
+                availableEqualizerProfiles = AudioEqualizerProfiles.Ids
             },
             streaming = new
             {

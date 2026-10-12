@@ -63,6 +63,9 @@ public class SynthesisRequest
     /// </summary>
     public float? NoiseW { get; set; }
 
+    /// <summary>Optional ordered device profiles. Unknown entries are ignored; no server default is applied.</summary>
+    public string?[]? Equalizer { get; set; }
+
     /// <summary>
     /// Specifies an artistic DSP effect to apply (e.g., "Overdrive", "Telephone").
     /// </summary>

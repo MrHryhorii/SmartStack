@@ -17,7 +17,7 @@ and optional CPU waveform comparisons for DSP controls.
 | [PunctuationRegression](PunctuationRegression/) | Check Unicode punctuation, including Thai sentence endings, against the symbols supported by a Piper model. Verify custom punctuation rules, compound marks, lexical connectors, normalization idempotence, and model control-token handling. |
 | [TechnicalSpeechIntegration](TechnicalSpeechIntegration/) | Check complete symbol and emoji descriptions against explicitly declared spoken names. Preserve literal punctuation names, localized pronunciation, compatible fullwidth characters, native voice state, callbacks, and cached output under concurrent calls. Verify adapted phoneme coverage and complete technical names in Piper IDs. Compare statistical and model/script routing against explicit-language native references. Check default emoji reading, explicit disabling, and the model's exact dialect. |
 | [TextAnalysisAllocations](TextAnalysisAllocations/) | Detect unexpected managed allocations in text analysis using explicit budgets, and report other scenarios for local investigation. See [Managed allocation checks](#managed-allocation-checks) below. |
-| [ServerConfigurationRegression](ServerConfigurationRegression/) | Check version consistency, liveness versus readiness, available capabilities, detector candidates and tuning, configuration defaults, named format validation, JSON ranges and request overrides, and effective emergency chunk limits. Optional CPU waveform checks cover the DSP master switch, character/spatial overrides, tails, volume, and safe voice fallback with cloning enabled. |
+| [ServerConfigurationRegression](ServerConfigurationRegression/) | Check version consistency, liveness versus readiness, available capabilities, detector candidates and tuning, configuration defaults, named format validation, JSON ranges and request overrides, and effective emergency chunk limits. Managed equalizer checks cover device-profile discovery, optional arrays, truncation to the first 16 raw entries, bounded list access, ordered/repeated filtering, frequency response, streaming state, concurrent isolation, and allocation budgets. Optional CPU waveform checks cover equalizer/character/spatial order, output resampling, the DSP master switch, tails, volume, and safe voice fallback with cloning enabled. Cloning fixtures also verify that equalizer profiles follow OpenVoice conversion and respect the DSP master switch. |
 
 Expected boundaries and punctuation are defined by explicit fixtures. Fixed-seed
 generated cases check source preservation, Unicode text elements, splitting progress,
@@ -42,7 +42,7 @@ the ONNX weights or start the server.
 
 `ServerConfigurationRegression` references the actual engine assembly; the commands
 below select the CPU build. Its
-default checks need no model weights or native synthesis library. Optional waveform
+default checks need no model weights or native synthesis library. Equalizer checks use deterministic PCM to verify dry filtering without generated noise, saturation, or resonant gain peaks. Optional waveform
 checks need a matching Piper `.onnx` / `.onnx.json` pair and the native eSpeak
 dependencies used by the engine. They run the public synthesis pipeline without
 starting the HTTP server. The two-path mode leaves cloning disabled; adding the

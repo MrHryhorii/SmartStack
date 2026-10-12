@@ -112,6 +112,7 @@ internal static class SynthesisChecks
         });
 
         await SampleRateSynthesisChecks.Run(synthesis, services, config, native, check);
+        await EqualizerSynthesisChecks.Run(synthesis, services, config, check);
 
         if (clonerDirectory != null && voicesDirectory != null)
             await CloningChecks.Run(config, piper, phonemizer, native, clonerDirectory, voicesDirectory, check);

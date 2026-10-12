@@ -67,6 +67,10 @@ internal static class AudioGenerationPipeline
             envType != SpatialEnvironment.None &&
             envIntensity > 0.001f;
 
+        AudioEqualizer? equalizer = ctx.EffectsConfig.EnableGlobalEffects
+            ? AudioEqualizer.Create(request.Equalizer, ctx.ProcessingSampleRate)
+            : null;
+
         AudioEffectsEngine? effectsEngine = useEffect
             ? new AudioEffectsEngine(ctx.EffectsConfig, ctx.ProcessingSampleRate)
             : null;
@@ -409,7 +413,10 @@ internal static class AudioGenerationPipeline
                             currentBuffer = rentedBuffer2;
                             currentLength = r2.Length;
                         }
-                        // Apply character effects FIRST (Overdrive, Telephone, LoFiTape, etc.)
+                        // Apply dry device profiles after cloning/resampling, before artistic DSP.
+                        equalizer?.Apply(currentBuffer.AsSpan(0, currentLength));
+
+                        // Apply character effects before spatial acoustics.
                         effectsEngine?.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
 
                         // Apply spatial acoustics AFTER character effects.
@@ -429,7 +436,8 @@ internal static class AudioGenerationPipeline
                         if (chunk.IsSentenceFinished)
                         {
                             Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
-                            // Keep character/spatial tails active during the sentence pause.
+                            // Advance the same filters during pauses; keep downstream DSP tails active.
+                            equalizer?.Apply(absoluteSilence.AsSpan());
                             effectsEngine?.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
                             spatialEngine?.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
 
