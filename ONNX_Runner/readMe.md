@@ -458,7 +458,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 
 | Parameter               | Type   | Description                                                |
 | ----------------------- | ------ | ---------------------------------------------------------- |
-| `equalizer`             | string[] | Ordered playback-profile IDs. Only the first 16 entries are processed; unknown names are ignored. See [Equalizer Profiles](#available-equalizer-profiles). |
+| `equalizer`             | string[] | Ordered playback-profile IDs. Only the first 16 entries are processed; unknown names are ignored. |
 | `effect`                | string | DSP character effect to apply. See available values below. |
 | `effect_intensity`      | float  | Effect intensity. `1.0` is full strength.                  |
 | `environment`           | string | Acoustic spatial environment. See available values below.  |
@@ -467,7 +467,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 
 #### Available Equalizer Profiles
 
-`equalizer` accepts an array of profile IDs. Omit it, use `null`, or send `[]` to bypass this layer. Profiles apply sequentially in array order after voice cloning and before character and spatial effects; repeated IDs apply again. Arrays longer than 16 entries are truncated to the first 16, including unknown names and null entries.
+`equalizer` accepts an array of profile IDs. Omitted or `null` values use `EffectsSettings.DefaultEqualizer`; an explicit `[]` disables this layer for the request. Profiles apply sequentially in array order after voice cloning and before character and spatial effects; repeated IDs apply again. Arrays longer than 16 entries are truncated to the first 16, including unknown names and null entries.
 
 | Profile ID | Playback device | Filter settings |
 | --- | --- | --- |
@@ -482,7 +482,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 
 HP/LP are high-pass/low-pass cutoff frequencies; the other values are tonal-band centers and gain. Settings adapt to the available frequency range of the audio.
 
-These IDs match Google's public audio-profile names; the filters are Tsubaki's own device approximations. Usually select one profile. Available IDs are also returned by `GET /tsbk/audio/equalizers`.
+> These IDs match Google's public audio-profile names; the filters are Tsubaki's own device approximations. Usually select one profile. Available IDs are also returned by `GET /tsbk/audio/equalizers`.
 
 #### Available Effects
 
@@ -548,15 +548,16 @@ Lower sample rates reduce high-frequency detail; increasing the rate does not re
 
 ## Server-Side DSP Defaults
 
-Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect parameters, Tsubaki allows you to set a **Default Effect** in `appsettings.json`. This effect will be automatically applied to all incoming API requests unless explicitly overridden by a custom client (like the built-in web dashboard).
+Since standard OpenAI clients (like SillyTavern) cannot send custom DSP effect parameters, Tsubaki allows you to set **default equalizer profiles, character effects, and spatial environments** in `appsettings.json`. These defaults are automatically applied to all incoming API requests unless explicitly overridden by a custom client (like the built-in web dashboard).
 
-### Default Effects & Environments
+### Default Equalizer, Effects & Environments
 
-The following is an example configuration that enables LoFiTape and LivingRoom as server-wide defaults. The shipped defaults keep both the effect and environment disabled (`None`).
+The following example enables a phone-speaker profile, LoFiTape, and LivingRoom as server-wide defaults. The shipped defaults disable all three layers (`DefaultEqualizer: []`, effect and environment: `None`).
 
 ```json
 "EffectsSettings": {
   "EnableGlobalEffects": true,
+  "DefaultEqualizer": ["handset-class-device"],
   "DefaultEffect": "LoFiTape",
   "DefaultIntensity": 1.0,
   "DefaultEnvironment": "LivingRoom",
@@ -566,11 +567,12 @@ The following is an example configuration that enables LoFiTape and LivingRoom a
 }
 ```
 
+`DefaultEqualizer` is an ordered array of profile IDs; `[]` or `null` disables the server-default equalizer. Only its first 16 entries are processed, and unknown names are ignored.
 `DefaultEffect: "None"` disables the default character effect only;
 `DefaultEnvironment: "None"` disables the default spatial environment only.
-Requests can override either default independently.
+Omitted or `null` request fields inherit their server defaults. An explicit `equalizer` array replaces `DefaultEqualizer` completely; `[]` disables it for that request. Likewise, `effect: "None"` and `environment: "None"` disable their respective layers. The dashboard sends `[]` when no profiles are selected. Restart the server after changing `appsettings.json`.
 
-Set `EnableGlobalEffects: false` to bypass both stages, including spatial reverb
+Set `EnableGlobalEffects: false` to bypass all three layers, including spatial reverb
 tails. Per-request effects cannot re-enable them while this switch is off.
 Pitch, volume, output resampling, gain compensation, and the low-pass filter remain independent.
 An omitted `DefaultEnvironmentIntensity` uses `0.25`, matching the shipped configuration.
@@ -1201,7 +1203,7 @@ supplementary symbols and whitespace-separated code constructs are outside this 
 
 ### Audio & DSP
 
-- **`EffectsSettings`** — Server-wide default character effect and spatial environment, automatically applied to every request unless overridden by a custom client. See *Server-Side DSP Defaults* above for why this matters specifically for OpenAI-compatible clients.
+- **`EffectsSettings`** — Server-wide default equalizer profiles, character effect, and spatial environment, automatically applied to every request unless overridden by a custom client. See *Server-Side DSP Defaults* above for why this matters specifically for OpenAI-compatible clients.
 
 - **`DspSettings`** — Controls the low-pass cleanup filter used on cloned output, server-wide default pitch, volume, and output sample rate, and the fixed `VolumeBoosterDb` gain correction. This lets you calibrate the engine's baseline output once while keeping `DefaultVolume`/`volume` available for playback-level control.
 
@@ -1299,6 +1301,7 @@ The paths below are relative to the server's base URL (`http://localhost:5045` b
 | `chunking` | Effective `earlySplit`, `maxChunkLength`, and `sentencePauseSeconds` defaults. |
 | `dsp.defaultSampleRate` | Configured output sample rate in Hz; `0` keeps the normal model/codec rate. The actual rate for a speech response is given by `X-Audio-Sample-Rate`. |
 | `dsp.volumeBoosterDb`, `dsp.defaultTotalGainDb` | Configured gain boost and combined default gain in dB; the latter is `null` when default volume is muted. |
+| `effects.defaultEqualizer` | Configured server-default profile array. `[]` or `null` disables the default equalizer. |
 | `effects.enabled` | Master switch for equalizer profiles, character and spatial effects. |
 | `streaming`, `formats` | Streaming defaults and currently available output formats. WAV remains buffered. |
 
