@@ -29,6 +29,7 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 **Reference**
 
 - [API Endpoints](#api-endpoints)
+- [Equalizer Profiles](#available-equalizer-profiles)
 - [Available Effects](#available-effects)
 - [Available Environments](#available-environments)
 - [Voice Cloning](#voice-cloning-openvoice-v2)
@@ -198,7 +199,7 @@ and [ONNX Runtime Optimization](#onnx-runtime-optimization) for execution settin
 | `DspSettings.DefaultPitch` / `DefaultVolume` | Adjust the default voice pitch or loudness; `1.0` preserves the original scale. The shipped `VolumeBoosterDb: 8.0` adds gain separately. |
 | `ChunkerSettings.SentencePauseSeconds` | Adjust sentence pacing. The default `0.3` seconds scales with reading speed. |
 | `StreamSettings.EnableStreaming` | Enable progressive output for supported formats. WAV is always buffered. |
-| `EffectsSettings.EnableGlobalEffects` | Set `false` to bypass character effects, spatial environments, and their reverb tails. Pitch, volume, and the low-pass filter still work. |
+| `EffectsSettings.EnableGlobalEffects` | Set `false` to bypass equalizer profiles, character effects, spatial environments, and their reverb tails. Pitch, volume, and the low-pass filter still work. |
 
 To inspect the running build and its actual capabilities, open
 `http://localhost:5045/tsbk/server/status` after starting the server.
@@ -432,6 +433,8 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
     "early_split": true,
     "language": "auto",
 
+    "equalizer": ["handset-class-device", "telephony-class-application"],
+
     "effect": "Telephone",
     "effect_intensity": 0.8,
 
@@ -455,11 +458,31 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 
 | Parameter               | Type   | Description                                                |
 | ----------------------- | ------ | ---------------------------------------------------------- |
+| `equalizer`             | string[] | Ordered playback-profile IDs. Only the first 16 entries are processed; unknown names are ignored. See [Equalizer Profiles](#available-equalizer-profiles). |
 | `effect`                | string | DSP character effect to apply. See available values below. |
 | `effect_intensity`      | float  | Effect intensity. `1.0` is full strength.                  |
 | `environment`           | string | Acoustic spatial environment. See available values below.  |
 | `environment_intensity` | float  | Reverb intensity. `0.25` is recommended.                   |
 | `extend_reverb_tail`    | bool   | Lets the active `environment` reverb decay fully at the end of the request instead of being cut off. Overrides the server's `ExtendReverbTailOnFinish` default for this request only. Has no effect on character `effect`s. See *Reverb Tail Extension* in Server-Side DSP Defaults below. |
+
+#### Available Equalizer Profiles
+
+`equalizer` accepts an array of profile IDs. Omit it, use `null`, or send `[]` to bypass this layer. Profiles apply sequentially in array order after voice cloning and before character and spatial effects; repeated IDs apply again. Arrays longer than 16 entries are truncated to the first 16, including unknown names and null entries.
+
+| Profile ID | Playback device | Filter settings |
+| --- | --- | --- |
+| `wearable-class-device` | Wearable speaker | HP 350 Hz; LP 5 kHz; 2.5 kHz +3 dB |
+| `handset-class-device` | Phone speaker | HP 180 Hz; LP 8 kHz; 400 Hz -2 dB; 1.5 kHz +3 dB |
+| `headphone-class-device` | Headphones | HP 40 Hz; LP 18 kHz; 120 Hz +1.5 dB; 4.5 kHz +1.5 dB |
+| `small-bluetooth-speaker-class-device` | Small Bluetooth speaker | HP 120 Hz; LP 10 kHz; 250 Hz +3 dB; 800 Hz -2 dB |
+| `medium-bluetooth-speaker-class-device` | Medium Bluetooth speaker | HP 70 Hz; LP 14 kHz; 180 Hz +2 dB; 4 kHz +1 dB |
+| `large-home-entertainment-class-device` | Home entertainment system | HP 30 Hz; LP 20 kHz; 100 Hz +2 dB; 900 Hz -1.5 dB; 6 kHz +2 dB |
+| `large-automotive-class-device` | Car speakers | HP 90 Hz; LP 12 kHz; 180 Hz +3 dB; 3 kHz -2 dB |
+| `telephony-class-application` | Telephone line | HP 300 Hz; LP 3.4 kHz; 1 kHz +3 dB |
+
+HP/LP are high-pass/low-pass cutoff frequencies; the other values are tonal-band centers and gain. Settings adapt to the available frequency range of the audio.
+
+These IDs match Google's public audio-profile names; the filters are Tsubaki's own device approximations. Usually select one profile. Available IDs are also returned by `GET /tsbk/audio/equalizers`.
 
 #### Available Effects
 
@@ -1257,6 +1280,7 @@ The paths below are relative to the server's base URL (`http://localhost:5045` b
 | `POST` | `/tsbk/audio/speech`       | Main TTS endpoint, full parameter set               |
 | `POST` | `/tsbk/audio/phonemize`    | Text phonemization (for diagnostics)                |
 | `GET`  | `/tsbk/audio/voices`       | List available voices                               |
+| `GET`  | `/tsbk/audio/equalizers`   | List available playback-profile IDs                 |
 | `GET`  | `/tsbk/audio/effects`      | List available DSP effects                          |
 | `GET`  | `/tsbk/audio/environments` | List available acoustic environments                |
 | `GET`  | `/tsbk/server/status`      | Version, initialized capabilities, and current defaults |
@@ -1275,7 +1299,7 @@ The paths below are relative to the server's base URL (`http://localhost:5045` b
 | `chunking` | Effective `earlySplit`, `maxChunkLength`, and `sentencePauseSeconds` defaults. |
 | `dsp.defaultSampleRate` | Configured output sample rate in Hz; `0` keeps the normal model/codec rate. The actual rate for a speech response is given by `X-Audio-Sample-Rate`. |
 | `dsp.volumeBoosterDb`, `dsp.defaultTotalGainDb` | Configured gain boost and combined default gain in dB; the latter is `null` when default volume is muted. |
-| `effects.enabled` | Master switch for character and spatial effects. |
+| `effects.enabled` | Master switch for equalizer profiles, character and spatial effects. |
 | `streaming`, `formats` | Streaming defaults and currently available output formats. WAV remains buffered. |
 
 **Universal:**
