@@ -70,6 +70,7 @@
    --log-color    console text color (separate from --accent for retro effect)
 ========================================================================== */
 :root[data-theme="dark"] {
+    color-scheme: dark;
     --bg-base:      #0b0a1a;
     --bg-panel:     #14122b;
     --text-main:    #f8f8f8;
@@ -92,6 +93,7 @@
 }
 
 html {
+    color-scheme: light;
     scrollbar-gutter: stable;
 }
 
@@ -134,7 +136,7 @@ body {
 .layout {
     display: grid;
     grid-template-columns: 2fr 1fr;
-    grid-template-rows: auto auto;
+    grid-template-rows: min-content 1fr;
     grid-template-areas:
         "main side"
         "log  side";
@@ -150,6 +152,7 @@ body {
 @media (max-width: 768px) {
     .layout {
         grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto auto auto;
         grid-template-areas:
             "main"
             "side"
@@ -171,7 +174,7 @@ body {
 }
 
 .panel-main { grid-area: main; display: flex; flex-direction: column; }
-.panel-log  { grid-area: log; }
+.panel-log  { grid-area: log; display: flex; flex-direction: column; min-height: 0; padding-bottom: var(--space-4); }
 .panel-side { grid-area: side; }
 
 
@@ -649,8 +652,11 @@ input[type="checkbox"] {
     line-height: 1.4;
     padding: var(--space-3);
     border-radius: var(--radius-md);
-    height: 180px;
-    overflow-y: auto;
+    flex: 1 1 0;
+    height: 0;
+    min-height: 180px;
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
     border: 1px solid var(--border);
 }
 
@@ -804,4 +810,15 @@ textarea, .log {
     .tooltip-wide::after {
         max-width: min(300px, calc(100vw - 24px));
     }
+}
+
+/* Validation feedback follows the active theme rather than browser popup colors. */
+.field-error {
+    margin: 8px 0 0;
+    padding: 8px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    background: var(--input-bg);
+    color: var(--text-main);
+    font-size: 0.8rem;
 }

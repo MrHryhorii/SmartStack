@@ -240,6 +240,14 @@ async function bootEngine() {
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum', 'extendTailToggle']);
     bindToggle('useSampleRate', ['sampleRateNum']);
+    const sampleRateError = document.getElementById('sampleRateError');
+    // Clear the themed validation message when the value or override changes.
+    const clearSampleRateError = () => {
+        sampleRateError.hidden = true;
+        document.getElementById('sampleRateNum').removeAttribute('aria-invalid');
+    };
+    document.getElementById('sampleRateNum').addEventListener('input', clearSampleRateError);
+    document.getElementById('useSampleRate').addEventListener('change', clearSampleRateError);
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
     bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
@@ -309,7 +317,15 @@ async function bootEngine() {
 
         const useSampleRate = document.getElementById('useSampleRate').checked;
         const sampleRateInput = document.getElementById('sampleRateNum');
-        if (useSampleRate && !sampleRateInput.reportValidity()) return;
+        const hasSampleRate = useSampleRate && (sampleRateInput.value.trim() !== '' || sampleRateInput.validity.badInput);
+        if (hasSampleRate && !sampleRateInput.checkValidity()) {
+            sampleRateError.textContent = 'Enter a whole number from 0 to 48000.';
+            sampleRateError.hidden = false;
+            sampleRateInput.setAttribute('aria-invalid', 'true');
+            sampleRateInput.focus();
+            return;
+        }
+        clearSampleRateError();
 
         document.getElementById('statusLog').innerHTML = '';
         btn.disabled = true;
@@ -346,7 +362,7 @@ async function bootEngine() {
         payload.equalizer = equalizers;
 
         // Omit the override when off; an explicit zero bypasses the server default.
-        if (useSampleRate) {
+        if (hasSampleRate) {
             payload.samplerate = sampleRateInput.valueAsNumber;
         }
 

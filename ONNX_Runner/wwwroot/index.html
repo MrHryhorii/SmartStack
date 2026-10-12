@@ -9,7 +9,7 @@
     <title>Tsubaki TTS Engine</title>
     <!-- Favicon for the application -->
     <link rel="icon" type="image/svg+xml" href="tsubaki.svg">
-    <link rel="stylesheet" href="css/styles.css?v=equalizer4">
+    <link rel="stylesheet" href="css/styles.css?v=ui-polish3">
     <!-- Theme initialization script to handle light/dark mode toggling -->
     <script src="js/theme-init.js"></script>
 </head>
@@ -271,13 +271,14 @@
                             <div class="toggle">
                                 <input type="checkbox" id="useSampleRate">
                                 <span class="toggle-label-help help-tooltip tooltip-up"
-                                    data-tooltip="Output sample rate in Hz. API field: samplerate. Off uses the server default; 0 keeps the model/codec rate. Nonzero rates are clamped to 8000–48000 Hz; lower rates reduce high-frequency detail. MP3/AAC use the nearest supported rate; Opus decodes at 48000 Hz.">
+                                    data-tooltip="Output sample rate in Hz. API field: samplerate. Off or empty uses the server default; 0 keeps the model/codec rate. Nonzero rates are clamped to 8000–48000 Hz; lower rates reduce high-frequency detail. MP3/AAC use the nearest supported rate; Opus decodes at 48000 Hz.">
                                     <label for="useSampleRate">Sample Rate (Hz)</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
                             </div>
-                            <input type="number" id="sampleRateNum" min="0" max="48000" step="1" value="0"
-                                list="sampleRateOptions" required disabled aria-label="Output sample rate in Hz">
+                            <input type="number" id="sampleRateNum" aria-describedby="sampleRateError" min="0" max="48000" step="1" value="0"
+                                list="sampleRateOptions" disabled aria-label="Output sample rate in Hz">
+                            <p id="sampleRateError" class="field-error" role="alert" hidden></p>
                             <datalist id="sampleRateOptions">
                                 <option value="0" label="Model/codec rate"></option>
                                 <option value="8000"></option>
@@ -361,7 +362,7 @@
     </div>
     <!-- Main application script that handles UI interactions, API communication, and audio processing -->
     <script src="js/accordion.js"></script>
-    <script type="module" src="js/app.js?v=equalizer4"></script>
+    <script type="module" src="js/app.js?v=ui-polish3"></script>
 
 </body>
 
