@@ -342,7 +342,8 @@ async function bootEngine() {
 
         // Capture the selected profiles in display order before asynchronous playback cleanup.
         const equalizers = selectedEqualizers(equalizerList);
-        if (equalizers.length) payload.equalizer = equalizers;
+        // An empty selection explicitly bypasses server playback-profile defaults.
+        payload.equalizer = equalizers;
 
         // Omit the override when off; an explicit zero bypasses the server default.
         if (useSampleRate) {

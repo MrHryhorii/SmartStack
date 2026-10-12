@@ -92,10 +92,7 @@ public static class InfoEndpoints
         return Results.Ok(new { effects });
     }
     /// <summary>Lists the device-profile IDs supported by the equalizer catalog.</summary>
-    public static IResult GetEqualizers()
-    {
-        return Results.Ok(new { equalizers = AudioEqualizerProfiles.Ids });
-    }
+    public static IResult GetEqualizers() => Results.Ok(new { equalizers = AudioEqualizerProfiles.Ids });
 
     /// <summary>
     /// Retrieves all available spatial environments dynamically from the system enumeration.
@@ -212,6 +209,7 @@ public static class InfoEndpoints
             effects = new
             {
                 enabled = effects.EnableGlobalEffects,
+                defaultEqualizer = effects.DefaultEqualizer,
                 defaultEffect = effects.DefaultEffect,
                 defaultIntensity = effects.DefaultIntensity,
                 defaultEnvironment = effects.DefaultEnvironment,

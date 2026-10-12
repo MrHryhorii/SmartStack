@@ -68,7 +68,7 @@ internal static class AudioGenerationPipeline
             envIntensity > 0.001f;
 
         AudioEqualizer? equalizer = ctx.EffectsConfig.EnableGlobalEffects
-            ? AudioEqualizer.Create(request.Equalizer, ctx.ProcessingSampleRate)
+            ? AudioEqualizer.Create(request.Equalizer ?? ctx.EffectsConfig.DefaultEqualizer, ctx.ProcessingSampleRate)
             : null;
 
         AudioEffectsEngine? effectsEngine = useEffect

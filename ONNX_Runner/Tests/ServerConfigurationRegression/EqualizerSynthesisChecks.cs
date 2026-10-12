@@ -16,10 +16,12 @@ internal static class EqualizerSynthesisChecks
         var chunker = services.GetRequiredService<ChunkerSettings>();
         var savedDsp = (dsp.DefaultSampleRate, dsp.VolumeBoosterDb);
         var savedEffects = effects.EnableGlobalEffects;
+        var savedEqualizer = effects.DefaultEqualizer;
         float savedPause = chunker.SentencePauseSeconds;
         dsp.DefaultSampleRate = 0;
         dsp.VolumeBoosterDb = 0;
         effects.EnableGlobalEffects = true;
+        effects.DefaultEqualizer = [];
         chunker.SentencePauseSeconds = .017f;
 
         // Uses deterministic inference and several sentences to exercise continuous per-request filters.
@@ -48,6 +50,44 @@ internal static class EqualizerSynthesisChecks
         {
             byte[] dry = await Read();
             float[] drySamples = WavSamples(dry);
+            await check("CPU omitted equalizer inherits server profiles and empty arrays override them", async () =>
+            {
+                byte[] phone = await Read(["telephony-class-application"]);
+                byte[] headphones = await Read(["headphone-class-device"]);
+                effects.DefaultEqualizer = ["telephony-class-application"];
+                try
+                {
+                    Require((await Read()).AsSpan().SequenceEqual(phone), "Omitted array did not inherit the default.");
+                    Require((await Read([])).AsSpan().SequenceEqual(dry), "Empty array failed to disable the default.");
+                    Require((await Read(["headphone-class-device"])).AsSpan().SequenceEqual(headphones),
+                        "Explicit profiles were merged with the default rather than replacing it.");
+                    Require((await Read(["unknown", null])).AsSpan().SequenceEqual(dry),
+                        "Unsupported explicit array fell back to server profiles.");
+                    byte[] streamed = await Read(format: AudioFormat.Pcm, stream: true);
+                    byte[] buffered = await Read(format: AudioFormat.Pcm);
+                    Require(streamed.AsSpan().SequenceEqual(buffered), "Default profiles changed streamed PCM.");
+                    effects.EnableGlobalEffects = false;
+                    Require((await Read()).AsSpan().SequenceEqual(dry), "Default ignored the DSP master switch.");
+                }
+                finally { effects.DefaultEqualizer = []; effects.EnableGlobalEffects = true; }
+            });
+            foreach (string?[]? defaults in new string?[]?[] { null, [], ["unknown", null] })
+            {
+                await check("CPU inactive server profile lists retain the dry waveform", async () =>
+                {
+                    effects.DefaultEqualizer = defaults;
+                    try { Require((await Read()).AsSpan().SequenceEqual(dry), "Inactive defaults changed audio."); }
+                    finally { effects.DefaultEqualizer = []; }
+                });
+            }
+            await check("CPU server defaults retain the 16-entry raw-prefix limit", async () =>
+            {
+                effects.DefaultEqualizer = Enumerable.Repeat<string?>("unknown", 16)
+                    .Append("telephony-class-application").ToArray();
+                try { Require((await Read()).AsSpan().SequenceEqual(dry), "The default inspected a discarded 17th entry."); }
+                finally { effects.DefaultEqualizer = []; }
+            });
+
             foreach (string?[] profiles in new string?[][] { [], ["unknown"], [null, "", "unknown"] })
             {
                 await check("CPU synthesis preserves dry PCM for an empty or unsupported equalizer list", async () =>
@@ -64,6 +104,7 @@ internal static class EqualizerSynthesisChecks
                         "Active profile was ignored or changed audio duration.");
                     float[] expected = (float[])drySamples.Clone();
                     AudioEqualizer.Create([id], config.Audio.SampleRate)!.Apply(expected);
+                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
                     Near(expected, WavSamples(actual));
                 });
             }
@@ -81,6 +122,7 @@ internal static class EqualizerSynthesisChecks
                 float[] expected = (float[])drySamples.Clone();
                 var ids = new[] { "telephony-class-application", "telephony-class-application" };
                 AudioEqualizer.Create(ids, config.Audio.SampleRate)!.Apply(expected);
+                VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
                 Near(expected, WavSamples(twice));
             });
 
@@ -98,6 +140,7 @@ internal static class EqualizerSynthesisChecks
                     if (environment != "None") new SpatialEffectsEngine(config.Audio.SampleRate)
                         .ApplyEnvironment(expected, SpatialEnvironment.LivingRoom, .25f);
                     float[] actual = WavSamples(await Read(["telephony-class-application"], effect, environment));
+                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
                     Near(expected, actual);
                 });
             }
@@ -145,6 +188,7 @@ internal static class EqualizerSynthesisChecks
             dsp.DefaultSampleRate = savedDsp.DefaultSampleRate;
             dsp.VolumeBoosterDb = savedDsp.VolumeBoosterDb;
             effects.EnableGlobalEffects = savedEffects;
+            effects.DefaultEqualizer = savedEqualizer;
             chunker.SentencePauseSeconds = savedPause;
         }
     }

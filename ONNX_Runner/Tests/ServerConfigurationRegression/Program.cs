@@ -160,6 +160,31 @@ if (!synthesisOnly)
         Require(bound.DefaultEnvironmentIntensity == .25f, "Omitted intensity unexpectedly enables a full-strength environment.");
     });
 
+    Check("Equalizer defaults are empty and server status reports the configured array", () =>
+    {
+        Require(new EffectsSettings().DefaultEqualizer is { Length: 0 }, "Default profile processing is active.");
+        string?[] configured = ["handset-class-device", "unknown", null, "telephony-class-application"];
+        effects.DefaultEqualizer = configured;
+        Require(Status().GetProperty("effects").GetProperty("defaultEqualizer").EnumerateArray()
+            .Select(item => item.ValueKind == JsonValueKind.Null ? null : item.GetString()).SequenceEqual(configured),
+            "Status lost configured order or entries.");
+        effects.DefaultEqualizer = [];
+    });
+    foreach (string value in new[] { "null", "[]", "[\"handset-class-device\",\"telephony-class-application\"]" })
+    {
+        Check($"Equalizer configuration binds {value}", () =>
+        {
+            using var stream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(
+                "{\"EffectsSettings\":{\"DefaultEqualizer\":" + value + "}}"));
+            var configured = new ConfigurationBuilder().AddJsonStream(stream).Build()
+                .GetSection("EffectsSettings").Get<EffectsSettings>()!;
+            string?[]? expected = JsonSerializer.Deserialize<string?[]?>(value);
+            Require(expected == null ? configured.DefaultEqualizer is null or { Length: 0 } :
+                configured.DefaultEqualizer != null && configured.DefaultEqualizer.SequenceEqual(expected),
+                "Configuration changed the profile-list shape or order.");
+        });
+    }
+
     foreach (var fixture in new (string Name, string Model, string[] Codes, bool Statistical, string[] Expected)[]
     {
         ("Empty candidates", "en-us", [], false, ["en-us"]),

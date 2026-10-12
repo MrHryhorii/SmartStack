@@ -53,6 +53,9 @@ public class EffectsSettings
     /// <summary>Master switch for equalizer profiles, character effects, and spatial environments, including reverb tails.</summary>
     public bool EnableGlobalEffects { get; set; } = true;
 
+    /// <summary>Ordered playback profiles inherited by omitted/null request arrays; empty arrays bypass the layer.</summary>
+    public string?[]? DefaultEqualizer { get; set; } = [];
+
     // Character Effects (Voice)
     public string DefaultEffect { get; set; } = "None";
     public float DefaultIntensity { get; set; } = 1.0f;
