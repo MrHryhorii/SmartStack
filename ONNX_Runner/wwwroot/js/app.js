@@ -1,5 +1,6 @@
 import { initTheme } from './theme.js';
-import { getVoices, getEffects, getEnvironments, synthesizeSpeech } from './api.js';
+import { getVoices, getEffects, getEnvironments, getEqualizers, synthesizeSpeech } from './api.js?v=equalizer1';
+import { initEqualizerProfiles, selectedEqualizers } from './equalizer.js?v=equalizer2';
 import { AudioEngine } from './audio.js?v=aac2';
 import { SUPPORTED_LANGUAGES } from './languages.js';
 import { receiveBase64Json } from './b64-json.js';
@@ -203,15 +204,20 @@ async function bootEngine() {
     document.getElementById('statusLog').innerHTML = '';
     log('SYSTEM READY... Awaiting commands.');
 
-    const [voicesData, effectsData, envData] = await Promise.all([
+    const [voicesData, effectsData, envData, equalizerData] = await Promise.all([
         getVoices(),
         getEffects(),
-        getEnvironments()
+        getEnvironments(),
+        getEqualizers()
     ]);
 
     populateSelect('voiceSelect', voicesData.voices, 'piper_base');
     populateSelect('effectSelect', effectsData.effects);
     populateSelect('environmentSelect', envData.environments);
+    const equalizerList = document.getElementById('equalizerProfiles');
+    if (!initEqualizerProfiles(equalizerList, equalizerData.equalizers)) {
+        document.getElementById('equalizerHint').textContent = 'Playback profiles are unavailable.';
+    }
 
     // Language metadata is local; dynamic audio options come from the server.
     populateLanguageSelector();
@@ -333,6 +339,10 @@ async function bootEngine() {
             early_split: document.getElementById('earlySplitToggle').checked,
             language: document.getElementById('languageSelect').value
         };
+
+        // Capture the selected profiles in display order before asynchronous playback cleanup.
+        const equalizers = selectedEqualizers(equalizerList);
+        if (equalizers.length) payload.equalizer = equalizers;
 
         // Omit the override when off; an explicit zero bypasses the server default.
         if (useSampleRate) {

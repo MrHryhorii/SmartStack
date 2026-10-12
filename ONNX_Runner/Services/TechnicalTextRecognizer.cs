@@ -68,9 +68,12 @@ public static class TechnicalTextRecognizer
     }
 
     /// <summary>Checks whitespace, visual quotes, and non-lexical reporting dashes as technical-token boundaries.</summary>
-    public static bool IsBoundary(char value, TextChunkerRules rules) =>
-        char.IsWhiteSpace(value) || rules.VisualQuotes.Contains(value) ||
+    public static bool IsBoundary(char value, TextChunkerRules rules)
+    {
+        return char.IsWhiteSpace(value) || rules.VisualQuotes.Contains(value) ||
         (rules.ReportingDashes.Contains(value) && !rules.LexicalHyphens.Contains(value));
+    }
+
 
     /// <summary>Checks whether technical symbols need named reading, preserving ordinary numeric versions, times, and IPv4 endpoints.</summary>
     public static bool ShouldSpeak(ReadOnlySpan<char> text, TextChunkerRules rules)

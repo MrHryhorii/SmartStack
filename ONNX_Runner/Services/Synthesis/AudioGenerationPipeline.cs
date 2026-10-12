@@ -108,7 +108,7 @@ internal static class AudioGenerationPipeline
         // Evaluated as a single float multiply, applying flat compensation without an extra audio pass.
         float boosterLinear = MathF.Pow(10f, ctx.DspConfig.VolumeBoosterDb / 20f);
         float targetVolume = requestedVolume * boosterLinear;
-        bool useVolumeShift = MathF.Abs(targetVolume - 1.0f) > 0.001f;
+        bool useVolumeShift = equalizer != null || MathF.Abs(targetVolume - 1.0f) > 0.001f;
         // =================================================================
         float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
         int silenceSamplesCount = (int)(ctx.ProcessingSampleRate * (ctx.ChunkerConfig.SentencePauseSeconds / currentSpeed));
@@ -413,7 +413,7 @@ internal static class AudioGenerationPipeline
                             currentBuffer = rentedBuffer2;
                             currentLength = r2.Length;
                         }
-                        // Apply dry device profiles after cloning/resampling, before artistic DSP.
+                        // Apply device bandwidth and tonal bands after cloning/resampling, before character DSP.
                         equalizer?.Apply(currentBuffer.AsSpan(0, currentLength));
 
                         // Apply character effects before spatial acoustics.
@@ -427,7 +427,7 @@ internal static class AudioGenerationPipeline
                         // VolumeShifter also acts as the final soft limiter before encoding.
                         if (useVolumeShift)
                         {
-                            VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume);
+                            VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume, forceLimiter: equalizer != null);
                         }
 
                         WriteOutput(currentBuffer.AsSpan(0, currentLength), streamManager, outputResampler, filter);
@@ -444,7 +444,7 @@ internal static class AudioGenerationPipeline
                             // Keep the generated DSP tail at the same final output gain as the main audio.
                             if (useVolumeShift)
                             {
-                                VolumeShifter.ApplyVolume(absoluteSilence.AsSpan(), targetVolume);
+                                VolumeShifter.ApplyVolume(absoluteSilence.AsSpan(), targetVolume, forceLimiter: equalizer != null);
                             }
 
                             WriteOutput(absoluteSilence.AsSpan(), streamManager, outputResampler, filter);
@@ -495,7 +495,7 @@ internal static class AudioGenerationPipeline
                             // Apply the same final master gain to the reverb tail.
                             if (useVolumeShift)
                             {
-                                VolumeShifter.ApplyVolume(probeSpan, targetVolume);
+                                VolumeShifter.ApplyVolume(probeSpan, targetVolume, forceLimiter: equalizer != null);
                             }
 
                             WriteOutput(probeSpan, streamManager, outputResampler, filter);

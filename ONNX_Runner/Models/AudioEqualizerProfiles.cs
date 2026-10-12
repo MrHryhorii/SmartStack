@@ -1,13 +1,18 @@
 using System.Collections.Frozen;
+using System.Collections.ObjectModel;
 
 namespace ONNX_Runner.Models;
 
-/// <summary>Unity-gain, second-order high-pass and low-pass settings for one device class.</summary>
-public sealed record AudioEqualizerProfile(string Id, float HighPassHz, float LowPassHz, float QFactor);
+/// <summary>A broad parametric band; Q controls width and gain describes the center in decibels.</summary>
+public sealed record AudioEqualizerBand(float FrequencyHz, float QFactor, float GainDb);
+
+/// <summary>Playback bandwidth and immutable tonal bands for one device class.</summary>
+public sealed record AudioEqualizerProfile(string Id, float HighPassHz, float LowPassHz, float QFactor,
+    IReadOnlyList<AudioEqualizerBand> Bands);
 
 /// <summary>
 /// Device-class approximations using Google's public profile IDs, with locally defined DSP settings.
-/// Cutoffs describe a dry playback bandwidth; no presence boost, noise, or saturation is added.
+/// Broad tonal bands distinguish device classes without adding noise, saturation, or spatial effects.
 /// </summary>
 public static class AudioEqualizerProfiles
 {
@@ -19,15 +24,18 @@ public static class AudioEqualizerProfiles
 
     public static IReadOnlyList<AudioEqualizerProfile> All { get; } = Array.AsReadOnly<AudioEqualizerProfile>(
     [
-        new("wearable-class-device", 350f, 5000f, ButterworthQ),
-        new("handset-class-device", 180f, 8000f, ButterworthQ),
-        new("headphone-class-device", 40f, 18000f, ButterworthQ),
-        new("small-bluetooth-speaker-class-device", 120f, 10000f, ButterworthQ),
-        new("medium-bluetooth-speaker-class-device", 70f, 14000f, ButterworthQ),
-        new("large-home-entertainment-class-device", 30f, 20000f, ButterworthQ),
-        new("large-automotive-class-device", 90f, 12000f, ButterworthQ),
-        new("telephony-class-application", 300f, 3400f, ButterworthQ)
+        new("wearable-class-device", 350f, 5000f, ButterworthQ, Bands(new AudioEqualizerBand(2500f, .8f, 3f))),
+        new("handset-class-device", 180f, 8000f, ButterworthQ, Bands(new AudioEqualizerBand(400f, .8f, -2f), new(1500f, .8f, 3f))),
+        new("headphone-class-device", 40f, 18000f, ButterworthQ, Bands(new AudioEqualizerBand(120f, .6f, 1.5f), new(4500f, .6f, 1.5f))),
+        new("small-bluetooth-speaker-class-device", 120f, 10000f, ButterworthQ, Bands(new AudioEqualizerBand(250f, .8f, 3f), new(800f, .9f, -2f))),
+        new("medium-bluetooth-speaker-class-device", 70f, 14000f, ButterworthQ, Bands(new AudioEqualizerBand(180f, .7f, 2f), new(4000f, .7f, 1f))),
+        new("large-home-entertainment-class-device", 30f, 20000f, ButterworthQ, Bands(new AudioEqualizerBand(100f, .6f, 2f), new(900f, .7f, -1.5f), new(6000f, .6f, 2f))),
+        new("large-automotive-class-device", 90f, 12000f, ButterworthQ, Bands(new AudioEqualizerBand(180f, .7f, 3f), new(3000f, .8f, -2f))),
+        new("telephony-class-application", 300f, 3400f, ButterworthQ, Bands(new AudioEqualizerBand(1000f, .8f, 3f)))
     ]);
+
+    /// <summary>Protects preset bands from mutation through the public catalog.</summary>
+    private static ReadOnlyCollection<AudioEqualizerBand> Bands(params AudioEqualizerBand[] bands) => Array.AsReadOnly(bands);
 
     public static IReadOnlyList<string> Ids { get; } = Array.AsReadOnly(All.Select(profile => profile.Id).ToArray());
 

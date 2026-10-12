@@ -6,10 +6,10 @@ namespace ONNX_Runner.Services;
 /// </summary>
 public static class VolumeShifter
 {
-    /// <summary>Applies gain in place and soft-limits peaks above the knee to reduce clipping.</summary>
-    public static void ApplyVolume(Span<float> buffer, float volume)
+    /// <summary>Applies gain and soft-limits peaks; forceLimiter also protects boosted DSP at unity gain.</summary>
+    public static void ApplyVolume(Span<float> buffer, float volume, bool forceLimiter = false)
     {
-        if (MathF.Abs(volume - 1.0f) < 0.001f) return;
+        if (!forceLimiter && MathF.Abs(volume - 1.0f) < 0.001f) return;
         // The threshold is where the soft-knee curve starts. Below this, the signal is unchanged.
         const float threshold = 0.8f;
         const float headroom = 1.0f - threshold;

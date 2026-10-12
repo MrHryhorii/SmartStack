@@ -37,6 +37,19 @@ export async function getEnvironments() {
     }
 }
 
+// Fetches supported playback profiles; missing metadata leaves their dashboard controls disabled.
+export async function getEqualizers() {
+    try {
+        const res = await fetch(`${BASE_URL}/equalizers`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        return { equalizers: Array.isArray(data?.equalizers) ? data.equalizers : [] };
+    } catch (e) {
+        console.error('API Error (Equalizers):', e);
+        return { equalizers: [] };
+    }
+}
+
 // Posts a speech request and returns its response, surfacing server validation errors.
 export async function synthesizeSpeech(payload) {
     const res = await fetch(`${BASE_URL}/speech`, {

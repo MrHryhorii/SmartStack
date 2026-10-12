@@ -197,18 +197,27 @@ public class BridgingStream : Stream
     /// <summary>
     /// Read operations are not supported by this write-only stream.
     /// </summary>
-    public override int Read(byte[] buffer, int offset, int count) =>
+    public override int Read(byte[] buffer, int offset, int count)
+    {
         throw new NotSupportedException("BridgingStream is write-only.");
+    }
+
 
     /// <summary>
     /// Seeking is not supported by this forward-only stream.
     /// </summary>
-    public override long Seek(long offset, SeekOrigin origin) =>
+    public override long Seek(long offset, SeekOrigin origin)
+    {
         throw new NotSupportedException("BridgingStream is forward-only.");
+    }
+
 
     /// <summary>
     /// Changing length is not supported by this forward-only stream.
     /// </summary>
-    public override void SetLength(long value) =>
+    public override void SetLength(long value)
+    {
         throw new NotSupportedException("BridgingStream does not support SetLength.");
+    }
+
 }

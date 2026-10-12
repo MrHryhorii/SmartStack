@@ -9,7 +9,7 @@
     <title>Tsubaki TTS Engine</title>
     <!-- Favicon for the application -->
     <link rel="icon" type="image/svg+xml" href="tsubaki.svg">
-    <link rel="stylesheet" href="css/styles.css">
+    <link rel="stylesheet" href="css/styles.css?v=equalizer3">
     <!-- Theme initialization script to handle light/dark mode toggling -->
     <script src="js/theme-init.js"></script>
 </head>
@@ -195,6 +195,21 @@
                         </div>
                     </div>
                 </details>
+                <!-- Ordered playback-device profiles, separate from character and spatial effects -->
+                <details class="advanced-group" id="equalizerGroup">
+                    <summary title="Choose a profile for the device that will play the audio.">Playback Device</summary>
+                    <div class="group-content">
+                        <p class="equalizer-hint" id="equalizerHint">
+                            <span class="help-tooltip" tabindex="0" role="note" aria-label="Equalizer API help"
+                                data-tooltip="API field: equalizer. Accepts an array of profile IDs. Selected profiles apply sequentially from top to bottom.">
+                                Usually select one profile.
+                                <span class="help-mark" aria-hidden="true">ⓘ</span>
+                            </span>
+                        </p>
+                        <ul class="equalizer-list" id="equalizerProfiles" aria-label="Playback profiles"
+                            aria-describedby="equalizerHint"></ul>
+                    </div>
+                </details>
                 <!-- Collapsible controls for character effects, acoustic spaces, and output sample rate -->
                 <details class="advanced-group">
                     <summary title="Character DSP effects, simulated acoustic spaces, and output sample rate.">Audio Effects</summary>
@@ -346,7 +361,7 @@
     </div>
     <!-- Main application script that handles UI interactions, API communication, and audio processing -->
     <script src="js/accordion.js"></script>
-    <script type="module" src="js/app.js?v=samplerate1"></script>
+    <script type="module" src="js/app.js?v=equalizer3"></script>
 
 </body>
 

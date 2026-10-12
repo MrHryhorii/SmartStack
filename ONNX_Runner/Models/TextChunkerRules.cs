@@ -290,14 +290,20 @@ public sealed class TextChunkerRules
     private readonly FrozenDictionary<PunctuationKind, ImmutableArray<Rune>> _semanticMarks;
 
     /// <summary>Returns the immutable marks assigned to one punctuation meaning.</summary>
-    internal ImmutableArray<Rune> GetSemanticMarks(PunctuationKind kind) => _semanticMarks[kind];
+    internal ImmutableArray<Rune> GetSemanticMarks(PunctuationKind kind)
+    {
+        return _semanticMarks[kind];
+    }
 
     // Literal syntax is spoken by name only inside a protected technical span.
-    public bool IsTechnicalSpeechSymbol(char value) =>
-        !char.IsSurrogate(value) && (char.IsPunctuation(value) || char.IsSymbol(value));
+    public bool IsTechnicalSpeechSymbol(char value)
+    {
+        return !char.IsSurrogate(value) && (char.IsPunctuation(value) || char.IsSymbol(value));
+    }
 
     // Unicode operators and currencies do not require an exhaustive glyph list.
     // Other symbols count as technical evidence only when attached to text or numbers.
+
     public bool IsTechnicalSymbolMarker(char value, bool hasText)
     {
         var category = char.GetUnicodeCategory(value);

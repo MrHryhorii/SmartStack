@@ -19,7 +19,10 @@ public static class Dsp
     /// correlated signals. Prefer <see cref="EqualPowerCrossfade"/> for wet/dry mixing.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Lerp(float a, float b, float t) => a + (b - a) * t;
+    public static float Lerp(float a, float b, float t)
+    {
+        return a + (b - a) * t;
+    }
 
     /// <summary>
     /// Computes complementary equal-power gains for a fixed wet/dry mix.
@@ -38,7 +41,9 @@ public static class Dsp
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float EqualPowerCrossfade(float dry, float wet, float dryGain, float wetGain)
-        => dry * dryGain + wet * wetGain;
+    {
+        return dry * dryGain + wet * wetGain;
+    }
 
     /// <summary>
     /// Convenience overload for non-hot-path use. When processing a buffer with a fixed mix,
@@ -57,7 +62,10 @@ public static class Dsp
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float KillDenormal(float x) => MathF.Abs(x) < 1e-15f ? 0f : x;
+    public static float KillDenormal(float x)
+    {
+        return MathF.Abs(x) < 1e-15f ? 0f : x;
+    }
 
     // =========================================================================
     // PHASE & OSCILLATORS
@@ -77,7 +85,10 @@ public static class Dsp
 
     /// <summary>Sine oscillator output from phase in radians.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Sine(float phase) => MathF.Sin(phase);
+    public static float Sine(float phase)
+    {
+        return MathF.Sin(phase);
+    }
 
     /// <summary>
     /// Sawtooth oscillator output in [-1, 1] from phase in [0, 2π).
@@ -85,7 +96,10 @@ public static class Dsp
     /// Formula: y = phase / π - 1
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float Sawtooth(float phase) => phase / MathF.PI - 1f;
+    public static float Sawtooth(float phase)
+    {
+        return phase / MathF.PI - 1f;
+    }
 
     // =========================================================================
     // SATURATION & WAVE-SHAPING
@@ -98,7 +112,10 @@ public static class Dsp
     /// Industry standard for tube/console saturation emulation.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float SoftClip(float x) => MathF.Tanh(x);
+    public static float SoftClip(float x)
+    {
+        return MathF.Tanh(x);
+    }
 
     /// <summary>
     /// Asymmetric soft clipper modeled after a single-transistor common-emitter amplifier.
@@ -177,10 +194,16 @@ public struct NoiseGenerator
     private float _b0, _b1, _b2, _b3, _b4, _b5;
 
     /// <summary>Seeds the PRNG. Must be non-zero for non-degenerate output.</summary>
-    public void Seed(uint seed) => _state = seed == 0u ? 1u : seed;
+    public void Seed(uint seed)
+    {
+        _state = seed == 0u ? 1u : seed;
+    }
 
     /// <summary>Clears the pink noise IIR state. Call between requests to prevent bleed.</summary>
-    public void Reset() => _b0 = _b1 = _b2 = _b3 = _b4 = _b5 = 0f;
+    public void Reset()
+    {
+        _b0 = _b1 = _b2 = _b3 = _b4 = _b5 = 0f;
+    }
 
     /// <summary>
     /// White noise sample in [-0.5, 0.5].
@@ -224,7 +247,10 @@ public struct ThermalDrift
     public float State { get; private set; }
 
     /// <summary>Resets drift to a cold-start (zero) condition.</summary>
-    public void Reset() => State = 0f;
+    public void Reset()
+    {
+        State = 0f;
+    }
 
     /// <summary>
     /// Advances the drift state by one sample.
@@ -260,7 +286,10 @@ public struct DcBlocker(int sampleRate)
     }
 
     /// <summary>Clears the DC blocker's input and output history.</summary>
-    public void Reset() => _x1 = _y1 = 0f;
+    public void Reset()
+    {
+        _x1 = _y1 = 0f;
+    }
 }
 
 /// <summary>
@@ -337,7 +366,10 @@ public struct TapeDropout
     private float _currentDepth;
 
     /// <summary>Clears the oscillator phase and smoothed modulation depth.</summary>
-    public void Reset() => _phase = _targetDepth = _currentDepth = 0f;
+    public void Reset()
+    {
+        _phase = _targetDepth = _currentDepth = 0f;
+    }
 
     /// <summary>
     /// Applies a slew-limited stochastic volume dip to the input.
@@ -393,7 +425,10 @@ public struct FeedForwardCompressor
     private float _envelope;
 
     /// <summary>Clears the tracked envelope before processing a new signal.</summary>
-    public void Reset() => _envelope = 0f;
+    public void Reset()
+    {
+        _envelope = 0f;
+    }
 
     /// <summary>
     /// Converts a time constant in milliseconds to a one-pole IIR coefficient.
@@ -401,7 +436,9 @@ public struct FeedForwardCompressor
     /// coeff = exp(-1 / (timeMs * sampleRate / 1000))
     /// </summary>
     public static float TimeToCoeff(float timeMs, int sampleRate)
-        => MathF.Exp(-1f / (timeMs * sampleRate / 1000f));
+    {
+        return MathF.Exp(-1f / (timeMs * sampleRate / 1000f));
+    }
 
     /// <summary>
     /// Processes one sample through the compressor.

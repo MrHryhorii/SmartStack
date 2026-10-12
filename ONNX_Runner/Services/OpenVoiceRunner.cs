@@ -56,10 +56,14 @@ public partial class OpenVoiceRunner : IDisposable
     /// <summary>
     /// Returns the sample rate expected by the OpenVoice models.
     /// </summary>
-    public int GetTargetSamplingRate() => _config.Data.SamplingRate;
+    public int GetTargetSamplingRate()
+    {
+        return _config.Data.SamplingRate;
+    }
 
     // Represents the Color Converter's technical concurrency limit (pool size for DML,
     // int.MaxValue for CUDA/CPU). Single source of truth, mirroring PiperRunner.ConcurrencyCapacity.
+
     public int ColorConcurrencyCapacity { get; private set; }
 
     /// <summary>Initializes tone extraction/color sessions and their concurrency gate from model and hardware settings.</summary>
@@ -358,9 +362,9 @@ public partial class OpenVoiceRunner : IDisposable
     // --- EMBEDDING EXTRACTION & FINGERPRINT MANAGEMENT ---
 
     /// <summary>
-/// Extracts a voice embedding matching the configured channel count from a [frames, bins] spectrogram.
-/// Called sequentially during startup before the single extractor session is unloaded.
-/// </summary>
+    /// Extracts a voice embedding matching the configured channel count from a [frames, bins] spectrogram.
+    /// Called sequentially during startup before the single extractor session is unloaded.
+    /// </summary>
     public float[] ExtractToneColor(float[,] spectrogram)
     {
         ArgumentNullException.ThrowIfNull(spectrogram);
@@ -500,9 +504,9 @@ public partial class OpenVoiceRunner : IDisposable
     }
 
     /// <summary>
-/// Converts a caller-owned [bins, frames] spectrogram using the source and target voice embeddings.
-/// Returns pooled mono PCM; the caller must return Buffer to ArrayPool&lt;float&gt;.Shared.
-/// </summary>
+    /// Converts a caller-owned [bins, frames] spectrogram using the source and target voice embeddings.
+    /// Returns pooled mono PCM; the caller must return Buffer to ArrayPool&lt;float&gt;.Shared.
+    /// </summary>
     public (float[] Buffer, int Length) ApplyToneColor(
         float[] transposedSpectrogram,
         int frames,

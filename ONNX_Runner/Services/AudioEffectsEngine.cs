@@ -420,22 +420,26 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     /// <summary>Selects the wet/dry routing policy used to mix each voice effect with the source signal.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static RoutingMode GetRoutingMode(VoiceEffectType type) => type switch
+    private static RoutingMode GetRoutingMode(VoiceEffectType type)
     {
-        VoiceEffectType.Telephone => RoutingMode.ParallelCrossfade,
-        VoiceEffectType.Overdrive => RoutingMode.ParallelCrossfade,
-        VoiceEffectType.Bitcrusher => RoutingMode.ParallelCrossfade,
-        VoiceEffectType.RingModulator => RoutingMode.ParallelCrossfade,
-        VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
-        VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
-        VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
-        VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
-        VoiceEffectType.TacticalRadio => RoutingMode.FilteredCrossfade,
-        VoiceEffectType.FmRadio => RoutingMode.FilteredCrossfade,
-        VoiceEffectType.G711MuLaw => RoutingMode.CodecCrossfade,
-        VoiceEffectType.G711ALaw => RoutingMode.CodecCrossfade,
-        _ => RoutingMode.StrictInsert
-    };
+        return type switch
+        {
+            VoiceEffectType.Telephone => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.Overdrive => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.Bitcrusher => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.RingModulator => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
+            VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
+            VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
+            VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
+            VoiceEffectType.TacticalRadio => RoutingMode.FilteredCrossfade,
+            VoiceEffectType.FmRadio => RoutingMode.FilteredCrossfade,
+            VoiceEffectType.G711MuLaw => RoutingMode.CodecCrossfade,
+            VoiceEffectType.G711ALaw => RoutingMode.CodecCrossfade,
+            _ => RoutingMode.StrictInsert
+        };
+    }
+
 
     /// <summary>
     /// Configures effect-specific filters and coefficients that remain constant for the effect type.
@@ -592,26 +596,30 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     /// <summary>Dispatches one sample to the selected voice effect, retaining its per-request DSP state.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float Process(VoiceEffectType type, float x, float amount) => type switch
+    private float Process(VoiceEffectType type, float x, float amount)
     {
-        VoiceEffectType.Telephone => Telephone(x, amount),
-        VoiceEffectType.Overdrive => Overdrive(x, amount),
-        VoiceEffectType.Bitcrusher => Bitcrusher(x, amount),
-        VoiceEffectType.RingModulator => RingMod(x, amount),
-        VoiceEffectType.Flanger => Flanger(x, amount),
-        VoiceEffectType.Chorus => Chorus(x, amount),
-        VoiceEffectType.LoFiTape => LoFiTape(x, amount),
-        VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
-        VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
-        VoiceEffectType.FmRadio => FmRadio(x, amount),
-        VoiceEffectType.G711MuLaw => G711Codec(x, amount),
-        VoiceEffectType.G711ALaw => G711Codec(x, amount),
-        _ => x
-    };
+        return type switch
+        {
+            VoiceEffectType.Telephone => Telephone(x, amount),
+            VoiceEffectType.Overdrive => Overdrive(x, amount),
+            VoiceEffectType.Bitcrusher => Bitcrusher(x, amount),
+            VoiceEffectType.RingModulator => RingMod(x, amount),
+            VoiceEffectType.Flanger => Flanger(x, amount),
+            VoiceEffectType.Chorus => Chorus(x, amount),
+            VoiceEffectType.LoFiTape => LoFiTape(x, amount),
+            VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
+            VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
+            VoiceEffectType.FmRadio => FmRadio(x, amount),
+            VoiceEffectType.G711MuLaw => G711Codec(x, amount),
+            VoiceEffectType.G711ALaw => G711Codec(x, amount),
+            _ => x
+        };
+    }
 
     // =========================================================================
     // EFFECT ALGORITHMS
     // =========================================================================
+
 
     /// <summary>
     /// Simulates the characteristic distortion and line noise of a POTS telephone connection.

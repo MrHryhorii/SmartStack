@@ -42,7 +42,7 @@ the ONNX weights or start the server.
 
 `ServerConfigurationRegression` references the actual engine assembly; the commands
 below select the CPU build. Its
-default checks need no model weights or native synthesis library. Equalizer checks use deterministic PCM to verify dry filtering without generated noise, saturation, or resonant gain peaks. Optional waveform
+default checks need no model weights or native synthesis library. Equalizer checks use deterministic PCM to verify bandwidth and broad tonal coloration without generated noise or saturation. Optional waveform
 checks need a matching Piper `.onnx` / `.onnx.json` pair and the native eSpeak
 dependencies used by the engine. They run the public synthesis pipeline without
 starting the HTTP server. The two-path mode leaves cloning disabled; adding the

@@ -16,7 +16,7 @@ internal static class EqualizerChecks
         "telephony-class-application"
     ];
 
-    /// <summary>Checks request semantics, dry frequency response, streaming state, and allocation contracts.</summary>
+    /// <summary>Checks request semantics, colored frequency response, streaming state, and allocation contracts.</summary>
     internal static void Run(Action<string, Action> check)
     {
         check("Equalizer discovery lists exactly the eight public device-profile IDs", () =>
@@ -107,20 +107,22 @@ internal static class EqualizerChecks
             double low = ToneGain([ExpectedIds[7]], 48000, 100);
             double middle = ToneGain([ExpectedIds[7]], 48000, 1000);
             double high = ToneGain([ExpectedIds[7]], 48000, 10000);
-            Require(low < .15 && middle > .95 && middle <= 1 && high < .1,
-                $"Unexpected dry telephone response: {low:F5}, {middle:F5}, {high:F5}.");
+            Require(low < .15 && middle > 1.3 && middle < 1.45 && high < .1,
+                $"Unexpected colored telephone response: {low:F5}, {middle:F5}, {high:F5}.");
         });
 
         foreach (string id in ExpectedIds)
         {
-            check($"Equalizer {id} has no resonant gain hump", () =>
+            check($"Equalizer {id} has bounded broad coloration", () =>
             {
-                foreach (int frequency in new[] { 20, 40, 70, 120, 180, 300, 350, 500, 1000, 2000,
-                    3400, 5000, 8000, 10000, 14000, 18000, 22000 })
+                foreach (int frequency in new[] { 20, 40, 70, 120, 180, 250, 300, 350, 500, 800,
+                    900, 1000, 1500, 2000, 2500, 3000, 3400, 4500, 5000, 6000, 8000, 10000, 18000, 22000 })
                 {
                     double gain = ToneGain([id], 48000, frequency);
-                    Require(double.IsFinite(gain) && gain <= 1.0005, $"Gain peak at {frequency} Hz: {gain:F6}.");
+                    Require(double.IsFinite(gain) && gain <= 1.65, $"Excessive gain at {frequency} Hz: {gain:F6}.");
                 }
+                Require(AudioEqualizerProfiles.Find(id)!.Bands is ICollection<AudioEqualizerBand> { IsReadOnly: true },
+                    "Catalog exposes mutable tonal bands.");
             });
             check($"Equalizer {id} remains linear and adds no generated sound", () =>
             {
@@ -158,6 +160,57 @@ internal static class EqualizerChecks
                 });
             }
         }
+
+        // Independent listening targets: each device must retain its intended broad accent.
+        foreach (var target in new (int Index, int Frequency, double Minimum, double Maximum)[]
+        {
+            (0, 2500, 1.25, 1.5), (1, 1500, 1.3, 1.5), (2, 120, 1.1, 1.3),
+            (3, 250, 1.2, 1.5), (4, 180, 1.15, 1.4), (5, 900, .75, .95),
+            (6, 180, 1.2, 1.5), (7, 1000, 1.3, 1.45)
+        })
+        {
+            check($"Equalizer {ExpectedIds[target.Index]} retains its characteristic band", () =>
+            {
+                double gain = ToneGain([ExpectedIds[target.Index]], 48000, target.Frequency);
+                Require(gain > target.Minimum && gain < target.Maximum, $"Missing tonal character: {gain:F6}.");
+            });
+        }
+        check("Repeated boosted profiles accumulate their measured gain", () =>
+        {
+            double once = ToneGain([ExpectedIds[7]], 48000, 1000);
+            double repeated = ToneGain(Enumerable.Repeat(ExpectedIds[7], 16).ToArray(), 48000, 1000);
+            Require(Math.Abs(repeated / Math.Pow(once, 16) - 1) < .001,
+                "Repeated boosts were normalized, clipped, or changed between passes.");
+        });
+        foreach (string id in ExpectedIds)
+        {
+            check($"Sixteen repetitions of {id} remain finite across chunks", () =>
+            {
+                float[] samples = Signal(48000);
+                var engine = AudioEqualizer.Create(Enumerable.Repeat(id, 16).ToArray(), 24000)!;
+                engine.Apply(samples);
+                Require(samples.All(float.IsFinite), "Repeated boosts overflowed PCM.");
+            });
+        }
+
+        check("Final limiter protects repeated boosts at unity volume without changing filter linearity", () =>
+        {
+            float[] samples = new float[24000];
+            for (int i = 0; i < samples.Length; i++) samples[i] = (float)(.5 * Math.Sin(2 * Math.PI * 1000 * i / 24000));
+            AudioEqualizer.Create(Enumerable.Repeat(ExpectedIds[7], 16).ToArray(), 24000)!.Apply(samples);
+            Require(samples.Max(Math.Abs) > 1, "Fixture does not exercise accumulated boost.");
+            VolumeShifter.ApplyVolume(samples, 1f, forceLimiter: true);
+            Require(samples.All(float.IsFinite) && samples.Max(Math.Abs) < 1f, "Boosted PCM exceeded encoder headroom.");
+            float[] unaffected = [.1f, -.7f, 1.2f];
+            VolumeShifter.ApplyVolume(unaffected, 1f);
+            Require(unaffected.AsSpan().SequenceEqual(new float[] { .1f, -.7f, 1.2f }),
+                "The legacy unity-volume bypass changed without active equalization.");
+            float[] quiet = [.1f, -.7f];
+            VolumeShifter.ApplyVolume(quiet, 1f, forceLimiter: true);
+            Require(quiet.AsSpan().SequenceEqual(new float[] { .1f, -.7f }), "Limiter changed samples below its knee.");
+            VolumeShifter.ApplyVolume(samples, 0f, forceLimiter: true);
+            Require(samples.All(sample => sample == 0), "Active equalization defeated muted volume.");
+        });
 
         check("Equalizer state survives irregular chunks, empty buffers, and sentence pauses", () =>
         {

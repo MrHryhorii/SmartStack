@@ -13,7 +13,10 @@ internal static class AudioSampleRate
 
     /// <summary>Preserves null and zero sentinels; clamps every other rate to the supported request range.</summary>
     internal static int? Clamp(int? value)
-        => value is null or 0 ? value : Math.Clamp(value.Value, Minimum, Maximum);
+    {
+        return value is null or 0 ? value : Math.Clamp(value.Value, Minimum, Maximum);
+    }
+
 
     /// <summary>Selects the nearest codec input rate, choosing the lower rate on ties; unrestricted formats retain the input.</summary>
     internal static int Resolve(int sampleRate, AudioFormat format)

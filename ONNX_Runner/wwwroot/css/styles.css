@@ -149,7 +149,7 @@ body {
 
 @media (max-width: 768px) {
     .layout {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         grid-template-areas:
             "main"
             "side"
@@ -422,6 +422,68 @@ input[type="checkbox"] {
     margin: 0;
     border-radius: 4px;
 }
+
+/* Ordered playback profiles keep selection labels and movement buttons distinct. */
+.equalizer-hint {
+    margin: 0 0 var(--space-2);
+    color: var(--text-muted);
+    font-size: 0.8rem;
+}
+
+.equalizer-hint .help-tooltip { display: inline-block; }
+.equalizer-hint .help-tooltip::after { max-width: min(300px, calc(100vw - 96px)); }
+
+.equalizer-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: grid;
+    gap: var(--space-1);
+}
+
+.equalizer-profile {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-2);
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+}
+
+.equalizer-profile:has(input:checked) { border-color: var(--accent); }
+
+.equalizer-profile label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: var(--text-main);
+    line-height: 1.3;
+    cursor: pointer;
+}
+
+.equalizer-profile input { flex-shrink: 0; }
+.equalizer-label { min-width: 0; display: grid; gap: 2px; }
+.equalizer-label span, .equalizer-id { overflow-wrap: anywhere; }
+.equalizer-id { color: var(--text-muted); font-size: 0.7rem; user-select: text; }
+.equalizer-moves { display: flex; gap: var(--space-1); }
+
+.equalizer-move {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--input-bg);
+    color: var(--accent);
+    font: inherit;
+    cursor: pointer;
+}
+
+.equalizer-move:hover:not(:disabled) { background: var(--bg-base); }
+.equalizer-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.equalizer-move:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* --- Language selector & generation options --- */
 .generation-options {

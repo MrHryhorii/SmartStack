@@ -18,7 +18,8 @@ public sealed class AudioEqualizer
     /// Creates filters once per request for the first MaxProfilesPerRequest list entries,
     /// preserving order and repetitions. Unknown IDs and nulls still occupy list positions.
     /// Returns null for missing, empty, or entirely unsupported lists without constructing an engine.
-    /// Low-pass cutoffs at or above Nyquist are omitted because they exceed the available band.
+    /// Low-pass cutoffs at or above Nyquist and tonal bands too close to it are omitted.
+    /// Boosts accumulate across repeated profiles; no per-chunk normalization or limiting is applied.
     /// </summary>
     public static AudioEqualizer? Create(IReadOnlyList<string?>? profileIds, int sampleRate)
     {
@@ -33,6 +34,8 @@ public sealed class AudioEqualizer
             if (profile == null) continue;
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleRate);
             count += profile.LowPassHz < nyquist ? 2 : 1;
+            foreach (var band in profile.Bands)
+                if (band.FrequencyHz < nyquist * .95f) count++;
         }
         if (count == 0) return null;
 
@@ -48,6 +51,12 @@ public sealed class AudioEqualizer
             filters[index++] = BiQuadFilter.HighPassFilter(sampleRate, highPass, profile.QFactor);
             if (profile.LowPassHz < nyquist)
                 filters[index++] = BiQuadFilter.LowPassFilter(sampleRate, profile.LowPassHz, profile.QFactor);
+            // Omit unavailable bands rather than shifting their character into a low-rate voice.
+            foreach (var band in profile.Bands)
+            {
+                if (band.FrequencyHz >= nyquist * .95f) continue;
+                filters[index++] = BiQuadFilter.PeakingEQ(sampleRate, band.FrequencyHz, band.QFactor, band.GainDb);
+            }
         }
         return new AudioEqualizer(filters);
     }

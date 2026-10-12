@@ -184,12 +184,16 @@ public class SpatialEffectsEngine
     /// <summary>Converts an RT60 decay target and feedback delay into the per-round-trip gain.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static float Rt60ToFeedback(float rt60Seconds, float delaySeconds)
-        => MathF.Pow(10f, -3f * delaySeconds / rt60Seconds);
+    {
+        return MathF.Pow(10f, -3f * delaySeconds / rt60Seconds);
+    }
 
     /// <summary>Converts an acoustic round-trip distance in meters to a delay in samples.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float DistanceToRoundTripSamples(float distanceMeters)
-        => (2f * distanceMeters / SpeedOfSound) * _sampleRate;
+    {
+        return (2f * distanceMeters / SpeedOfSound) * _sampleRate;
+    }
 
     /// <summary>Calculates delay capacity for a target duration, including headroom and power-of-two rounding.</summary>
     private int SamplesFor(float targetMs)
