@@ -53,6 +53,7 @@
 ========================================================================== */
 :root[data-theme="light"] {
     --bg-base:      #e8eaed;
+    --control-hover: var(--bg-base);
     --bg-panel:     #f6f7f9;
     --text-main:    #1a1c22;
     --text-muted:   #5c6472;
@@ -73,6 +74,7 @@
 :root[data-theme="dark"] {
     color-scheme: dark;
     --bg-base:      #0b0a1a;
+    --control-hover: #1b1830;
     --bg-panel:     #14122b;
     --text-main:    #f8f8f8;
     --text-muted:   #8b8a9e;
@@ -242,7 +244,7 @@ details.advanced-group summary::-webkit-details-marker {
 }
 
 details.advanced-group summary:hover {
-    background: var(--bg-base);
+    background: var(--control-hover);
 }
 
 details[open].advanced-group summary {
@@ -486,7 +488,7 @@ input[type="checkbox"] {
     cursor: pointer;
 }
 
-.equalizer-move:hover:not(:disabled) { background: var(--bg-base); }
+.equalizer-move:hover:not(:disabled) { background: var(--control-hover); }
 .equalizer-move:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .equalizer-move:disabled { opacity: 0.5; cursor: not-allowed; }
 
