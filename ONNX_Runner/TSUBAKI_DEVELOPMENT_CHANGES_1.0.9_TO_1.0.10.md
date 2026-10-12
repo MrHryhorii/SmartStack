@@ -4,7 +4,7 @@
 
 Початок роботи: стабільна версія 1.0.9 та перший експериментальний архів з ідеями покращення скорочень, меж речень і вимови технічного тексту.
 
-Поточна база: `ONNX_Runner-1.0.10-current.zip`. Останній окремий патч: `ONNX_Runner-1.0.10-soft-hover-changes.zip`. Нові доповнення після первинного запису журналу наведено в розділах 11–33.
+Поточна база: `ONNX_Runner-1.0.10-current.zip`. Останній окремий патч: `ONNX_Runner-1.0.10-device-profile-order-changes.zip`. Нові доповнення після первинного запису журналу наведено в розділах 11–34.
 
 Статус: робочий стан розробки. Версію збірки встановлено в `1.0.10`; підготовка та публікація релізу ще не виконуються. Журнал потрібен для збереження історії змін і майбутніх нотаток релізу. Наступні зміни слід дописувати окремими пунктами.
 
@@ -568,3 +568,14 @@ Chromium: 14 перевірок пройдено для двох типів ко
 За результатом візуальної перевірки інтерфейсу користувачем hover-фон #292440 виявився надто світлим і близьким до рамки. Спільний --control-hover зменшено до #1b1830 для акордеонів і кнопок переміщення профілів. Рамки, текст, світла тема та поведінка контролів не змінено. Оновлено HTML cache keys. Перевірено точкову заміну CSS та незмінність решти джерел; браузерний прогін не повторювався для зміни лише відтінку.
 
 Патч `ONNX_Runner-1.0.10-soft-hover-changes.zip` містить styles.css, index.html та журнал поверх попереднього dark-hover патча. Повний архів та окремий журнал синхронізовано.
+
+
+## 34. Профілі пристроїв після character/spatial DSP
+
+- Device equalizer перенесено після character effects та spatial environment, перед master gain/limiter і вихідним ресемплінгом. Такий самий порядок застосовується на паузах між реченнями. Завершальний reverb tail тепер теж проходить через той самий request-local equalizer: раніше цей шлях не викликав його. Поріг завершення хвоста вимірюється на фактичному виході після профілю та gain; наявний cap 4 секунди незмінний. Character effects, які можуть генерувати шум, як і раніше не запускаються на завершальних silent probes.
+- У фронтенді Playback Device розміщено після Audio Effects. Шкала профілів, їхні ID, налаштування, серверний дефолт, порядок масиву та ліміт 16 незмінні. Оновлено cache keys.
+- У README та README тестів актуалізовано порядок DSP. У waveform references перенесено equalizer після character/spatial processing. Додано незалежні послідовні waveform-порівняння для всіх восьми одиночних профілів, пари handset/telephony та всіх восьми разом. Для кожної групи перевірено RingModulator + LivingRoom, повний ConcreteHall tail, фільтрацію кожного tail probe, збереження тривалості body, 4-секундний cap, finite PCM, відсутність перевищення амплітуди та збіг buffered/streamed PCM.
+
+Перевірки цього етапу: серверні керовані та реальні CPU waveform cases разом — 437/437; TextChunkerRegression — 784/784; LanguageSegmentationRegression — 370/370; PunctuationRegression — 75/75; TextAnalysisAllocations — 18/18 бюджетів; TechnicalSpeechIntegration — 401/401; Chromium — 20 перевірок, включно з новим порядком акордеонів. Native waveform synthesis виконано з en_US-hfc_female-medium без OpenVoice-клонування. Cloning fixtures цього етапу не запускалися. Тести використовують реальну production pipeline; browser API calls окремо перехоплені контрольними fixtures.
+
+Патч `ONNX_Runner-1.0.10-device-profile-order-changes.zip` містить 6 змінених файлів: Services/Synthesis/AudioGenerationPipeline.cs, Tests/ServerConfigurationRegression/EqualizerSynthesisChecks.cs, Tests/README.md, wwwroot/index.html, readMe.md та журнал. Він накладається поверх останнього soft-hover патча. Повний актуальний архів та окремий журнал синхронізовано; приватні runtime/model files до архівів не включено.

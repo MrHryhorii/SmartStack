@@ -26,7 +26,7 @@ internal static class EqualizerSynthesisChecks
 
         // Uses deterministic inference and several sentences to exercise continuous per-request filters.
         async Task<byte[]> Read(string?[]? profiles = null, string effect = "None", string environment = "None",
-            AudioFormat format = AudioFormat.Wav, bool stream = false, int rate = 0)
+            AudioFormat format = AudioFormat.Wav, bool stream = false, int rate = 0, bool extendTail = false)
         {
             var request = new SynthesisRequest
             {
@@ -34,7 +34,7 @@ internal static class EqualizerSynthesisChecks
                 Voice = "piper_base", Speed = 1, Format = format, Stream = stream,
                 EarlySplit = true, Language = config.Espeak.Voice, NoiseScale = 0, NoiseW = 0,
                 Pitch = 1, Volume = 1, Equalizer = profiles, Effect = effect, EffectIntensity = .5f,
-                Environment = environment, EnvironmentIntensity = .25f, ExtendReverbTail = false,
+                Environment = environment, EnvironmentIntensity = .25f, ExtendReverbTail = extendTail,
                 SampleRate = rate
             };
             using var body = new MemoryStream();
@@ -131,20 +131,20 @@ internal static class EqualizerSynthesisChecks
                 ("RingModulator", "None"), ("None", "LivingRoom"), ("RingModulator", "LivingRoom")
             })
             {
-                await check($"CPU DSP order remains equalizer then {effect} then {environment}", async () =>
+                await check($"CPU DSP order remains {effect} then {environment} then equalizer", async () =>
                 {
                     float[] expected = (float[])drySamples.Clone();
-                    AudioEqualizer.Create(["telephony-class-application"], config.Audio.SampleRate)!.Apply(expected);
                     if (effect != "None") new AudioEffectsEngine(effects, config.Audio.SampleRate)
                         .ApplyEffect(expected, VoiceEffectType.RingModulator, .5f);
                     if (environment != "None") new SpatialEffectsEngine(config.Audio.SampleRate)
                         .ApplyEnvironment(expected, SpatialEnvironment.LivingRoom, .25f);
+                    AudioEqualizer.Create(["telephony-class-application"], config.Audio.SampleRate)!.Apply(expected);
                     float[] actual = WavSamples(await Read(["telephony-class-application"], effect, environment));
                     VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
                     Near(expected, actual);
                 });
             }
-            await check("CPU equalizer and downstream effects preserve streamed PCM exactly", async () =>
+            await check("CPU final device profiles preserve streamed PCM exactly", async () =>
             {
                 string[] ids = ["wearable-class-device", "handset-class-device"];
                 byte[] buffered = await Read(ids, "RingModulator", "LivingRoom", AudioFormat.Pcm);
@@ -161,6 +161,51 @@ internal static class EqualizerSynthesisChecks
                 }
                 finally { effects.EnableGlobalEffects = true; }
             });
+
+            foreach (string[] ids in AudioEqualizerProfiles.Ids.Select(id => new[] { id }).Concat(new[]
+            {
+                new[] { "handset-class-device", "telephony-class-application" },
+                AudioEqualizerProfiles.Ids.ToArray()
+            }))
+            {
+                await check($"CPU final cascade {string.Join(",", ids)} colors effects and reverb", async () =>
+                {
+                    float[] expected = (float[])drySamples.Clone();
+                    new AudioEffectsEngine(effects, config.Audio.SampleRate).ApplyEffect(expected, VoiceEffectType.RingModulator, .5f);
+                    new SpatialEffectsEngine(config.Audio.SampleRate).ApplyEnvironment(expected, SpatialEnvironment.LivingRoom, .25f);
+                    AudioEqualizer.Create(ids, config.Audio.SampleRate)!.Apply(expected);
+                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
+                    float[] actual = WavSamples(await Read(ids, "RingModulator", "LivingRoom"));
+                    Near(expected, actual, .0002f);
+                });
+                await check($"CPU final cascade {string.Join(",", ids)} filters complete reverb tails", async () =>
+                {
+                    float[] actual = WavSamples(await Read(ids, environment: "ConcreteHall", extendTail: true));
+                    Require(actual.Length > drySamples.Length && actual.Length <= drySamples.Length + config.Audio.SampleRate * 4,
+                        "Tail disappeared, changed speech length, or exceeded the cap.");
+                    var spatial = new SpatialEffectsEngine(config.Audio.SampleRate);
+                    var equalizer = AudioEqualizer.Create(ids, config.Audio.SampleRate)!;
+                    float[] expected = (float[])drySamples.Clone();
+                    spatial.ApplyEnvironment(expected, SpatialEnvironment.ConcreteHall, .25f);
+                    equalizer.Apply(expected);
+                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
+                    Near(expected, actual.AsSpan(0, expected.Length), .0002f);
+                    int probeLength = config.Audio.SampleRate / 50;
+                    for (int offset = expected.Length; offset < actual.Length; offset += probeLength)
+                    {
+                        int length = Math.Min(probeLength, actual.Length - offset);
+                        float[] probe = new float[length];
+                        spatial.ApplyEnvironment(probe, SpatialEnvironment.ConcreteHall, .25f);
+                        equalizer.Apply(probe);
+                        VolumeShifter.ApplyVolume(probe, 1f, forceLimiter: true);
+                        Near(probe, actual.AsSpan(offset, length), .0002f);
+                    }
+                    Require(actual.All(float.IsFinite) && actual.Max(Math.Abs) <= 1f, "Filtered reverb produced invalid PCM.");
+                    byte[] buffered = await Read(ids, environment: "ConcreteHall", format: AudioFormat.Pcm, extendTail: true);
+                    byte[] streamed = await Read(ids, environment: "ConcreteHall", format: AudioFormat.Pcm, stream: true, extendTail: true);
+                    Require(buffered.AsSpan().SequenceEqual(streamed), "Tail filtering depends on delivery mode.");
+                });
+            }
 
             byte[] nativePcm = await Read(["telephony-class-application"], "RingModulator", "LivingRoom", AudioFormat.Pcm);
             float[] nativeSamples = PcmSamples(nativePcm);

@@ -406,7 +406,7 @@ If the cloned voice is still too quiet, compensate using `DefaultVolume` or `Vol
 }
 ```
 
-The volume adjustment is applied as a final gain stage with soft-knee limiting **after character and spatial effects, before encoding**. The cloning model itself always works from the natural, un-boosted waveform.
+The volume adjustment is applied as a final gain stage with soft-knee limiting **after character effects, spatial environments, and device profiles, before encoding**. The cloning model itself always works from the natural, un-boosted waveform.
 
 ---
 
@@ -467,7 +467,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 
 #### Available Equalizer Profiles
 
-`equalizer` accepts an array of profile IDs. Omitted or `null` values use `EffectsSettings.DefaultEqualizer`; an explicit `[]` disables this layer for the request. Profiles apply sequentially in array order after voice cloning and before character and spatial effects; repeated IDs apply again. Arrays longer than 16 entries are truncated to the first 16, including unknown names and null entries.
+`equalizer` accepts an array of profile IDs. Omitted or `null` values use `EffectsSettings.DefaultEqualizer`; an explicit `[]` disables this layer for the request. Profiles apply sequentially in array order after voice cloning, character effects, and spatial environments, including reverb tails, before final gain and output resampling; repeated IDs apply again. Arrays longer than 16 entries are truncated to the first 16, including unknown names and null entries.
 
 | Profile ID | Playback device | Filter settings |
 | --- | --- | --- |
@@ -640,7 +640,7 @@ Tsubaki requests override it with `samplerate`; an explicit `0` bypasses the ser
 
 Applies a fixed gain correction in decibels underneath `DefaultVolume`/`volume`. It is intended as a baseline calibration for the engine's output rather than a per-request volume preference. A value of `0` disables the correction.
 
-The booster and `volume` are applied together after character and spatial effects, before encoding.
+The booster and `volume` are applied together after character effects, spatial environments, and device profiles, before encoding.
 `VolumeBoosterDb` is server-only; use `volume` for per-request adjustments.
 `GET /tsbk/server/status` reports the boost and combined default gain.
 

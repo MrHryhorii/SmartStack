@@ -413,14 +413,14 @@ internal static class AudioGenerationPipeline
                             currentBuffer = rentedBuffer2;
                             currentLength = r2.Length;
                         }
-                        // Apply device bandwidth and tonal bands after cloning/resampling, before character DSP.
-                        equalizer?.Apply(currentBuffer.AsSpan(0, currentLength));
-
                         // Apply character effects before spatial acoustics.
                         effectsEngine?.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
 
                         // Apply spatial acoustics AFTER character effects.
                         spatialEngine?.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
+
+                        // Device profiles color the completed signal, including generated DSP sound.
+                        equalizer?.Apply(currentBuffer.AsSpan(0, currentLength));
 
                         // Apply final output gain AFTER all DSP. This keeps effect drive, compression,
                         // generated noise and spatial tails independent from the user's volume setting.
@@ -436,10 +436,10 @@ internal static class AudioGenerationPipeline
                         if (chunk.IsSentenceFinished)
                         {
                             Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
-                            // Advance the same filters during pauses; keep downstream DSP tails active.
-                            equalizer?.Apply(absoluteSilence.AsSpan());
+                            // Advance the same DSP state during pauses, then filter the resulting tails.
                             effectsEngine?.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
                             spatialEngine?.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
+                            equalizer?.Apply(absoluteSilence.AsSpan());
 
                             // Keep the generated DSP tail at the same final output gain as the main audio.
                             if (useVolumeShift)
@@ -469,7 +469,7 @@ internal static class AudioGenerationPipeline
                 // REVERB TAIL EXTENSION (Flushes spatial acoustics once at the end)
                 // =================================================================
                 // Drains residual reverb until output drops below the configured silence floor.
-                // Strictly spatial-only: excludes character effects to avoid spinning on static noise floors.
+                // Drain spatial state through device filters; exclude character effects that generate noise.
                 // Priority: request.ExtendReverbTail -> ctx.EffectsConfig.ExtendReverbTailOnFinish.
                 bool extendTail = request.ExtendReverbTail ?? ctx.EffectsConfig.ExtendReverbTailOnFinish;
                 if (extendTail && spatialEngine != null)
@@ -491,6 +491,7 @@ internal static class AudioGenerationPipeline
                             var probeSpan = tailProbe.AsSpan(0, probeSamples);
                             // effectsEngine intentionally NOT applied here — see note above.
                             spatialEngine.ApplyEnvironment(probeSpan, envType, envIntensity);
+                            equalizer?.Apply(probeSpan);
 
                             // Apply the same final master gain to the reverb tail.
                             if (useVolumeShift)
