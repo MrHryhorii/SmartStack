@@ -52,6 +52,11 @@ Managed character-effect checks compare every G.711 PCM16 input and decoded code
 with independent ITU reference digests. Rolling decoder-glitch checks cover capture
 duration, low/high-frequency detection, live replacement, streaming partitions, and
 allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
+Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
+and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
+reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD
+state are checked separately. Noise-level tolerances allow statistical variation;
+these checks do not assess subjective sound quality.
 
 The engine project excludes `Tests/**` from compilation and publishing. Listing
 test projects in the solution adds build work when building the whole solution;

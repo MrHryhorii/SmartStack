@@ -38,10 +38,10 @@ public enum VoiceEffectType
     /// <summary>Civilian handheld radio effect with an FM amplitude limiter and signal-dependent noise floor.</summary>
     FmRadio,
 
-    /// <summary>Classic US telephony codec (μ-law) creating a gritty, retro 8-bit mainframe AI voice.</summary>
+    /// <summary>G.711 μ-law telephony companding; finer quantization near silence than A-law.</summary>
     G711MuLaw,
 
-    /// <summary>European telephony codec (A-law) creating a sterile, clinical cyborg or droid voice with dead silences.</summary>
+    /// <summary>G.711 A-law telephony companding; a different quantization grid with similar telephone coloration.</summary>
     G711ALaw
 }
 

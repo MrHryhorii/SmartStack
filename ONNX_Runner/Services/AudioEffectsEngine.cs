@@ -1,5 +1,6 @@
 using ONNX_Runner.Models;
 using System.Runtime.CompilerServices;
+using System.Numerics;
 using NAudio.Dsp;
 
 namespace ONNX_Runner.Services;
@@ -15,7 +16,7 @@ namespace ONNX_Runner.Services;
 /// DSP ROUTING MANIFESTO:
 ///   - Parallel Crossfade: equal-power gains are prepared once per buffer -> Spectral effects.
 ///   - Parallel Add: Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * headroom), amount) -> Safe summation.
-///   - Strict Insert: wet -> Complete signal chain transformations. Mathematically neutral at amount=0.
+///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 ///   - Filtered Crossfade: Blends EQ input and wet output both proportionally to amount.
 ///     Used by radio-style effects where the filter character itself morphs with intensity.
@@ -39,20 +40,40 @@ namespace ONNX_Runner.Services;
 ///   - G.711 uses integer segmented companding/expanding: no Log/Exp/Pow in the codec hot path.
 public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 {
+    // All sample-domain tuning is calibrated to the same voice-model rate.
+    private const int ReferenceSampleRate = 22050;
+    private const float HissLevel = 0.8f;
+    private const float ThermalReferenceCoeff = 0.00021773577f;
     private readonly EffectsSettings _config = config;
-    private readonly int _sampleRate = sampleRate;
-
-    // Pre-scaled envelope follower coefficients computed once at construction.
-    private readonly float _envAtt = Dsp.ScaleCoeff(0.2f, sampleRate);
-    private readonly float _envRel = Dsp.ScaleCoeff(0.005f, sampleRate);
-    private readonly float _glitchAtt = Dsp.ScaleCoeff(0.9f, sampleRate);
-    private readonly float _glitchRel = Dsp.ScaleCoeff(0.001f, sampleRate);
-    private readonly float _tapeSlew = Dsp.ScaleCoeff(0.002f, sampleRate);
-    private readonly float _thermalDriftCoeff = Dsp.ScaleCoeff(0.0001f, sampleRate);
-
-    // Conversion factor used in every delay-modulated effect.
-    // Storing it avoids a multiply+divide per sample in Flanger, Chorus, and LoFiTape.
+    private readonly int _sampleRate = sampleRate > 0
+        ? sampleRate : throw new ArgumentOutOfRangeException(nameof(sampleRate));
+    private readonly float _sampleRateScale = sampleRate / (float)ReferenceSampleRate;
     private readonly float _msToSamples = sampleRate * 0.001f;
+    private readonly float _inverseSampleRate = 1f / sampleRate;
+    // Read-before-write taps include one causal sample. Keep its reference duration at other rates.
+    private readonly float _preWriteReadOffset = sampleRate / (float)ReferenceSampleRate - 1f;
+
+    // Reference coefficients retain the previous attack/release times at 22050 Hz.
+    private readonly float _envAtt = ScaleReferenceCoefficient(0.3847673f, sampleRate);
+    private readonly float _envRel = ScaleReferenceCoefficient(0.010852337f, sampleRate);
+    private readonly float _glitchAtt = ScaleReferenceCoefficient(0.99334526f, sampleRate);
+    private readonly float _glitchRel = ScaleReferenceCoefficient(0.0021755695f, sampleRate);
+    private readonly float _tapeSlew = ScaleReferenceCoefficient(0.004348576f, sampleRate);
+    private readonly float _thermalDriftCoeff = ScaleReferenceCoefficient(ThermalReferenceCoeff, sampleRate);
+    private readonly float _thermalNoiseGain = OnePoleNoiseGain(ThermalReferenceCoeff,
+        ScaleReferenceCoefficient(ThermalReferenceCoeff, sampleRate));
+    private float _thermalValue;
+    private int _pinkClockPhase;
+    private float _pinkPrevious, _pinkCurrent;
+
+    // Energy of unit white noise before/after the cassette speaker blend, including DC removal.
+    private readonly record struct NoiseEnergy(double Dry, double Cross, double Wet)
+    {
+        public double At(float mix) => Dry * (1 - mix) * (1 - mix)
+            + 2 * Cross * mix * (1 - mix) + Wet * mix * mix;
+    }
+    private static readonly NoiseEnergy ReferenceHissEnergy = TapeNoiseEnergy(ReferenceSampleRate, true);
+    private static readonly NoiseEnergy ReferenceGrainEnergy = TapeNoiseEnergy(ReferenceSampleRate, false);
 
     private enum RoutingMode
     {
@@ -104,6 +125,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float HissLowCoeff;
         public float HissCoeff;
         public float FlutterNoiseCoeff;
+        public float FlutterNoiseGain;
+        public float HissGain;
+        public NoiseEnergy HissEnergy, GrainEnergy;
 
         // Per-buffer constants derived from amount. Prepared once in ApplyEffect so the
         // tape hot path avoids repeated divisions and invariant arithmetic per sample.
@@ -197,7 +221,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float MinStep;
         public float MaxStep;
         public float StepGrow;
-        public float CvsdRateScale;
+        public int CvsdClockPhase;
+        public float CvsdPrevious;
 
         // Hoisted from per-sample sqrt(amount): set in ApplyEffect before the sample loop.
         public float TacticalSqrtAmount;
@@ -207,7 +232,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // CORE DSP PRIMITIVES & BUFFERS
     // =========================================================================
 
-    private readonly DelayBuffer _delay = new(4096);
+    private readonly DelayBuffer _delay = new(DelayCapacity(sampleRate));
     private DcBlocker _dcBlocker = new(sampleRate);
     private NoiseGenerator _noise = new();
     private ThermalDrift _thermal = new();
@@ -216,14 +241,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private int _filterCount;
     private VoiceEffectType _current = VoiceEffectType.None;
 
-    private const int GlitchReferenceSampleRate = 22050;
     private const int GlitchReferenceCaptureSamples = 4096;
     // Keep the original rolling capture duration without rounding it to a power-of-two size.
     private readonly float[] _glitchCapture = new float[Math.Max(1, (int)Math.Round(
-        GlitchReferenceCaptureSamples * (double)sampleRate / GlitchReferenceSampleRate))];
+        GlitchReferenceCaptureSamples * (double)sampleRate / ReferenceSampleRate))];
     private readonly int _glitchWindowSamples = Math.Max(1, sampleRate / 100);
-    private readonly float _glitchZcrRateScale = sampleRate / (float)GlitchReferenceSampleRate;
-    private readonly DelayBuffer _auxDelay = new(4096);
+
 
     // =========================================================================
     // EFFECT STATE INSTANCES
@@ -289,7 +312,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _glitch.TriggerWindowTimer = _glitchWindowSamples;
         Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
 
-        _auxDelay.Clear();
+        _thermalValue = 0f;
+        _pinkClockPhase = 0;
+        _pinkPrevious = _pinkCurrent = 0f;
 
         _radio = default;
         _radio.TacticalCompressor.Reset();
@@ -306,7 +331,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
 
         // Fast-path bypass for CPU savings in server environments.
-        // The underlying DSP is mathematically neutral at amount=0, so removing this guard is safe.
+        // Keep this guard: insert effects can contain latency, DC filtering, and fixed noise terms.
         if (amount <= 0.001f)
             return;
 
@@ -346,8 +371,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _tape.DelayMs = 0.1f + 1.3f * amount;
                 _tape.HfCutScale = 0.50f * amount;
                 _tape.AzimuthMix = amountSq * 0.45f;
-                _tape.BiasGrainScale = 0.0020f * amount;
-                _tape.HissAmount = 0.0025f * amount + 0.0075f * amountSq;
+                _tape.HissGain = _sampleRate == ReferenceSampleRate ? 1f
+                    : (float)Math.Sqrt(ReferenceHissEnergy.At(amountSq) / _tape.HissEnergy.At(amountSq));
+                float grainGain = _sampleRate == ReferenceSampleRate ? 1f
+                    : (float)Math.Sqrt(ReferenceGrainEnergy.At(amountSq) / _tape.GrainEnergy.At(amountSq));
+                _tape.BiasGrainScale = 0.0020f * amount * grainGain;
+                _tape.HissAmount = (0.0025f * amount + 0.0075f * amountSq) * HissLevel * _tape.HissGain;
                 _tape.FlutterNoiseScale = 0.50f * amount;
                 _tape.SpeakerMix = amountSq;
                 _tape.PerceptualTrim = 1f - 0.25f * amountSq;
@@ -373,6 +402,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             float filtered = Dsp.KillDenormal(dry);
 
             _thermal.Update(ref _noise, _thermalDriftCoeff);
+            _thermalValue = _thermal.State * _thermalNoiseGain;
 
             if (filterCount > 0)
                 for (int f = 0; f < filterCount; f++)
@@ -478,7 +508,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.Overdrive:
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(180f), 0.8f);
-                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, nyq, 0.707f);
+                // Keep the reference top cut in Hz; low-rate models still obey the Nyquist cap.
+                _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(ReferenceSampleRate * 0.45f), 0.707f);
                 break;
 
             case VoiceEffectType.Bitcrusher:
@@ -513,6 +544,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 // Band-limit the random component of flutter so delay modulation changes
                 // smoothly instead of jumping independently on every sample.
                 _tape.FlutterNoiseCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(35f) / _sampleRate);
+                float referenceFlutterCoeff = 1f - MathF.Exp(-2f * MathF.PI * 35f / ReferenceSampleRate);
+                _tape.FlutterNoiseGain = OnePoleNoiseGain(referenceFlutterCoeff, _tape.FlutterNoiseCoeff);
+                _tape.HissEnergy = TapeNoiseEnergy(_sampleRate, true);
+                _tape.GrainEnergy = TapeNoiseEnergy(_sampleRate, false);
 
                 _tape.PreState = _tape.DeState = 0f;
                 _tape.HissLowState = _tape.HissState = 0f;
@@ -562,14 +597,15 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _radio.CompAttackCoeff = FeedForwardCompressor.TimeToCoeff(1f, _sampleRate);
                 _radio.CompReleaseCoeff = FeedForwardCompressor.TimeToCoeff(80f, _sampleRate);
 
-                _radio.ReconCoeff = 1f - MathF.Exp(-2f * MathF.PI * 2400f / _sampleRate);
-                _radio.AccumDecay = MathF.Exp(-1f / (0.025f * _sampleRate));
-                _radio.StepDecay = MathF.Exp(-1f / (0.004f * _sampleRate));
+                _radio.ReconCoeff = 1f - MathF.Exp(-2f * MathF.PI * 2400f / ReferenceSampleRate);
+                _radio.AccumDecay = MathF.Exp(-1f / (0.025f * ReferenceSampleRate));
+                _radio.StepDecay = MathF.Exp(-1f / (0.004f * ReferenceSampleRate));
 
-                _radio.CvsdRateScale = 48000f / _sampleRate;
-                _radio.MinStep = 0.002f * _radio.CvsdRateScale;
-                _radio.MaxStep = 0.12f * _radio.CvsdRateScale;
-                _radio.StepGrow = 0.008f * _radio.CvsdRateScale;
+                // A fixed virtual bit clock keeps the four-bit history window and adaptation
+                // independent of the host rate. These are the existing 22050 Hz step sizes.
+                _radio.MinStep = 0.0043537416f;
+                _radio.MaxStep = 0.26122448f;
+                _radio.StepGrow = 0.017414967f;
 
                 _radio.CvsdStepSize = _radio.MinStep;
                 _radio.CvsdAccumulator = 0f;
@@ -589,7 +625,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.G711MuLaw:
             case VoiceEffectType.G711ALaw:
-                // ITU-T G.711: 300-3400 Hz band-limiting blended with amount via FilteredCrossfade.
+                // Both G.711 variants share a 300-3400 Hz wet path, blended via CodecCrossfade.
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(300f), 0.707f);
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 0.707f);
 
@@ -621,6 +657,72 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         };
     }
 
+    /// <summary>Preserves the physical decay time of a one-pole coefficient tuned at the reference rate.</summary>
+    private static float ScaleReferenceCoefficient(float coefficient, int sampleRate)
+    {
+        if (sampleRate == ReferenceSampleRate) return coefficient;
+        return 1f - MathF.Pow(1f - coefficient, ReferenceSampleRate / (float)sampleRate);
+    }
+
+    /// <summary>Preserves the steady-state variance of filtered white noise when its pole is retimed.</summary>
+    private static float OnePoleNoiseGain(float reference, float actual)
+    {
+        return MathF.Sqrt((reference / (2f - reference)) / (actual / (2f - actual)));
+    }
+
+    /// <summary>Fits the longest chorus tap (below 32 ms), keeping the original minimum capacity.</summary>
+    private static int DelayCapacity(int sampleRate)
+    {
+        uint required = (uint)Math.Ceiling(32.0 * sampleRate / 1000) + 2;
+        return (int)BitOperations.RoundUpToPowerOf2(Math.Max(4096u, required));
+    }
+
+    /// <summary>Runs the authored pink-noise filter at the reference clock, interpolating between ticks.</summary>
+    private float NextReferencePink()
+    {
+        if (_sampleRate == ReferenceSampleRate) return _noise.NextPink();
+        _pinkClockPhase += ReferenceSampleRate;
+        while (_pinkClockPhase >= _sampleRate)
+        {
+            _pinkClockPhase -= _sampleRate;
+            _pinkPrevious = _pinkCurrent;
+            _pinkCurrent = _noise.NextPink();
+        }
+        return Dsp.Lerp(_pinkPrevious, _pinkCurrent, _pinkClockPhase * _inverseSampleRate);
+    }
+
+    /// <summary>Measures linear noise-path energy once at setup, including the speaker blend and DC blocker.</summary>
+    private static NoiseEnergy TapeNoiseEnergy(int sampleRate, bool hiss)
+    {
+        float Safe(float hz) => Math.Min(hz, sampleRate * 0.45f);
+        var bump = BiQuadFilter.PeakingEQ(sampleRate, Safe(120f), 0.8f, 4f);
+        var hp = BiQuadFilter.HighPassFilter(sampleRate, Safe(70f), 0.707f);
+        var lp = BiQuadFilter.LowPassFilter(sampleRate, Safe(7500f), 0.707f);
+        var dryDc = new DcBlocker(sampleRate);
+        var wetDc = new DcBlocker(sampleRate);
+        float lowCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(1400f) / sampleRate);
+        float highCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(9000f) / sampleRate);
+        float low = 0, high = 0;
+        double dryEnergy = 0, crossEnergy = 0, wetEnergy = 0;
+        for (int i = 0; i < 1024; i++)
+        {
+            float value = i == 0 ? 1f : 0f;
+            if (hiss)
+            {
+                low += lowCoeff * (value - low);
+                high += highCoeff * (value - low - high);
+                value = high;
+            }
+            float colored = lp.Transform(hp.Transform(bump.Transform(value)));
+            float dry = dryDc.Process(value);
+            float wet = wetDc.Process(colored);
+            dryEnergy += (double)dry * dry;
+            crossEnergy += (double)dry * wet;
+            wetEnergy += (double)wet * wet;
+        }
+        return new NoiseEnergy(dryEnergy, crossEnergy, wetEnergy);
+    }
+
     // =========================================================================
     // EFFECT ALGORITHMS
     // =========================================================================
@@ -633,7 +735,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     private float Telephone(float x, float amount)
     {
-        float noise = _noise.NextPink() * (0.003f + _thermal.State * 0.002f + 0.018f * amount * amount) * amount;
+        float noise = NextReferencePink() * (0.003f + _thermalValue * 0.002f + 0.018f * amount * amount) * amount;
         float drive = 1f + amount * 2.5f;
         float wet = Dsp.AsymmetricSaturation(x * drive + noise);
         return wet / drive;
@@ -646,7 +748,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     private float Overdrive(float x, float amount)
     {
-        float bias = _thermal.State * _overdriveBiasScale;
+        float bias = _thermalValue * _overdriveBiasScale;
         float wet = Dsp.AsymmetricSaturation((x * _overdriveDrive) + bias);
         return wet * _overdriveTrim;
     }
@@ -660,11 +762,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     private float Bitcrusher(float x, float amount)
     {
-        float jitter = _thermal.State * 0.005f * amount;
-        float targetRate = Dsp.Lerp((float)_sampleRate, 11025f, amount);
-        float step = targetRate / _sampleRate;
+        float jitter = _thermalValue * 0.005f * amount;
+        float targetRate = Dsp.Lerp((float)_sampleRate, Math.Min(_sampleRate, ReferenceSampleRate * 0.5f), amount);
+        float step = Math.Min(targetRate / _sampleRate * (1f + jitter), 1f);
 
-        _bc.Phase += step * (1f + jitter);
+        _bc.Phase += step;
 
         if (_bc.Phase >= 1f)
         {
@@ -694,7 +796,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     private float RingMod(float x, float amount)
     {
-        float freq = 30f + _thermal.State * 1.5f;
+        float freq = 30f + _thermalValue * 1.5f;
         _mod.RingPhase = Dsp.AdvancePhase(_mod.RingPhase, freq, _sampleRate);
         float carrier = Dsp.Lerp(1f, Dsp.Sine(_mod.RingPhase), amount);
         float makeupGain = 1f + 0.8f * amount;
@@ -712,7 +814,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (_mod.FlangerPhase >= 2f * MathF.PI) _mod.FlangerPhase -= 2f * MathF.PI;
 
         float delayMs = 0.1f + 1.7f * amount + Dsp.Sine(_mod.FlangerPhase) * (1.1f * amount);
-        float delayed = _delay.Read(delayMs * _msToSamples);
+        float delayed = _delay.Read(Math.Max(0f, delayMs * _msToSamples + _preWriteReadOffset));
         _delay.Write(Dsp.SoftClip(x + delayed * 0.75f));
         return delayed * (0.72f * amount);
     }
@@ -728,12 +830,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (_mod.ChorusPhase >= 2f * MathF.PI) _mod.ChorusPhase -= 2f * MathF.PI;
         if (_mod.ChorusPhase2 >= 2f * MathF.PI) _mod.ChorusPhase2 -= 2f * MathF.PI;
 
-        float wow = _thermal.State * 0.006f * amount;
+        float wow = _thermalValue * 0.006f * amount;
         float d1 = 0.1f + 14.9f * amount + Dsp.Sine(_mod.ChorusPhase) * (6.0f * amount) + wow;
         float d2 = 0.1f + 23.9f * amount + Dsp.Sine(_mod.ChorusPhase2) * (7.0f * amount) - wow;
 
-        float s1 = _delay.Read(d1 * _msToSamples);
-        float s2 = _delay.Read(d2 * _msToSamples);
+        float s1 = _delay.Read(Math.Max(0f, d1 * _msToSamples + _preWriteReadOffset));
+        float s2 = _delay.Read(Math.Max(0f, d2 * _msToSamples + _preWriteReadOffset));
         _delay.Write(x);
 
         return (s1 + s2) * (0.45f * amount);
@@ -750,8 +852,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float hpf = _tape.PreHp != null ? _tape.PreHp.Transform(x) : x;
         float input = Dsp.Lerp(x, hpf, amount);
 
-        // Pre-emphasis: boosts HF before recording to compensate for tape physics.
-        // Muted to 0.8 to act as a natural de-esser for synthesized voices.
+        // Moderate HF pre-emphasis feeds the saturation stage; it is not a standalone de-esser.
         _tape.PreState += _tape.PreCoeff * (input - _tape.PreState);
         _tape.PreState = Dsp.KillDenormal(_tape.PreState);
         float preEmph = input + (input - _tape.PreState) * _tape.PreEmphScale;
@@ -765,8 +866,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float comp = _tape.Compressor.Process(saturated, _tape.CompThreshold, 3.5f,
                                   _tape.CompAttackCoeff, _tape.CompReleaseCoeff);
 
-        // Mild record-stage makeup keeps the cassette character audible without making
-        // the entire effect feel artificially quieter than the clean voice.
+        // Mild record-stage trim complements the amplitude compressor.
         float recorded = Dsp.Lerp(saturated, comp * _tape.CompMakeup, amount);
 
         _delay.Write(recorded);
@@ -783,7 +883,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float wow = (Dsp.Sine(_tape.LofiPhase) * 0.8f + Dsp.Sine(_tape.LofiPhase2) * 0.4f) * amount;
 
         float flutterNoise = _noise.NextWhite();
-        _tape.FlutterNoiseState += _tape.FlutterNoiseCoeff * (flutterNoise - _tape.FlutterNoiseState);
+        _tape.FlutterNoiseState += _tape.FlutterNoiseCoeff * (flutterNoise * _tape.FlutterNoiseGain - _tape.FlutterNoiseState);
         _tape.FlutterNoiseState = Dsp.KillDenormal(_tape.FlutterNoiseState);
 
         float flutter = Dsp.Sine(_tape.FlutterPhase) * (0.15f * amount)
@@ -816,7 +916,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Bias grain and hiss: intentionally audible cassette/playback-amplifier noise floor.
         // Hiss is shaped into an upper-band "shhh" rather than full-band digital white noise.
         float biasGrain = _noise.NextWhite() * _tape.BiasGrainScale;
-        float rawHiss = _noise.NextWhite() * (_tape.HissAmount + _thermal.State * 0.003f);
+        float rawHiss = _noise.NextWhite() * (_tape.HissAmount + _thermalValue * 0.003f * HissLevel * _tape.HissGain);
 
         _tape.HissLowState += _tape.HissLowCoeff * (rawHiss - _tape.HissLowState);
         _tape.HissLowState = Dsp.KillDenormal(_tape.HissLowState);
@@ -865,7 +965,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Check the detector every 10 milliseconds
         if (--_glitch.TriggerWindowTimer <= 0)
         {
-            float rawZcr = (float)_glitch.ZcrCount / _glitchWindowSamples * _glitchZcrRateScale;
+            float rawZcr = (float)_glitch.ZcrCount / _glitchWindowSamples * _sampleRateScale;
             _glitch.Zcr = 0.85f * _glitch.Zcr + 0.15f * rawZcr;
             _glitch.ZcrCount = 0;
             _glitch.TriggerWindowTimer = _glitchWindowSamples;
@@ -1003,32 +1103,34 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         float rfSignal = compressed * 1.5f;
 
-        // CVSD encoder: 1-bit delta modulator.
-        bool bit = rfSignal > _radio.ReconState;
-
-        _radio.CvsdHistory = ((_radio.CvsdHistory << 1) | (bit ? 1u : 0u)) & 0x0Fu;
-
-        if (_radio.CvsdHistory == 0x0Fu || _radio.CvsdHistory == 0x00u)
-            _radio.CvsdStepSize += _radio.StepGrow;
-        else
-            _radio.CvsdStepSize *= _radio.StepDecay;
-
-        _radio.CvsdStepSize = Math.Clamp(_radio.CvsdStepSize, _radio.MinStep, _radio.MaxStep);
-
-        // CVSD decoder: accumulator with ~25ms leak + 2400 Hz reconstruction LP.
-        // scaledStep suppresses granular noise at low intensities (sqrt curve).
-        float scaledStep = _radio.CvsdStepSize * _radio.TacticalSqrtAmount;
-        _radio.CvsdAccumulator += bit ? scaledStep : -scaledStep;
-        _radio.CvsdAccumulator *= _radio.AccumDecay;
-        _radio.CvsdAccumulator = Math.Clamp(_radio.CvsdAccumulator, -1.2f, 1.2f);
-        _radio.CvsdAccumulator = Dsp.KillDenormal(_radio.CvsdAccumulator);
-
-        _radio.ReconState += _radio.ReconCoeff * (_radio.CvsdAccumulator - _radio.ReconState);
-        _radio.ReconState = Dsp.KillDenormal(_radio.ReconState);
+        // The entire codec advances at the reference clock, including its feedback and decay.
+        // Below that rate, several virtual ticks share the available host input sample.
+        _radio.CvsdClockPhase += ReferenceSampleRate;
+        while (_radio.CvsdClockPhase >= _sampleRate)
+        {
+            _radio.CvsdClockPhase -= _sampleRate;
+            _radio.CvsdPrevious = _radio.ReconState;
+            bool bit = rfSignal > _radio.ReconState;
+            _radio.CvsdHistory = ((_radio.CvsdHistory << 1) | (bit ? 1u : 0u)) & 0x0Fu;
+            if (_radio.CvsdHistory == 0x0Fu || _radio.CvsdHistory == 0x00u)
+                _radio.CvsdStepSize += _radio.StepGrow;
+            else
+                _radio.CvsdStepSize *= _radio.StepDecay;
+            _radio.CvsdStepSize = Math.Clamp(_radio.CvsdStepSize, _radio.MinStep, _radio.MaxStep);
+            float scaledStep = _radio.CvsdStepSize * _radio.TacticalSqrtAmount;
+            _radio.CvsdAccumulator += bit ? scaledStep : -scaledStep;
+            _radio.CvsdAccumulator *= _radio.AccumDecay;
+            _radio.CvsdAccumulator = Math.Clamp(_radio.CvsdAccumulator, -1.2f, 1.2f);
+            _radio.CvsdAccumulator = Dsp.KillDenormal(_radio.CvsdAccumulator);
+            _radio.ReconState += _radio.ReconCoeff * (_radio.CvsdAccumulator - _radio.ReconState);
+            _radio.ReconState = Dsp.KillDenormal(_radio.ReconState);
+        }
+        float reconstructed = _sampleRate == ReferenceSampleRate ? _radio.ReconState
+            : Dsp.Lerp(_radio.CvsdPrevious, _radio.ReconState, _radio.CvsdClockPhase * _inverseSampleRate);
 
         // AsymmetricSaturation adds odd-harmonic gravel of an overdriven RF stage.
         const float outputTrim = 0.75f;
-        float saturated = Dsp.AsymmetricSaturation(_radio.ReconState * 1.4f) / 1.4f;
+        float saturated = Dsp.AsymmetricSaturation(reconstructed * 1.4f) / 1.4f;
         return Dsp.SoftClip(saturated * outputTrim);
     }
 
@@ -1051,7 +1153,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         float captureSupression = 1.0f - Math.Clamp(_radio.Envelope * 6.0f, 0f, 1f);
         float noiseAmount = captureSupression * 0.025f * amount * amount;
-        float rawNoise = _noise.NextPink() * noiseAmount;
+        float rawNoise = NextReferencePink() * noiseAmount;
 
         // Noise smoothing via pre-computed 1-pole LP (~800 Hz): no MathF.Exp per sample.
         _radio.NoiseState += _radio.NoiseCoeff * (rawNoise - _radio.NoiseState);
