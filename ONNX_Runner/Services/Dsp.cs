@@ -408,17 +408,11 @@ public struct TapeDropout
 }
 
 /// <summary>
-/// Feed-forward RMS compressor with asymmetric attack/release envelope follower.
-/// Based on the standard gain-computer model described in:
-///   Zölzer, U. — "DAFX: Digital Audio Effects", 2nd ed., Ch. 4.
-///
-/// Gain reduction is computed in the linear domain (not dB) for efficiency.
-/// The envelope follower uses pre-computed one-pole IIR coefficients:
-///   coeff = exp(-1 / (time_s * fs))
-///
-/// IMPORTANT: attackCoeff and releaseCoeff must be pre-computed once in Setup()
-/// via <see cref="TimeToCoeff"/> and passed in per-block — NOT per-sample —
-/// to avoid calling MathF.Exp in the hot path.
+/// Feed-forward amplitude compressor with an asymmetric rectified-signal envelope follower.
+/// Above the threshold, the tracked amplitude becomes threshold + excess / ratio.
+/// Ratio controls linear-amplitude excess, not a conventional compression slope in dB.
+/// This lightweight curve preserves the authored tape and tactical-radio character.
+/// Pre-compute attack/release coefficients with <see cref="TimeToCoeff"/> before sample processing.
 /// </summary>
 public struct FeedForwardCompressor
 {
@@ -445,7 +439,7 @@ public struct FeedForwardCompressor
     /// </summary>
     /// <param name="input">Input sample.</param>
     /// <param name="threshold">Linear amplitude threshold above which gain reduction begins.</param>
-    /// <param name="ratio">Compression ratio (e.g. 4.0 = 4:1). Must be ≥ 1.0.</param>
+    /// <param name="ratio">Divisor of amplitude above the threshold, at least 1; not a dB-domain ratio.</param>
     /// <param name="attackCoeff">Pre-computed attack coefficient from <see cref="TimeToCoeff"/>.</param>
     /// <param name="releaseCoeff">Pre-computed release coefficient from <see cref="TimeToCoeff"/>.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

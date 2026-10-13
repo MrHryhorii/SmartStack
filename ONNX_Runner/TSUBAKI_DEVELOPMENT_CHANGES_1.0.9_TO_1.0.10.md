@@ -1,10 +1,10 @@
 # Tsubaki TTS Engine: робочий журнал змін після 1.0.9
 
-Дата останнього оновлення: 2026-10-12.
+Дата останнього оновлення: 2026-10-13.
 
 Початок роботи: стабільна версія 1.0.9 та перший експериментальний архів з ідеями покращення скорочень, меж речень і вимови технічного тексту.
 
-Поточна база: `ONNX_Runner-1.0.10-current.zip`. Останній окремий патч: `ONNX_Runner-1.0.10-device-profile-order-changes.zip`. Нові доповнення після первинного запису журналу наведено в розділах 11–34.
+Поточна база: `ONNX_Runner-1.0.10-current.zip`. Останній окремий патч: `ONNX_Runner-1.0.10-audio-minimal-changes.zip`. Нові доповнення після первинного запису журналу наведено в розділах 11–35.
 
 Статус: робочий стан розробки. Версію збірки встановлено в `1.0.10`; підготовка та публікація релізу ще не виконуються. Журнал потрібен для збереження історії змін і майбутніх нотаток релізу. Наступні зміни слід дописувати окремими пунктами.
 
@@ -579,3 +579,19 @@ Chromium: 14 перевірок пройдено для двох типів ко
 Перевірки цього етапу: серверні керовані та реальні CPU waveform cases разом — 437/437; TextChunkerRegression — 784/784; LanguageSegmentationRegression — 370/370; PunctuationRegression — 75/75; TextAnalysisAllocations — 18/18 бюджетів; TechnicalSpeechIntegration — 401/401; Chromium — 20 перевірок, включно з новим порядком акордеонів. Native waveform synthesis виконано з en_US-hfc_female-medium без OpenVoice-клонування. Cloning fixtures цього етапу не запускалися. Тести використовують реальну production pipeline; browser API calls окремо перехоплені контрольними fixtures.
 
 Патч `ONNX_Runner-1.0.10-device-profile-order-changes.zip` містить 6 змінених файлів: Services/Synthesis/AudioGenerationPipeline.cs, Tests/ServerConfigurationRegression/EqualizerSynthesisChecks.cs, Tests/README.md, wwwroot/index.html, readMe.md та журнал. Він накладається поверх останнього soft-hover патча. Повний актуальний архів та окремий журнал синхронізовано; приватні runtime/model files до архівів не включено.
+
+
+## 35. Мінімальні правки від наданої бази перед переробкою DSP
+
+Робочу базу відновлено з `ONNX_Runner(20261013-140927).zip` (SHA256: `0ef510068f91b3d3f0a56a2654effec99dfb716c15a2f535db630076cd042734`). Попередню широку переробку character/spatial DSP до цієї бази не перенесено. Подальша перевірка розділена на самі character effects, їхню інтенсивність/змішування та просторові середовища.
+
+- **Точний контракт компресора.** Збережено існуючу математику `FeedForwardCompressor`: асиметричний follower від модуля сигналу та стискання перевищення порога в лінійній амплітуді. Коментарі більше не називають його RMS-компресором або стандартною dB-кривою 4:1. `ratio` ділить амплітудне перевищення порога; налаштування й звучання LoFiTape/TacticalRadio збережено.
+- **Рухомий DecoderGlitch від еталона 22050 Hz.** Замість фіксованих 4096 семплів місткість capture buffer масштабується до тривалості `4096 / 22050` секунд і округлюється до найближчого семпла. Для довільної цілої місткості використано пряме обгортання індексів; округлення до степеня двійки змінювало б ритм заміни фрагмента. ZCR нормалізується до одиниць базової частоти 22050 Hz. Рухомий запис, насичення, тривалість повторів, cooldown та fades збережено. На інших частотах можливі неминучі похибки округлення часових вікон, інша дискретизація вхідного сигналу й випадкові моменти запуску. Текстові коментарі описують rolling stutter, а не незмінний frozen snapshot.
+- **Негативні межі G.711 μ-law.** При переході до magnitude використано one's complement замість абсолютного значення скороченого PCM. Це виправляє 508 негативних крайових входів. Обидва encoder tables тепер збігаються з незалежним ITU-T G.191 `g711.c` v3.01 для всіх 65536 PCM16 значень, а обидва decoder tables — для всіх 256 кодових слів. A-law алгоритм не змінено. Еталонний C-код до проєкту не додано; тести використовують окремо отримані hashes нормативних таблиць.
+- **Регресії контрактів.** Нові 59 managed checks інтегровані в `ServerConfigurationRegression`: codec tables, μ-law негативні межі, capture duration, живе перезаписування активного фрагмента приблизно через 153 ms, low/high-frequency detector preference, streaming partitions та 0 managed bytes у прогрітому sample processing. Перевірено 8000/11025/16000/22050/24000/44100/48000/96000/192000 Hz. Конструктор/setup може виділяти буфери. `Tests/**` і далі виключено з production compilation/publishing.
+
+Порівняння production DSP на тому самому deterministic multitone input і seed: DecoderGlitch при 22050 Hz побітово збігається з наданою базою. Компресор має ті самі числові відповіді. Із 78 fixtures побітово незмінні 67; 11 змінених належать лише DecoderGlitch на п'яти інших rates та μ-law на всіх шести rates. Це перевірка збереження/локальності правок, а не суб'єктивна оцінка звуку.
+
+Перевірки: CPU Release build — 0 warnings / 0 errors; ServerConfigurationRegression managed — 387/387 (328 попередніх + 59 нових); TextChunkerRegression — 784/784; LanguageSegmentationRegression — 370/370; PunctuationRegression — 75/75; TextAnalysisAllocations — 18/18 бюджетів; native TechnicalSpeechIntegration — 401/401. Реальні CPU waveform checks — 109/109; разом серверні перевірки — 496/496. Waveform runner запущено приватною обгорткою з вимкненою ONNX Runtime telemetry та процесним seccomp-фільтром, який перевірено блокує мережеві сокети; це не зміна production-коду. Використано надану Piper модель en_US-hfc_female-medium без клонування. Windows DLL і OpenVoice цього етапу не перевірялися.
+
+Патч `ONNX_Runner-1.0.10-audio-minimal-changes.zip` містить 6 нових або змінених файлів: AudioEffectsEngine.cs, Dsp.cs, AudioEffectsChecks.cs, Program.cs серверних регресій, README тестів і журнал. Накладається безпосередньо на наданий архів. Нових API/config параметрів немає; змішування, рівні підсилення й просторові алгоритми не переналаштовувалися. Runtime dependencies, моделі, приватні вимірювальні програми та аудіозразки до патча не входять. Реліз не публікується.

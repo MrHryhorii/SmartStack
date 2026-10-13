@@ -48,6 +48,11 @@ dependencies used by the engine. They run the public synthesis pipeline without
 starting the HTTP server. The two-path mode leaves cloning disabled; adding the
 OpenVoice and voice directories enables the optional cloning checks below.
 
+Managed character-effect checks compare every G.711 PCM16 input and decoded codeword
+with independent ITU reference digests. Rolling decoder-glitch checks cover capture
+duration, low/high-frequency detection, live replacement, streaming partitions, and
+allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
+
 The engine project excludes `Tests/**` from compilation and publishing. Listing
 test projects in the solution adds build work when building the whole solution;
 it does not load or execute tests in a running TTS server.

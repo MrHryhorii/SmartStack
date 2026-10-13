@@ -26,6 +26,7 @@ if (!synthesisOnly)
 {
     RequestAdapterChecks.Run(Check);
     EqualizerChecks.Run(Check);
+    AudioEffectsChecks.Run(Check);
     SampleRateChecks.Run(Check, native);
     using var emptyServices = new ServiceCollection().BuildServiceProvider();
     var api = new ApiSettings();

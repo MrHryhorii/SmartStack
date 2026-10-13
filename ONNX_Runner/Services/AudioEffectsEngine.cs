@@ -216,8 +216,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private int _filterCount;
     private VoiceEffectType _current = VoiceEffectType.None;
 
-    private readonly float[] _glitchCapture = new float[4096];
-    private const int GlitchCaptureMask = 4095;
+    private const int GlitchReferenceSampleRate = 22050;
+    private const int GlitchReferenceCaptureSamples = 4096;
+    // Keep the original rolling capture duration without rounding it to a power-of-two size.
+    private readonly float[] _glitchCapture = new float[Math.Max(1, (int)Math.Round(
+        GlitchReferenceCaptureSamples * (double)sampleRate / GlitchReferenceSampleRate))];
+    private readonly int _glitchWindowSamples = Math.Max(1, sampleRate / 100);
+    private readonly float _glitchZcrRateScale = sampleRate / (float)GlitchReferenceSampleRate;
     private readonly DelayBuffer _auxDelay = new(4096);
 
     // =========================================================================
@@ -281,7 +286,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _azimuth = default;
 
         _glitch = default;
-        _glitch.TriggerWindowTimer = _sampleRate / 100;
+        _glitch.TriggerWindowTimer = _glitchWindowSamples;
         Array.Clear(_glitchCapture, 0, _glitchCapture.Length);
 
         _auxDelay.Clear();
@@ -539,7 +544,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.DecoderGlitch:
                 _glitch = default;
-                _glitch.TriggerWindowTimer = _sampleRate / 100; // 10ms window
+                _glitch.TriggerWindowTimer = _glitchWindowSamples; // Approximately 10 ms.
                 break;
 
             case VoiceEffectType.TacticalRadio:
@@ -836,8 +841,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     /// <summary>
     /// Simulates a VoIP packet loss or AI decoder failure.
-    /// Triggers only on loud, stable sounds (vowels) using Energy and ZCR detection.
-    /// Freezes the audio stream by looping a small buffer while real-time audio continues beneath.
+    /// Prefers sustained, low-ZCR sounds using a simple energy detector.
+    /// Repeats a region of the continuously written capture buffer; new audio can replace it mid-stutter.
+    /// Capture duration and ZCR units retain the original 22050 Hz character at other sample rates.
     /// </summary>
     private float DecoderGlitch(float x, float amount)
     {
@@ -845,7 +851,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // 1. Capture Buffer: Always save the latest audio for a potential loop.
         // ---------------------------------------------------------------------
         _glitchCapture[_glitch.WritePos] = x;
-        _glitch.WritePos = (_glitch.WritePos + 1) & GlitchCaptureMask;
+        if (++_glitch.WritePos >= _glitchCapture.Length) _glitch.WritePos = 0;
 
         // ---------------------------------------------------------------------
         // 2. Vowel Detector: Find loud and stable sounds using Energy and ZCR.
@@ -859,10 +865,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Check the detector every 10 milliseconds
         if (--_glitch.TriggerWindowTimer <= 0)
         {
-            float rawZcr = (float)_glitch.ZcrCount / (_sampleRate / 100);
+            float rawZcr = (float)_glitch.ZcrCount / _glitchWindowSamples * _glitchZcrRateScale;
             _glitch.Zcr = 0.85f * _glitch.Zcr + 0.15f * rawZcr;
             _glitch.ZcrCount = 0;
-            _glitch.TriggerWindowTimer = _sampleRate / 100;
+            _glitch.TriggerWindowTimer = _glitchWindowSamples;
 
             // If not currently glitching, cooldown is over, and we found a loud vowel:
             if (!_glitch.Frozen && _glitch.Cooldown <= 0
@@ -901,9 +907,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     // Safety: Make sure the loop fits at least twice inside the duration.
                     loopMs = Math.Min(loopMs, Math.Max(2f, durationMs * 0.5f));
 
-                    // Lock the read/write positions in the ring buffer
+                    // Select the rolling capture region; writing continues during playback.
                     _glitch.LoopLen = Math.Max(1, (int)(loopMs * _sampleRate / 1000f));
-                    _glitch.LoopStart = (_glitch.WritePos - _glitch.LoopLen + _glitchCapture.Length) & GlitchCaptureMask;
+                    _glitch.LoopStart = _glitch.WritePos - _glitch.LoopLen;
+                    if (_glitch.LoopStart < 0) _glitch.LoopStart += _glitchCapture.Length;
                     _glitch.PlayPos = 0;
 
                     // Cooldown: Prevent new glitches for a short time.
@@ -933,7 +940,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return x;
         }
 
-        float frozen = _glitchCapture[(_glitch.LoopStart + _glitch.PlayPos) & GlitchCaptureMask];
+        int captureIndex = _glitch.LoopStart + _glitch.PlayPos;
+        if (captureIndex >= _glitchCapture.Length) captureIndex -= _glitchCapture.Length;
+        float frozen = _glitchCapture[captureIndex];
 
         // Increase saturation based on amount to simulate a broken decoder
         frozen = Dsp.SoftClip(frozen * Dsp.Lerp(1.0f, 1.15f, amount));
@@ -985,7 +994,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float companderGain = _radio.TacticalEnvelope < 0.1f ? 1.15f : 0.92f;
         float companded = x * companderGain;
 
-        // Compressor: 4:1 AGC with 1ms attack / 80ms release.
+        // Amplitude-domain compression with 1 ms attack / 80 ms release; ratio is not a dB slope.
         float clipped = Dsp.SoftClip(companded * 2.0f);
         float compressed = _radio.TacticalCompressor.Process(
             clipped, 0.25f, 4f,
@@ -1182,7 +1191,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         if (pcm < 0)
         {
-            pcm = -pcm;
+            // One's-complement magnitude retains the ITU-T G.711 negative decision boundaries.
+            pcm = -pcm - 1;
             mask = 0x7F;
         }
         else
