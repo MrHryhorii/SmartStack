@@ -43,6 +43,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // All sample-domain tuning is calibrated to the same voice-model rate.
     private const int ReferenceSampleRate = 22050;
     private const float HissLevel = 0.8f;
+    private const float HissHighPassHz = 1400f;
+    private const float HissLowPassHz = 9000f;
     private const float ThermalReferenceCoeff = 0.00021773577f;
     private readonly EffectsSettings _config = config;
     private readonly int _sampleRate = sampleRate > 0
@@ -126,11 +128,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float HissCoeff;
         public float FlutterNoiseCoeff;
         public float FlutterNoiseGain;
+        public BiQuadFilter? HissColor;
         public float HissGain;
         public NoiseEnergy HissEnergy, GrainEnergy;
 
         // Per-buffer constants derived from amount. Prepared once in ApplyEffect so the
         // tape hot path avoids repeated divisions and invariant arithmetic per sample.
+        // Playback character appears early; wear-related controls retain their existing curves.
+        public float CharacterAmount;
         public float PreEmphScale;
         public float SatDrive;
         public float SatCompensation;
@@ -141,6 +146,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float AzimuthMix;
         public float BiasGrainScale;
         public float HissAmount;
+        public float ThermalHissScale;
         public float FlutterNoiseScale;
         public float SpeakerMix;
         public float PerceptualTrim;
@@ -331,7 +337,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
 
         // Fast-path bypass for CPU savings in server environments.
-        // Keep this guard: insert effects can contain latency, DC filtering, and fixed noise terms.
+        // Keep the guard to skip DSP work and preserve bit-identical bypass, including warm state.
         if (amount <= 0.001f)
             return;
 
@@ -362,24 +368,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.LoFiTape:
-                float amountSq = amount * amount;
-                _tape.PreEmphScale = 0.8f * amount;
-                _tape.SatDrive = 1f + 2.0f * amount;
-                _tape.SatCompensation = 1f / (1f + 0.35f * amount);
-                _tape.CompThreshold = Dsp.Lerp(1.0f, 0.38f, amount);
-                _tape.CompMakeup = Dsp.Lerp(1f, 0.90f, amount);
-                _tape.DelayMs = 0.1f + 1.3f * amount;
-                _tape.HfCutScale = 0.50f * amount;
-                _tape.AzimuthMix = amountSq * 0.45f;
-                _tape.HissGain = _sampleRate == ReferenceSampleRate ? 1f
-                    : (float)Math.Sqrt(ReferenceHissEnergy.At(amountSq) / _tape.HissEnergy.At(amountSq));
-                float grainGain = _sampleRate == ReferenceSampleRate ? 1f
-                    : (float)Math.Sqrt(ReferenceGrainEnergy.At(amountSq) / _tape.GrainEnergy.At(amountSq));
-                _tape.BiasGrainScale = 0.0020f * amount * grainGain;
-                _tape.HissAmount = (0.0025f * amount + 0.0075f * amountSq) * HissLevel * _tape.HissGain;
-                _tape.FlutterNoiseScale = 0.50f * amount;
-                _tape.SpeakerMix = amountSq;
-                _tape.PerceptualTrim = 1f - 0.25f * amountSq;
+                PrepareTape(amount);
                 break;
 
             case VoiceEffectType.TacticalRadio:
@@ -415,7 +404,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 : filtered;
 
             float wet = Process(type, processInput, amount);
-            wet = type != VoiceEffectType.DecoderGlitch ? _dcBlocker.Process(wet) : wet;
+            // Tape blends DC removal internally; rolling glitches preserve their captured samples.
+            wet = type is not (VoiceEffectType.DecoderGlitch or VoiceEffectType.LoFiTape)
+                ? _dcBlocker.Process(wet) : wet;
 
             // The early amount guard handles bypass; active routing follows the effect's signal structure.
             switch (mode)
@@ -538,15 +529,16 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 // Cassette hiss is concentrated toward the upper spectrum rather than being
                 // full-band white noise. Remove low-frequency noise below ~1.4 kHz, then
                 // gently roll off the extreme top above ~9 kHz to keep the hiss analog/soft.
-                _tape.HissLowCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(1400f) / _sampleRate);
-                _tape.HissCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(9000f) / _sampleRate);
+                _tape.HissLowCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(HissHighPassHz) / _sampleRate);
+                _tape.HissCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(HissLowPassHz) / _sampleRate);
 
                 // Band-limit the random component of flutter so delay modulation changes
                 // smoothly instead of jumping independently on every sample.
                 _tape.FlutterNoiseCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(35f) / _sampleRate);
                 float referenceFlutterCoeff = 1f - MathF.Exp(-2f * MathF.PI * 35f / ReferenceSampleRate);
                 _tape.FlutterNoiseGain = OnePoleNoiseGain(referenceFlutterCoeff, _tape.FlutterNoiseCoeff);
-                _tape.HissEnergy = TapeNoiseEnergy(_sampleRate, true);
+                _tape.HissColor = CreateTapeHissColor(_sampleRate);
+                _tape.HissEnergy = TapeNoiseEnergy(_sampleRate, true, true);
                 _tape.GrainEnergy = TapeNoiseEnergy(_sampleRate, false);
 
                 _tape.PreState = _tape.DeState = 0f;
@@ -635,6 +627,33 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
+    /// <summary>Prepares cassette intensity curves once per buffer, preserving the full-strength preset.</summary>
+    private void PrepareTape(float amount)
+    {
+        float amountSq = amount * amount;
+        // Quadratic ease-out has finite initial slope; sqrt(amount) would exaggerate tiny settings.
+        _tape.CharacterAmount = amount * (2f - amount);
+        _tape.PreEmphScale = 0.8f * amount;
+        _tape.SatDrive = 1f + 2.0f * amount;
+        _tape.SatCompensation = 1f / (1f + 0.35f * amount);
+        _tape.CompThreshold = Dsp.Lerp(1.0f, 0.38f, amount);
+        _tape.CompMakeup = Dsp.Lerp(1f, 0.90f, amount);
+        _tape.DelayMs = 0.1f * _tape.CharacterAmount + 1.3f * amount;
+        _tape.HfCutScale = 0.50f * amount;
+        _tape.AzimuthMix = amountSq * 0.45f;
+        _tape.HissGain = (float)Math.Sqrt(ReferenceHissEnergy.At(amountSq) / _tape.HissEnergy.At(amountSq));
+        float grainGain = _sampleRate == ReferenceSampleRate ? 1f
+            : (float)Math.Sqrt(ReferenceGrainEnergy.At(amountSq) / _tape.GrainEnergy.At(amountSq));
+        _tape.BiasGrainScale = 0.0020f * amount * grainGain;
+        // Factor the final amount out of the noise filter so its warm history also fades to zero.
+        _tape.HissAmount = (0.0025f + 0.0075f * amount) * HissLevel * _tape.HissGain;
+        // The final output amount yields CharacterAmount without division near zero.
+        _tape.ThermalHissScale = 2f - amount;
+        _tape.FlutterNoiseScale = 0.50f * amount;
+        _tape.SpeakerMix = amountSq;
+        _tape.PerceptualTrim = 1f - 0.25f * amountSq;
+    }
+
     /// <summary>Dispatches one sample to the selected voice effect, retaining its per-request DSP state.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float Process(VoiceEffectType type, float x, float amount)
@@ -691,8 +710,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return Dsp.Lerp(_pinkPrevious, _pinkCurrent, _pinkClockPhase * _inverseSampleRate);
     }
 
+    /// <summary>Softens the hiss mid-band without changing voice or grain, with a Nyquist-safe center.</summary>
+    private static BiQuadFilter CreateTapeHissColor(int sampleRate)
+    {
+        return BiQuadFilter.PeakingEQ(sampleRate, Math.Min(4500f, sampleRate * 0.45f), 1f, -2f);
+    }
+
     /// <summary>Measures linear noise-path energy once at setup, including the speaker blend and DC blocker.</summary>
-    private static NoiseEnergy TapeNoiseEnergy(int sampleRate, bool hiss)
+    private static NoiseEnergy TapeNoiseEnergy(int sampleRate, bool hiss, bool colorHiss = false)
     {
         float Safe(float hz) => Math.Min(hz, sampleRate * 0.45f);
         var bump = BiQuadFilter.PeakingEQ(sampleRate, Safe(120f), 0.8f, 4f);
@@ -700,8 +725,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         var lp = BiQuadFilter.LowPassFilter(sampleRate, Safe(7500f), 0.707f);
         var dryDc = new DcBlocker(sampleRate);
         var wetDc = new DcBlocker(sampleRate);
-        float lowCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(1400f) / sampleRate);
-        float highCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(9000f) / sampleRate);
+        float lowCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(HissHighPassHz) / sampleRate);
+        float highCoeff = 1f - MathF.Exp(-2f * MathF.PI * Safe(HissLowPassHz) / sampleRate);
+        var color = hiss && colorHiss ? CreateTapeHissColor(sampleRate) : null;
         float low = 0, high = 0;
         double dryEnergy = 0, crossEnergy = 0, wetEnergy = 0;
         for (int i = 0; i < 1024; i++)
@@ -711,7 +737,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             {
                 low += lowCoeff * (value - low);
                 high += highCoeff * (value - low - high);
-                value = high;
+                value = color?.Transform(high) ?? high;
             }
             float colored = lp.Transform(hp.Transform(bump.Transform(value)));
             float dry = dryDc.Process(value);
@@ -916,7 +942,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Bias grain and hiss: intentionally audible cassette/playback-amplifier noise floor.
         // Hiss is shaped into an upper-band "shhh" rather than full-band digital white noise.
         float biasGrain = _noise.NextWhite() * _tape.BiasGrainScale;
-        float rawHiss = _noise.NextWhite() * (_tape.HissAmount + _thermalValue * 0.003f * HissLevel * _tape.HissGain);
+        float rawHiss = _noise.NextWhite() * (_tape.HissAmount
+            + _thermalValue * 0.003f * HissLevel * _tape.HissGain * _tape.ThermalHissScale);
 
         _tape.HissLowState += _tape.HissLowCoeff * (rawHiss - _tape.HissLowState);
         _tape.HissLowState = Dsp.KillDenormal(_tape.HissLowState);
@@ -925,7 +952,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _tape.HissState += _tape.HissCoeff * (highPassedHiss - _tape.HissState);
         _tape.HissState = Dsp.KillDenormal(_tape.HissState);
 
-        float tapeSignal = azimuthSignal + biasGrain + _tape.HissState;
+        float coloredHiss = _tape.HissColor?.Transform(_tape.HissState) ?? _tape.HissState;
+        float tapeSignal = azimuthSignal + biasGrain + coloredHiss * amount;
 
         // Speaker simulation: cheap plastic enclosure coloring (quadratic blend).
         if (_tape.BoomboxBump != null && _tape.BoomboxHp != null && _tape.BoomboxLp != null)
@@ -936,7 +964,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
 
         float trimmed = tapeSignal * _tape.PerceptualTrim;
-        return Dsp.Lerp(trimmed, Dsp.SoftClip(trimmed), amount);
+        float playback = Dsp.Lerp(trimmed, Dsp.SoftClip(trimmed), amount);
+        float dcFiltered = _dcBlocker.Process(playback);
+
+        // Blends DC removal with complementary gains; the full-strength endpoint stays exact.
+        return _tape.CharacterAmount >= 1f ? dcFiltered
+            : Dsp.Lerp(playback, dcFiltered, _tape.CharacterAmount);
     }
 
     /// <summary>

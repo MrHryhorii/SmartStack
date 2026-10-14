@@ -57,6 +57,13 @@ and hot-loop allocations for every effect at nine rates. Cassette noise calibrat
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD
 state are checked separately. Noise-level tolerances allow statistical variation;
 these checks do not assess subjective sound quality.
+Cassette intensity checks also exercise the internal algorithm at zero, including
+warm delay/noise/filter state, convergence toward clean PCM, fixed transport
+frequencies, changing intensity across streaming buffers, and allocation budgets.
+Output-noise fixtures check the agreed levels at seven intensities against an
+independently recorded baseline after playback processing. A windowed spectral
+check verifies the reference-rate balance between the 3-6 kHz and 6-10 kHz bands
+and ensures that the mid-band share of total noise power decreases.
 
 The engine project excludes `Tests/**` from compilation and publishing. Listing
 test projects in the solution adds build work when building the whole solution;

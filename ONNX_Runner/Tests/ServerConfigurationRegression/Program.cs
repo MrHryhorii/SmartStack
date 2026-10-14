@@ -28,6 +28,7 @@ if (!synthesisOnly)
     EqualizerChecks.Run(Check);
     AudioEffectsChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
+    CassetteIntensityChecks.Run(Check);
     SampleRateChecks.Run(Check, native);
     using var emptyServices = new ServiceCollection().BuildServiceProvider();
     var api = new ApiSettings();
