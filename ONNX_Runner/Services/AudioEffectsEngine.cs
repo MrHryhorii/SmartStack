@@ -417,7 +417,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             float wet = Process(type, processInput, amount);
             wet = type != VoiceEffectType.DecoderGlitch ? _dcBlocker.Process(wet) : wet;
 
-            // Mathematical routing guarantees True Bypass when amount=0.
+            // The early amount guard handles bypass; active routing follows the effect's signal structure.
             switch (mode)
             {
                 case RoutingMode.ParallelCrossfade:

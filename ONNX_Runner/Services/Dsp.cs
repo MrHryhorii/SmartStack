@@ -14,9 +14,9 @@ public static class Dsp
     // =========================================================================
 
     /// <summary>
-    /// Linear interpolation (Equal-Gain crossfade).
-    /// At t=0.5, each signal is attenuated by -6dB, causing a perceptible dip on
-    /// correlated signals. Prefer <see cref="EqualPowerCrossfade"/> for wet/dry mixing.
+    /// Linear interpolation with complementary gains (1 - t and t).
+    /// Identical inputs retain their level; uncorrelated inputs can lose power during a crossfade.
+    /// The result depends on input level and correlation.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Lerp(float a, float b, float t)
@@ -36,8 +36,9 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Equal-Power (Constant-Power) crossfade using pre-computed gains.
-    /// At t=0.5 the gains are both sqrt(0.5) ≈ 0.707 (-3 dB each).
+    /// Combines inputs using pre-computed equal-power gains.
+    /// Constant power assumes equal-level, uncorrelated inputs.
+    /// Correlated inputs can gain level during the crossfade.
     /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float EqualPowerCrossfade(float dry, float wet, float dryGain, float wetGain)
