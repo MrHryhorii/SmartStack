@@ -52,6 +52,10 @@ Managed character-effect checks compare every G.711 PCM16 input and decoded code
 with independent ITU reference digests. Rolling decoder-glitch checks cover capture
 duration, low/high-frequency detection, live replacement, streaming partitions, and
 allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
+Codec-mixing checks compare midpoint and full-effect levels with independently recorded
+cubic fixtures at 8000, 22050, and 48000 Hz. They check the full RMS transition across
+input levels and master gain at five-percent steps and extra points near bypass and
+full effect, plus matching midpoint slopes, changing stream intensity, and hot-loop allocations.
 Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
 and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD

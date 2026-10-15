@@ -58,6 +58,42 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares matched cubic gains for the G.711 speech crossfade.
+    /// Both halves share their midpoint value and slope; wet gain can briefly exceed one.
+    /// Call once per buffer. This fixed speech preset does not measure or normalize input loudness.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void CubicGains(float t, out float dryGain, out float wetGain)
+    {
+        t = Math.Clamp(t, 0f, 1f);
+        if (t == .5f)
+        {
+            dryGain = .6685965239497303f;
+            wetGain = dryGain;
+            return;
+        }
+        if (t < .5f)
+        {
+            float v = 2f * t;
+            dryGain = ((.08206214577815385f * v - .1634656218284234f) * v - .25f) * v + 1f;
+            wetGain = ((-.056369344960515266f * v - .12503413108975425f) * v + .85f) * v;
+            return;
+        }
+
+        // Factoring from the full-wet endpoint avoids cancellation in the small dry gain.
+        float s = 2f * (1f - t);
+        dryGain = s * (.57f + s * (.5350447655268055f - .4364482415770753f * s));
+        wetGain = 1f + s * (.66f + s * (-1.8833867252118637f + .8919832491615939f * s));
+    }
+
+    /// <summary>Combines inputs with cubic gains prepared outside the sample loop.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float CubicCrossfade(float dry, float wet, float dryGain, float wetGain)
+    {
+        return dry * dryGain + wet * wetGain;
+    }
+
+    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.

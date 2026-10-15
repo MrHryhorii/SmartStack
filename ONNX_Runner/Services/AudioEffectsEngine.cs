@@ -20,8 +20,8 @@ namespace ONNX_Runner.Services;
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 ///   - Filtered Crossfade: Blends EQ input and wet output both proportionally to amount.
 ///     Used by radio-style effects where the filter character itself morphs with intensity.
-///   - Codec Crossfade: Processes a fully band-limited codec signal, then linearly blends dry/wet.
-///     This keeps codec intensity predictable and avoids correlated-signal loudness buildup.
+///   - Codec Crossfade: Processes a fully band-limited codec signal, then uses progressive hybrid gains.
+///     The mix stays closer to linear at low intensity and approaches equal-power at high intensity.
 /// </summary>
 ///
 /// DESIGN PHILOSOPHY:
@@ -358,6 +358,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode is RoutingMode.ParallelCrossfade or RoutingMode.FilteredCrossfade)
             Dsp.EqualPowerGains(amount, out equalPowerDryGain, out equalPowerWetGain);
 
+        float cubicDryGain = 1f;
+        float cubicWetGain = 0f;
+        if (mode == RoutingMode.CodecCrossfade)
+            Dsp.CubicGains(amount, out cubicDryGain, out cubicWetGain);
+
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
@@ -432,9 +437,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     break;
 
                 case RoutingMode.CodecCrossfade:
-                    // Codec dry/wet signals remain strongly correlated. Linear interpolation keeps
-                    // perceived level stable instead of creating an equal-power gain hump around 50%.
-                    buffer[i] = Dsp.Lerp(dry, wet, amount);
+                    // Preserve the accepted full-strength floating-point expression.
+                    buffer[i] = amount >= 1f
+                        ? Dsp.Lerp(dry, wet, amount)
+                        : Dsp.CubicCrossfade(dry, wet, cubicDryGain, cubicWetGain);
                     break;
             }
         }
