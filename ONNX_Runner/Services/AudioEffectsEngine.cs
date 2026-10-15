@@ -16,6 +16,7 @@ namespace ONNX_Runner.Services;
 /// DSP ROUTING MANIFESTO:
 ///   - Parallel Crossfade: equal-power gains are prepared once per buffer -> Spectral effects.
 ///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
+///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
 ///   - Parallel Add: Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * headroom), amount) -> Safe summation.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
@@ -85,7 +86,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         StrictCrossfade,
         FilteredCrossfade,
         CodecCrossfade,
-        CrusherCrossfade
+        CrusherCrossfade,
+        TacticalCrossfade
     }
 
     // =========================================================================
@@ -369,6 +371,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode == RoutingMode.CrusherCrossfade)
             Dsp.CrusherGains(amount, out crusherDryGain, out crusherWetGain);
 
+        float tacticalDryGain = 1f;
+        float tacticalWetGain = 0f;
+        if (mode == RoutingMode.TacticalCrossfade)
+            Dsp.TacticalGains(amount, out tacticalDryGain, out tacticalWetGain);
+
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
@@ -408,9 +415,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 for (int f = 0; f < filterCount; f++)
                     filtered = filters[f].Transform(filtered);
 
-            // FilteredCrossfade: blend EQ contribution proportionally to amount.
+            // Radio crossfades blend EQ contribution proportionally to amount.
             // At amount=0 the codec receives clean dry; at amount=1 fully band-limited.
-            float processInput = mode == RoutingMode.FilteredCrossfade
+            float processInput = mode is RoutingMode.FilteredCrossfade or RoutingMode.TacticalCrossfade
                 ? Dsp.Lerp(dry, filtered, amount)
                 : filtered;
 
@@ -428,6 +435,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
                 case RoutingMode.CrusherCrossfade:
                     buffer[i] = Dsp.CrusherCrossfade(dry, wet, crusherDryGain, crusherWetGain);
+                    break;
+
+                case RoutingMode.TacticalCrossfade:
+                    buffer[i] = Dsp.TacticalCrossfade(dry, wet, tacticalDryGain, tacticalWetGain);
                     break;
 
                 case RoutingMode.ParallelAdd:
@@ -474,7 +485,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
-            VoiceEffectType.TacticalRadio => RoutingMode.FilteredCrossfade,
+            VoiceEffectType.TacticalRadio => RoutingMode.TacticalCrossfade,
             VoiceEffectType.FmRadio => RoutingMode.FilteredCrossfade,
             VoiceEffectType.G711MuLaw => RoutingMode.CodecCrossfade,
             VoiceEffectType.G711ALaw => RoutingMode.CodecCrossfade,

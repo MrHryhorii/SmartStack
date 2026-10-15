@@ -59,6 +59,10 @@ full effect, plus matching midpoint slopes, changing stream intensity, and hot-l
 Crusher-mixing checks retain the compact two-cubic Bitcrusher correction, unchanged dry/wet
 proportions, recorded voice-level bounds, streaming intensity changes, and zero hot-loop
 allocations. Synthetic fixtures also verify routing and full-effect levels at three rates.
+Tactical-mixing checks preserve the recorded midpoint windows and five-percent voice-level
+paths, the shared polynomial midpoint value and slope, unchanged dry/wet proportions,
+streaming intensity changes, and zero hot-loop allocations. Independent synthetic fixtures
+check the evolving radio input filters and full-strength output at three rates.
 Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
 and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD

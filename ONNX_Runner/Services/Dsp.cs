@@ -142,6 +142,55 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares TacticalRadio gains using two experimentally fitted quartic corrections.
+    /// The halves share their midpoint value and slope while retaining the original dry/wet ratio.
+    /// Reuses the equal-power roots; call once per buffer without runtime loudness analysis.
+    /// </summary>
+    public static void TacticalGains(float t, out float dryGain, out float wetGain)
+    {
+        if (t <= 0.001f || float.IsNaN(t))
+        {
+            dryGain = 1f;
+            wetGain = 0f;
+            return;
+        }
+        if (t >= 1f)
+        {
+            dryGain = 0f;
+            wetGain = 1f;
+            return;
+        }
+
+        EqualPowerGains(t, out dryGain, out wetGain);
+        float correction;
+        if (t == 0.5f)
+        {
+            correction = 0.703430655f;
+        }
+        else if (t < 0.5f)
+        {
+            // The existing wet gain supplies sqrt(2*t), matching the low-intensity mix shape.
+            float u = wetGain * 1.41421356f;
+            correction = (((0.822745211f * u - 2.06082324f) * u + 2.31475267f) * u - 1.37324399f) * u + 1f;
+        }
+        else
+        {
+            // Evaluate the second half from its exact full-effect endpoint.
+            float u = 2f * (1f - t);
+            correction = (((1.01926546f * u - 1.28734397f) * u - 0.368925332f) * u + 0.340434498f) * u + 1f;
+        }
+        dryGain *= correction;
+        wetGain *= correction;
+    }
+
+    /// <summary>Combines inputs with Tactical gains prepared outside the sample loop.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float TacticalCrossfade(float dry, float wet, float dryGain, float wetGain)
+    {
+        return dry * dryGain + wet * wetGain;
+    }
+
+    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.
