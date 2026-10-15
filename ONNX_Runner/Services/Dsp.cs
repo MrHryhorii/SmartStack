@@ -94,6 +94,54 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares Bitcrusher gains using two experimentally fitted cubic correction segments.
+    /// Both halves share their midpoint value and slope; the original dry/wet ratio is retained.
+    /// Call once per buffer. No runtime loudness analysis or normalization is performed.
+    /// </summary>
+    public static void CrusherGains(float t, out float dryGain, out float wetGain)
+    {
+        if (t <= 0.001f || float.IsNaN(t))
+        {
+            dryGain = 1f;
+            wetGain = 0f;
+            return;
+        }
+        if (t >= 1f)
+        {
+            dryGain = 0f;
+            wetGain = 1f;
+            return;
+        }
+
+        float correction;
+        if (t == 0.5f)
+        {
+            correction = 0.867657153f;
+        }
+        else if (t < 0.5f)
+        {
+            float u = 2f * t;
+            correction = ((-0.3284173f * u + 0.788290584f) * u + -0.592216131f) * u + 1f;
+        }
+        else
+        {
+            // Evaluate from the full-effect endpoint to preserve its exact correction.
+            float u = 2f * (1f - t);
+            correction = ((-0.0907288549f * u + 0.314687421f) * u + -0.356301413f) * u + 1f;
+        }
+        EqualPowerGains(t, out dryGain, out wetGain);
+        dryGain *= correction;
+        wetGain *= correction;
+    }
+
+    /// <summary>Combines inputs with Crusher gains prepared outside the sample loop.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float CrusherCrossfade(float dry, float wet, float dryGain, float wetGain)
+    {
+        return dry * dryGain + wet * wetGain;
+    }
+
+    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.

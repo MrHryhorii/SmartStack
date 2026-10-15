@@ -28,6 +28,7 @@ if (!synthesisOnly)
     EqualizerChecks.Run(Check);
     AudioEffectsChecks.Run(Check);
     CodecMixingChecks.Run(Check);
+    CrusherMixingChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
     CassetteIntensityChecks.Run(Check);
     SampleRateChecks.Run(Check, native);

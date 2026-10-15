@@ -15,13 +15,13 @@ namespace ONNX_Runner.Services;
 ///
 /// DSP ROUTING MANIFESTO:
 ///   - Parallel Crossfade: equal-power gains are prepared once per buffer -> Spectral effects.
+///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
 ///   - Parallel Add: Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * headroom), amount) -> Safe summation.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 ///   - Filtered Crossfade: Blends EQ input and wet output both proportionally to amount.
 ///     Used by radio-style effects where the filter character itself morphs with intensity.
-///   - Codec Crossfade: Processes a fully band-limited codec signal, then uses progressive hybrid gains.
-///     The mix stays closer to linear at low intensity and approaches equal-power at high intensity.
+///   - Codec Crossfade: Processes a fully band-limited G.711 signal, then uses matched cubic gains.
 /// </summary>
 ///
 /// DESIGN PHILOSOPHY:
@@ -84,7 +84,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         StrictInsert,
         StrictCrossfade,
         FilteredCrossfade,
-        CodecCrossfade
+        CodecCrossfade,
+        CrusherCrossfade
     }
 
     // =========================================================================
@@ -363,6 +364,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode == RoutingMode.CodecCrossfade)
             Dsp.CubicGains(amount, out cubicDryGain, out cubicWetGain);
 
+        float crusherDryGain = 1f;
+        float crusherWetGain = 0f;
+        if (mode == RoutingMode.CrusherCrossfade)
+            Dsp.CrusherGains(amount, out crusherDryGain, out crusherWetGain);
+
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
@@ -420,6 +426,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, equalPowerDryGain, equalPowerWetGain);
                     break;
 
+                case RoutingMode.CrusherCrossfade:
+                    buffer[i] = Dsp.CrusherCrossfade(dry, wet, crusherDryGain, crusherWetGain);
+                    break;
+
                 case RoutingMode.ParallelAdd:
                     buffer[i] = Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * 0.85f), amount);
                     break;
@@ -458,7 +468,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             VoiceEffectType.Telephone => RoutingMode.ParallelCrossfade,
             VoiceEffectType.Overdrive => RoutingMode.ParallelCrossfade,
-            VoiceEffectType.Bitcrusher => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.Bitcrusher => RoutingMode.CrusherCrossfade,
             VoiceEffectType.RingModulator => RoutingMode.ParallelCrossfade,
             VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
             VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
