@@ -84,7 +84,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         ParallelAdd,
         StrictInsert,
         StrictCrossfade,
-        FilteredCrossfade,
+        FmCrossfade,
         CodecCrossfade,
         CrusherCrossfade,
         TacticalCrossfade
@@ -358,7 +358,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         float equalPowerDryGain = 1f;
         float equalPowerWetGain = 0f;
-        if (mode is RoutingMode.ParallelCrossfade or RoutingMode.FilteredCrossfade)
+        if (mode == RoutingMode.ParallelCrossfade)
             Dsp.EqualPowerGains(amount, out equalPowerDryGain, out equalPowerWetGain);
 
         float cubicDryGain = 1f;
@@ -375,6 +375,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float tacticalWetGain = 0f;
         if (mode == RoutingMode.TacticalCrossfade)
             Dsp.TacticalGains(amount, out tacticalDryGain, out tacticalWetGain);
+
+        float fmDryGain = 1f;
+        float fmWetGain = 0f;
+        if (mode == RoutingMode.FmCrossfade)
+            Dsp.FmGains(amount, out fmDryGain, out fmWetGain);
 
         // Per-buffer constants used by effect hot paths.
         switch (type)
@@ -417,7 +422,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             // Radio crossfades blend EQ contribution proportionally to amount.
             // At amount=0 the codec receives clean dry; at amount=1 fully band-limited.
-            float processInput = mode is RoutingMode.FilteredCrossfade or RoutingMode.TacticalCrossfade
+            float processInput = mode is RoutingMode.FmCrossfade or RoutingMode.TacticalCrossfade
                 ? Dsp.Lerp(dry, filtered, amount)
                 : filtered;
 
@@ -453,8 +458,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.Lerp(dry, wet, amount);
                     break;
 
-                case RoutingMode.FilteredCrossfade:
-                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, equalPowerDryGain, equalPowerWetGain);
+                case RoutingMode.FmCrossfade:
+                    buffer[i] = Dsp.FmCrossfade(dry, wet, fmDryGain, fmWetGain);
                     break;
 
                 case RoutingMode.CodecCrossfade:
@@ -486,7 +491,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
             VoiceEffectType.TacticalRadio => RoutingMode.TacticalCrossfade,
-            VoiceEffectType.FmRadio => RoutingMode.FilteredCrossfade,
+            VoiceEffectType.FmRadio => RoutingMode.FmCrossfade,
             VoiceEffectType.G711MuLaw => RoutingMode.CodecCrossfade,
             VoiceEffectType.G711ALaw => RoutingMode.CodecCrossfade,
             _ => RoutingMode.StrictInsert
