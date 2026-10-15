@@ -67,6 +67,10 @@ FM-mixing checks cover recorded midpoint windows and five-percent voice-level pa
 the shared cubic join, unchanged dry/wet proportions, streaming intensity changes,
 and zero hot-loop allocations. Independent synthetic fixtures check FM routing and
 full-strength output at three rates.
+Overdrive-mixing checks preserve ordered five-percent paths inside each recorded
+clean/full interval, the shared polynomial join, original dry/wet proportions,
+stream state and zero hot-loop allocations. Independent synthetic fixtures verify
+routing at three rates; recorded calibration moments serve as regression data.
 Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
 and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD

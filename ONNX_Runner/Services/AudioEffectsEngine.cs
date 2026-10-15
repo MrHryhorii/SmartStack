@@ -87,7 +87,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         FmCrossfade,
         CodecCrossfade,
         CrusherCrossfade,
-        TacticalCrossfade
+        TacticalCrossfade,
+        DriveCrossfade
     }
 
     // =========================================================================
@@ -381,6 +382,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode == RoutingMode.FmCrossfade)
             Dsp.FmGains(amount, out fmDryGain, out fmWetGain);
 
+        float driveDryGain = 1f;
+        float driveWetGain = 0f;
+        if (mode == RoutingMode.DriveCrossfade)
+            Dsp.DriveGains(amount, out driveDryGain, out driveWetGain);
+
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
@@ -446,6 +452,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.TacticalCrossfade(dry, wet, tacticalDryGain, tacticalWetGain);
                     break;
 
+                case RoutingMode.DriveCrossfade:
+                    buffer[i] = Dsp.DriveCrossfade(dry, wet, driveDryGain, driveWetGain);
+                    break;
+
                 case RoutingMode.ParallelAdd:
                     buffer[i] = Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * 0.85f), amount);
                     break;
@@ -483,7 +493,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return type switch
         {
             VoiceEffectType.Telephone => RoutingMode.ParallelCrossfade,
-            VoiceEffectType.Overdrive => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.Overdrive => RoutingMode.DriveCrossfade,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherCrossfade,
             VoiceEffectType.RingModulator => RoutingMode.ParallelCrossfade,
             VoiceEffectType.Flanger => RoutingMode.ParallelAdd,

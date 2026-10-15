@@ -240,6 +240,55 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares Overdrive gains using two experimentally fitted quartic corrections.
+    /// The halves share their midpoint value and slope while retaining the original dry/wet ratio.
+    /// Reuses the equal-power roots; call once per buffer without runtime loudness analysis.
+    /// </summary>
+    public static void DriveGains(float t, out float dryGain, out float wetGain)
+    {
+        if (t <= 0.001f || float.IsNaN(t))
+        {
+            dryGain = 1f;
+            wetGain = 0f;
+            return;
+        }
+        if (t >= 1f)
+        {
+            dryGain = 0f;
+            wetGain = 1f;
+            return;
+        }
+
+        EqualPowerGains(t, out dryGain, out wetGain);
+        float correction;
+        if (t == 0.5f)
+        {
+            correction = 0.930806007f;
+        }
+        else if (t < 0.5f)
+        {
+            // The existing wet gain supplies sqrt(2*t), matching the low-intensity mix shape.
+            float u = wetGain * 1.41421356f;
+            correction = (((-0.057844468f * u - 0.232485028f) * u + 0.207646598f) * u + 0.0134889044f) * u + 1f;
+        }
+        else
+        {
+            // The existing dry gain supplies sqrt(2*(1-t)) near the full-effect endpoint.
+            float u = dryGain * 1.41421356f;
+            correction = (((2.01971197f * u - 4.01631705f) * u + 2.54274303f) * u - 0.615331945f) * u + 1f;
+        }
+        dryGain *= correction;
+        wetGain *= correction;
+    }
+
+    /// <summary>Combines inputs with Drive gains prepared outside the sample loop.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float DriveCrossfade(float dry, float wet, float dryGain, float wetGain)
+    {
+        return dry * dryGain + wet * wetGain;
+    }
+
+    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.
