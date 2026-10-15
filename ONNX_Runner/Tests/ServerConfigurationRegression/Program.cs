@@ -32,6 +32,7 @@ if (!synthesisOnly)
     TacticalMixingChecks.Run(Check);
     FmMixingChecks.Run(Check);
     OverdriveMixingChecks.Run(Check);
+    RingMixingChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
     CassetteIntensityChecks.Run(Check);
     SampleRateChecks.Run(Check, native);

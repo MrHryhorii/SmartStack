@@ -289,6 +289,54 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares RingModulator gains with two experimentally fitted cubic corrections.
+    /// Retains the original tremolo transition and dry/wet ratio; call once per buffer.
+    /// The shared midpoint value and slope keep the two halves continuous.
+    /// </summary>
+    public static void RingGains(float t, out float dryGain, out float wetGain)
+    {
+        if (t <= 0.001f || float.IsNaN(t))
+        {
+            dryGain = 1f;
+            wetGain = 0f;
+            return;
+        }
+        if (t >= 1f)
+        {
+            dryGain = 0f;
+            wetGain = 1f;
+            return;
+        }
+
+        EqualPowerGains(t, out dryGain, out wetGain);
+        float correction;
+        if (t == 0.5f)
+        {
+            correction = 1.0222141f;
+        }
+        else if (t < 0.5f)
+        {
+            float u = 2f * t;
+            correction = ((-0.261437901f * u + 0.697643661f) * u + -0.413991664f) * u + 1f;
+        }
+        else
+        {
+            // Reverse the coordinate to retain the exact full-effect endpoint.
+            float u = 2f * (1f - t);
+            correction = ((0.536519771f * u + -1.29223559f) * u + 0.777929916f) * u + 1f;
+        }
+        dryGain *= correction;
+        wetGain *= correction;
+    }
+
+    /// <summary>Combines inputs with Ring gains prepared outside the sample loop.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float RingCrossfade(float dry, float wet, float dryGain, float wetGain)
+    {
+        return dry * dryGain + wet * wetGain;
+    }
+
+    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.

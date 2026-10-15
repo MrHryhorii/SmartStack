@@ -15,6 +15,7 @@ namespace ONNX_Runner.Services;
 ///
 /// DSP ROUTING MANIFESTO:
 ///   - Parallel Crossfade: equal-power gains are prepared once per buffer -> Spectral effects.
+///   - Ring Crossfade: fitted common gains retain the RingModulator tremolo transition.
 ///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
 ///   - Parallel Add: Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * headroom), amount) -> Safe summation.
@@ -88,7 +89,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         CodecCrossfade,
         CrusherCrossfade,
         TacticalCrossfade,
-        DriveCrossfade
+        DriveCrossfade,
+        RingCrossfade
     }
 
     // =========================================================================
@@ -387,6 +389,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode == RoutingMode.DriveCrossfade)
             Dsp.DriveGains(amount, out driveDryGain, out driveWetGain);
 
+        float ringDryGain = 1f;
+        float ringWetGain = 0f;
+        if (mode == RoutingMode.RingCrossfade)
+            Dsp.RingGains(amount, out ringDryGain, out ringWetGain);
+
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
@@ -456,6 +463,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.DriveCrossfade(dry, wet, driveDryGain, driveWetGain);
                     break;
 
+                case RoutingMode.RingCrossfade:
+                    buffer[i] = Dsp.RingCrossfade(dry, wet, ringDryGain, ringWetGain);
+                    break;
+
                 case RoutingMode.ParallelAdd:
                     buffer[i] = Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * 0.85f), amount);
                     break;
@@ -495,7 +506,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Telephone => RoutingMode.ParallelCrossfade,
             VoiceEffectType.Overdrive => RoutingMode.DriveCrossfade,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherCrossfade,
-            VoiceEffectType.RingModulator => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.RingModulator => RoutingMode.RingCrossfade,
             VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
             VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,

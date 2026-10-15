@@ -71,6 +71,10 @@ Overdrive-mixing checks preserve ordered five-percent paths inside each recorded
 clean/full interval, the shared polynomial join, original dry/wet proportions,
 stream state and zero hot-loop allocations. Independent synthetic fixtures verify
 routing at three rates; recorded calibration moments serve as regression data.
+RingModulator-mixing checks preserve the recorded RMS reference band, ordered
+five-percent corpus mean, original tremolo proportions, smooth gain join, stream
+state and zero hot-loop allocations. Individual midpoint windows remain separate
+diagnostics; the fixed correction does not guarantee them for every input.
 Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
 and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD
