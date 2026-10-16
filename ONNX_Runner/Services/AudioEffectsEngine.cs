@@ -14,7 +14,7 @@ namespace ONNX_Runner.Services;
 ///   - Zero-Allocation: DSP loop generates zero garbage. String parsing is offloaded to the caller.
 ///
 /// DSP ROUTING MANIFESTO:
-///   - Telephone Crossfade: calibrated equal-power weights retain the original phone proportions.
+///   - Telephone Crossfade: prepared polynomial weights retain the complete handset signal chain.
 ///   - Ring Crossfade: fitted common gains retain the RingModulator tremolo transition.
 ///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.

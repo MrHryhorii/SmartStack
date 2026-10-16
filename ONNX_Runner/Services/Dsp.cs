@@ -387,27 +387,33 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares Telephone gains with two experimentally fitted quartic corrections.
-    /// Reuses the equal-power roots; both weights share one correction and retain their proportions.
-    /// The pieces share their midpoint value and slope. Evaluate once per buffer.
+    /// Prepares Telephone weights from one empirically fitted rational quartic curve.
+    /// Positive Bernstein coefficients keep the shared denominator at least one.
+    /// The wet share increases smoothly, with no midpoint join; endpoints stay exact.
+    /// Call once per buffer. Mixing needs no level analysis, extra pass or allocation.
     /// </summary>
     public static void TelephoneGains(float t, out float dryGain, out float wetGain)
     {
-        if (t <= .001f || float.IsNaN(t)) { dryGain = 1f; wetGain = 0f; return; }
-        if (t >= 1f) { dryGain = 0f; wetGain = 1f; return; }
-        EqualPowerGains(t, out dryGain, out wetGain);
-        float correction;
-        if (t == .5f)
-            correction = 0.991323888f;
-        else
+        if (t <= .001f || float.IsNaN(t))
         {
-            float u = (t < .5f ? wetGain : dryGain) * 1.41421356f - .5f;
-            correction = t < .5f
-                ? ((((1.42106366f * u + 0.0788642094f) * u - 0.523106933f) * u - 0.0283921715f) * u + 1.03762221f)
-                : ((((0.0887395144f * u + 0.0738908052f) * u - 0.290819883f) * u - 0.0271488205f) * u + 1.06282067f);
+            dryGain = 1f;
+            wetGain = 0f;
+            return;
         }
-        dryGain *= correction;
-        wetGain *= correction;
+        if (t >= 1f)
+        {
+            dryGain = 0f;
+            wetGain = 1f;
+            return;
+        }
+
+        float s = 1f - t;
+        float s2 = s * s, t2 = t * t, cross = s * t;
+        float b0 = s2 * s2, b1 = cross * s2, b2 = cross * cross;
+        float b3 = cross * t2, b4 = t2 * t2;
+        float scale = 1f / (b0 + 126.780807f * b1 + 75.7484541f * b2 + 19.2256392f * b3 + b4);
+        dryGain = (b0 + 127.225773f * b1 + 51.4515467f * b2 + 0.712533685f * b3) * scale;
+        wetGain = (5.8789886f * b1 + 102.327607f * b2 + 19.4047641f * b3 + b4) * scale;
     }
 
     /// <summary>Combines inputs using prepared Telephone weights without additional per-sample work.</summary>

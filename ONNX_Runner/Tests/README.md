@@ -66,6 +66,15 @@ checks retain full-output references, streaming independence, and allocation bud
 The two cubic level-correction segments are prepared once per buffer; codec transfer
 laws, telephone bandwidth and full-strength waveforms remain unchanged.
 
+Telephone additionally checks independent current-path moments from the full voice
+catalog at 21 strengths. Its prepared dry/wet weights use one positive rational curve
+with increasing wet share and no midpoint join. Historical primary and endpoint
+controls keep their original data and tolerances; independent wet moments allow those
+controls to remain valid after changing the mix ratio. Embedded numeric fixtures are
+loaded only by the test runner. Checks cover the clean/full endpoints, current midpoint
+windows, curve progression and bending, the preceding curve's quality budgets, streaming
+partitions, and zero-allocation mixing.
+
 Separate engine-routing fixtures replay the unchanged synthetic inputs at three rates.
 Their expected levels come from frozen accepted effect algorithms, the declared
 `amount * (2 - amount)` wet-strength curve, and fixed output trims. The request amount

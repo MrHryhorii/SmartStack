@@ -37,6 +37,7 @@ if (!synthesisOnly)
     ChorusMixingChecks.Run(Check);
     FlangerMixingChecks.Run(Check);
     TelephoneMixingChecks.Run(Check);
+    TelephoneCurveChecks.Run(Check);
     CharacterStrengthChecks.Run(Check);
     BitcrusherQuantizationChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);

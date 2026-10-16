@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="TelephoneCurveMoments.json" LogicalName="TelephoneCurveMoments.json" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../ONNX_Runner.csproj" />
     <Compile Include="../../Models/AudioSampleRate.cs" Link="Production/AudioSampleRate.cs" />

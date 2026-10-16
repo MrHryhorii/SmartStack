@@ -4,8 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class TelephoneMixingChecks
 {
-    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
-    // Synthetic routing fixtures independently include the new strength curve and output trims.
+    // Frozen historical wet moments protect the previous regression limits across the revised mixer.
+    // Current eased-path moments and synthetic routing are checked independently as well.
     /// <summary>Checks measured midpoint windows, path errors, reversals and unchanged Telephone structure.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -20,28 +20,37 @@ internal static class TelephoneMixingChecks
                     "Endpoint mixing changed the selected signal.");
             }
         });
-        check("Telephone gains remain finite and preserve the original effect proportions", () =>
+        check("Telephone gains remain finite and their wet share increases monotonically", () =>
         {
+            float previous = 0;
             for (int i = 101; i < 100000; i++)
             {
                 float t = i / 100000f;
                 Dsp.TelephoneGains(t, out float dry, out float wet);
-                Dsp.EqualPowerGains(t, out float a, out float b);
                 Require(float.IsFinite(dry) && float.IsFinite(wet) && dry >= 0 && wet >= 0, "Invalid gain.");
-                Require(Math.Abs(dry * b - wet * a) < 3e-7, "The level correction changed the dry/wet ratio.");
+                float share = wet / (dry + wet);
+                Require(share >= previous - 3e-7f, "Increasing intensity reduced the wet share.");
+                previous = share;
             }
         });
-        check("Telephone polynomial halves share the accepted midpoint value and slope", () =>
+        check("Telephone rational gains retain their fitted midpoint and smooth local slopes", () =>
         {
-            const float h = .005f;
-            double middle = Correction(.5f);
-            double leftSlope = (3 * middle - 4 * Correction(.5f - h) + Correction(.5f - 2 * h)) / (2 * h);
-            double rightSlope = (-3 * middle + 4 * Correction(.5f + h) - Correction(.5f + 2 * h)) / (2 * h);
-            Require(Math.Abs(middle - 0.9913238805008562) < 1e-7, "The accepted midpoint changed.");
-            Require(Math.Abs(leftSlope - 0.21818084546918812) < .002 && Math.Abs(rightSlope - 0.21818084546918812) < .002,
-                "The two halves do not share their midpoint slope.");
-            Require(Math.Abs(Correction(MathF.BitDecrement(.5f)) - Correction(MathF.BitIncrement(.5f))) < 5e-7,
-                "The midpoint join is discontinuous.");
+            const float h = .001f;
+            Dsp.TelephoneGains(.5f, out float d, out float w);
+            Dsp.TelephoneGains(.5f - h, out float dl, out float wl);
+            Dsp.TelephoneGains(.5f - 2 * h, out float dll, out float wll);
+            Dsp.TelephoneGains(.5f + h, out float dr, out float wr);
+            Dsp.TelephoneGains(.5f + 2 * h, out float drr, out float wrr);
+            Require(Math.Abs(d - 0.80619398150939992) < 1e-7 && Math.Abs(w - 0.57478678600829058) < 1e-7, "The accepted midpoint changed.");
+            Require(Math.Abs((3 * d - 4 * dl + dll) / (2 * h) - (-0.74729824222052055)) < .002
+                && Math.Abs((-3 * d + 4 * dr - drr) / (2 * h) - (-0.74729824222052055)) < .002
+                && Math.Abs((3 * w - 4 * wl + wll) / (2 * h) - (1.3827105392897778)) < .002
+                && Math.Abs((-3 * w + 4 * wr - wrr) / (2 * h) - (1.3827105392897778)) < .002,
+                "The midpoint derivatives are not smooth.");
+            Dsp.TelephoneGains(MathF.BitDecrement(.5f), out float beforeDry, out float beforeWet);
+            Dsp.TelephoneGains(MathF.BitIncrement(.5f), out float afterDry, out float afterWet);
+            Require(Math.Abs(beforeDry - afterDry) < 5e-7 && Math.Abs(beforeWet - afterWet) < 5e-7,
+                "The continuous rational curve has a midpoint discontinuity.");
         });
         check("Telephone gain evaluation and prepared mixing allocate zero managed bytes", () =>
         {
@@ -90,8 +99,11 @@ internal static class TelephoneMixingChecks
         {
             check($"Telephone retains its independent dense reversal control for {r.Name}", () =>
             {
-                double from = r.FromDb + 20 * Math.Log10(Correction(r.From));
-                double to = r.ToDb + 20 * Math.Log10(Correction(r.To));
+                Require(Math.Abs(TelephoneCurveChecks.HistoricalEqualPowerLevel(r.Name, r.From) - r.FromDb) < 4e-6
+                    && Math.Abs(TelephoneCurveChecks.HistoricalEqualPowerLevel(r.Name, r.To) - r.ToDb) < 4e-6,
+                    "The original dense reference input changed.");
+                double from = TelephoneCurveChecks.HistoricalLevel(r.Name, r.From);
+                double to = TelephoneCurveChecks.HistoricalLevel(r.Name, r.To);
                 Require(r.Direction * (from - to) < .18, "A recorded dense reverse step exceeded its declared budget.");
             });
         }
@@ -170,19 +182,12 @@ internal static class TelephoneMixingChecks
         return 10 * Math.Log10(power / reference.DryPower);
     }
 
-    /// <summary>Recovers the common correction independently of the polynomial coordinates.</summary>
-    private static double Correction(float amount)
-    {
-        if (amount <= .001f || amount >= 1f) return 1;
-        Dsp.TelephoneGains(amount, out float dry, out float wet);
-        Dsp.EqualPowerGains(amount, out float a, out float b);
-        return Math.Sqrt((dry * (double)dry + wet * (double)wet) / (a * (double)a + b * (double)b));
-    }
-
-    /// <summary>Applies the common correction to independently recorded dense levels.</summary>
+    /// <summary>Evaluates old controls from independent moments without assuming a common gain.</summary>
     private static double CorrectedLevel((float Amount, double OriginalChangeDb) point)
     {
-        return point.OriginalChangeDb + 20 * Math.Log10(Correction(point.Amount));
+        Require(Math.Abs(TelephoneCurveChecks.HistoricalMean(point.Amount, true) - point.OriginalChangeDb) < 4e-6,
+            "The original dense catalog reference input changed.");
+        return TelephoneCurveChecks.HistoricalMean(point.Amount);
     }
 
     /// <summary>Creates the frozen multi-band synthetic input without stored audio assets.</summary>
@@ -1322,20 +1327,20 @@ internal static class TelephoneMixingChecks
         ]),
     ];
 
-    // Independent original wet samples combined with frozen JSON weights.
+    // Independent current wet moments combined with the offline rational fit; full references unchanged.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.05f, -19.22475145237264),
-        (8000, 0.5f, -21.035488942563681),
-        (8000, 0.95f, -23.023476722359312),
+        (8000, 0.05f, -19.365318859351934),
+        (8000, 0.5f, -20.4314614361504),
+        (8000, 0.95f, -23.587176993653021),
         (8000, 1f, -23.950129767107828),
-        (22050, 0.05f, -19.234911289342755),
-        (22050, 0.5f, -20.942069966039128),
-        (22050, 0.95f, -22.574997765656953),
+        (22050, 0.05f, -19.371683012762691),
+        (22050, 0.5f, -20.392732974785606),
+        (22050, 0.95f, -23.048917296815006),
         (22050, 1f, -23.378979960549117),
-        (48000, 0.05f, -19.235322028595242),
-        (48000, 0.5f, -20.931567574865394),
-        (48000, 0.95f, -22.534362417102859),
+        (48000, 0.05f, -19.372107468272951),
+        (48000, 0.5f, -20.387613323446885),
+        (48000, 0.95f, -23.001663975487119),
         (48000, 1f, -23.329612906801891),
     ];
 
