@@ -37,6 +37,7 @@ if (!synthesisOnly)
     FlangerMixingChecks.Run(Check);
     TelephoneMixingChecks.Run(Check);
     CharacterStrengthChecks.Run(Check);
+    BitcrusherQuantizationChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
     CassetteIntensityChecks.Run(Check);
     CassettePlaybackChecks.Run(Check);

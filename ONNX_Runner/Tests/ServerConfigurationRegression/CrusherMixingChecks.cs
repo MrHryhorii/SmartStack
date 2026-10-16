@@ -91,12 +91,12 @@ internal static class CrusherMixingChecks
         }
         foreach (var reference in SyntheticReferences)
         {
-            check($"Bitcrusher matches the accepted prototype at {reference.Rate} Hz and {reference.Amount:R}", () =>
+            check($"Bitcrusher matches independent tenth-bit routing at {reference.Rate} Hz and {reference.Amount:R}", () =>
             {
                 float[] input = Signal(reference.Rate, reference.Rate*3);
                 double level = Level(Process(input, reference.Rate, reference.Amount));
                 Require(Math.Abs(level-reference.RmsDbfs) < .01,
-                    $"Actual effect routing differs from the frozen prototype: {level:F6} dBFS.");
+                    $"Actual effect routing differs from the independent tenth-bit reference: {level:F6} dBFS.");
             });
         }
         foreach (int rate in new[] { 8000, 22050, 48000 })
@@ -189,19 +189,21 @@ internal static class CrusherMixingChecks
     [
         0, -0.46078359587804929, -0.81477240315051891, -1.0668876569055052, -1.2273908513172969, -1.3109158146340421, -1.3351476033367138, -1.319489775454723, -1.2839780898271616, -1.2485930677039578, -1.233037250862935, -1.2287630432970396, -1.2105569623167947, -1.173093196008185, -1.1112432461572255, -1.0202056586512518, -0.89564989963060859, -0.73386187989945229, -0.53188805571974174, -0.28764488051672293, 0
     ];
+    // Frozen from the accepted engine with a separate per-sample tenth-bit reference quantizer.
+    // Integer-depth midpoint/full references and historical mixer moments remain unchanged.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.1f, -20.447697691177691),
+        (8000, 0.1f, -20.447691856870808),
         (8000, 0.5f, -22.03047743613936),
-        (8000, 0.9f, -21.917042448419558),
+        (8000, 0.9f, -21.99179654451386),
         (8000, 1f, -21.67936886590627),
-        (22050, 0.1f, -20.447519970476659),
+        (22050, 0.1f, -20.447517251586),
         (22050, 0.5f, -22.03452401778393),
-        (22050, 0.9f, -21.949312423625077),
+        (22050, 0.9f, -22.036203320775126),
         (22050, 1f, -21.747021365760709),
-        (48000, 0.1f, -20.446609611182318),
+        (48000, 0.1f, -20.44660755148954),
         (48000, 0.5f, -22.026881272623086),
-        (48000, 0.9f, -21.968111558019743),
+        (48000, 0.9f, -22.047919599863327),
         (48000, 1f, -21.778692880423286),
     ];
     // Unseen-text 22050 Hz voice moments: measured before integration, without PCM assets.

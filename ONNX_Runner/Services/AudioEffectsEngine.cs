@@ -124,6 +124,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         public float Phase;
         public float Hold;
+        public float ClockStep;
+        public float Scale;
+        public float InverseScale;
+        public int MinValue;
+        public int MaxValue;
     }
 
     private struct TapeState
@@ -427,6 +432,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
+            case VoiceEffectType.Bitcrusher:
+                PrepareBitcrusher(effectAmount);
+                break;
+
             case VoiceEffectType.Overdrive:
                 _overdriveDrive = 1f + effectAmount * 4.0f;
                 _overdriveTrim = 1f / MathF.Sqrt(_overdriveDrive);
@@ -715,6 +724,20 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
+    /// <summary>Prepares tenth-bit quantization and the unchanged decimation clock once per buffer.</summary>
+    private void PrepareBitcrusher(float amount)
+    {
+        float bits = Math.Clamp(MathF.Round((16f - amount * 12f) * 10f) / 10f, 4f, 16f);
+        _bc.Scale = MathF.Pow(2f, bits - 1f);
+        _bc.InverseScale = 1f / _bc.Scale;
+        // Fractional depths retain uniform integer codes within the signed PCM range.
+        // Integer depths preserve the existing negative rail and one-code-short positive rail.
+        _bc.MinValue = -(int)MathF.Floor(_bc.Scale);
+        _bc.MaxValue = (int)MathF.Ceiling(_bc.Scale) - 1;
+        float targetRate = Dsp.Lerp((float)_sampleRate, Math.Min(_sampleRate, ReferenceSampleRate * 0.5f), amount);
+        _bc.ClockStep = targetRate / _sampleRate;
+    }
+
     /// <summary>Prepares cassette component amounts and playback trim once per buffer.</summary>
     private void PrepareTape(float amount)
     {
@@ -881,14 +904,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// Simulates the true aliasing and quantization artifacts of a lo-fi bitcrusher.
     /// Strictly relies on Zero-Order Hold (decimation) and amplitude quantization.
     /// The metallic character arises naturally from foldover frequencies and staircase waveforms.
-    /// Preserves the original bitcrusher behavior, but uses signed PCM-style quantization so
-    /// silence remains exactly zero and maximum intensity reaches a true 4-bit / 16-level signal.
+    /// Bit depth changes in 0.1-bit steps while the decimation rate varies continuously.
+    /// Silence remains exactly zero; full intensity retains the signed 4-bit / 16-level signal.
     /// </summary>
     private float Bitcrusher(float x, float amount)
     {
         float jitter = _thermalValue * 0.005f * amount;
-        float targetRate = Dsp.Lerp((float)_sampleRate, Math.Min(_sampleRate, ReferenceSampleRate * 0.5f), amount);
-        float step = Math.Min(targetRate / _sampleRate * (1f + jitter), 1f);
+        float step = Math.Min(_bc.ClockStep * (1f + jitter), 1f);
 
         _bc.Phase += step;
 
@@ -896,17 +918,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             _bc.Phase -= 1f;
 
-            int bits = Math.Clamp((int)MathF.Round(16f - (amount * 12f)), 4, 16);
-            int scale = 1 << (bits - 1);
-            int minValue = -scale;
-            int maxValue = scale - 1;
-
             int quantized = Math.Clamp(
-                (int)MathF.Round(Math.Clamp(x, -1f, 1f) * scale),
-                minValue,
-                maxValue);
+                (int)MathF.Round(Math.Clamp(x, -1f, 1f) * _bc.Scale),
+                _bc.MinValue,
+                _bc.MaxValue);
 
-            _bc.Hold = (float)quantized / scale;
+            _bc.Hold = quantized * _bc.InverseScale;
         }
 
         return _bc.Hold;

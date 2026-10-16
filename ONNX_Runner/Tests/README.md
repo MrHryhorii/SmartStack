@@ -70,6 +70,15 @@ RMS levels after the agreed output trims. Existing streaming and hot-loop alloca
 checks exercise the revised engine. Calibration of the external level curves after
 these changes is a separate step; the routing fixtures verify the declared processing,
 not ideal midpoint loudness.
+
+Bitcrusher quantization checks cover all 121 depths from 16.0 to 4.0 bits in
+0.1-bit steps, exact legacy quantization at every integer depth across all PCM16
+inputs, bounded fractional grids, exact silence, and a continuously varying
+decimation clock inside a fixed depth step. Changing-depth preparation is checked
+for managed allocations. Its fractional routing references use a separate per-sample
+quantizer; integer-depth midpoint/full references and historical mixer moments remain
+unchanged. The quantization scale and clock ratio are prepared once per buffer.
+
 Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
 and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD
