@@ -347,13 +347,35 @@ public static class Dsp
         if (t == .5f) return 1.0233542f;
         float u = (t < .5f ? 2f * t : 2f * (1f - t)) - .5f;
         if (t < .5f)
-            return (((((((7.15550812f * u + 0.502754754f) * u - 3.18544345f) * u - 0.130990126f) * u + 0.354670923f) * u - 0.0737219082f) * u + 0.0219718745f) * u + 1.03043892f);
-        return (((((((14.3553259f * u - 4.96932268f) * u - 7.11726878f) * u + 2.08667079f) * u + 1.03844834f) * u - 0.250867563f) * u - 0.0157305491f) * u + 1.02162274f);
+            return ((((((7.15550812f * u + 0.502754754f) * u - 3.18544345f) * u - 0.130990126f) * u + 0.354670923f) * u - 0.0737219082f) * u + 0.0219718745f) * u + 1.03043892f;
+        return ((((((14.3553259f * u - 4.96932268f) * u - 7.11726878f) * u + 2.08667079f) * u + 1.03844834f) * u - 0.250867563f) * u - 0.0157305491f) * u + 1.02162274f;
     }
 
     /// <summary>Retains the original delayed-voice blend and saturation, then applies prepared gain.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float ChorusCrossfade(float dry, float wet, float amount, float gain)
+    {
+        return Lerp(dry, SoftClip(dry + wet * .85f), amount) * gain;
+    }
+
+    /// <summary>
+    /// Prepares Flanger output gain from two experimentally fitted cubic segments.
+    /// They share their midpoint value and slope; calibration retains each recorded clean/full level.
+    /// Evaluate once per buffer, then apply after the original additive nonlinear mixture.
+    /// </summary>
+    public static float FlangerGain(float t)
+    {
+        if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
+        if (t == .5f) return 1.04095209f;
+        float u = (t < .5f ? 2f * t : 2f * (1f - t)) - .5f;
+        if (t < .5f)
+            return ((0.0178616755f * u + 0.0382889174f) * u + 0.0364867076f) * u + 1.01090384f;
+        return ((0.0547523536f * u - 0.15650019f) * u + 0.0272640362f) * u + 1.05960107f;
+    }
+
+    /// <summary>Retains Flanger feedback, delayed-voice proportions and saturation, then applies prepared gain.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float FlangerCrossfade(float dry, float wet, float amount, float gain)
     {
         return Lerp(dry, SoftClip(dry + wet * .85f), amount) * gain;
     }
@@ -439,7 +461,7 @@ public static class Dsp
             // Cubic soft clip: y = x - x³/3, valid for |x| ≤ 1 (unit gain below clipping threshold).
             // For |x| > 1, hard-clip at ±2/3 (the cubic's peak value at x=1).
             if (x >= 1f) return 2f / 3f;
-            return x - (x * x * x) / 3f;
+            return x - x * x * x / 3f;
         }
 
         // Negative half: tanh gives a gentler, more rounded limiting curve.

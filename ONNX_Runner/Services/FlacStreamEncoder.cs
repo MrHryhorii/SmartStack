@@ -447,7 +447,7 @@ internal sealed class FlacStreamEncoder : IDisposable
     {
         return value >= 0
             ? (uint)value << 1
-            : ((uint)(-value) << 1) - 1u;
+            : ((uint)-value << 1) - 1u;
     }
 
     /// <summary>Checks whether a nonempty frame contains only one repeated sample value.</summary>

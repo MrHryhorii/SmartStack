@@ -62,12 +62,12 @@ public static class LufsMeter
         double cosW0 = Math.Cos(w0);
         double sqrtA = Math.Sqrt(a);
 
-        double b0S = a * ((a + 1) + (a - 1) * cosW0 + 2 * sqrtA * alpha);
-        double b1S = -2 * a * ((a - 1) + (a + 1) * cosW0);
-        double b2S = a * ((a + 1) + (a - 1) * cosW0 - 2 * sqrtA * alpha);
-        double a0S = (a + 1) - (a - 1) * cosW0 + 2 * sqrtA * alpha;
-        double a1S = 2 * ((a - 1) - (a + 1) * cosW0);
-        double a2S = (a + 1) - (a - 1) * cosW0 - 2 * sqrtA * alpha;
+        double b0S = a * (a + 1 + (a - 1) * cosW0 + 2 * sqrtA * alpha);
+        double b1S = -2 * a * (a - 1 + (a + 1) * cosW0);
+        double b2S = a * (a + 1 + (a - 1) * cosW0 - 2 * sqrtA * alpha);
+        double a0S = a + 1 - (a - 1) * cosW0 + 2 * sqrtA * alpha;
+        double a1S = 2 * (a - 1 - (a + 1) * cosW0);
+        double a2S = a + 1 - (a - 1) * cosW0 - 2 * sqrtA * alpha;
 
         var stage1 = new Biquad(b0S / a0S, b1S / a0S, b2S / a0S, a1S / a0S, a2S / a0S);
 

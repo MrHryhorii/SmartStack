@@ -18,7 +18,7 @@ namespace ONNX_Runner.Services;
 ///   - Ring Crossfade: fitted common gains retain the RingModulator tremolo transition.
 ///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
-///   - Parallel Add: Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * headroom), amount) -> Safe summation.
+///   - Chorus / Flanger Add: original nonlinear summation, then a prepared effect-specific gain.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 ///   - Filtered Crossfade: Blends EQ input and wet output both proportionally to amount.
@@ -82,7 +82,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private enum RoutingMode
     {
         ParallelCrossfade,
-        ParallelAdd,
+        FlangerAdd,
         StrictInsert,
         StrictCrossfade,
         FmCrossfade,
@@ -396,6 +396,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             Dsp.RingGains(amount, out ringDryGain, out ringWetGain);
 
         float chorusGain = mode == RoutingMode.ChorusAdd ? Dsp.ChorusGain(amount) : 1f;
+        float flangerGain = mode == RoutingMode.FlangerAdd ? Dsp.FlangerGain(amount) : 1f;
 
         // Per-buffer constants used by effect hot paths.
         switch (type)
@@ -474,8 +475,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.ChorusCrossfade(dry, wet, amount, chorusGain);
                     break;
 
-                case RoutingMode.ParallelAdd:
-                    buffer[i] = Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * 0.85f), amount);
+                case RoutingMode.FlangerAdd:
+                    buffer[i] = Dsp.FlangerCrossfade(dry, wet, amount, flangerGain);
                     break;
 
                 case RoutingMode.StrictInsert:
@@ -514,7 +515,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Overdrive => RoutingMode.DriveCrossfade,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherCrossfade,
             VoiceEffectType.RingModulator => RoutingMode.RingCrossfade,
-            VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
+            VoiceEffectType.Flanger => RoutingMode.FlangerAdd,
             VoiceEffectType.Chorus => RoutingMode.ChorusAdd,
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
@@ -746,7 +747,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// <summary>Preserves the steady-state variance of filtered white noise when its pole is retimed.</summary>
     private static float OnePoleNoiseGain(float reference, float actual)
     {
-        return MathF.Sqrt((reference / (2f - reference)) / (actual / (2f - actual)));
+        return MathF.Sqrt(reference / (2f - reference) / (actual / (2f - actual)));
     }
 
     /// <summary>Fits the longest chorus tap (below 32 ms), keeping the original minimum capacity.</summary>

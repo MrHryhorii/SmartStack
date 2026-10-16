@@ -192,7 +192,7 @@ public class SpatialEffectsEngine
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float DistanceToRoundTripSamples(float distanceMeters)
     {
-        return (2f * distanceMeters / SpeedOfSound) * _sampleRate;
+        return 2f * distanceMeters / SpeedOfSound * _sampleRate;
     }
 
     /// <summary>Calculates delay capacity for a target duration, including headroom and power-of-two rounding.</summary>

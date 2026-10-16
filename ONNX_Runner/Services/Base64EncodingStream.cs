@@ -120,7 +120,7 @@ public sealed class Base64EncodingStream : Stream
         // Encode complete 3-byte groups directly from the caller's buffer. The output side uses
         // one pooled buffer for the whole response, avoiding combined/input copies and per-write GC.
         int wholeBytes = source.Length - (source.Length % 3);
-        int maxRawBytesPerPass = (encodedBuffer.Length / 4) * 3;
+        int maxRawBytesPerPass = encodedBuffer.Length / 4 * 3;
 
         while (wholeBytes > 0)
         {

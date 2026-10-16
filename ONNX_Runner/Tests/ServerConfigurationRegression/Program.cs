@@ -34,6 +34,7 @@ if (!synthesisOnly)
     OverdriveMixingChecks.Run(Check);
     RingMixingChecks.Run(Check);
     ChorusMixingChecks.Run(Check);
+    FlangerMixingChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
     CassetteIntensityChecks.Run(Check);
     SampleRateChecks.Run(Check, native);
