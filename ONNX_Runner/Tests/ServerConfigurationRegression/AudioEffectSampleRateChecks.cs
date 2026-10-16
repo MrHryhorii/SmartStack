@@ -89,12 +89,12 @@ internal static class AudioEffectSampleRateChecks
                 });
         }
 
-        check("Cassette hiss reduction lowers the reference noise floor without muting it", () =>
+        check("Cassette playback trim lowers voice and the reference noise floor together", () =>
         {
-            // Independent pre-change measurement: -58.24 dBFS. Reducing hiss by 0.8,
-            // while retaining grain, should lower the combined floor by about 1.7 dB.
+            // Independent frozen-prototype replay is about -63.46 dBFS after the agreed
+            // enclosure resonance and late output trim; the cassette noise remains audible.
             double dbfs = 20 * Math.Log10(NoiseRms(22050, VoiceEffectType.LoFiTape, 1));
-            Require(dbfs > -60.3 && dbfs < -59.7, "Reference cassette noise is outside the agreed range.");
+            Require(dbfs > -63.76 && dbfs < -63.16, "Reference cassette noise is outside the agreed range.");
         });
         check("Bitcrusher never requests a clock faster than a low-rate source", () =>
         {

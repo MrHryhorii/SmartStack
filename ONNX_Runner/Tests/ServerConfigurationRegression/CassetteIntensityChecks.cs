@@ -14,30 +14,31 @@ internal static class CassetteIntensityChecks
     /// <summary>Checks the cassette core itself at zero, intensity continuity, streaming, and allocations.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        // Independently recorded from the pre-tuning source: 22050 Hz, seed 123456,
-        // eight seconds of silence, excluding one second of startup. Includes playback EQ.
+        // Independently replayed from the frozen cassette prototype with the agreed enclosure
+        // resonance and output trim: 22050 Hz, seed 123456, eight seconds of silence,
+        // excluding one second of startup. The prior noise-floor contract changed with playback level.
         double[] referenceNoiseRms =
         [
-            7.01357132202562e-07,
-            7.0023878334912252e-06,
-            7.5936638711499949e-05,
-            0.000212096417652673,
-            0.00046526782906294373,
-            0.00070317229062871723,
-            0.0010028744719766413
+            7.015065512324314e-07,
+            7.003428268894397e-06,
+            7.543374613541095e-05,
+            0.0002039638957824946,
+            0.0004055186635797206,
+            0.0005394837717260337,
+            0.0006715353285700821
         ];
         for (int index = 0; index < Amounts.Length; index++)
         {
             float amount = Amounts[index];
             double expected = referenceNoiseRms[index];
-            check($"Cassette output noise retains its agreed level at {amount:0.#####} intensity", () =>
+            check($"Cassette output noise retains its retuned playback level at {amount:0.#####} intensity", () =>
             {
                 float[] samples = Noise(22050, amount);
                 double power = 0;
                 for (int i = 22050; i < samples.Length; i++) power += (double)samples[i] * samples[i];
                 double actual = Math.Sqrt(power / (samples.Length - 22050));
                 Require(Math.Abs(20 * Math.Log10(actual / expected)) < .05,
-                    "Hiss recoloring changed the agreed playback noise level by more than 0.05 dB.");
+                    "Cassette playback noise changed by more than 0.05 dB from the independent reference.");
             });
         }
 

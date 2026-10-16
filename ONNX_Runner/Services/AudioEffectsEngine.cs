@@ -47,6 +47,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private const float HissLevel = 0.8f;
     private const float HissHighPassHz = 1400f;
     private const float HissLowPassHz = 9000f;
+    // Partial compensation of record-stage gain leaves about +1 dB at full playback.
+    private const float TapePlaybackCompensation = 0.423369f;
     private const float ThermalReferenceCoeff = 0.00021773577f;
     private readonly EffectsSettings _config = config;
     private readonly int _sampleRate = sampleRate > 0
@@ -157,6 +159,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float FlutterNoiseScale;
         public float SpeakerMix;
         public float PerceptualTrim;
+        public float OutputGain;
 
         // Pre-computed LFO phase increments: eliminates per-sample 2pi*f/fs multiply.
         public float LofiPhaseInc;     // 0.4 Hz   (primary wow)
@@ -170,6 +173,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float CompReleaseCoeff;
 
         public BiQuadFilter? BoomboxBump;
+        public BiQuadFilter? BoomboxResonance;
         public BiQuadFilter? BoomboxHp;
         public BiQuadFilter? BoomboxLp;
     }
@@ -617,6 +621,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _azimuth.FilterState = 0f;
 
                 _tape.BoomboxBump = BiQuadFilter.PeakingEQ(_sampleRate, Safe(120f), 0.8f, 4.0f);
+                _tape.BoomboxResonance = CreateTapeResonance(_sampleRate);
                 _tape.BoomboxHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(70f), 0.707f);
                 _tape.BoomboxLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(7500f), 0.707f);
 
@@ -688,7 +693,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
-    /// <summary>Prepares cassette intensity curves once per buffer, preserving the full-strength preset.</summary>
+    /// <summary>Prepares cassette component amounts and playback trim once per buffer.</summary>
     private void PrepareTape(float amount)
     {
         float amountSq = amount * amount;
@@ -713,6 +718,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _tape.FlutterNoiseScale = 0.50f * amount;
         _tape.SpeakerMix = amountSq;
         _tape.PerceptualTrim = 1f - 0.25f * amountSq;
+        // Follow the existing saturation's small-signal gain rise, without a runtime level scan.
+        float saturationLift = amount * (_tape.SatDrive * _tape.SatCompensation - 1f);
+        _tape.OutputGain = 1f / (1f + TapePlaybackCompensation * saturationLift);
     }
 
     /// <summary>Dispatches one sample to the selected voice effect, retaining its per-request DSP state.</summary>
@@ -777,11 +785,18 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return BiQuadFilter.PeakingEQ(sampleRate, Math.Min(4500f, sampleRate * 0.45f), 1f, -2f);
     }
 
+    /// <summary>Creates the broad enclosure resonance shared by playback and noise calibration.</summary>
+    private static BiQuadFilter CreateTapeResonance(int sampleRate)
+    {
+        return BiQuadFilter.PeakingEQ(sampleRate, Math.Min(700f, sampleRate * 0.45f), 1f, 1.5f);
+    }
+
     /// <summary>Measures linear noise-path energy once at setup, including the speaker blend and DC blocker.</summary>
     private static NoiseEnergy TapeNoiseEnergy(int sampleRate, bool hiss, bool colorHiss = false)
     {
         float Safe(float hz) => Math.Min(hz, sampleRate * 0.45f);
         var bump = BiQuadFilter.PeakingEQ(sampleRate, Safe(120f), 0.8f, 4f);
+        var resonance = CreateTapeResonance(sampleRate);
         var hp = BiQuadFilter.HighPassFilter(sampleRate, Safe(70f), 0.707f);
         var lp = BiQuadFilter.LowPassFilter(sampleRate, Safe(7500f), 0.707f);
         var dryDc = new DcBlocker(sampleRate);
@@ -800,7 +815,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 high += highCoeff * (value - low - high);
                 value = color?.Transform(high) ?? high;
             }
-            float colored = lp.Transform(hp.Transform(bump.Transform(value)));
+            float colored = lp.Transform(hp.Transform(resonance.Transform(bump.Transform(value))));
             float dry = dryDc.Process(value);
             float wet = wetDc.Process(colored);
             dryEnergy += (double)dry * dry;
@@ -1017,9 +1032,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float tapeSignal = azimuthSignal + biasGrain + coloredHiss * amount;
 
         // Speaker simulation: cheap plastic enclosure coloring (quadratic blend).
-        if (_tape.BoomboxBump != null && _tape.BoomboxHp != null && _tape.BoomboxLp != null)
+        if (_tape.BoomboxBump != null && _tape.BoomboxResonance != null
+            && _tape.BoomboxHp != null && _tape.BoomboxLp != null)
         {
             float bumped = _tape.BoomboxBump.Transform(tapeSignal);
+            bumped = _tape.BoomboxResonance.Transform(bumped);
             float filtered = _tape.BoomboxLp.Transform(_tape.BoomboxHp.Transform(bumped));
             tapeSignal = Dsp.Lerp(tapeSignal, filtered, _tape.SpeakerMix);
         }
@@ -1028,9 +1045,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float playback = Dsp.Lerp(trimmed, Dsp.SoftClip(trimmed), amount);
         float dcFiltered = _dcBlocker.Process(playback);
 
-        // Blends DC removal with complementary gains; the full-strength endpoint stays exact.
-        return _tape.CharacterAmount >= 1f ? dcFiltered
+        // Playback trim follows saturation and DC removal, scaling voice and noise together.
+        float output = _tape.CharacterAmount >= 1f ? dcFiltered
             : Dsp.Lerp(playback, dcFiltered, _tape.CharacterAmount);
+        return output * _tape.OutputGain;
     }
 
     /// <summary>

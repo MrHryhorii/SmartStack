@@ -38,6 +38,7 @@ if (!synthesisOnly)
     TelephoneMixingChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
     CassetteIntensityChecks.Run(Check);
+    CassettePlaybackChecks.Run(Check);
     SampleRateChecks.Run(Check, native);
     using var emptyServices = new ServiceCollection().BuildServiceProvider();
     var api = new ApiSettings();
