@@ -58,6 +58,14 @@ coefficients. They protect coefficient evaluation, joins, endpoints and the reco
 component-level tradeoffs. These historical moments do not represent the revised
 engine intensity path and must not be read as current waveform-level guarantees.
 
+The shared G.711 mixer additionally uses current fixed-path moments from three
+unaltered base-voice recordings. Its 21-point checks protect decreasing loudness,
+the clean/full window, a mean midpoint near the center in dB, close levels between
+A-law and mu-law, and unchanged dry/wet proportions. Separate real-engine multitone
+checks retain full-output references, streaming independence, and allocation budgets.
+The two cubic level-correction segments are prepared once per buffer; codec transfer
+laws, telephone bandwidth and full-strength waveforms remain unchanged.
+
 Separate engine-routing fixtures replay the unchanged synthetic inputs at three rates.
 Their expected levels come from frozen accepted effect algorithms, the declared
 `amount * (2 - amount)` wet-strength curve, and fixed output trims. The request amount

@@ -4,16 +4,16 @@ using ONNX_Runner.Services;
 
 internal static class CodecMixingChecks
 {
-    // Independently recorded three-second multitone levels from the accepted cubic prototype.
-    // Full-effect references also match the preceding unchanged Lerp implementation.
+    // Midpoints follow frozen multitone levels plus the independently fitted common correction.
+    // Full-effect references retain the accepted, unchanged waveform.
     private static readonly (int Rate, VoiceEffectType Effect, double Midpoint, double Full)[] References =
     [
-        (8000, VoiceEffectType.G711MuLaw, -17.3121218582, -20.1166058264),
-        (8000, VoiceEffectType.G711ALaw, -17.3134303795, -20.1216184393),
-        (22050, VoiceEffectType.G711MuLaw, -17.3086324032, -20.2596146032),
-        (22050, VoiceEffectType.G711ALaw, -17.3093281467, -20.2613109183),
-        (48000, VoiceEffectType.G711MuLaw, -17.3190676454, -20.2951385248),
-        (48000, VoiceEffectType.G711ALaw, -17.3190228104, -20.2956794489)
+        (8000, VoiceEffectType.G711MuLaw, -18.1536254402, -20.1166058264),
+        (8000, VoiceEffectType.G711ALaw, -18.1549339615, -20.1216184393),
+        (22050, VoiceEffectType.G711MuLaw, -18.1501359852, -20.2596146032),
+        (22050, VoiceEffectType.G711ALaw, -18.1508317287, -20.2613109183),
+        (48000, VoiceEffectType.G711MuLaw, -18.1605712274, -20.2951385248),
+        (48000, VoiceEffectType.G711ALaw, -18.1605263924, -20.2956794489)
     ];
 
     // Regular five-percent steps plus the bypass edge and points near the full-effect endpoint.
@@ -47,7 +47,7 @@ internal static class CodecMixingChecks
             Dsp.CubicGains(.5f + 2 * h, out float farRightDry, out float farRightWet);
             Dsp.CubicGains(MathF.BitDecrement(.5f), out float adjacentLeftDry, out float adjacentLeftWet);
             Dsp.CubicGains(MathF.BitIncrement(.5f), out float adjacentRightDry, out float adjacentRightWet);
-            Require(Math.Abs(middleDry - .6685965239497303) < 1e-7 && middleDry == middleWet,
+            Require(Math.Abs(middleDry - .6068605903761474) < 1e-7 && middleDry == middleWet,
                 "The independently approved midpoint changed.");
             Require(Math.Abs(adjacentLeftDry - adjacentRightDry) < 2e-7 &&
                 Math.Abs(adjacentLeftWet - adjacentRightWet) < 2e-7,
@@ -56,10 +56,10 @@ internal static class CodecMixingChecks
             double dryRightSlope = (-3.0 * middleDry + 4.0 * rightDry - farRightDry) / (2 * h);
             double wetLeftSlope = (3.0 * middleWet - 4.0 * leftWet + farLeftWet) / (2 * h);
             double wetRightSlope = (-3.0 * middleWet + 4.0 * rightWet - farRightWet) / (2 * h);
-            Require(Math.Abs(dryLeftSlope + .6614896126447709) < .001 &&
-                Math.Abs(dryRightSlope + .6614896126447709) < .001 &&
-                Math.Abs(wetLeftSlope - .8616474058778909) < .001 &&
-                Math.Abs(wetRightSlope - .8616474058778909) < .001,
+            Require(Math.Abs(dryLeftSlope + .6527793124905132) < .001 &&
+                Math.Abs(dryRightSlope + .6527793124905132) < .001 &&
+                Math.Abs(wetLeftSlope - .7297164037958086) < .001 &&
+                Math.Abs(wetRightSlope - .7297164037958086) < .001,
                 "One-sided slopes no longer meet at the approved midpoint.");
         });
 
