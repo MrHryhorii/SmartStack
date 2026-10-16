@@ -337,6 +337,28 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares Chorus output gain from two experimentally fitted seventh-degree segments.
+    /// They share their midpoint value and slope; centered coordinates stabilize float rounding.
+    /// Evaluate once per buffer, then apply after the original additive nonlinear mixture.
+    /// </summary>
+    public static float ChorusGain(float t)
+    {
+        if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
+        if (t == .5f) return 1.0233542f;
+        float u = (t < .5f ? 2f * t : 2f * (1f - t)) - .5f;
+        if (t < .5f)
+            return (((((((7.15550812f * u + 0.502754754f) * u - 3.18544345f) * u - 0.130990126f) * u + 0.354670923f) * u - 0.0737219082f) * u + 0.0219718745f) * u + 1.03043892f);
+        return (((((((14.3553259f * u - 4.96932268f) * u - 7.11726878f) * u + 2.08667079f) * u + 1.03844834f) * u - 0.250867563f) * u - 0.0157305491f) * u + 1.02162274f);
+    }
+
+    /// <summary>Retains the original delayed-voice blend and saturation, then applies prepared gain.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float ChorusCrossfade(float dry, float wet, float amount, float gain)
+    {
+        return Lerp(dry, SoftClip(dry + wet * .85f), amount) * gain;
+    }
+
+    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.

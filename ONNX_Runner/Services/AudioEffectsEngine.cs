@@ -90,7 +90,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         CrusherCrossfade,
         TacticalCrossfade,
         DriveCrossfade,
-        RingCrossfade
+        RingCrossfade,
+        ChorusAdd
     }
 
     // =========================================================================
@@ -394,6 +395,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode == RoutingMode.RingCrossfade)
             Dsp.RingGains(amount, out ringDryGain, out ringWetGain);
 
+        float chorusGain = mode == RoutingMode.ChorusAdd ? Dsp.ChorusGain(amount) : 1f;
+
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
@@ -467,6 +470,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.RingCrossfade(dry, wet, ringDryGain, ringWetGain);
                     break;
 
+                case RoutingMode.ChorusAdd:
+                    buffer[i] = Dsp.ChorusCrossfade(dry, wet, amount, chorusGain);
+                    break;
+
                 case RoutingMode.ParallelAdd:
                     buffer[i] = Dsp.Lerp(dry, Dsp.SoftClip(dry + wet * 0.85f), amount);
                     break;
@@ -508,7 +515,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherCrossfade,
             VoiceEffectType.RingModulator => RoutingMode.RingCrossfade,
             VoiceEffectType.Flanger => RoutingMode.ParallelAdd,
-            VoiceEffectType.Chorus => RoutingMode.ParallelAdd,
+            VoiceEffectType.Chorus => RoutingMode.ChorusAdd,
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
             VoiceEffectType.TacticalRadio => RoutingMode.TacticalCrossfade,
