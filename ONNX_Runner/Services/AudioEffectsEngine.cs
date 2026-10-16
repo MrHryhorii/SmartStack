@@ -14,7 +14,7 @@ namespace ONNX_Runner.Services;
 ///   - Zero-Allocation: DSP loop generates zero garbage. String parsing is offloaded to the caller.
 ///
 /// DSP ROUTING MANIFESTO:
-///   - Parallel Crossfade: equal-power gains are prepared once per buffer -> Spectral effects.
+///   - Telephone Crossfade: calibrated equal-power weights retain the original phone proportions.
 ///   - Ring Crossfade: fitted common gains retain the RingModulator tremolo transition.
 ///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
@@ -81,7 +81,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     private enum RoutingMode
     {
-        ParallelCrossfade,
+        TelephoneCrossfade,
         FlangerAdd,
         StrictInsert,
         StrictCrossfade,
@@ -360,10 +360,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
-        float equalPowerDryGain = 1f;
-        float equalPowerWetGain = 0f;
-        if (mode == RoutingMode.ParallelCrossfade)
-            Dsp.EqualPowerGains(amount, out equalPowerDryGain, out equalPowerWetGain);
+        float telephoneDryGain = 1f;
+        float telephoneWetGain = 0f;
+        if (mode == RoutingMode.TelephoneCrossfade)
+            Dsp.TelephoneGains(amount, out telephoneDryGain, out telephoneWetGain);
 
         float cubicDryGain = 1f;
         float cubicWetGain = 0f;
@@ -451,8 +451,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             // The early amount guard handles bypass; active routing follows the effect's signal structure.
             switch (mode)
             {
-                case RoutingMode.ParallelCrossfade:
-                    buffer[i] = Dsp.EqualPowerCrossfade(dry, wet, equalPowerDryGain, equalPowerWetGain);
+                case RoutingMode.TelephoneCrossfade:
+                    buffer[i] = Dsp.TelephoneCrossfade(dry, wet, telephoneDryGain, telephoneWetGain);
                     break;
 
                 case RoutingMode.CrusherCrossfade:
@@ -511,7 +511,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         return type switch
         {
-            VoiceEffectType.Telephone => RoutingMode.ParallelCrossfade,
+            VoiceEffectType.Telephone => RoutingMode.TelephoneCrossfade,
             VoiceEffectType.Overdrive => RoutingMode.DriveCrossfade,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherCrossfade,
             VoiceEffectType.RingModulator => RoutingMode.RingCrossfade,

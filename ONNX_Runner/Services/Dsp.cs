@@ -381,6 +381,37 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares Telephone gains with two experimentally fitted quartic corrections.
+    /// Reuses the equal-power roots; both weights share one correction and retain their proportions.
+    /// The pieces share their midpoint value and slope. Evaluate once per buffer.
+    /// </summary>
+    public static void TelephoneGains(float t, out float dryGain, out float wetGain)
+    {
+        if (t <= .001f || float.IsNaN(t)) { dryGain = 1f; wetGain = 0f; return; }
+        if (t >= 1f) { dryGain = 0f; wetGain = 1f; return; }
+        EqualPowerGains(t, out dryGain, out wetGain);
+        float correction;
+        if (t == .5f)
+            correction = 0.991323888f;
+        else
+        {
+            float u = (t < .5f ? wetGain : dryGain) * 1.41421356f - .5f;
+            correction = t < .5f
+                ? ((((1.42106366f * u + 0.0788642094f) * u - 0.523106933f) * u - 0.0283921715f) * u + 1.03762221f)
+                : ((((0.0887395144f * u + 0.0738908052f) * u - 0.290819883f) * u - 0.0271488205f) * u + 1.06282067f);
+        }
+        dryGain *= correction;
+        wetGain *= correction;
+    }
+
+    /// <summary>Combines inputs using prepared Telephone weights without additional per-sample work.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float TelephoneCrossfade(float dry, float wet, float dryGain, float wetGain)
+    {
+        return dry * dryGain + wet * wetGain;
+    }
+
+    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.

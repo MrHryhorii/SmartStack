@@ -82,6 +82,9 @@ bypass, a continuous gain join, and zero-allocation prepared mixing.
 Flanger-mixing checks cover recorded midpoint escape limits and window counts,
 own-direction reversal budgets, reference paths, the common-curve tradeoff,
 independent routing, the shared cubic join, streaming and zero allocations.
+Telephone-mixing checks cover measured wet-path powers and their cross terms,
+own-direction reference and reversal limits, midpoint window counts, bounded
+per-record tradeoffs, original mix proportions, streaming and zero allocations.
 Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
 and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD

@@ -35,6 +35,7 @@ if (!synthesisOnly)
     RingMixingChecks.Run(Check);
     ChorusMixingChecks.Run(Check);
     FlangerMixingChecks.Run(Check);
+    TelephoneMixingChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
     CassetteIntensityChecks.Run(Check);
     SampleRateChecks.Run(Check, native);
