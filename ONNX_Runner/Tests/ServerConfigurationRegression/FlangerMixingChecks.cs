@@ -4,6 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class FlangerMixingChecks
 {
+    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
+    // Synthetic routing fixtures independently include the new strength curve and output trims.
     /// <summary>Checks measured midpoint windows, path errors, reversals and unchanged Flanger structure.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -56,7 +58,7 @@ internal static class FlangerMixingChecks
                 double escape = Math.Max(Math.Min(0, r.FullChangeDb) - y, 0) + Math.Max(y - Math.Max(0, r.FullChangeDb), 0);
                 Require(escape < .37, "Midpoint exceeded the declared escape limit.");
             });
-            check($"Flanger recorded primary path stays within 1.81 dB of its own guide for {r.Name}", () =>
+            check($"Frozen mixer: Flanger recorded primary path stays within 1.81 dB of its own guide for {r.Name}", () =>
             {
                 Require(r.Points.Length == 21, "Missing primary measurements.");
                 double oldError = 0, newError = 0;
@@ -68,7 +70,7 @@ internal static class FlangerMixingChecks
                 }
                 Require((newError - oldError) / r.Points.Length < .26, "A recording exceeded the allowed common-curve tradeoff.");
             });
-            check($"Flanger recorded primary reverse steps stay below 0.64 dB for {r.Name}", () =>
+            check($"Frozen mixer: Flanger recorded primary reverse steps stay below 0.64 dB for {r.Name}", () =>
             {
                 for (int i = 1; i < r.Points.Length; i++)
                     Require(Math.Sign(r.FullChangeDb) * (Level(r.Points[i - 1]) - Level(r.Points[i])) < .64, "A primary reverse step exceeded its declared budget.");
@@ -95,7 +97,7 @@ internal static class FlangerMixingChecks
                     "Production output differs from the frozen pre-update waveform times the independent gain.");
             });
         }
-        check("Flanger corpus mean improves its path and retains primary/dense ordering controls", () =>
+        check("Frozen mixer: Flanger corpus mean improves its path and retains primary/dense ordering controls", () =>
         {
             double oldError = 0, newError = 0, previous = 0;
             for (int i = 0; i < 21; i++)
@@ -1295,17 +1297,17 @@ internal static class FlangerMixingChecks
     // Frozen old waveform multiplied by the independent coefficient evaluator.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.0500000007f, -19.291422197787508),
-        (8000, 0.5f, -18.2417207863366),
-        (8000, 0.949999988f, -17.702059708831943),
+        (8000, 0.05f, -19.271280437162297),
+        (8000, 0.5f, -18.409587363827114),
+        (8000, 0.95f, -17.230866022145158),
         (8000, 1f, -17.213050540008584),
-        (22050, 0.0500000007f, -19.291615565341981),
-        (22050, 0.5f, -18.245948962774953),
-        (22050, 0.949999988f, -17.686155795356459),
+        (22050, 0.05f, -19.271988030228052),
+        (22050, 0.5f, -18.396059171673286),
+        (22050, 0.95f, -17.184715771821914),
         (22050, 1f, -17.147841855809492),
-        (48000, 0.0500000007f, -19.291701124236159),
-        (48000, 0.5f, -18.249719523451557),
-        (48000, 0.949999988f, -17.68783609104155),
+        (48000, 0.05f, -19.272146029325384),
+        (48000, 0.5f, -18.397331904198488),
+        (48000, 0.95f, -17.177886834255549),
         (48000, 1f, -17.143445228576098),
     ];
 

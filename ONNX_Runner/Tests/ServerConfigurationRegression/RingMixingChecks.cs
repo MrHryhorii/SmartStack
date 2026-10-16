@@ -4,6 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class RingMixingChecks
 {
+    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
+    // Synthetic routing fixtures independently include the new strength curve and output trims.
     /// <summary>Checks recorded reference paths, corpus mean, original effect proportions and stream state.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -59,7 +61,7 @@ internal static class RingMixingChecks
         Require(VoiceReferences.Length == 48 && SyntheticReferences.Length == 12, "Missing independent fixtures.");
         foreach (var reference in VoiceReferences)
         {
-            check($"RingModulator recorded level path stays within 1 dB of its endpoint guide for {reference.Name}", () =>
+            check($"Frozen mixer: RingModulator recorded level path stays within 1 dB of its endpoint guide for {reference.Name}", () =>
             {
                 Require(reference.Points.Length == 21, "Missing five-percent voice measurements.");
                 foreach (var point in reference.Points)
@@ -81,7 +83,7 @@ internal static class RingMixingChecks
                 Require(Math.Abs(level - reference.RmsDbfs) < .01, "Actual routing differs from the frozen wet-path fixture.");
             });
         }
-        check("RingModulator catalog mean moves closer to its endpoint guide", () =>
+        check("Frozen mixer: RingModulator catalog mean moves closer to its endpoint guide", () =>
         {
             double oldError = 0, newError = 0, previousMean = 0;
             for (int index = 0; index < 21; index++)
@@ -182,18 +184,18 @@ internal static class RingMixingChecks
     // Frozen from the original wet path and an independent coefficient evaluator.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.05f, -19.804229184099327),
-        (8000, 0.5f, -20.990751019658475),
-        (8000, 0.95f, -20.570999960119497),
-        (8000, 1f, -20.629377606023208),
-        (22050, 0.05f, -19.804726431371801),
-        (22050, 0.5f, -21.006574442750612),
-        (22050, 0.95f, -20.637442355297107),
-        (22050, 1f, -20.701725922959344),
-        (48000, 0.05f, -19.804727342466361),
-        (48000, 0.5f, -21.01100156104371),
-        (48000, 0.95f, -20.657545753209419),
-        (48000, 1f, -20.723562254795542),
+        (8000, 0.05f, -19.819059974037884),
+        (8000, 0.5f, -20.951812422932182),
+        (8000, 0.95f, -20.791435668448997),
+        (8000, 1f, -21.448549508943625),
+        (22050, 0.05f, -19.819353782050889),
+        (22050, 0.5f, -20.968405719298232),
+        (22050, 0.95f, -20.8578685079924),
+        (22050, 1f, -21.52089782706199),
+        (48000, 0.05f, -19.819307514299279),
+        (48000, 0.5f, -20.973246821967816),
+        (48000, 0.95f, -20.877921351962605),
+        (48000, 1f, -21.542734157261396),
     ];
 
     // All 48 recordings enter calibration; these fixtures are not blind validation.

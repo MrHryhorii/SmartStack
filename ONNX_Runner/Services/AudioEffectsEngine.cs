@@ -49,6 +49,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private const float HissLowPassHz = 9000f;
     // Partial compensation of record-stage gain leaves about +1 dB at full playback.
     private const float TapePlaybackCompensation = 0.423369f;
+    // Fixed output trims keep full effects near +1 dB on the reference Piper voice.
+    // Apply after character generation; drive, compression and modulation stay intact.
+    private const float OverdriveOutputGain = 0.56f;
+    private const float TacticalOutputGain = 0.63f;
+    private const float FmOutputGain = 0.78f;
+    private const float RingOutputGain = 0.91f;
     private const float ThermalReferenceCoeff = 0.00021773577f;
     private readonly EffectsSettings _config = config;
     private readonly int _sampleRate = sampleRate > 0
@@ -340,6 +346,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// <summary>
     /// Applies the specified audio effect to the input buffer in-place.
     /// The amount parameter controls the intensity of the effect (0 = no effect, 1 = full effect).
+    /// External blends retain the request amount; their wet algorithms receive an eased strength.
     /// Optimized for real-time processing with zero allocations in the audio thread.
     /// </summary>
     public void ApplyEffect(Span<float> buffer, VoiceEffectType type, float amount)
@@ -361,6 +368,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
 
         RoutingMode mode = GetRoutingMode(type);
+        // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
+        // Tape and rolling glitches retain their own authored intensity laws.
+        float effectAmount = mode == RoutingMode.StrictInsert ? amount : amount * (2f - amount);
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
@@ -382,22 +392,34 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float tacticalDryGain = 1f;
         float tacticalWetGain = 0f;
         if (mode == RoutingMode.TacticalCrossfade)
+        {
             Dsp.TacticalGains(amount, out tacticalDryGain, out tacticalWetGain);
+            tacticalWetGain *= TacticalOutputGain;
+        }
 
         float fmDryGain = 1f;
         float fmWetGain = 0f;
         if (mode == RoutingMode.FmCrossfade)
+        {
             Dsp.FmGains(amount, out fmDryGain, out fmWetGain);
+            fmWetGain *= FmOutputGain;
+        }
 
         float driveDryGain = 1f;
         float driveWetGain = 0f;
         if (mode == RoutingMode.DriveCrossfade)
+        {
             Dsp.DriveGains(amount, out driveDryGain, out driveWetGain);
+            driveWetGain *= OverdriveOutputGain;
+        }
 
         float ringDryGain = 1f;
         float ringWetGain = 0f;
         if (mode == RoutingMode.RingCrossfade)
+        {
             Dsp.RingGains(amount, out ringDryGain, out ringWetGain);
+            ringWetGain *= RingOutputGain;
+        }
 
         float chorusGain = mode == RoutingMode.ChorusAdd ? Dsp.ChorusGain(amount) : 1f;
         float flangerGain = mode == RoutingMode.FlangerAdd ? Dsp.FlangerGain(amount) : 1f;
@@ -406,9 +428,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         switch (type)
         {
             case VoiceEffectType.Overdrive:
-                _overdriveDrive = 1f + amount * 4.0f;
+                _overdriveDrive = 1f + effectAmount * 4.0f;
                 _overdriveTrim = 1f / MathF.Sqrt(_overdriveDrive);
-                _overdriveBiasScale = 0.06f * amount;
+                _overdriveBiasScale = 0.06f * effectAmount;
                 break;
 
             case VoiceEffectType.LoFiTape:
@@ -416,9 +438,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.TacticalRadio:
-                // Hoist sqrt(amount) above the sample loop for TacticalRadio.
+                // Hoist the shaped intensity root above the sample loop for TacticalRadio.
                 // MathF.Sqrt is called once per buffer instead of once per sample.
-                _radio.TacticalSqrtAmount = MathF.Sqrt(amount);
+                _radio.TacticalSqrtAmount = MathF.Sqrt(effectAmount);
                 break;
 
             case VoiceEffectType.DecoderGlitch:
@@ -441,13 +463,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 for (int f = 0; f < filterCount; f++)
                     filtered = filters[f].Transform(filtered);
 
-            // Radio crossfades blend EQ contribution proportionally to amount.
-            // At amount=0 the codec receives clean dry; at amount=1 fully band-limited.
+            // Radio EQ follows the same shaped strength as its codec, independently of outer mixing.
+            // At zero the codec receives clean dry; at one it receives fully band-limited PCM.
             float processInput = mode is RoutingMode.FmCrossfade or RoutingMode.TacticalCrossfade
-                ? Dsp.Lerp(dry, filtered, amount)
+                ? Dsp.Lerp(dry, filtered, effectAmount)
                 : filtered;
 
-            float wet = Process(type, processInput, amount);
+            float wet = Process(type, processInput, effectAmount);
             // Tape blends DC removal internally; rolling glitches preserve their captured samples.
             wet = type is not (VoiceEffectType.DecoderGlitch or VoiceEffectType.LoFiTape)
                 ? _dcBlocker.Process(wet) : wet;

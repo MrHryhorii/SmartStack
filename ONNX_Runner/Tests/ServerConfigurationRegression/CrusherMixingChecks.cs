@@ -4,6 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class CrusherMixingChecks
 {
+    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
+    // Synthetic routing fixtures independently include the new strength curve and output trims.
     /// <summary>Checks the accepted correction, recorded voice bounds, actual routing and stream state.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -72,7 +74,7 @@ internal static class CrusherMixingChecks
         Require(SyntheticReferences.Length == 12 && VoiceReferences.Length == 16, "Missing independent level fixtures.");
         foreach (var reference in VoiceReferences)
         {
-            check($"Crusher stays within 1 dB of the recorded reference for {reference.Name}", () =>
+            check($"Frozen mixer: Crusher stays within 1 dB of the recorded reference for {reference.Name}", () =>
             {
                 Require(reference.Points.Length == 21, "Missing primary voice moments.");
                 foreach (var point in reference.Points)
@@ -189,17 +191,17 @@ internal static class CrusherMixingChecks
     ];
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.1f, -20.447697962283694),
-        (8000, 0.5f, -22.036205662933),
-        (8000, 0.9f, -22.568002522241201),
+        (8000, 0.1f, -20.447697691177691),
+        (8000, 0.5f, -22.03047743613936),
+        (8000, 0.9f, -21.917042448419558),
         (8000, 1f, -21.67936886590627),
-        (22050, 0.1f, -20.449049734642976),
-        (22050, 0.5f, -22.041591524959394),
-        (22050, 0.9f, -22.587252012518807),
+        (22050, 0.1f, -20.447519970476659),
+        (22050, 0.5f, -22.03452401778393),
+        (22050, 0.9f, -21.949312423625077),
         (22050, 1f, -21.747021365760709),
-        (48000, 0.1f, -20.448202745352507),
-        (48000, 0.5f, -22.04224259525602),
-        (48000, 0.9f, -22.606037549659142),
+        (48000, 0.1f, -20.446609611182318),
+        (48000, 0.5f, -22.026881272623086),
+        (48000, 0.9f, -21.968111558019743),
         (48000, 1f, -21.778692880423286),
     ];
     // Unseen-text 22050 Hz voice moments: measured before integration, without PCM assets.

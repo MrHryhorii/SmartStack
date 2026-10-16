@@ -36,6 +36,7 @@ if (!synthesisOnly)
     ChorusMixingChecks.Run(Check);
     FlangerMixingChecks.Run(Check);
     TelephoneMixingChecks.Run(Check);
+    CharacterStrengthChecks.Run(Check);
     AudioEffectSampleRateChecks.Run(Check);
     CassetteIntensityChecks.Run(Check);
     CassettePlaybackChecks.Run(Check);

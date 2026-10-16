@@ -4,6 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class OverdriveMixingChecks
 {
+    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
+    // Synthetic routing fixtures independently include the new strength curve and output trims.
     /// <summary>Checks midpoint windows, recorded level paths, effect identity and stream state.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -59,13 +61,13 @@ internal static class OverdriveMixingChecks
         Require(VoiceReferences.Length == 48 && SyntheticReferences.Length == 12, "Missing independent fixtures.");
         foreach (var reference in VoiceReferences)
         {
-            check($"Overdrive recorded midpoint stays inside its endpoints for {reference.Name}", () =>
+            check($"Frozen mixer: Overdrive recorded midpoint stays inside its endpoints for {reference.Name}", () =>
             {
                 double middle = RecordedLevel(reference, reference.Points[10]);
                 Require(middle >= Math.Min(0, reference.FullChangeDb) && middle <= Math.Max(0, reference.FullChangeDb),
                     $"Recorded midpoint escaped its clean/full window: {middle:F6} dB.");
             });
-            check($"Overdrive recorded levels stay ordered inside the endpoint interval for {reference.Name}", () =>
+            check($"Frozen mixer: Overdrive recorded levels stay ordered inside the endpoint interval for {reference.Name}", () =>
             {
                 Require(reference.Points.Length == 21, "Missing five-percent voice measurements.");
                 double previous = 0;
@@ -91,7 +93,7 @@ internal static class OverdriveMixingChecks
                 Require(Math.Abs(level - reference.RmsDbfs) < .01, "Actual routing differs from the frozen wet-path fixture.");
             });
         }
-        check("Overdrive catalog mean moves closer to its endpoint guide", () =>
+        check("Frozen mixer: Overdrive catalog mean moves closer to its endpoint guide", () =>
         {
             double oldError = 0, newError = 0;
             for (int index = 0; index < 21; index++)
@@ -190,18 +192,18 @@ internal static class OverdriveMixingChecks
     // Frozen from the unchanged wet path and an independent coefficient evaluator.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.05f, -19.416626897457874),
-        (8000, 0.5f, -20.415003912878909),
-        (8000, 0.95f, -18.516483500240888),
-        (8000, 1f, -17.769274376332977),
-        (22050, 0.05f, -19.423845806334676),
-        (22050, 0.5f, -20.473753701446256),
-        (22050, 0.95f, -18.594076348686418),
-        (22050, 1f, -17.839480058594106),
-        (48000, 0.05f, -19.415424538229349),
-        (48000, 0.5f, -20.452974542967759),
-        (48000, 0.95f, -18.6057740305491),
-        (48000, 1f, -17.863256799949795),
+        (8000, 0.05f, -19.4343089337941),
+        (8000, 0.5f, -21.90926831315732),
+        (8000, 0.95f, -23.220945248006942),
+        (8000, 1f, -22.805513801686455),
+        (22050, 0.05f, -19.43830974104538),
+        (22050, 0.5f, -21.949176417587619),
+        (22050, 0.95f, -23.30027204442996),
+        (22050, 1f, -22.875719482189687),
+        (48000, 0.05f, -19.433100369043508),
+        (48000, 0.5f, -21.926482776264045),
+        (48000, 0.95f, -23.302598499416945),
+        (48000, 1f, -22.899496225082544),
     ];
 
     // All 48 recordings enter calibration. These are regression data, not blind validation.

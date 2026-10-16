@@ -4,6 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class FmMixingChecks
 {
+    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
+    // Synthetic routing fixtures independently include the new strength curve and output trims.
     /// <summary>Checks midpoint windows, recorded level paths, effect identity and stream state.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -59,7 +61,7 @@ internal static class FmMixingChecks
         Require(CalibrationMidpoints.Length == 32 && VoiceReferences.Length == 16 && SyntheticReferences.Length == 12, "Missing independent fixtures.");
         foreach (var reference in CalibrationMidpoints)
         {
-            check($"FM recorded midpoint stays inside its endpoints for {reference.Name}", () =>
+            check($"Frozen mixer: FM recorded midpoint stays inside its endpoints for {reference.Name}", () =>
             {
                 Dsp.FmGains(.5f, out float dry, out float wet);
                 double power = dry * (double)dry * reference.DryPower + wet * (double)wet * reference.WetPower
@@ -71,13 +73,13 @@ internal static class FmMixingChecks
         }
         foreach (var reference in VoiceReferences)
         {
-            check($"Fm recorded midpoint stays inside its endpoints for {reference.Name}", () =>
+            check($"Frozen mixer: Fm recorded midpoint stays inside its endpoints for {reference.Name}", () =>
             {
                 double middle = RecordedLevel(reference, reference.Points[10]);
                 Require(middle >= Math.Min(0, reference.FullChangeDb) && middle <= Math.Max(0, reference.FullChangeDb),
                     $"Recorded midpoint escaped its clean/full window: {middle:F6} dB.");
             });
-            check($"Fm recorded level path stays within 1 dB for {reference.Name}", () =>
+            check($"Frozen mixer: Fm recorded level path stays within 1 dB for {reference.Name}", () =>
             {
                 Require(reference.Points.Length == 21, "Missing five-percent voice measurements.");
                 foreach (var point in reference.Points)
@@ -177,18 +179,18 @@ internal static class FmMixingChecks
     // Frozen offline from the unchanged FM wet path and independent correction evaluator.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.05f, -19.309105058399613),
-        (8000, 0.5f, -19.050215116479336),
-        (8000, 0.95f, -19.23187045127375),
-        (8000, 1f, -19.4070046021276),
-        (22050, 0.05f, -19.321131734839657),
-        (22050, 0.5f, -19.15454045042727),
-        (22050, 0.95f, -19.64597813495056),
-        (22050, 1f, -19.76540125836841),
-        (48000, 0.05f, -19.324429368117432),
-        (48000, 0.5f, -19.167065091847309),
-        (48000, 0.95f, -19.684482451110416),
-        (48000, 1f, -19.802956005542697),
+        (8000, 0.05f, -19.616227124048827),
+        (8000, 0.5f, -20.689718733337784),
+        (8000, 0.95f, -20.933573695641215),
+        (8000, 1f, -21.565112864828009),
+        (22050, 0.05f, -19.627056322693207),
+        (22050, 0.5f, -20.851506274076165),
+        (22050, 0.95f, -21.345371393613767),
+        (22050, 1f, -21.923509521171731),
+        (48000, 0.05f, -19.629762100068366),
+        (48000, 0.5f, -20.865096824848909),
+        (48000, 0.95f, -21.383616631776103),
+        (48000, 1f, -21.961064269073294),
     ];
 
     // Two calibration passages are separate from the full control-passage paths below.

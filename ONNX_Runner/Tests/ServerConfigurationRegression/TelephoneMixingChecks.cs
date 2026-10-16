@@ -4,6 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class TelephoneMixingChecks
 {
+    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
+    // Synthetic routing fixtures independently include the new strength curve and output trims.
     /// <summary>Checks measured midpoint windows, path errors, reversals and unchanged Telephone structure.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -66,7 +68,7 @@ internal static class TelephoneMixingChecks
                 double escape = Math.Max(Math.Min(0, r.FullChangeDb) - y, 0) + Math.Max(y - Math.Max(0, r.FullChangeDb), 0);
                 Require(escape < .55, "Midpoint exceeded the declared escape limit.");
             });
-            check($"Telephone recorded primary path stays within 1.81 dB of its own guide for {r.Name}", () =>
+            check($"Frozen mixer: Telephone recorded primary path stays within 1.81 dB of its own guide for {r.Name}", () =>
             {
                 Require(r.Points.Length == 21, "Missing primary measurements.");
                 double oldError = 0, newError = 0;
@@ -78,7 +80,7 @@ internal static class TelephoneMixingChecks
                 }
                 Require((newError - oldError) / r.Points.Length < .21, "A recording exceeded the allowed common-curve tradeoff.");
             });
-            check($"Telephone recorded primary reverse steps stay below 0.7001 dB for {r.Name}", () =>
+            check($"Frozen mixer: Telephone recorded primary reverse steps stay below 0.7001 dB for {r.Name}", () =>
             {
                 for (int i = 1; i < r.Points.Length; i++)
                     Require(Math.Sign(r.FullChangeDb) * (RecordedLevel(r, r.Points[i - 1]) - RecordedLevel(r, r.Points[i])) < .7001, "A primary reverse step exceeded its declared budget.");
@@ -105,7 +107,7 @@ internal static class TelephoneMixingChecks
                     "Production output differs from the frozen pre-update waveform times the independent gain.");
             });
         }
-        check("Telephone corpus mean improves its path and retains primary/dense ordering controls", () =>
+        check("Frozen mixer: Telephone corpus mean improves its path and retains primary/dense ordering controls", () =>
         {
             double oldError = 0, newError = 0, previous = 0;
             for (int i = 0; i < 21; i++)
@@ -1323,17 +1325,17 @@ internal static class TelephoneMixingChecks
     // Independent original wet samples combined with frozen JSON weights.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.0500000007f, -19.224599516643021),
-        (8000, 0.5f, -21.006985066658139),
-        (8000, 0.949999988f, -22.999139135144219),
+        (8000, 0.05f, -19.22475145237264),
+        (8000, 0.5f, -21.035488942563681),
+        (8000, 0.95f, -23.023476722359312),
         (8000, 1f, -23.950129767107828),
-        (22050, 0.0500000007f, -19.234772309206157),
-        (22050, 0.5f, -20.907931513104216),
-        (22050, 0.949999988f, -22.547082338030581),
+        (22050, 0.05f, -19.234911289342755),
+        (22050, 0.5f, -20.942069966039128),
+        (22050, 0.95f, -22.574997765656953),
         (22050, 1f, -23.378979960549117),
-        (48000, 0.0500000007f, -19.235184320014994),
-        (48000, 0.5f, -20.896777729075062),
-        (48000, 0.949999988f, -22.506003821502318),
+        (48000, 0.05f, -19.235322028595242),
+        (48000, 0.5f, -20.931567574865394),
+        (48000, 0.95f, -22.534362417102859),
         (48000, 1f, -23.329612906801891),
     ];
 

@@ -4,6 +4,8 @@ using ONNX_Runner.Services;
 
 internal static class ChorusMixingChecks
 {
+    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
+    // Synthetic routing fixtures independently include the new strength curve and output trims.
     /// <summary>Checks measured midpoint windows, path errors, reversals and unchanged Chorus structure.</summary>
     internal static void Run(Action<string, Action> check)
     {
@@ -55,13 +57,13 @@ internal static class ChorusMixingChecks
                 double y = Level(r.Points[10]);
                 Require(y >= Math.Min(0, r.FullChangeDb) && y <= Math.Max(0, r.FullChangeDb), "Midpoint escaped its endpoint window.");
             });
-            check($"Chorus recorded primary path stays within 1.57 dB of its own guide for {r.Name}", () =>
+            check($"Frozen mixer: Chorus recorded primary path stays within 1.57 dB of its own guide for {r.Name}", () =>
             {
                 Require(r.Points.Length == 21, "Missing primary measurements.");
                 foreach (var point in r.Points)
                     Require(Math.Abs(Level(point) - point.Amount * r.FullChangeDb) < 1.57, "Recorded path exceeded its declared reference band.");
             });
-            check($"Chorus recorded primary reverse steps stay below 0.6501 dB for {r.Name}", () =>
+            check($"Frozen mixer: Chorus recorded primary reverse steps stay below 0.6501 dB for {r.Name}", () =>
             {
                 for (int i = 1; i < r.Points.Length; i++)
                     Require(Level(r.Points[i - 1]) - Level(r.Points[i]) < .6501, "A primary reverse step exceeded its declared budget.");
@@ -88,7 +90,7 @@ internal static class ChorusMixingChecks
                     "Production output differs from the frozen pre-update waveform times the independent gain.");
             });
         }
-        check("Chorus corpus mean improves its path and retains primary/dense ordering controls", () =>
+        check("Frozen mixer: Chorus corpus mean improves its path and retains primary/dense ordering controls", () =>
         {
             double oldError = 0, newError = 0, previous = 0;
             for (int i = 0; i < 21; i++)
@@ -1285,17 +1287,17 @@ internal static class ChorusMixingChecks
     // Frozen old waveform multiplied by the independent coefficient evaluator.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.0500000007f, -19.264475545223),
-        (8000, 0.5f, -19.163016815105191),
-        (8000, 0.949999988f, -17.438283553904029),
+        (8000, 0.05f, -19.26622545346487),
+        (8000, 0.5f, -19.475003310597874),
+        (8000, 0.95f, -17.675795777225542),
         (8000, 1f, -17.626859869400093),
-        (22050, 0.0500000007f, -19.264543417503806),
-        (22050, 0.5f, -19.160623083757777),
-        (22050, 0.949999988f, -17.441623859575358),
+        (22050, 0.05f, -19.266212183156512),
+        (22050, 0.5f, -19.473568964535012),
+        (22050, 0.95f, -17.678975195507757),
         (22050, 1f, -17.62828700062564),
-        (48000, 0.0500000007f, -19.26456803840756),
-        (48000, 0.5f, -19.160125526959291),
-        (48000, 0.949999988f, -17.446034817855345),
+        (48000, 0.05f, -19.266238301114068),
+        (48000, 0.5f, -19.471605566679678),
+        (48000, 0.95f, -17.682873426818226),
         (48000, 1f, -17.632537394143604),
     ];
 

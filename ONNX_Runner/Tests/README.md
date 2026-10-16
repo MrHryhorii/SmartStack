@@ -52,39 +52,24 @@ Managed character-effect checks compare every G.711 PCM16 input and decoded code
 with independent ITU reference digests. Rolling decoder-glitch checks cover capture
 duration, low/high-frequency detection, live replacement, streaming partitions, and
 allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
-Codec-mixing checks compare midpoint and full-effect levels with independently recorded
-cubic fixtures at 8000, 22050, and 48000 Hz. They check the full RMS transition across
-input levels and master gain at five-percent steps and extra points near bypass and
-full effect, plus matching midpoint slopes, changing stream intensity, and hot-loop allocations.
-Crusher-mixing checks retain the compact two-cubic Bitcrusher correction, unchanged dry/wet
-proportions, recorded voice-level bounds, streaming intensity changes, and zero hot-loop
-allocations. Synthetic fixtures also verify routing and full-effect levels at three rates.
-Tactical-mixing checks preserve the recorded midpoint windows and five-percent voice-level
-paths, the shared polynomial midpoint value and slope, unchanged dry/wet proportions,
-streaming intensity changes, and zero hot-loop allocations. Independent synthetic fixtures
-check the evolving radio input filters and full-strength output at three rates.
-FM-mixing checks cover recorded midpoint windows and five-percent voice-level paths,
-the shared cubic join, unchanged dry/wet proportions, streaming intensity changes,
-and zero hot-loop allocations. Independent synthetic fixtures check FM routing and
-full-strength output at three rates.
-Overdrive-mixing checks preserve ordered five-percent paths inside each recorded
-clean/full interval, the shared polynomial join, original dry/wet proportions,
-stream state and zero hot-loop allocations. Independent synthetic fixtures verify
-routing at three rates; recorded calibration moments serve as regression data.
-RingModulator-mixing checks preserve the recorded RMS reference band, ordered
-five-percent corpus mean, original tremolo proportions, smooth gain join, stream
-state and zero hot-loop allocations. Individual midpoint windows remain separate
-diagnostics; the fixed correction does not guarantee them for every input.
-Chorus-mixing checks cover recorded midpoint windows, primary reference paths and
-reverse-step budgets, independent routing fixtures, streaming changes, exact
-bypass, a continuous gain join, and zero-allocation prepared mixing.
+Mixer component checks retain the frozen voice moments used to fit the codec,
+Crusher, Tactical, FM, Overdrive, RingModulator, Chorus, Flanger, and Telephone
+coefficients. They protect coefficient evaluation, joins, endpoints and the recorded
+component-level tradeoffs. These historical moments do not represent the revised
+engine intensity path and must not be read as current waveform-level guarantees.
 
-Flanger-mixing checks cover recorded midpoint escape limits and window counts,
-own-direction reversal budgets, reference paths, the common-curve tradeoff,
-independent routing, the shared cubic join, streaming and zero allocations.
-Telephone-mixing checks cover measured wet-path powers and their cross terms,
-own-direction reference and reversal limits, midpoint window counts, bounded
-per-record tradeoffs, original mix proportions, streaming and zero allocations.
+Separate engine-routing fixtures replay the unchanged synthetic inputs at three rates.
+Their expected levels come from frozen accepted effect algorithms, the declared
+`amount * (2 - amount)` wet-strength curve, and fixed output trims. The request amount
+still controls the external blend. G.711 keeps its fixed codec transfer characteristic;
+cassette and decoder-glitch intensity laws remain separate.
+
+Character-strength checks verify the prepared Overdrive and Tactical input strength,
+midpoint Bitcrusher quantization, and independent full-waveform checkpoints, peaks and
+RMS levels after the agreed output trims. Existing streaming and hot-loop allocation
+checks exercise the revised engine. Calibration of the external level curves after
+these changes is a separate step; the routing fixtures verify the declared processing,
+not ideal midpoint loudness.
 Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
 and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
 reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD
