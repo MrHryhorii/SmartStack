@@ -20,41 +20,59 @@ internal static class CrusherMixingChecks
                     "Endpoint mixing changed the selected input.");
             }
         });
-        check("Crusher retains the independently approved correction at all 21 primary points", () =>
+        check("Crusher retains independently evaluated weight norms at all 21 primary points", () =>
         {
-            Require(CorrectionReferences.Length == 21, "Missing approved correction fixtures.");
+            Require(GainNormReferences.Length == 21, "Missing fitted weight-norm fixtures.");
             for (int i = 1; i < 20; i++)
             {
                 Dsp.CrusherGains(i/20f, out float dry, out float wet);
                 double correctionDb = 10*Math.Log10(dry*(double)dry+wet*(double)wet);
-                Require(Math.Abs(correctionDb-CorrectionReferences[i]) < .00001,
-                    $"The approved correction changed at intensity {i/20f:R}.");
+                Require(Math.Abs(correctionDb-GainNormReferences[i]) < .00001,
+                    $"The fitted weight-norm changed at intensity {i/20f:R}.");
             }
         });
-        check("Crusher gains stay finite and preserve the existing dry/wet proportions", () =>
+        check("Crusher gains stay finite while their wet share increases monotonically", () =>
         {
+            float previousShare = 0;
             for (int i = 101; i < 100000; i++)
             {
                 float t = i/100000f;
                 Dsp.CrusherGains(t, out float dry, out float wet);
-                Dsp.EqualPowerGains(t, out float originalDry, out float originalWet);
                 Require(float.IsFinite(dry) && float.IsFinite(wet) && dry >= 0f && wet >= 0f,
                     "A calibrated gain is invalid.");
-                Require(Math.Abs(dry*originalWet-wet*originalDry) < 3e-7,
-                    "The level correction changed effect strength.");
+                float share = wet / (dry + wet);
+                Require(share >= previousShare - 3e-7f, "Increasing intensity reduced the wet share.");
+                previousShare = share;
             }
         });
-        check("Crusher cubic halves meet with the fitted midpoint value and slope", () =>
+        check("Crusher joined weight norm is smooth at its fitted midpoint", () =>
         {
-            const float h = .005f;
-            double middle = CorrectionGain(.5f);
-            double leftSlope = (3*middle-4*CorrectionGain(.5f-h)+CorrectionGain(.5f-2*h))/(2*h);
-            double rightSlope = (-3*middle+4*CorrectionGain(.5f+h)-CorrectionGain(.5f+2*h))/(2*h);
-            Require(Math.Abs(middle-0.86765715268940624) < 1e-7, "The fitted midpoint changed.");
-            Require(Math.Abs(leftSlope - (-0.0017737268856794141)) < .001 && Math.Abs(rightSlope - (-0.0017737268856794141)) < .001,
-                "The two cubic halves no longer share the fitted midpoint slope.");
-            Require(Math.Abs(CorrectionGain(MathF.BitDecrement(.5f))-
-                CorrectionGain(MathF.BitIncrement(.5f))) < 3e-7, "The midpoint is discontinuous.");
+            const float h = .001f;
+            double middle = GainNorm(.5f);
+            double leftSlope = (3*middle-4*GainNorm(.5f-h)+GainNorm(.5f-2*h))/(2*h);
+            double rightSlope = (-3*middle+4*GainNorm(.5f+h)-GainNorm(.5f+2*h))/(2*h);
+            Require(Math.Abs(middle-0.83980007259307099) < 1e-7, "The fitted midpoint changed.");
+            Require(Math.Abs(leftSlope - (-0.15859706016817782)) < .001 && Math.Abs(rightSlope - (-0.15859706016817782)) < .001,
+                "The joined weight norm changed its fitted midpoint derivative.");
+            Require(Math.Abs(GainNorm(MathF.BitDecrement(.5f))-
+                GainNorm(MathF.BitIncrement(.5f))) < 3e-7, "The midpoint is discontinuous.");
+        });
+        check("Crusher halves share their fitted dry and wet midpoint slopes", () =>
+        {
+            const float h = .001f;
+            Dsp.CrusherGains(.5f, out float dry, out float wet);
+            Dsp.CrusherGains(.5f-h, out float dl1, out float wl1);
+            Dsp.CrusherGains(.5f-2*h, out float dl2, out float wl2);
+            Dsp.CrusherGains(.5f+h, out float dr1, out float wr1);
+            Dsp.CrusherGains(.5f+2*h, out float dr2, out float wr2);
+            Require(Math.Abs(dry-0.69875589758602674) < 1e-7 && Math.Abs(wet-0.46583726505730888) < 1e-7,
+                "A half lost the shared midpoint weights.");
+            double dryLeft = (3d*dry-4d*dl1+dl2)/(2*h), dryRight = (-3d*dry+4d*dr1-dr2)/(2*h);
+            double wetLeft = (3d*wet-4d*wl1+wl2)/(2*h), wetRight = (-3d*wet+4d*wr1-wr2)/(2*h);
+            Require(Math.Abs(dryLeft-(-0.44944592742954015)) < .002 && Math.Abs(dryRight-(-0.44944592742954015)) < .002,
+                "Dry midpoint derivatives do not meet.");
+            Require(Math.Abs(wetLeft-(0.38825397485724722)) < .002 && Math.Abs(wetRight-(0.38825397485724722)) < .002,
+                "Wet midpoint derivatives do not meet.");
         });
         check("Crusher gain evaluation and prepared mixing allocate no managed bytes", () =>
         {
@@ -134,8 +152,8 @@ internal static class CrusherMixingChecks
         }
     }
 
-    /// <summary>Recovers the correction without inspecting polynomial coefficients.</summary>
-    private static double CorrectionGain(float amount)
+    /// <summary>Measures the fitted dry/wet weight norm without reading prepared coefficients.</summary>
+    private static double GainNorm(float amount)
     {
         Dsp.CrusherGains(amount, out float dry, out float wet);
         return Math.Sqrt(dry*(double)dry+wet*(double)wet);
@@ -185,25 +203,25 @@ internal static class CrusherMixingChecks
     }
 
     // Frozen independently from the accepted offline study, never regenerated during tests.
-    private static readonly double[] CorrectionReferences =
+    private static readonly double[] GainNormReferences =
     [
-        0, -0.46078359587804929, -0.81477240315051891, -1.0668876569055052, -1.2273908513172969, -1.3109158146340421, -1.3351476033367138, -1.319489775454723, -1.2839780898271616, -1.2485930677039578, -1.233037250862935, -1.2287630432970396, -1.2105569623167947, -1.173093196008185, -1.1112432461572255, -1.0202056586512518, -0.89564989963060859, -0.73386187989945229, -0.53188805571974174, -0.28764488051672293, 0
+        0, -0.034299239137089446, -0.1703772569951342, -0.37680835789571376, -0.61889315585059601, -0.86175703370479095, -1.0755067219856254, -1.2417230701029409, -1.3585308635196325, -1.4410950803243927, -1.516481843145465, -1.5775269986954426, -1.5954055893017416, -1.577585804806807, -1.5283413944848672, -1.337484141913821, -0.92311831830298607, -0.54522418387904092, -0.31326694966537943, -0.15182847295566998, 0
     ];
-    // Frozen from the accepted engine with a separate per-sample tenth-bit reference quantizer.
-    // Integer-depth midpoint/full references and historical mixer moments remain unchanged.
+    // Frozen wet moments plus independent joined-Hermite weights; full references unchanged.
+    // The tenth-bit quantizer and every historical voice moment remain unchanged.
     private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
     [
-        (8000, 0.1f, -20.447691856870808),
-        (8000, 0.5f, -22.03047743613936),
-        (8000, 0.9f, -21.99179654451386),
+        (8000, 0.1f, -19.51267790739638),
+        (8000, 0.5f, -21.730287303817605),
+        (8000, 0.9f, -22.036654531246185),
         (8000, 1f, -21.67936886590627),
-        (22050, 0.1f, -20.447517251586),
-        (22050, 0.5f, -22.03452401778393),
-        (22050, 0.9f, -22.036203320775126),
+        (22050, 0.1f, -19.512220285532614),
+        (22050, 0.5f, -21.726726263275118),
+        (22050, 0.9f, -22.109693858702446),
         (22050, 1f, -21.747021365760709),
-        (48000, 0.1f, -20.44660755148954),
-        (48000, 0.5f, -22.026881272623086),
-        (48000, 0.9f, -22.047919599863327),
+        (48000, 0.1f, -19.511974633233081),
+        (48000, 0.5f, -21.718705303096137),
+        (48000, 0.9f, -22.130781725922716),
         (48000, 1f, -21.778692880423286),
     ];
     // Unseen-text 22050 Hz voice moments: measured before integration, without PCM assets.

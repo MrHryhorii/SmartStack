@@ -58,6 +58,13 @@ coefficients. They protect coefficient evaluation, joins, endpoints and the reco
 component-level tradeoffs. These historical moments do not represent the revised
 engine intensity path and must not be read as current waveform-level guarantees.
 
+Bitcrusher additionally checks current frozen moments from all 16 voices at 21
+strengths. Its joined dry/wet halves preserve clean/full output while reducing
+transition humps. Checks protect previous voice-error and reverse-step budgets,
+base-voice midpoint windows and hump, the common midpoint value and slopes,
+streaming, silence, and allocation-free preparation. The tenth-bit quantizer
+and fractional decimation clock are unchanged.
+
 The shared G.711 mixer additionally uses current fixed-path moments from three
 unaltered base-voice recordings. Its 21-point checks protect decreasing loudness,
 the clean/full window, a mean midpoint near the center in dB, close levels between

@@ -100,13 +100,14 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares Bitcrusher gains using two experimentally fitted cubic correction segments.
-    /// Both halves share their midpoint value and slope; the original dry/wet ratio is retained.
-    /// Call once per buffer. No runtime loudness analysis or normalization is performed.
+    /// Prepares fitted Bitcrusher weights in two halves with a shared midpoint and slope.
+    /// Cubic numerators and one late quadratic denominator reduce transition-level humps.
+    /// Endpoint factors keep the disappearing branch nonnegative near clean/full output.
+    /// Call once per buffer; no input-level scan, extra PCM pass or allocation is used.
     /// </summary>
     public static void CrusherGains(float t, out float dryGain, out float wetGain)
     {
-        if (t <= 0.001f || float.IsNaN(t))
+        if (t <= .001f || float.IsNaN(t))
         {
             dryGain = 1f;
             wetGain = 0f;
@@ -119,25 +120,21 @@ public static class Dsp
             return;
         }
 
-        float correction;
-        if (t == 0.5f)
+        float centered = 2f * t - 1f;
+        if (centered <= 0f)
         {
-            correction = 0.867657153f;
+            dryGain = 0.698755898f + centered * (-0.224722964f
+                + centered * (0.484005037f + centered * 0.407483898f));
+            wetGain = (1f + centered) * (0.465837265f
+                + centered * (-0.271710278f + centered * -0.737547543f));
+            return;
         }
-        else if (t < 0.5f)
-        {
-            float u = 2f * t;
-            correction = ((-0.3284173f * u + 0.788290584f) * u + -0.592216131f) * u + 1f;
-        }
-        else
-        {
-            // Evaluate from the full-effect endpoint to preserve its exact correction.
-            float u = 2f * (1f - t);
-            correction = ((-0.0907288549f * u + 0.314687421f) * u + -0.356301413f) * u + 1f;
-        }
-        EqualPowerGains(t, out dryGain, out wetGain);
-        dryGain *= correction;
-        wetGain *= correction;
+
+        float inverse = 1f / (1f + -3.0530102f * centered * (1f - centered));
+        dryGain = (1f - centered) * (0.698755898f
+            + centered * (-1.65927595f + centered * 1.34332191f)) * inverse;
+        wetGain = 0.465837265f + centered * (0.194126987f
+            + centered * (-0.597301142f + centered * 0.937336889f)) * inverse;
     }
 
     /// <summary>Combines inputs with Crusher gains prepared outside the sample loop.</summary>

@@ -30,6 +30,7 @@ if (!synthesisOnly)
     CodecMixingChecks.Run(Check);
     CodecLoudnessChecks.Run(Check);
     CrusherMixingChecks.Run(Check);
+    CrusherCurveChecks.Run(Check);
     TacticalMixingChecks.Run(Check);
     FmMixingChecks.Run(Check);
     OverdriveMixingChecks.Run(Check);
