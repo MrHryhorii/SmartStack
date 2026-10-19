@@ -53,7 +53,7 @@ with independent ITU reference digests. Rolling decoder-glitch checks cover capt
 duration, low/high-frequency detection, live replacement, streaming partitions, and
 allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
 Mixer component checks retain the frozen voice moments used to fit the codec,
-Crusher, Tactical, FM, RingModulator, and Telephone
+Crusher, Tactical, FM, and Telephone
 coefficients. They protect coefficient evaluation, joins, endpoints and the recorded
 component-level tradeoffs. These historical moments do not represent the revised
 engine intensity path and must not be read as current waveform-level guarantees.
@@ -91,6 +91,15 @@ stream partitions, and zero-allocation gain preparation. Independent routing che
 three rates and three input levels. Historical pre-trim moments remain in the research
 archive rather than defining the new signal path. RMS budgets describe these fixtures;
 they do not promise identical loudness or monotonicity for arbitrary input audio.
+
+RingModulator checks use independent post-DC wet moments from 48 recordings at 21
+strengths on the current eased path. The common gain preserves its original dry/wet
+ratio and tremolo transition. Two cubic halves share their midpoint value and physical
+slope; the first half reuses the prepared square root. Checks protect ordered base-voice
+paths, the centered base-mean midpoint, bounded catalog errors, independent PCM routing
+at three rates and input levels, stream partitions, and allocation-free preparation.
+Individual catalog midpoint windows remain a reported limitation. Historical linear-path
+moments are retained in the research archive rather than defining current output.
 
 Chorus and Flanger checks use current additive-waveform moments from the full voice
 catalog at 21 strengths, including eased internal intensity. Their prepared scalar gains

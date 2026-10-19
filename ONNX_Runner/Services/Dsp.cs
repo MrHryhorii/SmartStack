@@ -284,9 +284,9 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares RingModulator gains with two experimentally fitted cubic corrections.
-    /// Retains the original tremolo transition and dry/wet ratio; call once per buffer.
-    /// The shared midpoint value and slope keep the two halves continuous.
+    /// Prepares RingModulator gains with two empirically fitted cubic corrections.
+    /// The left half reuses sqrt(t); shared midpoint value and slope join both halves.
+    /// Keeps the eased wet algorithm and dry/wet ratio; evaluate once per buffer.
     /// </summary>
     public static void RingGains(float t, out float dryGain, out float wetGain)
     {
@@ -307,18 +307,19 @@ public static class Dsp
         float correction;
         if (t == 0.5f)
         {
-            correction = 1.0222141f;
+            correction = 1.00849332f;
         }
         else if (t < 0.5f)
         {
-            float u = 2f * t;
-            correction = ((-0.261437901f * u + 0.697643661f) * u + -0.413991664f) * u + 1f;
+            // Reuse the prepared wet root instead of evaluating another square root.
+            float u = wetGain * 1.41421356f;
+            correction = ((-0.0281309448f * u + 0.540940037f) * u - 0.50431577f) * u + 1f;
         }
         else
         {
             // Reverse the coordinate to retain the exact full-effect endpoint.
             float u = 2f * (1f - t);
-            correction = ((0.536519771f * u + -1.29223559f) * u + 0.777929916f) * u + 1f;
+            correction = ((-0.237859864f * u + 0.220640671f) * u + 0.0257125147f) * u + 1f;
         }
         dryGain *= correction;
         wetGain *= correction;

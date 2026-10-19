@@ -1,118 +1,183 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
 internal static class RingMixingChecks
 {
-    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
-    // Synthetic routing fixtures independently include the new strength curve and output trims.
-    /// <summary>Checks recorded reference paths, corpus mean, original effect proportions and stream state.</summary>
+    private static readonly Corpus Fixtures = Load();
+
+    /// <summary>Checks the actual eased wet path, prepared level curve and unchanged effect proportions.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        check("RingModulator gains preserve exact endpoints and bypass", () =>
+        VoiceRecord[] voices = Fixtures.Voices;
+        VoiceRecord[] basis = voices.Where(v => v.Voice == "piper_base").ToArray();
+        Require(voices.Length == 48 && basis.Length == 3 && Fixtures.Synthetic.Length == 9,
+            "The independent current-path fixtures are incomplete.");
+
+        check("RingModulator preserves exact endpoint and invalid-input gains", () =>
         {
-            foreach (float amount in new[] { -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
+            foreach (float amount in new[] { float.NegativeInfinity, -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
             {
                 Dsp.RingGains(amount, out float dry, out float wet);
-                bool full = amount >= 1;
-                Require(dry == (full ? 0f : 1f) && wet == (full ? 1f : 0f), "Endpoint gain changed.");
-                Require(Dsp.RingCrossfade(.25f, -.75f, dry, wet) == (full ? -.75f : .25f),
-                    "Endpoint mixing changed the selected signal.");
+                bool full = amount >= 1f;
+                Require(dry == (full ? 0f : 1f) && wet == (full ? 1f : 0f), "An endpoint gain changed.");
+                Require(Dsp.RingCrossfade(.25f, -.75f, dry, wet) == (full ? -.75f : .25f), "Endpoint selection changed.");
             }
         });
-        check("RingModulator gains remain finite and preserve the original effect proportions", () =>
+        check("RingModulator common correction is finite, positive and preserves increasing wet share", () =>
         {
-            for (int i = 101; i < 100000; i++)
+            double previousShare = 0;
+            for (int i = 0; i <= 100000; i++)
             {
-                float t = i / 100000f;
-                Dsp.RingGains(t, out float dry, out float wet);
-                Dsp.EqualPowerGains(t, out float a, out float b);
-                Require(float.IsFinite(dry) && float.IsFinite(wet) && dry >= 0 && wet >= 0, "Invalid gain.");
-                Require(Math.Abs(dry * b - wet * a) < 3e-7, "The level correction changed the dry/wet ratio.");
+                float amount = i / 100000f;
+                Dsp.RingGains(amount, out float dry, out float wet);
+                double correction = Math.Sqrt(dry * (double)dry + wet * (double)wet);
+                Require(float.IsFinite(dry) && float.IsFinite(wet) && dry >= 0 && wet >= 0,
+                    "A prepared gain is invalid.");
+                Require(correction > .85 && correction < 1.1, "The common correction left its bounded range.");
+                double share = wet / (dry + (double)wet);
+                Require(share >= previousShare - 1e-7, "The wet share moved backwards.");
+                previousShare = share;
+                if (amount <= .001f || amount >= 1f) continue;
+                Dsp.EqualPowerGains(amount, out float a, out float b);
+                Require(Math.Abs(dry * b - wet * a) < 3e-7, "The correction changed the original dry/wet ratio.");
             }
         });
-        check("RingModulator polynomial halves share the accepted midpoint value and slope", () =>
+        check("RingModulator root-coordinate halves share midpoint values and physical slopes", () =>
         {
-            const float h = .005f;
+            const float h = .001f;
             double middle = Correction(.5f);
-            double leftSlope = (3 * middle - 4 * Correction(.5f - h) + Correction(.5f - 2 * h)) / (2 * h);
-            double rightSlope = (-3 * middle + 4 * Correction(.5f + h) - Correction(.5f + 2 * h)) / (2 * h);
-            Require(Math.Abs(middle - 1.0222140954484731) < 1e-7, "The accepted midpoint changed.");
-            Require(Math.Abs(leftSlope - 0.39396390810033893) < .002 && Math.Abs(rightSlope - 0.39396390810033893) < .002,
-                "The two halves do not share their midpoint slope.");
+            double left = (3 * middle - 4 * Correction(.5f - h) + Correction(.5f - 2 * h)) / (2 * h);
+            double right = (-3 * middle + 4 * Correction(.5f + h) - Correction(.5f + 2 * h)) / (2 * h);
+            Require(Math.Abs(left - right) < .003, "The midpoint slope is discontinuous.");
             Require(Math.Abs(Correction(MathF.BitDecrement(.5f)) - Correction(MathF.BitIncrement(.5f))) < 5e-7,
-                "The midpoint join is discontinuous.");
+                "The midpoint value is discontinuous.");
         });
-        check("RingModulator gain evaluation and prepared mixing allocate zero managed bytes", () =>
+        check("RingModulator prepared gain and mixing allocate zero managed bytes", () =>
         {
-            double sum = 0;
-            for (int i = 0; i < 20000; i++) sum += Sample(i);
+            double checksum = 0;
+            for (int i = 0; i < 20000; i++) checksum += PreparedSample(i);
             long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 20000; i++) sum += Sample(i);
-            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-            Require(allocated == 0 && double.IsFinite(sum), $"Prepared mixing allocated {allocated} bytes.");
+            for (int i = 0; i < 20000; i++) checksum += PreparedSample(i);
+            Require(GC.GetAllocatedBytesForCurrentThread() == before && double.IsFinite(checksum),
+                "Prepared mixing allocated memory.");
+        });
 
-            static float Sample(int i)
-            {
-                Dsp.RingGains(i % 1001 / 1000f, out float dry, out float wet);
-                return Dsp.RingCrossfade(.2f, -.1f, dry, wet);
-            }
-        });
-        Require(VoiceReferences.Length == 48 && SyntheticReferences.Length == 12, "Missing independent fixtures.");
-        foreach (var reference in VoiceReferences)
+        foreach (VoiceRecord voice in voices)
         {
-            check($"Frozen mixer: RingModulator recorded level path stays within 1 dB of its endpoint guide for {reference.Name}", () =>
+            Require(voice.Points.Length == 21, "A recorded current path is incomplete.");
+            check($"RingModulator current-path guide band holds for {voice.Name}", () =>
             {
-                Require(reference.Points.Length == 21, "Missing five-percent voice measurements.");
-                foreach (var point in reference.Points)
+                foreach (Point point in voice.Points)
+                    Require(Math.Abs(Level(voice, point) - point.Amount * voice.FullChangeDb) < 1,
+                        "A current-path level exceeded the declared 1 dB guide band.");
+            });
+            check($"RingModulator current-path reverse-step band holds for {voice.Name}", () =>
+            {
+                double previous = 0;
+                foreach (Point point in voice.Points)
                 {
-                    double error = RecordedLevel(reference, point) - point.Amount * reference.FullChangeDb;
-                    Require(Math.Abs(error) < 1, $"Recorded path error exceeds 1 dB at {point.Amount:R}: {error:F6} dB.");
+                    double current = Level(voice, point);
+                    Require(Math.Sign(voice.FullChangeDb) * (previous - current) < .51,
+                        "An individual current-path reverse step exceeded its reported budget.");
+                    previous = current;
+                }
+            });
+            check($"RingModulator current-path endpoint escape band holds for {voice.Name}", () =>
+            {
+                foreach (Point point in voice.Points)
+                {
+                    double level = Level(voice, point);
+                    Require(level >= Math.Min(0, voice.FullChangeDb) - .70 && level <= Math.Max(0, voice.FullChangeDb) + .70,
+                        "An individual current-path endpoint escape exceeded its reported budget.");
                 }
             });
         }
-        foreach (var reference in SyntheticReferences)
+        foreach (VoiceRecord voice in basis)
         {
-            check($"RingModulator routing matches the independent fixture at {reference.Rate} Hz and {reference.Amount:R}", () =>
+            check($"RingModulator base path stays ordered inside its clean/full window for {voice.Name}", () =>
             {
-                float[] signal = Signal(reference.Rate, reference.Rate * 3);
-                NewEngine(reference.Rate).ApplyEffect(signal, VoiceEffectType.RingModulator, reference.Amount);
-                double sum = 0;
-                foreach (float x in signal) sum += x * (double)x;
-                double level = 10 * Math.Log10(sum / signal.Length);
-                Require(Math.Abs(level - reference.RmsDbfs) < .01, "Actual routing differs from the frozen wet-path fixture.");
+                double previous = 0;
+                foreach (Point point in voice.Points)
+                {
+                    double current = Level(voice, point);
+                    Require(current >= previous - .0001 && current >= -.0001 && current <= voice.FullChangeDb + .0001,
+                        "A base-voice path reversed or left its clean/full window.");
+                    previous = current;
+                }
             });
         }
-        check("Frozen mixer: RingModulator catalog mean moves closer to its endpoint guide", () =>
+        check("RingModulator base mean follows an ordered transition with a centered midpoint", () =>
         {
-            double oldError = 0, newError = 0, previousMean = 0;
-            for (int index = 0; index < 21; index++)
+            double full = basis.Average(v => v.FullChangeDb), previous = 0, error = 0, baselineError = 0;
+            for (int i = 0; i <= 20; i++)
             {
-                double oldMean = 0, newMean = 0, guide = 0;
-                foreach (var reference in VoiceReferences)
-                {
-                    var point = reference.Points[index];
-                    Dsp.EqualPowerGains(point.Amount, out float dry, out float wet);
-                    double power = dry * (double)dry * reference.DryPower + wet * (double)wet * point.WetPower
-                        + 2 * dry * (double)wet * point.Cross;
-                    oldMean += 10 * Math.Log10(power / reference.DryPower);
-                    newMean += RecordedLevel(reference, point);
-                    guide += point.Amount * reference.FullChangeDb;
-                }
-                Require(newMean >= previousMean - 1e-5, "The catalog mean reversed at a primary point.");
-                previousMean = newMean;
-                oldError += Math.Abs(oldMean - guide);
-                newError += Math.Abs(newMean - guide);
+                double mean = basis.Average(v => Level(v, v.Points[i]));
+                Require(mean >= previous - .0001, "The base mean reversed at a captured point.");
+                error += Math.Abs(mean - i / 20d * full) / 21;
+                baselineError += Math.Abs(basis.Average(v => v.Points[i].BaselineChangeDb) - i / 20d * full) / 21;
+                previous = mean;
             }
-            Require(newError < oldError, "The fixed correction no longer improves the catalog mean.");
+            Require(error < .04 && error < baselineError * .1, "The base-mean guide improvement regressed.");
+            Require(Math.Abs(basis.Average(v => Level(v, v.Points[10])) - full / 2) < 1e-5,
+                "The base mean midpoint moved from the half-dB guide.");
         });
+        check("RingModulator catalog controls retain the declared midpoint and average-error budgets", () =>
+        {
+            int windows = 0; double error = 0, baselineError = 0, meanError = 0;
+            foreach (VoiceRecord voice in voices)
+            {
+                double midpoint = Level(voice, voice.Points[10]);
+                if (midpoint >= Math.Min(0, voice.FullChangeDb) && midpoint <= Math.Max(0, voice.FullChangeDb)) windows++;
+                foreach (Point point in voice.Points)
+                {
+                    error += Math.Abs(Level(voice, point) - point.Amount * voice.FullChangeDb) / (48 * 21);
+                    baselineError += Math.Abs(point.BaselineChangeDb - point.Amount * voice.FullChangeDb) / (48 * 21);
+                }
+            }
+            for (int i = 0; i <= 20; i++)
+                meanError += Math.Abs(voices.Average(v => Level(v, v.Points[i]))
+                    - voices.Average(v => v.FullChangeDb) * i / 20d) / 21;
+            Require(windows >= 25, "Catalog midpoint coverage fell below the declared 25/48.");
+            Require(error < .19 && error < baselineError * .6 && meanError < .18,
+                "Catalog average-error improvement regressed.");
+        });
+
+        foreach (SyntheticRecord record in Fixtures.Synthetic)
+        foreach (SyntheticPoint point in record.Points)
+        {
+            check($"RingModulator independent wet routing at {record.Rate} Hz, scale {record.Scale:R}, amount {point.Amount:R}", () =>
+            {
+                float[] clean = Signal(record.Rate, record.Rate * 3, record.Scale), actual = (float[])clean.Clone();
+                NewEngine(record.Rate).ApplyEffect(actual, VoiceEffectType.RingModulator, point.Amount);
+                double power = 0;
+                foreach (float sample in actual)
+                {
+                    Require(float.IsFinite(sample), "Non-finite effect output.");
+                    power += sample * (double)sample;
+                }
+                Dsp.RingGains(point.Amount, out float dryGain, out float wetGain); wetGain *= .91f;
+                double expectedPower = dryGain * (double)dryGain * record.DryPower
+                    + wetGain * (double)wetGain * point.WetPower + 2 * dryGain * (double)wetGain * point.Cross;
+                Require(Math.Abs(10 * Math.Log10(power / actual.Length / expectedPower)) < .0001,
+                    "Output power differs from independently captured post-DC wet moments.");
+                Require(point.WetIndices.Length == 16 && point.WetSamples.Length == 16, "Wet checkpoints are incomplete.");
+                for (int i = 0; i < point.WetIndices.Length; i++)
+                {
+                    int index = point.WetIndices[i];
+                    float expected = clean[index] * dryGain + point.WetSamples[i] * wetGain;
+                    Require(Math.Abs(actual[index] - expected) < 3e-7, "Correction changed a frozen wet waveform checkpoint.");
+                }
+            });
+        }
         foreach (int rate in new[] { 8000, 22050, 48000 })
         {
-            check($"RingModulator intensity changes are independent of stream partitions at {rate} Hz", () =>
+            check($"RingModulator changing intensity is independent of streaming partitions at {rate} Hz", () =>
             {
-                float[] amounts = [0f, .001f, .00101f, .025f, .125f, .4995f, .5f, .5005f, .875f, .99f, 1f, .45f];
+                float[] amounts = [0, .001f, .00101f, .05f, .25f, .4995f, .5f, .5005f, .85f, 1, .45f];
                 int size = rate / 8;
-                float[] whole = Signal(rate, size * amounts.Length), split = (float[])whole.Clone();
+                float[] whole = Signal(rate, size * amounts.Length, 1), split = (float[])whole.Clone();
                 var a = NewEngine(rate); var b = NewEngine(rate);
                 for (int section = 0; section < amounts.Length; section++)
                 {
@@ -122,1238 +187,81 @@ internal static class RingMixingChecks
                             VoiceEffectType.RingModulator, amounts[section]);
                 }
                 Require(MemoryMarshal.AsBytes(whole.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(split.AsSpan())),
-                    "Streaming partitions changed the effect output.");
+                    "Streaming partitions changed output.");
             });
-            check($"RingModulator preserves clean bypass after warmup at {rate} Hz", () =>
+            check($"RingModulator warm bypass remains exact at {rate} Hz", () =>
             {
-                var engine = NewEngine(rate); float[] input = Signal(rate, rate / 2), warm = (float[])input.Clone();
-                engine.ApplyEffect(warm, VoiceEffectType.RingModulator, .65f);
+                float[] clean = Signal(rate, rate / 4, 1); var engine = NewEngine(rate);
+                engine.ApplyEffect((float[])clean.Clone(), VoiceEffectType.RingModulator, .7f);
                 foreach (float amount in new[] { 0f, .001f })
                 {
-                    float[] output = (float[])input.Clone();
-                    engine.ApplyEffect(output, VoiceEffectType.RingModulator, amount);
-                    Require(MemoryMarshal.AsBytes(input.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(output.AsSpan())),
-                        "Warm-state bypass changed clean samples.");
+                    float[] output = (float[])clean.Clone(); engine.ApplyEffect(output, VoiceEffectType.RingModulator, amount);
+                    Require(output.SequenceEqual(clean), "Warm bypass changed the original samples.");
                 }
             });
         }
     }
 
-    /// <summary>Evaluates actual gains against recorded dry/wet power, including their cross term.</summary>
-    private static double RecordedLevel(VoiceReference reference, (float Amount, double WetPower, double Cross) point)
+    /// <summary>Evaluates current prepared gains against the frozen independent wet moments.</summary>
+    private static double Level(VoiceRecord voice, Point point)
     {
-        Dsp.RingGains(point.Amount, out float dry, out float wet);
-        double power = dry * (double)dry * reference.DryPower + wet * (double)wet * point.WetPower
+        Dsp.RingGains(point.Amount, out float dry, out float wet); wet *= .91f;
+        double power = dry * (double)dry * voice.DryPower + wet * (double)wet * point.WetPower
             + 2 * dry * (double)wet * point.Cross;
-        return 10 * Math.Log10(power / reference.DryPower);
+        return 10 * Math.Log10(power / voice.DryPower);
     }
 
-    /// <summary>Recovers the common gain independently of its polynomial representation.</summary>
+    /// <summary>Recovers the common scalar independently of its coordinate representation.</summary>
     private static double Correction(float amount)
     {
         Dsp.RingGains(amount, out float dry, out float wet);
         return Math.Sqrt(dry * (double)dry + wet * (double)wet);
     }
 
-    /// <summary>Creates the frozen multi-band synthetic input without stored audio assets.</summary>
-    private static float[] Signal(int rate, int count)
+    /// <summary>Exercises both prepared gains and the unchanged per-sample combination.</summary>
+    private static float PreparedSample(int index)
+    {
+        Dsp.RingGains(index % 1001 / 1000f, out float dry, out float wet);
+        return Dsp.RingCrossfade(.2f, -.1f, dry, wet);
+    }
+
+    /// <summary>Recreates the exact multi-band routing input without audio assets.</summary>
+    private static float[] Signal(int rate, int count, float scale)
     {
         var signal = new float[count];
         for (int i = 0; i < count; i++)
         {
             double t = (double)i / rate;
-            signal[i] = (float)((.18 * Math.Sin(2 * Math.PI * 110 * t) + .08 * Math.Sin(2 * Math.PI * 330 * t)
+            signal[i] = scale * (float)((.18 * Math.Sin(2 * Math.PI * 110 * t) + .08 * Math.Sin(2 * Math.PI * 330 * t)
                 + .05 * Math.Sin(2 * Math.PI * 1700 * t) + .03 * Math.Sin(2 * Math.PI * Math.Min(3200, rate * .3) * t))
                 * (.7 + .3 * Math.Sin(2 * Math.PI * .73 * t)));
         }
         return signal;
     }
 
-    /// <summary>Creates fixed per-request state for independently replayable effect checks.</summary>
+    /// <summary>Creates isolated per-request effect state.</summary>
     private static AudioEffectsEngine NewEngine(int rate)
     {
         var engine = new AudioEffectsEngine(new(), rate); engine.Reset(123456); return engine;
     }
 
-    /// <summary>Reports a violated signal contract to the console runner.</summary>
-    private static void Require(bool condition, string message)
+    /// <summary>Loads numeric moments only in the standalone regression runner.</summary>
+    private static Corpus Load()
     {
-        if (!condition) throw new InvalidOperationException(message);
+        using Stream stream = typeof(RingMixingChecks).Assembly.GetManifestResourceStream("RingCurveMoments.json")
+            ?? throw new InvalidDataException("Missing current-path RingModulator moments.");
+        return JsonSerializer.Deserialize<Corpus>(stream) ?? throw new InvalidDataException("Invalid RingModulator moments.");
     }
 
-    // Frozen from the original wet path and an independent coefficient evaluator.
-    private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
-    [
-        (8000, 0.05f, -19.819059974037884),
-        (8000, 0.5f, -20.951812422932182),
-        (8000, 0.95f, -20.791435668448997),
-        (8000, 1f, -21.448549508943625),
-        (22050, 0.05f, -19.819353782050889),
-        (22050, 0.5f, -20.968405719298232),
-        (22050, 0.95f, -20.8578685079924),
-        (22050, 1f, -21.52089782706199),
-        (48000, 0.05f, -19.819307514299279),
-        (48000, 0.5f, -20.973246821967816),
-        (48000, 0.95f, -20.877921351962605),
-        (48000, 1f, -21.542734157261396),
-    ];
+    /// <summary>Reports an explicit signal contract failure.</summary>
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidDataException(message);
+    }
 
-    // All 48 recordings enter calibration; these fixtures are not blind validation.
-    private static readonly VoiceReference[] VoiceReferences =
-    [
-        new("alloy-train_a", 0.0032900629070604123, -0.028838249059447207,
-        [
-            (0f, 0.0032900629070604123, 0.0032900629070604123),
-            (0.05f, 0.0020049813166264667, 0.00047332699910418387),
-            (0.1f, 0.0019502522748396328, 0.00046546969753987209),
-            (0.15f, 0.0018885091125561315, 0.00045567108631171087),
-            (0.2f, 0.0018221723750635702, 0.00044392697555874417),
-            (0.25f, 0.0017539722566394099, 0.00043023352749338743),
-            (0.3f, 0.0016869499551425886, 0.00041458734747169265),
-            (0.35f, 0.0016244610077781755, 0.00039698599667622206),
-            (0.4f, 0.0015701720794705258, 0.00037742822368719146),
-            (0.45f, 0.0015280571842614889, 0.00035591427048485688),
-            (0.5f, 0.001502391365634138, 0.00033244624911146428),
-            (0.55f, 0.0014977393703432499, 0.00030702863452399367),
-            (0.6f, 0.0015189390444187969, 0.00027966853421933479),
-            (0.65f, 0.0015710821008031587, 0.00025037627175444064),
-            (0.7f, 0.0016594868395503157, 0.00021916557958819317),
-            (0.75f, 0.0017896662298926215, 0.00018605434379265047),
-            (0.8f, 0.0019672882107426414, 0.00015106477379801998),
-            (0.85f, 0.0021981307357797392, 0.00011422392813343706),
-            (0.9f, 0.0024880304541157233, 7.5564181147954259e-05),
-            (0.95f, 0.0028428248489691214, 3.5123243822038279e-05),
-            (1f, 0.0032682884334813969, -7.0551250898890545e-06),
-        ]),
-        new("alloy-train_b", 0.0024898764769244663, 0.33771861862210883,
-        [
-            (0f, 0.0024898764769244663, 0.0024898764769244663),
-            (0.05f, 0.0016569280074418325, 0.00056765844986177442),
-            (0.1f, 0.0016124666221527212, 0.0005587176881084163),
-            (0.15f, 0.0015621996811374913, 0.00054748195776234594),
-            (0.2f, 0.0015081080387797687, 0.00053394525389853585),
-            (0.25f, 0.0014524291290293971, 0.00051810203931145751),
-            (0.3f, 0.0013976582445631527, 0.00049994733517707212),
-            (0.35f, 0.0013465515702754298, 0.00047947766547530335),
-            (0.4f, 0.0013021231675196638, 0.00045669113810387681),
-            (0.45f, 0.0012676413844261655, 0.00043158798781001877),
-            (0.5f, 0.0012466226383015303, 0.00040417129448754453),
-            (0.55f, 0.0012428201709060592, 0.00037444737407613338),
-            (0.6f, 0.0012602083290979206, 0.00034242637774485385),
-            (0.65f, 0.0013029634704059732, 0.00030812307836040371),
-            (0.7f, 0.0013754377557713721, 0.00027155708147648183),
-            (0.75f, 0.0014821285178752996, 0.00023275392117096022),
-            (0.8f, 0.0016276403232608602, 0.00019174515707836049),
-            (0.85f, 0.0018166426719022398, 0.00014856912985272878),
-            (0.9f, 0.002053822169960405, 0.00010327137964026487),
-            (0.95f, 0.0023438296651566133, 5.590480860524957e-05),
-            (1f, 0.0026912228658115983, 6.530175877865507e-06),
-        ]),
-        new("alloy-validation", 0.002843379828247063, 0.060092784611644134,
-        [
-            (0f, 0.002843379828247063, 0.002843379828247063),
-            (0.05f, 0.0017800113903367189, 0.0005033053506667772),
-            (0.1f, 0.0017310587241840228, 0.00049506748150044777),
-            (0.15f, 0.0016758216796452, 0.00048477340735500447),
-            (0.2f, 0.0016164460806430006, 0.00047241839465602108),
-            (0.25f, 0.0015553535736868883, 0.0004579981225675531),
-            (0.3f, 0.0014952430001398908, 0.00044150871160506189),
-            (0.35f, 0.0014390932425794296, 0.00042294741888235498),
-            (0.4f, 0.0013901605044128566, 0.00040231280946113879),
-            (0.45f, 0.001351974594961671, 0.00037960506983210422),
-            (0.5f, 0.0013283329090834615, 0.00035482657733651072),
-            (0.55f, 0.0013232898599244806, 0.00032798233010886997),
-            (0.6f, 0.0013411411396632876, 0.00029908026933198956),
-            (0.65f, 0.0013864056549676726, 0.00026813194943002907),
-            (0.7f, 0.0014637995772757431, 0.00023515276440984513),
-            (0.75f, 0.001578206753270407, 0.00020016271858230294),
-            (0.8f, 0.0017346413006830359, 0.00016318663334827899),
-            (0.85f, 0.0019382059648100751, 0.00012425478988431127),
-            (0.9f, 0.00219404425312439, 8.3403199697987287e-05),
-            (0.95f, 0.0025072875309167645, 4.0673828064087563e-05),
-            (1f, 0.0028829967748057106, -3.884868705869388e-06),
-        ]),
-        new("ash-train_a", 0.0030094069246454644, 0.95314383064104646,
-        [
-            (0f, 0.0030094069246454644, 0.0030094069246454644),
-            (0.05f, 0.002287017689742763, 0.0010531578574242543),
-            (0.1f, 0.002224958217019065, 0.0010366545675773995),
-            (0.15f, 0.002154940732948237, 0.0010158998197276022),
-            (0.2f, 0.0020797283711479035, 0.00099088249081679563),
-            (0.25f, 0.0020024402545626252, 0.00096159228666666452),
-            (0.3f, 0.0019265532185379522, 0.00092802011618440671),
-            (0.35f, 0.0018559058739979458, 0.00089015956931810683),
-            (0.4f, 0.0017946946632306331, 0.00084800720776264423),
-            (0.45f, 0.0017474690374125865, 0.00080156365339661517),
-            (0.5f, 0.0017191229612596799, 0.00075083464058789092),
-            (0.55f, 0.0017148801878261503, 0.0006958320888304344),
-            (0.6f, 0.0017402728663280596, 0.00063657502824019567),
-            (0.65f, 0.0018011163876670005, 0.00057309102861308897),
-            (0.7f, 0.0019034737548770584, 0.000505416796637046),
-            (0.75f, 0.0020536147121339317, 0.00043359994560115153),
-            (0.8f, 0.0022579643247762622, 0.00035769948176931461),
-            (0.85f, 0.0025230457657362715, 0.00027778705237159294),
-            (0.9f, 0.0028554150465652725, 0.00019394785443007853),
-            (0.95f, 0.0032615883970331491, 0.00010628085866122009),
-            (1f, 0.0037479630357589856, 1.4899877789295881e-05),
-        ]),
-        new("ash-train_b", 0.0027442297771367069, 1.0978809105971798,
-        [
-            (0f, 0.0027442297771367069, 0.0027442297771367069),
-            (0.05f, 0.0021810481322920481, 0.0011611493649025478),
-            (0.1f, 0.0021218894975717647, 0.0011431666367552099),
-            (0.15f, 0.0020550256045832383, 0.0011205077703337384),
-            (0.2f, 0.0019830683252968729, 0.0010931582752525854),
-            (0.25f, 0.0019089724984081506, 0.0010611046344616833),
-            (0.3f, 0.0018360387178135507, 0.0010243349527284389),
-            (0.35f, 0.0017679171466322514, 0.00098284064094165307),
-            (0.4f, 0.0017086037432435361, 0.0009366170414650773),
-            (0.45f, 0.0016624340870729306, 0.00088566463064274081),
-            (0.5f, 0.0016340733223227728, 0.00082999049928975826),
-            (0.55f, 0.0016284986604695848, 0.00076960989440112498),
-            (0.6f, 0.0016509735174500301, 0.00070454703437823737),
-            (0.65f, 0.0017070174342162757, 0.00063483735000185028),
-            (0.7f, 0.0018023639615888209, 0.00056052800967895905),
-            (0.75f, 0.0019429116003109727, 0.000481680216113672),
-            (0.8f, 0.0021346641267439323, 0.00039836982919186261),
-            (0.85f, 0.0023836639608633731, 0.00031068888182786284),
-            (0.9f, 0.0026959168401431829, 0.00021874655165863248),
-            (0.95f, 0.0030773106726450601, 0.00012266949817949183),
-            (1f, 0.0035335282154458189, 2.2602898587064815e-05),
-        ]),
-        new("ash-validation", 0.0024726712873509586, 0.99177836532160413,
-        [
-            (0f, 0.0024726712873509586, 0.0024726712873509586),
-            (0.05f, 0.0019131538990067986, 0.0009713931606575801),
-            (0.1f, 0.0018624822988060896, 0.00095625643048657483),
-            (0.15f, 0.0018051321370488006, 0.00093720415464599389),
-            (0.2f, 0.0017433782192785489, 0.00091422570051838826),
-            (0.25f, 0.0016797892900597018, 0.00088731115955115094),
-            (0.3f, 0.0016172296786295473, 0.00085645173952082515),
-            (0.35f, 0.0015588625729156778, 0.0008216411577000452),
-            (0.4f, 0.0015081470451623862, 0.00078287598034341847),
-            (0.45f, 0.0014688339531366758, 0.00074015661306796245),
-            (0.5f, 0.001444959150111175, 0.00069348829297445429),
-            (0.55f, 0.0014408315150859568, 0.00064288222129678461),
-            (0.6f, 0.0014610153856301235, 0.00058835625651217321),
-            (0.65f, 0.0015103099782087395, 0.00052993646363888537),
-            (0.7f, 0.0015937204441022897, 0.00046765754846674014),
-            (0.75f, 0.0017164246281472235, 0.00040156451984585411),
-            (0.8f, 0.001883731417476922, 0.00033171315321089512),
-            (0.85f, 0.0021010351542820123, 0.00025817114613684993),
-            (0.9f, 0.0023737632096200285, 0.0001810187827923094),
-            (0.95f, 0.0027073193251434674, 0.00010034917022903509),
-            (1f, 0.0031070212415313502, 1.626920709552928e-05),
-        ]),
-        new("ballad-train_a", 0.0026009674958155831, 0.59311649550080148,
-        [
-            (0f, 0.0026009674958155831, 0.0026009674958155831),
-            (0.05f, 0.001830065325796089, 0.00080591625386116673),
-            (0.1f, 0.0017781677974005883, 0.00079206002838053504),
-            (0.15f, 0.0017197969457308942, 0.00077486022001351255),
-            (0.2f, 0.0016571955718353531, 0.00075430872859665705),
-            (0.25f, 0.0015928945036065613, 0.00073039802918993698),
-            (0.3f, 0.0015297138715794599, 0.00070312148109611522),
-            (0.35f, 0.0014707663144699309, 0.00067247433943618917),
-            (0.4f, 0.0014194539133315809, 0.00063845412114137395),
-            (0.45f, 0.0013794639949463792, 0.00060106116967792011),
-            (0.5f, 0.0013547627066702367, 0.00056029959547851708),
-            (0.55f, 0.0013495830330004532, 0.00051617805386021084),
-            (0.6f, 0.0013684079723685981, 0.00046871022197691174),
-            (0.65f, 0.001415950248269106, 0.00041791606297026968),
-            (0.7f, 0.0014971246620097986, 0.00036382213113662096),
-            (0.75f, 0.0016170155309606217, 0.00030646279774019662),
-            (0.8f, 0.0017808367243265357, 0.00024588070318336128),
-            (0.85f, 0.0019938869934517088, 0.00018212756842501395),
-            (0.9f, 0.0022614996937110748, 0.00011526478252275402),
-            (0.95f, 0.0025889872481278412, 4.5363604070276079e-05),
-            (1f, 0.0029815807404095195, -2.7494090004927917e-05),
-        ]),
-        new("ballad-train_b", 0.0022264905798923458, 0.78073676708814332,
-        [
-            (0f, 0.0022264905798923458, 0.0022264905798923458),
-            (0.05f, 0.0016267250466515839, 0.00078796703280519995),
-            (0.1f, 0.0015815928657349745, 0.00077504262852259734),
-            (0.15f, 0.0015307543258342715, 0.00075889435051504275),
-            (0.2f, 0.001476190701829773, 0.00073951397039944344),
-            (0.25f, 0.0014201401991427473, 0.00071689379195295734),
-            (0.3f, 0.0013650997569446897, 0.00069102706557041898),
-            (0.35f, 0.0013138278595176971, 0.00066190902201798045),
-            (0.4f, 0.0012693418522982285, 0.00062953711682933982),
-            (0.45f, 0.001234913877665979, 0.00059391186073791131),
-            (0.5f, 0.0012140642659385712, 0.00055503759889537674),
-            (0.55f, 0.0012105494724011748, 0.0005129233557328931),
-            (0.6f, 0.0012283451171915085, 0.00046758342420025916),
-            (0.65f, 0.0012716254802156821, 0.00041903854936727286),
-            (0.7f, 0.0013447352507972544, 0.00036731626608062993),
-            (0.75f, 0.0014521567772106158, 0.00031245218961090289),
-            (0.8f, 0.0015984697457940554, 0.00025449043941565654),
-            (0.85f, 0.0017883063524612916, 0.00019348431486304756),
-            (0.9f, 0.0020263011165943244, 0.00012949703807353086),
-            (0.95f, 0.002317036391064745, 6.2601659737561896e-05),
-            (1f, 0.0026649835873651757, -7.1181300241627508e-06),
-        ]),
-        new("ballad-validation", 0.002611863283027083, 0.76236413289901606,
-        [
-            (0f, 0.002611863283027083, 0.002611863283027083),
-            (0.05f, 0.0019144935231104896, 0.00099917158067854136),
-            (0.1f, 0.0018623521996434628, 0.00098326729445181614),
-            (0.15f, 0.0018034555380018913, 0.00096330686926669382),
-            (0.2f, 0.0017401047684818089, 0.00093927787748686287),
-            (0.25f, 0.0016749046664084821, 0.00091116878155311158),
-            (0.3f, 0.0016107660873685792, 0.0008789693742055182),
-            (0.35f, 0.0015509097286208046, 0.00084267237164890277),
-            (0.4f, 0.0014988626692144481, 0.00080227390807591909),
-            (0.45f, 0.0014584525965936894, 0.00075777463700892164),
-            (0.5f, 0.001433797971625199, 0.00070918105019349338),
-            (0.55f, 0.0014292912040673117, 0.00065650664632992779),
-            (0.6f, 0.0014495744548977459, 0.00059977290922444719),
-            (0.65f, 0.0014995104034399901, 0.00053901088324478648),
-            (0.7f, 0.0015841431097623846, 0.00047426176679874843),
-            (0.75f, 0.0017086528781328108, 0.00040557858157749788),
-            (0.8f, 0.001878302486688792, 0.00033302650722529821),
-            (0.85f, 0.0020983788539617556, 0.00025668384982414379),
-            (0.9f, 0.0023741298742332275, 0.00017664244729672187),
-            (0.95f, 0.0027106986253099424, 9.3007544030617213e-05),
-            (1f, 0.0031130554290032799, 5.8981205677856011e-06),
-        ]),
-        new("cedar-train_a", 0.0025472722038852756, 1.2777350014157562,
-        [
-            (0f, 0.0025472722038852756, 0.0025472722038852756),
-            (0.05f, 0.0020795257472197375, 0.0012116839816604308),
-            (0.1f, 0.0020217550854240906, 0.0011917686870012278),
-            (0.15f, 0.0019567312484522772, 0.0011668950659456509),
-            (0.2f, 0.0018869957564037016, 0.0011370512704232132),
-            (0.25f, 0.0018154162740976379, 0.001102226183011451),
-            (0.3f, 0.0017451884616036535, 0.0010624100991051075),
-            (0.35f, 0.0016798394830201924, 0.0010175960826577829),
-            (0.4f, 0.0016232246062468597, 0.00096778045112030822),
-            (0.45f, 0.0015795227209998237, 0.00091296378544583265),
-            (0.5f, 0.001553228884606141, 0.00085315218158389086),
-            (0.55f, 0.0015491410087857126, 0.00078835834868258927),
-            (0.6f, 0.0015723406707766536, 0.00071860256998869084),
-            (0.65f, 0.0016281702801854, 0.00064391422393280447),
-            (0.7f, 0.0017222014767046359, 0.00056433249976738174),
-            (0.75f, 0.0018601980834191511, 0.00047990820507318042),
-            (0.8f, 0.0020480704643723764, 0.00039070434749848292),
-            (0.85f, 0.0022918242869394991, 0.00029679744198260287),
-            (0.9f, 0.0025975028460411046, 0.00019827855663689432),
-            (0.95f, 0.0029711227200314968, 9.5253432914030624e-05),
-            (1f, 0.0034186044742883777, -1.2156090401228135e-05),
-        ]),
-        new("cedar-train_b", 0.0024766407385654094, 1.4131841947729029,
-        [
-            (0f, 0.0024766407385654094, 0.0024766407385654094),
-            (0.05f, 0.0021064351875074798, 0.0013432661705639389),
-            (0.1f, 0.0020511005258262473, 0.0013225427144885832),
-            (0.15f, 0.0019884113668106988, 0.0012964124838221497),
-            (0.2f, 0.0019208664899005431, 0.0012648581410456632),
-            (0.25f, 0.001851294170343613, 0.0012278636116999991),
-            (0.3f, 0.0017828544510264817, 0.001185414764601371),
-            (0.35f, 0.0017190433197784246, 0.0011375016144301124),
-            (0.4f, 0.0016636886772919642, 0.0010841188729874527),
-            (0.45f, 0.0016209442611022928, 0.0010252676267801116),
-            (0.5f, 0.0015952795259877471, 0.0009609569510586124),
-            (0.55f, 0.0015914622651623891, 0.00089120578248634227),
-            (0.6f, 0.0016145330667024353, 0.00081604401786348677),
-            (0.65f, 0.0016697753496383303, 0.00073551506490831891),
-            (0.7f, 0.0017626733211684789, 0.00064967658682663272),
-            (0.75f, 0.0018988638045660687, 0.00055860317721722708),
-            (0.8f, 0.0020840768068651891, 0.00046238703973499766),
-            (0.85f, 0.0023240695919127538, 0.00036113987896075234),
-            (0.9f, 0.0026245525740334437, 0.00025499394273617918),
-            (0.95f, 0.0029911092468184069, 0.00014410236945250059),
-            (1f, 0.0034291101194025221, 2.8640333325026862e-05),
-        ]),
-        new("cedar-validation", 0.0026729652820864061, 1.3950050377366452,
-        [
-            (0f, 0.0026729652820864061, 0.0026729652820864061),
-            (0.05f, 0.002274336513410506, 0.0015187332223768467),
-            (0.1f, 0.002210756853070958, 0.0014937708502622857),
-            (0.15f, 0.00213907720657662, 0.0014625799472824054),
-            (0.2f, 0.0020620553018327803, 0.0014251399455592743),
-            (0.25f, 0.0019828115938416474, 0.0013814317341934376),
-            (0.3f, 0.0019048321670934035, 0.0013314384857012554),
-            (0.35f, 0.0018319729957299515, 0.0012751482202849891),
-            (0.4f, 0.0017684558185174584, 0.0012125545825099713),
-            (0.45f, 0.0017188611869371009, 0.0011436587515075091),
-            (0.5f, 0.0016881170823341461, 0.0010684715958945068),
-            (0.55f, 0.0016814788998022489, 0.00098701551550276585),
-            (0.6f, 0.0017045013533937736, 0.00089932621470938427),
-            (0.65f, 0.0017630039901651538, 0.00080545522968299621),
-            (0.7f, 0.0018630250965217586, 0.00070547097232652586),
-            (0.75f, 0.0020107684472893735, 0.00059946143609348828),
-            (0.8f, 0.0022125392640068567, 0.00048753498246196787),
-            (0.85f, 0.0024746743640152676, 0.00036982175250543491),
-            (0.9f, 0.0028034659691326996, 0.00024647462997877146),
-            (0.95f, 0.0032050809671224276, 0.00011766885008138575),
-            (1f, 0.0036854779884516482, -1.6397288908426702e-05),
-        ]),
-        new("coral-train_a", 0.0017180358702559664, 1.7455601170159873,
-        [
-            (0f, 0.0017180358702559664, 0.0017180358702559664),
-            (0.05f, 0.0015704622485752026, 0.0011779229656479725),
-            (0.1f, 0.0015289097184128715, 0.0011596095717834212),
-            (0.15f, 0.0014819365577399776, 0.001136560747903523),
-            (0.2f, 0.0014314200525001989, 0.001108767510952727),
-            (0.25f, 0.0013794754953790037, 0.0010762215009462272),
-            (0.3f, 0.0013284568792045655, 0.0010389152064326213),
-            (0.35f, 0.0012809594222001903, 0.00099684342368463715),
-            (0.4f, 0.0012398172430197591, 0.00095000326937503816),
-            (0.45f, 0.0012081009208359159, 0.00089839507942828076),
-            (0.5f, 0.0011891136268661218, 0.00084202331722159991),
-            (0.55f, 0.0011863838003292643, 0.00078089750240745701),
-            (0.6f, 0.0012036543838876718, 0.00071503272647429315),
-            (0.65f, 0.0012448707139494999, 0.00064445108006013017),
-            (0.7f, 0.0013141628224484889, 0.00056918195680609408),
-            (0.75f, 0.0014158251098045113, 0.00048926368977994712),
-            (0.8f, 0.0015542905865465113, 0.0004047438938748602),
-            (0.85f, 0.0017341020392092337, 0.00031568062826529042),
-            (0.9f, 0.0019598788218299136, 0.00022214329906242384),
-            (0.95f, 0.002236279519729691, 0.00012421287644189555),
-            (1f, 0.0025679599062084905, 2.1983182685559256e-05),
-        ]),
-        new("coral-train_b", 0.0015589760146015453, 1.788386529793339,
-        [
-            (0f, 0.0015589760146015453, 0.0015589760146015453),
-            (0.05f, 0.0014313142121412611, 0.0011040041722944821),
-            (0.1f, 0.0013881428343530781, 0.001084476247683791),
-            (0.15f, 0.001339870980541859, 0.0010603259874816156),
-            (0.2f, 0.0012883092225687749, 0.0010315418468870635),
-            (0.25f, 0.0012354991738173383, 0.00099811315210185077),
-            (0.3f, 0.0011837146999434582, 0.00096003046926687922),
-            (0.35f, 0.0011354643343828078, 0.00091728723128151242),
-            (0.4f, 0.0010934888694877568, 0.00086987998245035582),
-            (0.45f, 0.0010607581934255251, 0.00081780951248679504),
-            (0.5f, 0.0010404659850541892, 0.00076108199314136151),
-            (0.55f, 0.0010360203327752623, 0.00069971014180970404),
-            (0.6f, 0.0010510302232068453, 0.00063371400466832894),
-            (0.65f, 0.0010892895285066141, 0.00056312266526862761),
-            (0.7f, 0.0011547547837154936, 0.00048797471842404932),
-            (0.75f, 0.0012515192048281776, 0.00040832010881758769),
-            (0.8f, 0.0013837808113215538, 0.00032422067840664505),
-            (0.85f, 0.0015558068132441798, 0.00023575138922541226),
-            (0.9f, 0.0017718930403338934, 0.00014300117324944712),
-            (0.95f, 0.0020363199895761849, 4.607319936011318e-05),
-            (1f, 0.0023533042896231185, -5.4914036895317466e-05),
-        ]),
-        new("coral-validation", 0.0017379639729347982, 1.8049312021334671,
-        [
-            (0f, 0.0017379639729347982, 0.0017379639729347982),
-            (0.05f, 0.0016148087517782203, 0.0012952953663694766),
-            (0.1f, 0.0015720260443503524, 0.0012751337842229896),
-            (0.15f, 0.0015236297412527405, 0.0012497553709785612),
-            (0.2f, 0.0014715451634852801, 0.0012191467548742566),
-            (0.25f, 0.0014179463551101958, 0.0011832954223953006),
-            (0.3f, 0.0013652575178433682, 0.0011421902196929511),
-            (0.35f, 0.0013161558956381954, 0.0010958231851879825),
-            (0.4f, 0.0012735692761046543, 0.0010441898629555341),
-            (0.45f, 0.0012406724417890582, 0.00098729063916125283),
-            (0.5f, 0.001220881473493779, 0.00092513206049046328),
-            (0.55f, 0.0012178431666614612, 0.00085772816548138585),
-            (0.6f, 0.00123541994835721, 0.0007851014096754604),
-            (0.65f, 0.0012776720642849097, 0.00070728457866272817),
-            (0.7f, 0.0013488327780166057, 0.00062432131210635666),
-            (0.75f, 0.0014532799910508785, 0.00053626807971478155),
-            (0.8f, 0.0015955015066477234, 0.00044319467365616937),
-            (0.85f, 0.0017800571057795488, 0.00034518536321938081),
-            (0.9f, 0.0020115366106388784, 0.00024233968174544002),
-            (0.95f, 0.0022945147153475899, 0.00013477229542638465),
-            (1f, 0.0026335034384102262, 2.2613913236080099e-05),
-        ]),
-        new("echo-train_a", 0.0023980219457539224, 1.4279072123287797,
-        [
-            (0f, 0.0023980219457539224, 0.0023980219457539224),
-            (0.05f, 0.0020311139800466352, 0.0013345999549713638),
-            (0.1f, 0.001974266595193883, 0.0013125797462052401),
-            (0.15f, 0.0019103106108990138, 0.0012850933340370139),
-            (0.2f, 0.0018417324900289556, 0.0012521278061164958),
-            (0.25f, 0.0017713371377274926, 0.0012136711415567363),
-            (0.3f, 0.0017022495470695319, 0.0011697126445365258),
-            (0.35f, 0.0016379181354263528, 0.0011202447635069871),
-            (0.4f, 0.0015821116551196655, 0.0010652633567950918),
-            (0.45f, 0.0015389146792998336, 0.0010047688994608648),
-            (0.5f, 0.0015127207506579721, 0.00093876781721417715),
-            (0.55f, 0.0015082196030897724, 0.00086727373251573134),
-            (0.6f, 0.0015303789283830831, 0.000790308354543348),
-            (0.65f, 0.0015844227752643881, 0.00070790337351937999),
-            (0.7f, 0.0016758015364030463, 0.00062010094779816379),
-            (0.75f, 0.0018101568131268226, 0.00052695583164491337),
-            (0.8f, 0.0019932783300131104, 0.00042853594078992813),
-            (0.85f, 0.0022310556975214239, 0.0003249237340884161),
-            (0.9f, 0.0025294236189928533, 0.00021621718854324983),
-            (0.95f, 0.0028943022032605834, 0.00010253007971347967),
-            (1f, 0.0033315311208936193, -1.6006759155386793e-05),
-        ]),
-        new("echo-train_b", 0.0018640643688134161, 1.4676622868105618,
-        [
-            (0f, 0.0018640643688134161, 0.0018640643688134161),
-            (0.05f, 0.0016101520488565643, 0.0011140344195611955),
-            (0.1f, 0.0015656366141691483, 0.0010961691919851432),
-            (0.15f, 0.0015154339900402003, 0.001073778030458684),
-            (0.2f, 0.0014614911667907599, 0.0010468493653610314),
-            (0.25f, 0.0014060068802799644, 0.0010153724619888684),
-            (0.3f, 0.0013514330625202485, 0.00097933774334029887),
-            (0.35f, 0.0013004776719881498, 0.00093873847965639538),
-            (0.4f, 0.0012561020654531236, 0.00089357097059351279),
-            (0.45f, 0.0012215172702316061, 0.00084383573660580513),
-            (0.5f, 0.0012001779399568109, 0.00078953865581658398),
-            (0.55f, 0.001195771325360942, 0.00073069209618916115),
-            (0.6f, 0.001212201714651043, 0.00066731578312067131),
-            (0.65f, 0.0012535716180476504, 0.00059943835599544915),
-            (0.7f, 0.0013241560502456923, 0.00052709797491866525),
-            (0.75f, 0.0014283724032309083, 0.00045034399503091088),
-            (0.8f, 0.001570743840116648, 0.00036923753191693071),
-            (0.85f, 0.0017558583916229256, 0.00028385252324018411),
-            (0.9f, 0.0019883233714443199, 0.0001942765682649146),
-            (0.95f, 0.0022727156137944092, 0.00010061093566830479),
-            (1f, 0.0026135278585883875, 2.9715784954092504e-06),
-        ]),
-        new("echo-validation", 0.0023551490682516304, 1.4998866095421555,
-        [
-            (0f, 0.0023551490682516304, 0.0023551490682516304),
-            (0.05f, 0.0020300384319824733, 0.0014571768252540089),
-            (0.1f, 0.0019731311908111494, 0.0014331786210014597),
-            (0.15f, 0.0019090613442070373, 0.0014031988617063686),
-            (0.2f, 0.001840310310404075, 0.0013672170757412015),
-            (0.25f, 0.0017696864601032161, 0.0013252141482777439),
-            (0.3f, 0.0017003281546643528, 0.001277173303916673),
-            (0.35f, 0.001635707718006175, 0.0012230825901002542),
-            (0.4f, 0.00157962761628541, 0.0011629356998936781),
-            (0.45f, 0.0015362140125092173, 0.0010967338361230101),
-            (0.5f, 0.0015099057777251625, 0.0010244878940723135),
-            (0.55f, 0.0015054357307637371, 0.00094622040449263752),
-            (0.6f, 0.0015278035523492431, 0.00086196710158326279),
-            (0.65f, 0.0015822432636072099, 0.00077177961172181318),
-            (0.7f, 0.0016741793199108916, 0.00067572645760395427),
-            (0.75f, 0.0018091762598333486, 0.00057389569756758371),
-            (0.8f, 0.0019928786067362407, 0.00046639575960619206),
-            (0.85f, 0.0022309456163781926, 0.00035335678392922328),
-            (0.9f, 0.0025289808187934988, 0.00023493153899813092),
-            (0.95f, 0.002892458644730425, 0.00011129495479510177),
-            (1f, 0.0033266496250679367, -1.7355157542124561e-05),
-        ]),
-        new("fable-train_a", 0.0030255317367335081, 1.1617790660568019,
-        [
-            (0f, 0.0030255317367335081, 0.0030255317367335081),
-            (0.05f, 0.0024230046014620857, 0.0013661123096201833),
-            (0.1f, 0.0023536459273587225, 0.0013430635781593678),
-            (0.15f, 0.0022756800088377699, 0.0013143719411986873),
-            (0.2f, 0.0021920881463785387, 0.0012800204883743978),
-            (0.25f, 0.0021062388868760607, 0.0012399935434808428),
-            (0.3f, 0.0020218907462372635, 0.0011942772924177427),
-            (0.35f, 0.0019431964924010385, 0.001142861977910724),
-            (0.4f, 0.0018746989128508593, 0.0010857423864609667),
-            (0.45f, 0.0018213245221968008, 0.0010229194291948593),
-            (0.5f, 0.0017883728480819179, 0.0009544019034697953),
-            (0.55f, 0.001781498036602117, 0.00088020800908846853),
-            (0.6f, 0.0018066821176410425, 0.00080036671670618979),
-            (0.65f, 0.0018702031115044645, 0.00071492001811217221),
-            (0.7f, 0.0019785909447151482, 0.0006239238752482856),
-            (0.75f, 0.0021385761866343734, 0.00052745057772164976),
-            (0.8f, 0.0023570269481908222, 0.00042558986293441759),
-            (0.85f, 0.0026408785115883257, 0.0003184503166989473),
-            (0.9f, 0.0029970539852093268, 0.00020616093149428575),
-            (0.95f, 0.0034323775301064695, 8.8871168850519053e-05),
-            (1f, 0.0039534806679469301, -3.3247436160753749e-05),
-        ]),
-        new("fable-train_b", 0.0022980438816606759, 1.2492862243083849,
-        [
-            (0f, 0.0022980438816606759, 0.0022980438816606759),
-            (0.05f, 0.0018894073603855147, 0.0011474990397551709),
-            (0.1f, 0.0018397952668001265, 0.0011296908005956373),
-            (0.15f, 0.0017835665242617585, 0.0011072547954420772),
-            (0.2f, 0.0017229554643170264, 0.0010801749147641554),
-            (0.25f, 0.0016604910370708714, 0.0010484361739458508),
-            (0.3f, 0.0015989992534199561, 0.0010120252095175083),
-            (0.35f, 0.0015416066541668199, 0.00097093232580600607),
-            (0.4f, 0.0014917369734812945, 0.00092515209133351513),
-            (0.45f, 0.0014531056983017369, 0.00087468471915888059),
-            (0.5f, 0.0014297111293968372, 0.0008195377540089633),
-            (0.55f, 0.0014258185202116736, 0.00075972751940047952),
-            (0.6f, 0.001445937685131189, 0.00069528041789801572),
-            (0.65f, 0.0014947956622895588, 0.00062623491454675119),
-            (0.7f, 0.0015772999521357495, 0.00055264247550245815),
-            (0.75f, 0.0016984952996936466, 0.00047456975819429754),
-            (0.8f, 0.001863511709052468, 0.00039209928620988991),
-            (0.85f, 0.002077507027212678, 0.00030533086535663258),
-            (0.9f, 0.0023456028071275931, 0.00021438257925159018),
-            (0.95f, 0.0026728161303966082, 0.0001193908383524979),
-            (1f, 0.0030639871516061922, 2.0511155860617236e-05),
-        ]),
-        new("fable-validation", 0.0028249476782369384, 1.2714460807553571,
-        [
-            (0f, 0.0028249476782369384, 0.0028249476782369384),
-            (0.05f, 0.0023330273588506398, 0.001499870734726847),
-            (0.1f, 0.0022667727554275831, 0.0014751640933201233),
-            (0.15f, 0.0021921519213022596, 0.0014442930235328796),
-            (0.2f, 0.0021120099372808985, 0.0014072329613389774),
-            (0.25f, 0.0020295711246743988, 0.0013639610105084311),
-            (0.3f, 0.0019484430794954829, 0.0013144570253833942),
-            (0.35f, 0.0018726216725705857, 0.0012587064073408744),
-            (0.4f, 0.0018064866242559561, 0.0011967012334628332),
-            (0.45f, 0.0017547936815626587, 0.0011284424576482879),
-            (0.5f, 0.0017226612691936859, 0.0010539424596459255),
-            (0.55f, 0.0017155467305428934, 0.00097322729789301636),
-            (0.6f, 0.0017392132061310431, 0.00088633876061162151),
-            (0.65f, 0.0017996883008353688, 0.00079333743811461628),
-            (0.7f, 0.0019032092568987357, 0.00069430404677594051),
-            (0.75f, 0.0020561591704232637, 0.00058934254171692834),
-            (0.8f, 0.0022649906518506318, 0.00047858116661306693),
-            (0.85f, 0.002536142633150361, 0.00036217416199155482),
-            (0.9f, 0.0028759497656675242, 0.00024030279944952025),
-            (0.95f, 0.003290547862857224, 0.00011317508238627784),
-            (1f, 0.0037857768971053403, -1.8973728417927185e-05),
-        ]),
-        new("female-train_a", 0.0043827410500488244, 1.535474841977976,
-        [
-            (0f, 0.0043827410500488244, 0.0043827410500488244),
-            (0.05f, 0.0038339715037713292, 0.0024490685283089786),
-            (0.1f, 0.0037280295184980027, 0.0024095190669836584),
-            (0.15f, 0.0036084832332862996, 0.0023599618086074482),
-            (0.2f, 0.003479968395355203, 0.002300356879922361),
-            (0.25f, 0.0033477399454964834, 0.0022306670562653526),
-            (0.3f, 0.0032176784991733817, 0.0021508598917790822),
-            (0.35f, 0.0030962977015006063, 0.00206091188986746),
-            (0.4f, 0.0029907369087033104, 0.0019608104994420957),
-            (0.45f, 0.0029087476634133348, 0.0018505576783062728),
-            (0.5f, 0.0028586709511206031, 0.001730173770480127),
-            (0.55f, 0.0028493983057896535, 0.0015997015090298877),
-            (0.6f, 0.0028903160316909493, 0.0014592089727820162),
-            (0.65f, 0.00299123739170071, 0.0013087949083293649),
-            (0.7f, 0.0031623106453941615, 0.0011485908675868109),
-            (0.75f, 0.0034139122681814951, 0.00097876654859225371),
-            (0.8f, 0.0037565177982635456, 0.00079953183281632743),
-            (0.85f, 0.0042005588057689846, 0.00061114004495179059),
-            (0.9f, 0.0047562648613626518, 0.00041389022798156921),
-            (0.95f, 0.0054334951405601182, 0.00020812734912839374),
-            (1f, 0.0062415620984633087, -5.7559602168291234e-06),
-        ]),
-        new("female-train_b", 0.0031232994063456758, 1.5802588203804433,
-        [
-            (0f, 0.0031232994063456758, 0.0031232994063456758),
-            (0.05f, 0.0027695563521449944, 0.0018561743994730459),
-            (0.1f, 0.0026931578932798332, 0.0018261686110701181),
-            (0.15f, 0.0026069025974794348, 0.0017885758534323529),
-            (0.2f, 0.0025141285751412142, 0.0017433657580957322),
-            (0.25f, 0.0024186205768211761, 0.001690509980735233),
-            (0.3f, 0.002324614630723656, 0.0016299836893237723),
-            (0.35f, 0.0022368037519554548, 0.0015617688926200331),
-            (0.4f, 0.0021603322865834948, 0.0014858558048140183),
-            (0.45f, 0.0021007866964128223, 0.0014022455991027308),
-            (0.5f, 0.0020641789410554916, 0.0013109534306280906),
-            (0.55f, 0.002056918448248706, 0.001212011299482688),
-            (0.6f, 0.0020857719968283761, 0.0011054705171183407),
-            (0.65f, 0.0021578142502416534, 0.00099140547333350509),
-            (0.7f, 0.0022803618684937286, 0.00086991560258384791),
-            (0.75f, 0.0024608956124789255, 0.00074112918619851829),
-            (0.8f, 0.0027069671642578732, 0.00060520501035054664),
-            (0.85f, 0.0030260954750845966, 0.0004623349359695374),
-            (0.9f, 0.0034256523744289808, 0.00031274561843904251),
-            (0.95f, 0.0039127406468532286, 0.0001566985894726383),
-            (1f, 0.0044940665639077422, -5.5081431417690944e-06),
-        ]),
-        new("female-validation", 0.0034263738043532918, 1.5957855624678174,
-        [
-            (0f, 0.0034263738043532918, 0.0034263738043532918),
-            (0.05f, 0.003033708667477761, 0.0019928817612071461),
-            (0.1f, 0.002950528601471361, 0.0019606370637070521),
-            (0.15f, 0.0028566560194334383, 0.0019202558242497599),
-            (0.2f, 0.0027557547588825454, 0.0018717105735969991),
-            (0.25f, 0.0026519718202091605, 0.0018149757414005945),
-            (0.3f, 0.0025499413118883806, 0.0017500288684929783),
-            (0.35f, 0.0024547902648668256, 0.0016768538879115837),
-            (0.4f, 0.0023721329655802949, 0.0015954421781146761),
-            (0.45f, 0.0023080618487812763, 0.0015057950586989553),
-            (0.5f, 0.0022691320368371827, 0.0014079265266628677),
-            (0.55f, 0.0022623349412192084, 0.0013018658602389323),
-            (0.6f, 0.002295060188630421, 0.001187659842814783),
-            (0.65f, 0.0023750492149593331, 0.0010653762842812206),
-            (0.7f, 0.0025103325125765226, 0.00093510561009478273),
-            (0.75f, 0.0027091558653823053, 0.00079696476510622951),
-            (0.8f, 0.0029798904990979399, 0.00065109862767474933),
-            (0.85f, 0.0033309326190896537, 0.00049768274939859119),
-            (0.9f, 0.0037705910803944183, 0.00033692506968333106),
-            (0.95f, 0.004306964937268537, 0.00016906662399412948),
-            (1f, 0.0049478132278855808, -5.6167037039419272e-06),
-        ]),
-        new("male-train_a", 0.0018609189360598462, 0.43860985647296502,
-        [
-            (0f, 0.0018609189360598462, 0.0018609189360598462),
-            (0.05f, 0.0012591481685297844, 0.0003999313517855651),
-            (0.1f, 0.0012251194722800072, 0.00039355977666056928),
-            (0.15f, 0.0011867301564477948, 0.00038557111678350043),
-            (0.2f, 0.0011454987384136325, 0.0003759631748894426),
-            (0.25f, 0.0011031341425799105, 0.00036473390704515232),
-            (0.3f, 0.0010615361903703777, 0.00035188141681450952),
-            (0.35f, 0.0010227974003917809, 0.00033740447541075148),
-            (0.4f, 0.00098920131324727414, 0.00032130236666378346),
-            (0.45f, 0.00096322091974132464, 0.00030357517193152646),
-            (0.5f, 0.00094751623755804271, 0.0002842240515176573),
-            (0.55f, 0.00094492959692146035, 0.00026325136715893416),
-            (0.6f, 0.00095847847870304999, 0.00024066084109700779),
-            (0.65f, 0.00099134789943438532, 0.00021645801028059158),
-            (0.7f, 0.0010468787911193204, 0.00019065015507669646),
-            (0.75f, 0.001128554777445244, 0.00016324680968098402),
-            (0.8f, 0.0012399851530411703, 0.0001342598506158405),
-            (0.85f, 0.0013848857802116613, 0.00010370376152578834),
-            (0.9f, 0.0015670569919651383, 7.1595982100243681e-05),
-            (0.95f, 0.0017903579968891704, 3.7956853527297024e-05),
-            (1f, 0.0020586780820625885, 2.8101161404605764e-06),
-        ]),
-        new("male-train_b", 0.0017781239658384207, 0.80172106508836549,
-        [
-            (0f, 0.0017781239658384207, 0.0017781239658384207),
-            (0.05f, 0.0012971242829333085, 0.00052127119300127514),
-            (0.1f, 0.0012620983560085778, 0.00051307914780203564),
-            (0.15f, 0.0012226110907979889, 0.00050278575747925505),
-            (0.2f, 0.0011802343904051221, 0.00049038730853043829),
-            (0.25f, 0.0011367392139677421, 0.00047588042432324237),
-            (0.3f, 0.0010940960949043415, 0.00045926205036792315),
-            (0.35f, 0.0010544772231778688, 0.00044053009997640445),
-            (0.4f, 0.0010202544993632755, 0.00041968341828816622),
-            (0.45f, 0.00099399731518788983, 0.00039672218975100415),
-            (0.5f, 0.0009784690997235179, 0.00037164829112195383),
-            (0.55f, 0.00097662096253471522, 0.00034446571297760422),
-            (0.6f, 0.00099158213272184889, 0.0003151806709190358),
-            (0.65f, 0.0010266494377985033, 0.00028380233981578065),
-            (0.7f, 0.0010852717739653361, 0.00025034282033582132),
-            (0.75f, 0.0011710323701177229, 0.00021481797819659698),
-            (0.8f, 0.0012876260598450047, 0.00017724743577017277),
-            (0.85f, 0.0014388344002104758, 0.00013765523536699134),
-            (0.9f, 0.0016284962249175747, 9.6070071181535702e-05),
-            (0.95f, 0.0018604751258323596, 5.2525484769257271e-05),
-            (1f, 0.00213862255103753, 7.0604320258126271e-06),
-        ]),
-        new("male-validation", 0.0016908650829871716, 0.55221098246584077,
-        [
-            (0f, 0.0016908650829871716, 0.0016908650829871716),
-            (0.05f, 0.0011697314934276536, 0.00041623605894923965),
-            (0.1f, 0.0011368730009012453, 0.00040927122795161717),
-            (0.15f, 0.0010999393325048198, 0.00040059842653353294),
-            (0.2f, 0.0010603668933686289, 0.00039021526490180499),
-            (0.25f, 0.0010197719514308712, 0.00037811955336575838),
-            (0.3f, 0.00097995096175797756, 0.00036430927125932593),
-            (0.35f, 0.00094288234665756954, 0.00034878307333123033),
-            (0.4f, 0.00091072494190813516, 0.00033154021753726697),
-            (0.45f, 0.00088581643238116862, 0.00031258078028063781),
-            (0.5f, 0.00087067103774983575, 0.00029190597996202707),
-            (0.55f, 0.00086797486832788722, 0.00026951837267883338),
-            (0.6f, 0.00088057914021483262, 0.00024542195661599514),
-            (0.65f, 0.00091149263296202239, 0.00021962264797779937),
-            (0.7f, 0.00096387044798792608, 0.00019212824143673889),
-            (0.75f, 0.0010410012429234036, 0.00016294895797683325),
-            (0.8f, 0.0011462906680456859, 0.00013209752930894167),
-            (0.85f, 0.0012832430601081351, 9.9589449386749395e-05),
-            (0.9f, 0.0014554397645052423, 6.5443354497560013e-05),
-            (0.95f, 0.0016665149235229632, 2.9680980292887738e-05),
-            (1f, 0.0019201274403765223, -7.6723434790644965e-06),
-        ]),
-        new("marin-train_a", 0.0043097493371378279, 1.4986600662466074,
-        [
-            (0f, 0.0043097493371378279, 0.0043097493371378279),
-            (0.05f, 0.0037258005148945107, 0.0022323321742159499),
-            (0.1f, 0.0036275905138172639, 0.002197983249778046),
-            (0.15f, 0.0035164070959284905, 0.0021546523935127996),
-            (0.2f, 0.0033966851632294798, 0.0021023090774687069),
-            (0.25f, 0.0032734434710843812, 0.0020409248674647792),
-            (0.3f, 0.0031522895323193249, 0.0019704747867570977),
-            (0.35f, 0.0030394264414823325, 0.0018909409531287541),
-            (0.4f, 0.0029416460765383178, 0.0018023136774874846),
-            (0.45f, 0.002866318591668188, 0.0017045943583839415),
-            (0.5f, 0.0028213744082862813, 0.0015977983191450054),
-            (0.55f, 0.0028152734357709606, 0.0014819580255512701),
-            (0.6f, 0.0028569602423826044, 0.0013571251438884216),
-            (0.65f, 0.002955810587682755, 0.0012233747791836355),
-            (0.7f, 0.0031215576275895264, 0.0010808070997763426),
-            (0.75f, 0.0033642059153950834, 0.00092955169737427327),
-            (0.8f, 0.0036939262557775061, 0.00076976909485620569),
-            (0.85f, 0.0041209383407871808, 0.00060165380671051789),
-            (0.9f, 0.0046553789140561389, 0.00042543640316061536),
-            (0.95f, 0.0053071579106138715, 0.00024138396080635385),
-            (1f, 0.0060858047965879252, 4.9802348987754909e-05),
-        ]),
-        new("marin-train_b", 0.0037298909444791815, 1.5249034147518756,
-        [
-            (0f, 0.0037298909444791815, 0.0037298909444791815),
-            (0.05f, 0.0032709996443461022, 0.0020911484427322837),
-            (0.1f, 0.0031820238582410208, 0.0020574493472353332),
-            (0.15f, 0.0030813852316314842, 0.0020151938409654004),
-            (0.2f, 0.002972996623343045, 0.0019643415364534902),
-            (0.25f, 0.0028613029184035867, 0.0019048548323201439),
-            (0.3f, 0.0027512873656181636, 0.0018367008509072174),
-            (0.35f, 0.0026484788365950334, 0.0017598557190309375),
-            (0.4f, 0.0025589449226716922, 0.0016743066874640915),
-            (0.45f, 0.002489278993393925, 0.0015800557269399185),
-            (0.5f, 0.0024465775847202233, 0.001477123456739214),
-            (0.55f, 0.0024384024485207042, 0.0013655530855761428),
-            (0.6f, 0.0024727263355843036, 0.0012454136468573703),
-            (0.65f, 0.0025578657997444012, 0.0011168049915607282),
-            (0.7f, 0.0027023922353698769, 0.00097986024496616686),
-            (0.75f, 0.0029150274888620474, 0.00083475065526313779),
-            (0.8f, 0.0032045193905594601, 0.0006816876363588926),
-            (0.85f, 0.0035795043402809938, 0.00052092556825522466),
-            (0.9f, 0.0040483574146625645, 0.00035276362698267717),
-            (0.95f, 0.0046190342565102516, 0.00017754554727094033),
-            (1f, 0.0052989091728395474, -4.3395316901834031e-06),
-        ]),
-        new("marin-validation", 0.0034501677910643873, 1.5364274299597085,
-        [
-            (0f, 0.0034501677910643873, 0.0034501677910643873),
-            (0.05f, 0.0030174474022299671, 0.0018824458720756072),
-            (0.1f, 0.0029359416680557202, 0.0018523528023195147),
-            (0.15f, 0.0028438341894747587, 0.0018146007617664708),
-            (0.2f, 0.0027447444608088875, 0.0017691634342658559),
-            (0.25f, 0.0026427683925061385, 0.0017160163336287961),
-            (0.3f, 0.00254248202651936, 0.0016551379325135834),
-            (0.35f, 0.0024489472203296728, 0.0015865127888585863),
-            (0.4f, 0.0023677060446595198, 0.0015101325649696832),
-            (0.45f, 0.0023047722262232347, 0.0014259984142836141),
-            (0.5f, 0.0022666165674400831, 0.0013341235780050056),
-            (0.55f, 0.0022601416174439603, 0.0012345359086257126),
-            (0.6f, 0.0022926455508788307, 0.0011272799300960669),
-            (0.65f, 0.0023717780047469023, 0.0010124202414687009),
-            (0.7f, 0.0025054803725663151, 0.00089004315140529236),
-            (0.75f, 0.0027019152337734221, 0.00076026025374127833),
-            (0.8f, 0.0029693806243848079, 0.00062320997450384145),
-            (0.85f, 0.0033162137499162048, 0.00047906011906569964),
-            (0.9f, 0.0037506828662387682, 0.00032800970489179769),
-            (0.95f, 0.0042808692525512964, 0.00017028958463116727),
-            (1f, 0.0049145409654594279, 6.1644137297720772e-06),
-        ]),
-        new("nova-train_a", 0.0041641512883619572, 1.6722054792599046,
-        [
-            (0f, 0.0041641512883619572, 0.0041641512883619572),
-            (0.05f, 0.0037800731238805639, 0.0027222877989759556),
-            (0.1f, 0.003681637573663861, 0.0026805563648582657),
-            (0.15f, 0.0035699191650379568, 0.002627871364825412),
-            (0.2f, 0.0034493635241652702, 0.0025641896255224621),
-            (0.25f, 0.0033250110622736434, 0.0024894707836417133),
-            (0.3f, 0.0032025032236772614, 0.002403679294684033),
-            (0.35f, 0.003088089928135692, 0.0023067892411281982),
-            (0.4f, 0.0029886227632409685, 0.0021987863053936343),
-            (0.45f, 0.0029115426706600614, 0.0020796715879535591),
-            (0.5f, 0.0028648591874615944, 0.0019494659175657578),
-            (0.55f, 0.0028571146128903223, 0.0018082139526178628),
-            (0.6f, 0.0028973322511755342, 0.0016559876236941875),
-            (0.65f, 0.0029949536379680606, 0.0014928915647731645),
-            (0.7f, 0.0031597534182416257, 0.0013190657037322167),
-            (0.75f, 0.0034017399976066565, 0.0011346907649471103),
-            (0.8f, 0.0037310356435579692, 0.00093999051392847381),
-            (0.85f, 0.004157743643789462, 0.00073523530035309221),
-            (0.9f, 0.0046918015453554672, 0.00052074436236590677),
-            (0.95f, 0.0053428239609447049, 0.00029688605173932382),
-            (1f, 0.0061199383530902976, 6.4079735870016405e-05),
-        ]),
-        new("nova-train_b", 0.0031363111151163688, 1.7125943243734412,
-        [
-            (0f, 0.0031363111151163688, 0.0031363111151163688),
-            (0.05f, 0.0028573434277224894, 0.0020922994294018927),
-            (0.1f, 0.0027760085337532967, 0.0020573884063571392),
-            (0.15f, 0.0026844459298879259, 0.0020138386230404951),
-            (0.2f, 0.0025861530741933679, 0.0019616143579784914),
-            (0.25f, 0.0024850962588609756, 0.0019006824457071278),
-            (0.3f, 0.0023857156452530824, 0.0018310138998567493),
-            (0.35f, 0.0022929312648868527, 0.0017525879516020685),
-            (0.4f, 0.002212136892937519, 0.0016653937100435012),
-            (0.45f, 0.0021491892415064942, 0.0015694334112923015),
-            (0.5f, 0.0021103895652612838, 0.0014647259826017021),
-            (0.55f, 0.0021024523540421583, 0.0013513103979700667),
-            (0.6f, 0.002132460911914828, 0.0012292486690132782),
-            (0.65f, 0.0022078125757981804, 0.0010986302847422991),
-            (0.7f, 0.0023361457890847372, 0.00095957429940174031),
-            (0.75f, 0.0025252548788666173, 0.00081223388865736383),
-            (0.8f, 0.0027829879765032491, 0.00065679821573291157),
-            (0.85f, 0.0031171341761965761, 0.00049349501179638119),
-            (0.9f, 0.0035353000871003043, 0.00032259258720154408),
-            (0.95f, 0.0040447791868530982, 0.00014439959348445475),
-            (1f, 0.0046524163107656497, -4.0733554659682283e-05),
-        ]),
-        new("nova-validation", 0.0035429952508683332, 1.7079242789218796,
-        [
-            (0f, 0.0035429952508683332, 0.0035429952508683332),
-            (0.05f, 0.0032325918164936907, 0.00241069351317419),
-            (0.1f, 0.0031409118600276703, 0.0023705986043643192),
-            (0.15f, 0.0030376566235678216, 0.0023205631840436231),
-            (0.2f, 0.0029267696703256575, 0.0022605464100982357),
-            (0.25f, 0.0028127208071549803, 0.0021905102148845226),
-            (0.3f, 0.0027005116912277643, 0.0021104211887977291),
-            (0.35f, 0.0025956824062720748, 0.0020202551356990677),
-            (0.4f, 0.0025043051180230389, 0.0019199989843989328),
-            (0.45f, 0.0024329728793463863, 0.0018096545348149468),
-            (0.5f, 0.0023887800297216046, 0.0016892424020092417),
-            (0.55f, 0.0023792893053684542, 0.0015588060818266759),
-            (0.6f, 0.0024124842035399127, 0.0014184151110127011),
-            (0.65f, 0.0024967111388429714, 0.0012681703226952998),
-            (0.7f, 0.0026406014198017314, 0.0011082060161368723),
-            (0.75f, 0.0028529804982856816, 0.00093869521853431187),
-            (0.8f, 0.0031427591307781641, 0.00075985157721255062),
-            (0.85f, 0.0035188132234135567, 0.0005719323275511734),
-            (0.9f, 0.0039898519646373899, 0.00037524022736646327),
-            (0.95f, 0.0045642784563667835, 0.00017012329957879544),
-            (1f, 0.0052500446635835194, -4.3023979587423437e-05),
-        ]),
-        new("onyx-train_a", 0.0026734835842577276, 0.45664438321665202,
-        [
-            (0f, 0.0026734835842577276, 0.0026734835842577276),
-            (0.05f, 0.001826567174208926, 0.00087629659378681121),
-            (0.1f, 0.0017753579698544422, 0.0008614961014825794),
-            (0.15f, 0.001717658303303136, 0.00084307269966862734),
-            (0.2f, 0.0016556895157365122, 0.00082101480536805839),
-            (0.25f, 0.0015919649839734383, 0.00079531163224788679),
-            (0.3f, 0.0015292922929887685, 0.00076595367203613094),
-            (0.35f, 0.001470777005104535, 0.0007329341829205694),
-            (0.4f, 0.0014198192010715662, 0.00069624956210705103),
-            (0.45f, 0.0013801081931993264, 0.00065590044354664598),
-            (0.5f, 0.0013556134511154626, 0.00061189291958557528),
-            (0.55f, 0.0013505691162508651, 0.00056423957529191297),
-            (0.6f, 0.0013694512180796427, 0.00051296043321964854),
-            (0.65f, 0.0014169508564060779, 0.00045808446006619254),
-            (0.7f, 0.0014979370751452099, 0.00039965011828149911),
-            (0.75f, 0.0016174144963692636, 0.0003377070153019172),
-            (0.8f, 0.001780471630272518, 0.00027231625475079006),
-            (0.85f, 0.001992224603858212, 0.00020355147944296417),
-            (0.9f, 0.0022577547221224845, 0.00013149932170061524),
-            (0.95f, 0.0025820430531199121, 5.6259419066531698e-05),
-            (1f, 0.0029699009146222834, -2.2055178202554921e-05),
-        ]),
-        new("onyx-train_b", 0.0030467738707689977, 0.76625681365634435,
-        [
-            (0f, 0.0030467738707689977, 0.0030467738707689977),
-            (0.05f, 0.0022527876744775476, 0.0012723016941350359),
-            (0.1f, 0.0021867315620602568, 0.0012509077602454923),
-            (0.15f, 0.0021124346158392991, 0.0012242368539310013),
-            (0.2f, 0.002032670797327329, 0.0011922623529557821),
-            (0.25f, 0.0019505965855252227, 0.0011549594647434042),
-            (0.3f, 0.0018697564187133032, 0.0011123066463813254),
-            (0.35f, 0.00179408790528592, 0.0010642883705564666),
-            (0.4f, 0.0017279159588343333, 0.0010108967660369327),
-            (0.45f, 0.0016759407299079476, 0.00095213404818012134),
-            (0.5f, 0.0016432169328381655, 0.00088801519999062836),
-            (0.55f, 0.0016351201259511684, 0.0008185706254720135),
-            (0.6f, 0.0016572990400954817, 0.00074384826188221933),
-            (0.65f, 0.0017156172219088305, 0.00066391653600563112),
-            (0.7f, 0.0018160784285011274, 0.00057886570633772086),
-            (0.75f, 0.0019647417805213358, 0.00048881021941010196),
-            (0.8f, 0.0021676259053540615, 0.00039388935972527959),
-            (0.85f, 0.0024306079821763229, 0.00029426766100086951),
-            (0.9f, 0.0027593221512209735, 0.00019013490265468129),
-            (0.95f, 0.003159059965662305, 8.170427324714487e-05),
-            (1f, 0.0036346776777166855, -3.0788446096073219e-05),
-        ]),
-        new("onyx-validation", 0.00284883794896816, 0.65398270898221611,
-        [
-            (0f, 0.00284883794896816, 0.00284883794896816),
-            (0.05f, 0.0020477695314695767, 0.0011754349153582859),
-            (0.1f, 0.001991791913984165, 0.0011567333237167085),
-            (0.15f, 0.0019284900519539326, 0.0011332414031280436),
-            (0.2f, 0.0018603124927217421, 0.0011049362502714576),
-            (0.25f, 0.0017900422891127048, 0.001071796242814372),
-            (0.3f, 0.0017208019191600529, 0.001033802301046074),
-            (0.35f, 0.001656058352826271, 0.00099094027615017114),
-            (0.4f, 0.0015996189983324171, 0.00094320214474004674),
-            (0.45f, 0.0015556230731139156, 0.00089058829601465928),
-            (0.5f, 0.0015285262708523951, 0.00083310972468757976),
-            (0.55f, 0.0015230743513664437, 0.0007707903016948407),
-            (0.6f, 0.0015442661806245287, 0.00070366859337920402),
-            (0.65f, 0.0015973083524626513, 0.00063180038885402392),
-            (0.7f, 0.0016875571456616714, 0.00055525956699773176),
-            (0.75f, 0.0018204535109498873, 0.00047414023649148499),
-            (0.8f, 0.0020014505761217064, 0.00038855669048861515),
-            (0.85f, 0.0022359394060992325, 0.00029864388354394224),
-            (0.9f, 0.0025291753743786525, 0.00020455691029067915),
-            (0.95f, 0.0028862077760702298, 0.00010646946426221498),
-            (1f, 0.0033118146030187766, 4.5730711098616345e-06),
-        ]),
-        new("piper_base-train_a", 0.0021159343355676022, 1.7792716714319461,
-        [
-            (0f, 0.0021159343355676022, 0.0021159343355676022),
-            (0.05f, 0.0019474116279145019, 0.001495503353185271),
-            (0.1f, 0.001894489763499677, 0.0014714751813850165),
-            (0.15f, 0.0018347969205585648, 0.0014413718673656527),
-            (0.2f, 0.0017706865072136778, 0.0014051799545802589),
-            (0.25f, 0.0017048118739890488, 0.0013628869290690316),
-            (0.3f, 0.0016401276826555982, 0.0013144816429046327),
-            (0.35f, 0.0015798929596137234, 0.0012599563073111355),
-            (0.4f, 0.0015276681346954371, 0.0011993066443987078),
-            (0.45f, 0.0014873114909283219, 0.0011325332632108444),
-            (0.5f, 0.0014629734126976792, 0.0010596429802777634),
-            (0.55f, 0.0014590857021044145, 0.00098065012405116996),
-            (0.6f, 0.0014803462870077784, 0.00089557747815048811),
-            (0.65f, 0.0015317013586022726, 0.00080445828434825574),
-            (0.7f, 0.0016183199415096435, 0.00070733676558337255),
-            (0.75f, 0.0017455645545973351, 0.00060427045473473052),
-            (0.8f, 0.0019189542290540473, 0.00049533078271764839),
-            (0.85f, 0.0021441233227438412, 0.00038060468963196399),
-            (0.9f, 0.0024267741144362006, 0.00026019589689998501),
-            (0.95f, 0.002772624034622014, 0.00013422517440681933),
-            (1f, 0.0031873470463572831, 2.8321546153637765e-06),
-        ]),
-        new("piper_base-train_b", 0.0016530731728661844, 1.7731412658341945,
-        [
-            (0f, 0.0016530731728661844, 0.0016530731728661844),
-            (0.05f, 0.0015190393703554655, 0.0011660603892204454),
-            (0.1f, 0.001474166515007108, 0.0011459255719723578),
-            (0.15f, 0.0014239024314202642, 0.0011209506906237165),
-            (0.2f, 0.0013701474301730876, 0.0010911255165079691),
-            (0.25f, 0.0013150420410446004, 0.001056440581336317),
-            (0.3f, 0.0012609677524844506, 0.0010168874583045334),
-            (0.35f, 0.0012105495214914438, 0.0009724602467846336),
-            (0.4f, 0.0011666534342266517, 0.00092315576380665469),
-            (0.45f, 0.0011323839341699157, 0.00086897448730039936),
-            (0.5f, 0.0011110796534916424, 0.00080992158601679858),
-            (0.55f, 0.0011063053652412874, 0.00074600796997577735),
-            (0.6f, 0.0011218404314896817, 0.00067725086830923691),
-            (0.65f, 0.0011616656154245781, 0.0006036755298149053),
-            (0.7f, 0.0012299438506817005, 0.00052531545061945022),
-            (0.75f, 0.0013309982653415921, 0.00044221424738011066),
-            (0.8f, 0.0014692843503318067, 0.00035442614019190217),
-            (0.85f, 0.0016493586145432701, 0.00026201716331190585),
-            (0.9f, 0.0018758425153260806, 0.00016506619343937087),
-            (0.95f, 0.0021533819488259087, 6.3665236646427356e-05),
-            (1f, 0.0024866015757026992, -4.2079127978329385e-05),
-        ]),
-        new("piper_base-validation", 0.0021363241410659777, 1.8370853358457104,
-        [
-            (0f, 0.0021363241410659777, 0.0021363241410659777),
-            (0.05f, 0.0019873439150457427, 0.0015990281288206967),
-            (0.1f, 0.0019335616292271806, 0.0015735412252523072),
-            (0.15f, 0.001872889193354104, 0.0015415703344264411),
-            (0.2f, 0.001807727945211401, 0.0015030997054567921),
-            (0.25f, 0.0017407865551904644, 0.0014581146960232902),
-            (0.3f, 0.0016750824403266307, 0.0014066023271584733),
-            (0.35f, 0.0016139450112482088, 0.001348553481922038),
-            (0.4f, 0.001561012627021051, 0.0012839632226541041),
-            (0.45f, 0.0015202284923220058, 0.0012128323294417365),
-            (0.5f, 0.0014958343403652275, 0.0011351688433809586),
-            (0.55f, 0.0014923586881337521, 0.0010509896632478304),
-            (0.6f, 0.0015145998986276143, 0.00096032157361723475),
-            (0.65f, 0.0015676064742299841, 0.00086320364071840986),
-            (0.7f, 0.0016566490549877312, 0.00075968779049116395),
-            (0.75f, 0.0017871880188390485, 0.00064984145900185059),
-            (0.8f, 0.0019648331001273557, 0.00053374834388085588),
-            (0.85f, 0.0021952981183536078, 0.00041151013280078531),
-            (0.9f, 0.0024843492687717239, 0.00028324793039651242),
-            (0.95f, 0.0028377478375476322, 0.00014910252952884907),
-            (1f, 0.003261186844675953, 9.2362889556876559e-06),
-        ]),
-        new("sage-train_a", 0.003664620124492278, 1.4656392798879025,
-        [
-            (0f, 0.003664620124492278, 0.003664620124492278),
-            (0.05f, 0.0031430484778772589, 0.0019603724781857108),
-            (0.1f, 0.003056017833158225, 0.0019286733837372404),
-            (0.15f, 0.002957916730736811, 0.0018889727189727828),
-            (0.2f, 0.0028525622145653012, 0.0018412436350733305),
-            (0.25f, 0.0027442716726336315, 0.0017854610426785162),
-            (0.3f, 0.0026378668865448462, 0.001721602976625558),
-            (0.35f, 0.0025386797089203372, 0.0016496536545683039),
-            (0.4f, 0.0024525464908362396, 0.0015696046489175369),
-            (0.45f, 0.0023857987820497546, 0.001481457189265703),
-            (0.5f, 0.0023452484248929471, 0.0013852249745410208),
-            (0.55f, 0.0023381610778094846, 0.0012809366361205012),
-            (0.6f, 0.0023722186266953689, 0.0011686379123854842),
-            (0.65f, 0.0024554735793670731, 0.0010483951920153762),
-            (0.7f, 0.0025962867201478469, 0.00092029695116983823),
-            (0.75f, 0.0028032541952315573, 0.00078445770843121486),
-            (0.8f, 0.0030851186623760125, 0.00064101941452732842),
-            (0.85f, 0.0034506695200547826, 0.00049015406145243323),
-            (0.9f, 0.0039086311639083601, 0.00033206562106679238),
-            (0.95f, 0.0044675412995564502, 0.0001669905476423789),
-            (1f, 0.0051356201031651037, -4.8001724828905553e-06),
-        ]),
-        new("sage-train_b", 0.0031769226952012156, 1.4831703007786068,
-        [
-            (0f, 0.0031769226952012156, 0.0031769226952012156),
-            (0.05f, 0.0027585040747023048, 0.0017859808945223264),
-            (0.1f, 0.002687425082315158, 0.0017589820952082723),
-            (0.15f, 0.0026066669001326322, 0.0017248182571101447),
-            (0.2f, 0.0025194606757752559, 0.0016834583463403955),
-            (0.25f, 0.002429473975879403, 0.0016348734616296566),
-            (0.3f, 0.0023408153315704447, 0.0015790380995285016),
-            (0.35f, 0.0022580403283354584, 0.0015159337845874238),
-            (0.4f, 0.0021861462438660787, 0.0014455503580632961),
-            (0.45f, 0.0021305623335761492, 0.0013678888875084927),
-            (0.5f, 0.0020971331575075627, 0.0012829645809538789),
-            (0.55f, 0.0020920901538601863, 0.0011908099554794602),
-            (0.6f, 0.002122010761175094, 0.0010914770936864223),
-            (0.65f, 0.002193768290142519, 0.00098504176863909473),
-            (0.7f, 0.0023144646069093396, 0.00087160515933722301),
-            (0.75f, 0.002491351225001538, 0.00075129771625050948),
-            (0.8f, 0.0027317349254875629, 0.00062428086224275534),
-            (0.85f, 0.0030428727274736745, 0.00049074939184294293),
-            (0.9f, 0.0034318567191392387, 0.00035093295394441584),
-            (0.95f, 0.0039054914180056371, 0.00020509621112616946),
-            (1f, 0.0044701662701948676, 5.3539753304895639e-05),
-        ]),
-        new("sage-validation", 0.0037324854465279793, 1.5448253530358116,
-        [
-            (0f, 0.0037324854465279793, 0.0037324854465279793),
-            (0.05f, 0.0032844276440520395, 0.0021667364977414165),
-            (0.1f, 0.0031978807694381596, 0.0021331089427043424),
-            (0.15f, 0.0030997771805011424, 0.0020907288276034246),
-            (0.2f, 0.0029940023091380159, 0.0020395604650797136),
-            (0.25f, 0.0028849616315906163, 0.0019795705177041776),
-            (0.3f, 0.0027775859310521108, 0.001910729661710218),
-            (0.35f, 0.0026773380523320558, 0.0018330165486583044),
-            (0.4f, 0.0025902066402817879, 0.0017464195270648058),
-            (0.45f, 0.0025226954626881765, 0.0016509397896473676),
-            (0.5f, 0.0024818046597774846, 0.0015465949435691309),
-            (0.55f, 0.0024749989346245344, 0.0014334223945865691),
-            (0.6f, 0.0025101618815157574, 0.0013114823197079466),
-            (0.65f, 0.0025955396782219235, 0.0011808619358778106),
-            (0.7f, 0.0027396663403834245, 0.0010416778045312727),
-            (0.75f, 0.0029512754022352492, 0.00089408017364363875),
-            (0.8f, 0.0032391944835676659, 0.00073825475307461583),
-            (0.85f, 0.0036122285123395066, 0.00057442537788826781),
-            (0.9f, 0.0040790312234110469, 0.00040285591847170264),
-            (0.95f, 0.0046479683338512354, 0.00022384993935424999),
-            (1f, 0.0053269749966384653, 3.7752090377741255e-05),
-        ]),
-        new("shimmer-train_a", 0.0037529167583250818, 1.130222324015687,
-        [
-            (0f, 0.0037529167583250818, 0.0037529167583250818),
-            (0.05f, 0.0030107977342246745, 0.0014623194804937768),
-            (0.1f, 0.0029284104039030276, 0.0014388503705329101),
-            (0.15f, 0.0028353226471869416, 0.0014094181889515499),
-            (0.2f, 0.0027351455676670566, 0.0013739993527430367),
-            (0.25f, 0.0026319676049160689, 0.0013325716344586393),
-            (0.3f, 0.0025303591077018559, 0.0012851157090259103),
-            (0.35f, 0.0024353777825684366, 0.0012316173042526014),
-            (0.4f, 0.0023525635188549271, 0.001172068568639784),
-            (0.45f, 0.0022879293070968026, 0.0011064700462696424),
-            (0.5f, 0.002247946316192588, 0.0010348330290384561),
-            (0.55f, 0.0022395176325920424, 0.00095718181078337781),
-            (0.6f, 0.002269940608999019, 0.00087355558362147388),
-            (0.65f, 0.0023468611252823821, 0.00078401132656647269),
-            (0.7f, 0.0024782115700125204, 0.00068862538014584341),
-            (0.75f, 0.0026721378820852393, 0.00058749643040237787),
-            (0.8f, 0.0029369111261673738, 0.00048074678554855946),
-            (0.85f, 0.0032808289632756207, 0.00036852446851797622),
-            (0.9f, 0.0037121056480188441, 0.00025100463198610428),
-            (0.95f, 0.0042387531049195475, 0.00012838975766709109),
-            (1f, 0.0048684550441817839, 9.1096207625597676e-07),
-        ]),
-        new("shimmer-train_b", 0.0035097629242073396, 1.1895207378768156,
-        [
-            (0f, 0.0035097629242073396, 0.0035097629242073396),
-            (0.05f, 0.0028574662001972654, 0.0014955945942612243),
-            (0.1f, 0.0027773689747209182, 0.0014710323679200746),
-            (0.15f, 0.0026870089718794752, 0.0014403229324614687),
-            (0.2f, 0.0025898422711015563, 0.0014034394834113494),
-            (0.25f, 0.0024897881063948787, 0.0013603569987310964),
-            (0.3f, 0.0023912340309763282, 0.0013110535546131665),
-            (0.35f, 0.0022990415183582612, 0.0012555132472179371),
-            (0.4f, 0.0022185406027167881, 0.0011937273568373786),
-            (0.45f, 0.0021555196244285326, 0.0011256969062789796),
-            (0.5f, 0.0021162081643015373, 0.001051435355863338),
-            (0.55f, 0.0021072470138953315, 0.00097097092992571351),
-            (0.6f, 0.002135646314959523, 0.00088434899629537007),
-            (0.65f, 0.0022087333715617333, 0.00079163535520429356),
-            (0.7f, 0.0023340830777331401, 0.00069291777024550326),
-            (0.75f, 0.0025194363189032136, 0.00058830935249304633),
-            (0.8f, 0.002772602196124067, 0.00047794990163256437),
-            (0.85f, 0.0031013498918536228, 0.00036200782267918722),
-            (0.9f, 0.00351328905493171, 0.00024068153683207578),
-            (0.95f, 0.0040157433417561308, 0.00011419923609340444),
-            (1f, 0.0046156179721735325, -1.7180037619856687e-05),
-        ]),
-        new("shimmer-validation", 0.0041457419191879659, 1.2013859644468603,
-        [
-            (0f, 0.0041457419191879659, 0.0041457419191879659),
-            (0.05f, 0.0033662468151544628, 0.0016789095975677678),
-            (0.1f, 0.003276038521779379, 0.0016524766428838646),
-            (0.15f, 0.0031739737404621231, 0.001619234912635243),
-            (0.2f, 0.0030640681191988115, 0.0015791577375408013),
-            (0.25f, 0.002950869320793365, 0.0015322200752102757),
-            (0.3f, 0.0028394624581580155, 0.0014784001213679814),
-            (0.35f, 0.0027354759327171277, 0.0014176820361295921),
-            (0.4f, 0.0026450755585370133, 0.001350057272453381),
-            (0.45f, 0.0025749542330451543, 0.0012755268985161512),
-            (0.5f, 0.0025323144357624495, 0.0011941042920247098),
-            (0.55f, 0.0025248383096587211, 0.0011058176535667448),
-            (0.6f, 0.0025606445692108216, 0.0010107122142084461),
-            (0.65f, 0.0026482359655697852, 0.00090885347144694175),
-            (0.7f, 0.0027964280484819091, 0.00080032905422700593),
-            (0.75f, 0.0030142655775421473, 0.00068525213719839416),
-            (0.8f, 0.0033109207910128617, 0.00056376289014265228),
-            (0.85f, 0.003695579593698867, 0.00043603096431862686),
-            (0.9f, 0.004177314398026287, 0.00030225713309364369),
-            (0.95f, 0.0047649460329384314, 0.00016267375122245751),
-            (1f, 0.0054668965942272201, 1.7546128193916204e-05),
-        ]),
-        new("verse-train_a", 0.0028618834962881655, 1.0449688985812955,
-        [
-            (0f, 0.0028618834962881655, 0.0028618834962881655),
-            (0.05f, 0.0022378618240614231, 0.0011315650491274395),
-            (0.1f, 0.0021739550300430305, 0.0011126961875615169),
-            (0.15f, 0.0021020779176502513, 0.0010891688950398419),
-            (0.2f, 0.0020249758942076181, 0.0010609688159239215),
-            (0.25f, 0.0019457516938507669, 0.0010280826325581123),
-            (0.3f, 0.0018678679077599324, 0.00099049861601674394),
-            (0.35f, 0.0017951510507542632, 0.00094820844715441514),
-            (0.4f, 0.0017317874868439478, 0.00090120765896008399),
-            (0.45f, 0.0016823175055399255, 0.0008494969989871192),
-            (0.5f, 0.0016516254119786577, 0.00079308388201429199),
-            (0.55f, 0.0016449219914467931, 0.00073198369986973081),
-            (0.6f, 0.0016677195136215086, 0.0006662209969546262),
-            (0.65f, 0.0017258017968321405, 0.00059583135073053588),
-            (0.7f, 0.0018251827421881092, 0.00052086215239558137),
-            (0.75f, 0.0019720581441692296, 0.00044137466205284952),
-            (0.8f, 0.0021727467269263313, 0.00035744480220180032),
-            (0.85f, 0.0024336242130594643, 0.00026916451695072768),
-            (0.9f, 0.0027610490278383794, 0.00017664274246911453),
-            (0.95f, 0.0031612816745072718, 8.0005715529147086e-05),
-            (1f, 0.0036403977733104557, -2.060196279738305e-05),
-        ]),
-        new("verse-train_b", 0.0023186473414633954, 1.1263033195496313,
-        [
-            (0f, 0.0023186473414633954, 0.0023186473414633954),
-            (0.05f, 0.0018597000141867969, 0.0010056864248622008),
-            (0.1f, 0.001811636921572234, 0.00099037659792098449),
-            (0.15f, 0.0017570621523820907, 0.00097103509871545376),
-            (0.2f, 0.0016981552644701873, 0.00094764873801962343),
-            (0.25f, 0.0016373829021386387, 0.00092020516620781954),
-            (0.3f, 0.001577500978798193, 0.00088869337812706956),
-            (0.35f, 0.0015215583690597375, 0.00085310540082602227),
-            (0.4f, 0.0014728937333840198, 0.00081343666988503021),
-            (0.45f, 0.0014351307296686527, 0.00076968730021935493),
-            (0.5f, 0.0014121699819669843, 0.00072186339446021861),
-            (0.55f, 0.0014081745631178452, 0.00066997824705790658),
-            (0.6f, 0.0014275493740560786, 0.00061405336970050842),
-            (0.65f, 0.0014749161223698722, 0.00055412034214781612),
-            (0.7f, 0.0015550789741865421, 0.00049022125765386341),
-            (0.75f, 0.0016729845483325991, 0.00042241080119213978),
-            (0.8f, 0.001833673292745235, 0.00035075679240026116),
-            (0.85f, 0.0020422249417978407, 0.00027534129554650184),
-            (0.9f, 0.0023036982551952914, 0.0001962615583347861),
-            (0.95f, 0.0026230654194045835, 0.00011362999501729358),
-            (1f, 0.0030051422256929037, 2.7575062463383345e-05),
-        ]),
-        new("verse-validation", 0.0022512436863146479, 1.0998466617056053,
-        [
-            (0f, 0.0022512436863146479, 0.0022512436863146479),
-            (0.05f, 0.0017838607710727709, 0.00097790455890895203),
-            (0.1f, 0.0017352190212186159, 0.00096228867008064792),
-            (0.15f, 0.0016802958388170465, 0.00094269890490603862),
-            (0.2f, 0.0016212371085147607, 0.00091912283001525041),
-            (0.25f, 0.0015604684969898245, 0.00089154881280093879),
-            (0.3f, 0.0015006973064130332, 0.00085996657034253089),
-            (0.35f, 0.0014449158895575862, 0.00082436872268010024),
-            (0.4f, 0.0013963985512231048, 0.00078475123593276929),
-            (0.45f, 0.0013586971068145549, 0.00074111452167585602),
-            (0.5f, 0.0013356334048349118, 0.00069346476320178072),
-            (0.55f, 0.001331286052097193, 0.00064181510993010268),
-            (0.6f, 0.0013499710798372665, 0.00058618651323191111),
-            (0.65f, 0.0013962192727108879, 0.00052660957715157625),
-            (0.7f, 0.0014747443545319711, 0.00046312503713236201),
-            (0.75f, 0.0015904064719455776, 0.00039578560919788382),
-            (0.8f, 0.0017481673967690982, 0.00032465658670052631),
-            (0.85f, 0.0019530408269083927, 0.00024981690096942389),
-            (0.9f, 0.0022100371497358919, 0.00017135988553016276),
-            (0.95f, 0.0025241037038228591, 8.9393377894955104e-05),
-            (1f, 0.0029000612740792088, 4.0404656246449134e-06),
-        ]),
-    ];
-    private sealed record VoiceReference(string Name, double DryPower, double FullChangeDb,
-        (float Amount, double WetPower, double Cross)[] Points);
+    private sealed record Corpus(VoiceRecord[] Voices, SyntheticRecord[] Synthetic);
+    private sealed record VoiceRecord(string Name, string Voice, int Rate, double DryPower, double FullChangeDb, Point[] Points);
+    private sealed record Point(float Amount, double WetPower, double Cross, double BaselineChangeDb);
+    private sealed record SyntheticRecord(string Name, int Rate, float Scale, double DryPower, SyntheticPoint[] Points);
+    private sealed record SyntheticPoint(float Amount, double WetPower, double Cross, int[] WetIndices, float[] WetSamples);
 }
