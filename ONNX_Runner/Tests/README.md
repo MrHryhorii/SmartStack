@@ -101,20 +101,25 @@ at three rates and input levels, stream partitions, and allocation-free preparat
 Individual catalog midpoint windows remain a reported limitation. Historical linear-path
 moments are retained in the research archive rather than defining current output.
 
-Chorus and Flanger checks use current additive-waveform moments from the full voice
-catalog at 21 strengths, including eased internal intensity. Their prepared scalar gains
-follow the unchanged additive mixture, so delay modulation, feedback, saturation and
-voice proportions retain their character. Checks cover base-mean progression, midpoint
-coverage, bounded per-recording errors and reversals, smooth gain joins, exact endpoints,
-streaming partitions, zero-allocation preparation, and independent PCM checkpoints at
-three sample rates and input levels. Historical linear-intensity fixtures are retained
-in the development research archive. A common fixed correction cannot make every
-recording follow the same loudness path; recorded limits remain explicit.
+Chorus and Flanger checks capture the unchanged saturated additive branch separately
+from the outer mixture. The prepared quadratic blend gives the processed branch a
+larger share at intermediate strengths while retaining exact clean/full endpoints.
+Checks protect its increasing bounded share and nominal midpoint anchor, independently
+recombine captured dry/composite moments, and compare engine PCM against those branches.
+Separate scalar gains control level after the new blend, outside delay feedback.
+The current catalog retains exactly 21 captured audio strengths; dense scalar audits
+add no audio measurements. Checks also cover bounded base/catalog level behavior,
+midpoint coverage, shared gain values/slopes, streaming partitions, zero-allocation
+preparation, and independent checkpoints at three rates and input levels. The previous
+mixture and its fixtures remain in the development research archive. Numeric branch
+shares do not define perceived effect strength, and a fixed common correction cannot
+make every recording follow the same loudness path.
 
 Separate engine-routing fixtures replay the unchanged synthetic inputs at three rates.
 Their expected levels come from frozen accepted effect algorithms, the declared
 `amount * (2 - amount)` wet-strength curve, and fixed output trims. The request amount
-still controls the external blend. G.711 keeps its fixed codec transfer characteristic;
+controls the effect-specific outer blend; Chorus and Flanger prepare a stronger
+quadratic share before entering the sample loop. G.711 keeps its fixed codec transfer characteristic;
 cassette and decoder-glitch intensity laws remain separate.
 
 Character-strength checks verify the prepared Overdrive and Tactical input strength,

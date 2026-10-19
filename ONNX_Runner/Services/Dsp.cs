@@ -333,63 +333,76 @@ public static class Dsp
     }
 
     /// <summary>
+    /// Prepares the outer Chorus/Flanger blend once per buffer.
+    /// The quadratic raises the processed share to two thirds at the request midpoint.
+    /// With the unchanged eased wet strength, nominal delayed contribution reaches half of full.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static float ModulationBlend(float amount)
+    {
+        if (amount <= .001f || float.IsNaN(amount)) return 0f;
+        if (amount >= 1f) return 1f;
+        return amount + (2f / 3f) * amount * (1f - amount);
+    }
+
+    /// <summary>
     /// Prepares Chorus output gain with two empirically fitted rational halves.
     /// Shared midpoint values and slopes preserve a smooth join; clean/full gain stays one.
-    /// Apply once per buffer after the unchanged additive mixture, outside delay feedback.
+    /// Apply once per buffer after the stronger outer blend, outside delay feedback.
     /// </summary>
     public static float ChorusGain(float t)
     {
         if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
-        if (t == .5f) return 1.03879979f;
+        if (t == .5f) return 1.03566193f;
         if (t < .5f)
         {
             float u = 2f * t - .5f;
-            float numerator = (((-0.27393262f * u - 4.37512919f) * u + 0.10728295f) * u + 2.1131822f);
-            float denominator = (-4.28119018f * u * u + 2.07029755f);
+            float numerator = ((((-0.303560057f * u - 0.189747621f) * u - 1.31784643f) * u + 0.0830988377f) * u + 1.36626508f);
+            float denominator = (-1.36823033f * u * u + 1.34205758f);
             return numerator / denominator;
         }
 
         float uRight = 2f * (1f - t) - .5f;
-        float numeratorRight = (((0.115456868f * uRight + 3.80479318f) * uRight + 0.00993557782f) * uRight + 0.0682016019f);
-        float denominatorRight = (3.73057947f * uRight * uRight + 0.0673551331f);
+        float numeratorRight = ((((0.410710288f * uRight + 0.0659920946f) * uRight + 3.60087619f) * uRight + 0.0191639087f) * uRight + 0.0919425263f);
+        float denominatorRight = (3.6334975f * uRight * uRight + 0.0916256246f);
         return numeratorRight / denominatorRight;
     }
 
-    /// <summary>Retains the original delayed-voice blend and saturation, then applies prepared gain.</summary>
+    /// <summary>Combines the unchanged saturated Chorus branch using the prepared outer blend and gain.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float ChorusCrossfade(float dry, float wet, float amount, float gain)
+    public static float ChorusCrossfade(float dry, float wet, float blend, float gain)
     {
-        return Lerp(dry, SoftClip(dry + wet * .85f), amount) * gain;
+        return Lerp(dry, SoftClip(dry + wet * .85f), blend) * gain;
     }
 
     /// <summary>
     /// Prepares Flanger output gain with two empirically fitted rational halves.
     /// Shared midpoint values and slopes preserve a smooth join; clean/full gain stays one.
-    /// Apply once per buffer after the unchanged additive mixture, outside delay feedback.
+    /// Apply once per buffer after the stronger outer blend, outside delay feedback.
     /// </summary>
     public static float FlangerGain(float t)
     {
         if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
-        if (t == .5f) return 1.06025798f;
+        if (t == .5f) return 1.05223483f;
         if (t < .5f)
         {
             float u = 2f * t - .5f;
-            float numerator = ((((-0.914684569f * u - 2.13948337f) * u - 28.9072914f) * u + 0.595128826f) * u + 8.31411962f);
-            float denominator = (-28.4643044f * u * u + 8.11607609f);
+            float numerator = ((((1.16806412f * u - 3.09658653f) * u - 42.5090101f) * u + 0.826381459f) * u + 11.5803659f);
+            float denominator = (-40.9222665f * u * u + 11.2305666f);
             return numerator / denominator;
         }
 
         float uRight = 2f * (1f - t) - .5f;
-        float numeratorRight = ((((0.420727168f * uRight + 0.299182342f) * uRight + 1.20960225f) * uRight - 0.0145376027f) * uRight + 0.701432982f);
-        float denominatorRight = (1.35363617f * uRight * uRight + 0.661590958f);
+        float numeratorRight = ((((0.815267683f * uRight + 0.284995762f) * uRight - 0.260169203f) * uRight - 0.0190141146f) * uRight + 1.04020548f);
+        float denominatorRight = (-0.0180616669f * uRight * uRight + 1.00451542f);
         return numeratorRight / denominatorRight;
     }
 
-    /// <summary>Retains Flanger feedback, delayed-voice proportions and saturation, then applies prepared gain.</summary>
+    /// <summary>Combines the unchanged saturated Flanger branch using the prepared outer blend and gain.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float FlangerCrossfade(float dry, float wet, float amount, float gain)
+    public static float FlangerCrossfade(float dry, float wet, float blend, float gain)
     {
-        return Lerp(dry, SoftClip(dry + wet * .85f), amount) * gain;
+        return Lerp(dry, SoftClip(dry + wet * .85f), blend) * gain;
     }
 
     /// <summary>

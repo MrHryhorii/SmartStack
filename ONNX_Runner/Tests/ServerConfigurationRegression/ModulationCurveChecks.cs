@@ -7,7 +7,7 @@ internal static class ModulationCurveChecks
 {
     private static readonly Corpus Fixtures = Load();
 
-    /// <summary>Checks current-path moments, independent waveform checkpoints and bounded calibration tradeoffs.</summary>
+    /// <summary>Checks the stronger outer blend, current-path moments and independent waveform checkpoints.</summary>
     internal static void Run(Action<string, Action> check, VoiceEffectType effect)
     {
         bool chorus = effect == VoiceEffectType.Chorus;
@@ -16,9 +16,50 @@ internal static class ModulationCurveChecks
         SyntheticRecord[] synthetic = Fixtures.Synthetic.Where(v => v.Effect == name).ToArray();
         VoiceRecord[] basis = voices.Where(v => v.Voice == "piper_base").ToArray();
         Require(voices.Length == 48 && basis.Length == 3 && synthetic.Length == 9, "Current-path fixtures are incomplete.");
-        double guideBudget = chorus ? 1.16 : 1.40;
-        double reverseBudget = chorus ? .47 : .415;
-        double escapeBudget = chorus ? .365 : .76;
+        double guideBudget = chorus ? 1.40 : 1.60;
+        double reverseBudget = chorus ? .72 : .62;
+        double escapeBudget = chorus ? .65 : .92;
+
+        check($"{name} outer blend preserves clean/full guards", () =>
+        {
+            foreach (float amount in new[] { -1f, 0f, .001f, float.NaN })
+                Require(Dsp.ModulationBlend(amount) == 0f, "Clean or invalid blend did not bypass.");
+            foreach (float amount in new[] { 1f, 2f, float.PositiveInfinity })
+                Require(Dsp.ModulationBlend(amount) == 1f, "Full blend changed.");
+        });
+        check($"{name} midpoint increases processed share without changing internal strength", () =>
+        {
+            float blend = Dsp.ModulationBlend(.5f);
+            Require(MathF.Abs(blend - 2f / 3f) < 1e-7f, "Midpoint retained the previous half-share.");
+            Require(MathF.Abs(.75f * blend - .5f) < 1e-7f, "Nominal midpoint delayed contribution changed.");
+        });
+        check($"{name} outer blend is bounded, increasing and stronger throughout its active range", () =>
+        {
+            float previous = 0f;
+            // This audits a scalar formula; audio fixtures retain exactly 21 strengths.
+            for (int i = 1; i <= 100000; i++)
+            {
+                float amount = i / 100000f, blend = Dsp.ModulationBlend(amount);
+                Require(float.IsFinite(blend) && blend >= previous && blend <= 1f, "Invalid or reversing blend.");
+                if (amount > .001f && amount < 1f)
+                    Require(blend > amount, "The new outer blend did not strengthen the processed branch.");
+                previous = blend;
+            }
+        });
+        check($"{name} prepared mixture retains the independent saturated additive branch", () =>
+        {
+            foreach (float dry in new[] { -.8f, -.2f, 0f, .15f, .9f })
+            foreach (float wet in new[] { -.7f, 0f, .1f, .8f })
+            for (int i = 0; i <= 20; i++)
+            {
+                float amount = i / 20f;
+                double blend = amount <= .001f ? 0 : amount + (2d / 3d) * amount * (1d - amount);
+                double branch = Math.Tanh(dry + (double)wet * .85f);
+                double expected = dry + (branch - dry) * blend;
+                Require(Math.Abs(Mix(chorus, dry, wet, amount, 1f) - expected) < 3e-7,
+                    "Prepared mixture changed the declared branch or blend.");
+            }
+        });
 
         check($"{name} gain preserves exact endpoint and invalid-input guards", () =>
         {
@@ -36,7 +77,8 @@ internal static class ModulationCurveChecks
         });
         check($"{name} halves share midpoint values and slopes", () =>
         {
-            const float h = .001f;
+            // A smaller finite-difference step separates the shared tangent from nearby curvature.
+            const float h = .0005f;
             double middle = Gain(chorus, .5f);
             double left = (3 * middle - 4 * Gain(chorus, .5f - h) + Gain(chorus, .5f - 2 * h)) / (2 * h);
             double right = (-3 * middle + 4 * Gain(chorus, .5f + h) - Gain(chorus, .5f + 2 * h)) / (2 * h);
@@ -44,7 +86,7 @@ internal static class ModulationCurveChecks
             Require(Math.Abs(Gain(chorus, MathF.BitDecrement(.5f)) - Gain(chorus, MathF.BitIncrement(.5f))) < 3e-6,
                 "The midpoint value is discontinuous.");
         });
-        check($"{name} correction scales the existing mixture without changing its proportions", () =>
+        check($"{name} correction scales the strengthened mixture without undoing its proportions", () =>
         {
             foreach (float dry in new[] { -.8f, -.2f, 0f, .15f, .9f })
             foreach (float wet in new[] { -.7f, 0f, .1f, .8f })
@@ -104,21 +146,18 @@ internal static class ModulationCurveChecks
         check($"{name} base mean follows the bounded ordered transition", () =>
         {
             double full = basis.Average(v => v.Points[^1].BaselineChangeDb), previous = 0;
-            double error = 0, baselineError = 0;
+            double error = 0;
             for (int i = 0; i <= 20; i++)
             {
                 double mean = basis.Average(v => Level(chorus, v.Points[i]));
-                double original = basis.Average(v => v.Points[i].BaselineChangeDb);
-                Require(previous - mean < (chorus ? .0001 : .012), "The base mean reverse-step budget regressed.");
+                Require(previous - mean < (chorus ? .00015 : .0202), "The base mean reverse-step budget regressed.");
                 Require(mean >= -.001 && mean <= full + (chorus ? .001 : .01), "The base mean left its bounded endpoint window.");
                 error += Math.Abs(mean - i / 20d * full) / 21;
-                baselineError += Math.Abs(original - i / 20d * full) / 21;
                 previous = mean;
             }
-            Require(error < (chorus ? .06 : .035) && error < baselineError * .8, "Base guide-error reduction regressed.");
+            Require(error < (chorus ? .06 : .055), "The new blend exceeded its base guide-error budget.");
             double midpoint = basis.Average(v => Level(chorus, v.Points[10]));
             Require(midpoint > .35 * full && midpoint < .65 * full, "The base midpoint left its central endpoint window.");
-            if (!chorus) Require(Math.Abs(midpoint - full / 2) < 1e-5, "The Flanger mean midpoint moved from the half-dB anchor.");
         });
         check($"{name} catalog controls retain midpoint coverage and average-error budgets", () =>
         {
@@ -137,7 +176,7 @@ internal static class ModulationCurveChecks
                 meanError += Math.Abs(voices.Average(v => Level(chorus, v.Points[i]))
                     - voices.Average(v => v.Points[^1].BaselineChangeDb) * i / 20d) / 21;
             Require(windows >= (chorus ? 48 : 30), "Recorded midpoint coverage regressed.");
-            Require(error < baselineError + .001 && meanError < (chorus ? .066 : .06), "Recorded average-error budgets regressed.");
+            Require(error < baselineError + .03 && meanError < .10, "Recorded average-error budgets regressed.");
         });
 
         foreach (SyntheticRecord record in synthetic)
@@ -158,8 +197,14 @@ internal static class ModulationCurveChecks
                     "Output no longer matches the independently captured additive waveform and prepared gain.");
                 Require(point.Indices.Length == 16 && point.Samples.Length == 16, "Waveform checkpoints are incomplete.");
                 for (int i = 0; i < point.Indices.Length; i++)
+                {
+                    double blend = Dsp.ModulationBlend(point.Amount);
+                    double independent = point.DrySamples[i] + (point.CompositeSamples[i] - (double)point.DrySamples[i]) * blend;
+                    Require(Math.Abs(signal[point.Indices[i]] - independent * gain) < 3e-6,
+                        "The engine changed the independently captured branch or stronger blend.");
                     Require(Math.Abs(signal[point.Indices[i]] - point.Samples[i] * gain) < 3e-6,
                         "Level correction changed a captured waveform checkpoint.");
+                }
             });
         }
         foreach (int rate in new[] { 8000, 22050, 48000 })
@@ -192,15 +237,22 @@ internal static class ModulationCurveChecks
         }
     }
 
-    /// <summary>Applies prepared gain to an independently captured uncorrected current-path RMS.</summary>
-    private static double Level(bool chorus, Point point) => point.UncorrectedChangeDb + 20 * Math.Log10(Gain(chorus, point.Amount));
+    /// <summary>Recombines independent dry/composite moments using the production blend and prepared scalar.</summary>
+    private static double Level(bool chorus, Point point)
+    {
+        double blend = Dsp.ModulationBlend(point.Amount), dry = 1 - blend;
+        double power = dry * dry + blend * blend * point.CompositePowerRatio
+            + 2 * dry * blend * point.CompositeCrossRatio;
+        return 10 * Math.Log10(power) + 20 * Math.Log10(Gain(chorus, point.Amount));
+    }
 
     /// <summary>Selects the effect-specific once-per-buffer scalar.</summary>
     private static float Gain(bool chorus, float amount) => chorus ? Dsp.ChorusGain(amount) : Dsp.FlangerGain(amount);
 
-    /// <summary>Routes the existing additive mixture without changing its composition.</summary>
+    /// <summary>Routes the stronger declared outer blend without altering the saturated branch.</summary>
     private static float Mix(bool chorus, float dry, float wet, float amount, float gain) => chorus
-        ? Dsp.ChorusCrossfade(dry, wet, amount, gain) : Dsp.FlangerCrossfade(dry, wet, amount, gain);
+        ? Dsp.ChorusCrossfade(dry, wet, Dsp.ModulationBlend(amount), gain)
+        : Dsp.FlangerCrossfade(dry, wet, Dsp.ModulationBlend(amount), gain);
 
     /// <summary>Exercises warmed runtime preparation and mixing without allocating test objects.</summary>
     private static float PreparedSample(bool chorus, int i)
@@ -245,7 +297,9 @@ internal static class ModulationCurveChecks
 
     private sealed record Corpus(VoiceRecord[] Voices, SyntheticRecord[] Synthetic);
     private sealed record VoiceRecord(string Name, string Voice, string Effect, int Rate, Point[] Points);
-    private sealed record Point(float Amount, double UncorrectedChangeDb, double BaselineChangeDb);
+    private sealed record Point(float Amount, double UncorrectedChangeDb, double BaselineChangeDb,
+        double CompositePowerRatio, double CompositeCrossRatio);
     private sealed record SyntheticRecord(string Effect, int Rate, float Scale, SyntheticPoint[] Points);
-    private sealed record SyntheticPoint(float Amount, double OriginalDbfs, int[] Indices, float[] Samples);
+    private sealed record SyntheticPoint(float Amount, double OriginalDbfs, int[] Indices, float[] Samples,
+        float[] DrySamples, float[] CompositeSamples);
 }

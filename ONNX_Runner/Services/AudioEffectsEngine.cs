@@ -426,6 +426,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             ringWetGain *= RingOutputGain;
         }
 
+        float modulationBlend = mode is RoutingMode.ChorusAdd or RoutingMode.FlangerAdd
+            ? Dsp.ModulationBlend(amount) : amount;
         float chorusGain = mode == RoutingMode.ChorusAdd ? Dsp.ChorusGain(amount) : 1f;
         float flangerGain = mode == RoutingMode.FlangerAdd ? Dsp.FlangerGain(amount) : 1f;
 
@@ -507,11 +509,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     break;
 
                 case RoutingMode.ChorusAdd:
-                    buffer[i] = Dsp.ChorusCrossfade(dry, wet, amount, chorusGain);
+                    buffer[i] = Dsp.ChorusCrossfade(dry, wet, modulationBlend, chorusGain);
                     break;
 
                 case RoutingMode.FlangerAdd:
-                    buffer[i] = Dsp.FlangerCrossfade(dry, wet, amount, flangerGain);
+                    buffer[i] = Dsp.FlangerCrossfade(dry, wet, modulationBlend, flangerGain);
                     break;
 
                 case RoutingMode.StrictInsert:
