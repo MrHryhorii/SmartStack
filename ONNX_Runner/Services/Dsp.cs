@@ -145,9 +145,9 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares TacticalRadio gains using two experimentally fitted quartic corrections.
-    /// The halves share their midpoint value and slope while retaining the original dry/wet ratio.
-    /// Reuses the equal-power roots; call once per buffer without runtime loudness analysis.
+    /// Prepares TacticalRadio gains for its eased input EQ, codec strength and fixed output trim.
+    /// Two empirically fitted quartic halves share their midpoint value and intensity slope.
+    /// Preserves the equal-power dry/wet ratio and reuses its prepared roots once per buffer.
     /// </summary>
     public static void TacticalGains(float t, out float dryGain, out float wetGain)
     {
@@ -168,19 +168,19 @@ public static class Dsp
         float correction;
         if (t == 0.5f)
         {
-            correction = 0.703430655f;
+            correction = 0.862721205f;
         }
         else if (t < 0.5f)
         {
-            // The existing wet gain supplies sqrt(2*t), matching the low-intensity mix shape.
+            // Reuse the wet root to shape the low-intensity transition.
             float u = wetGain * 1.41421356f;
-            correction = (((0.822745211f * u - 2.06082324f) * u + 2.31475267f) * u - 1.37324399f) * u + 1f;
+            correction = (((-0.677354693f * u + 1.27634215f) * u - 0.0871671513f) * u - 0.649099052f) * u + 1f;
         }
         else
         {
-            // Evaluate the second half from its exact full-effect endpoint.
+            // Evaluate from exact full wet to preserve its accepted waveform.
             float u = 2f * (1f - t);
-            correction = (((1.01926546f * u - 1.28734397f) * u - 0.368925332f) * u + 0.340434498f) * u + 1f;
+            correction = (((0.659005046f * u - 1.58438516f) * u + 1.18094683f) * u - 0.392845571f) * u + 1f;
         }
         dryGain *= correction;
         wetGain *= correction;

@@ -53,7 +53,7 @@ with independent ITU reference digests. Rolling decoder-glitch checks cover capt
 duration, low/high-frequency detection, live replacement, streaming partitions, and
 allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
 Mixer component checks retain the frozen voice moments used to fit the codec,
-Crusher, Tactical, FM, and Telephone
+Crusher, FM, and Telephone
 coefficients. They protect coefficient evaluation, joins, endpoints and the recorded
 component-level tradeoffs. These historical moments do not represent the revised
 engine intensity path and must not be read as current waveform-level guarantees.
@@ -105,6 +105,15 @@ paths, the centered base-mean midpoint, bounded catalog errors, independent PCM 
 at three rates and input levels, stream partitions, and allocation-free preparation.
 Individual catalog midpoint windows remain a reported limitation. Historical linear-path
 moments are retained in the research archive rather than defining current output.
+
+TacticalRadio checks use frozen post-DC wet moments from the current eased input-EQ
+and codec path at 21 strengths. Three base passages guide the common quartic gain;
+the remaining 45 recordings are controls. Checks preserve the equal-power dry/wet
+ratio, independent Hermite values, midpoint continuity, base midpoint windows and
+ordered mean progression, declared individual level budgets, synthetic waveform
+checkpoints, stream partitions, exact bypass and allocation-free preparation.
+Historical linear-strength mixer moments remain in the research archive. A common
+fixed gain does not ensure every voice follows its own ideal level curve.
 
 Chorus and Flanger checks capture the unchanged saturated additive branch separately
 from the outer mixture. The prepared quadratic blend gives the processed branch a
