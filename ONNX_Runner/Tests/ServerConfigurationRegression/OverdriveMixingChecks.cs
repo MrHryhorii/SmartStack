@@ -70,14 +70,15 @@ internal static class OverdriveMixingChecks
             }
         });
         OverdriveCurveChecks.Run(check);
+        OverdriveCharacterChecks.Run(check);
         foreach (var reference in new[]
         {
-            (Rate: 8000, Dbfs: -22.805513801686455),
-            (Rate: 22050, Dbfs: -22.875719482189687),
-            (Rate: 48000, Dbfs: -22.899496225082544)
+            (Rate: 8000, Dbfs: -22.821074668294223),
+            (Rate: 22050, Dbfs: -22.891515568221106),
+            (Rate: 48000, Dbfs: -22.915161418671644)
         })
         {
-            check($"Overdrive retains the preceding full-strength output at {reference.Rate} Hz", () =>
+            check($"Overdrive matches the accepted stronger full-strength output at {reference.Rate} Hz", () =>
             {
                 float[] signal = Signal(reference.Rate, reference.Rate * 3, 1f);
                 NewEngine(reference.Rate).ApplyEffect(signal, VoiceEffectType.Overdrive, 1);

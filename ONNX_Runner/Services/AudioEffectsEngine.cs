@@ -51,7 +51,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private const float TapePlaybackCompensation = 0.423369f;
     // Fixed output trims keep full effects near +1 dB on the reference Piper voice.
     // Apply after character generation; drive, compression and modulation stay intact.
-    private const float OverdriveOutputGain = 0.56f;
+    private const float OverdriveOutputGain = 0.5347782f;
     private const float TacticalOutputGain = 0.63f;
     private const float FmOutputGain = 0.78f;
     private const float RingOutputGain = 0.91f;
@@ -439,7 +439,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.Overdrive:
-                _overdriveDrive = 1f + effectAmount * 4.0f;
+                _overdriveDrive = 1f + effectAmount * 4.808956f;
                 _overdriveTrim = 1f / MathF.Sqrt(_overdriveDrive);
                 _overdriveBiasScale = 0.06f * effectAmount;
                 break;

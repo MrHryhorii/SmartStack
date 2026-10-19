@@ -91,6 +91,11 @@ stream partitions, and zero-allocation gain preparation. Independent routing che
 three rates and three input levels. Historical pre-trim moments remain in the research
 archive rather than defining the new signal path. RMS budgets describe these fixtures;
 they do not promise identical loudness or monotonicity for arbitrary input audio.
+The stronger Overdrive uses a fixed drive and output-trim calibration. A 250 Hz tone
+at peak 0.18 and 22050 Hz targets 10% full-strength THD over harmonics 2-9, measured
+after warmup; this reference does not define speech distortion or perceived strength.
+Checks retain the milder midpoint, harmonic growth at 21 strengths over three rates
+and input levels, the calibrated base-mean full level, and current waveform references.
 
 RingModulator checks use independent post-DC wet moments from 48 recordings at 21
 strengths on the current eased path. The common gain preserves its original dry/wet
