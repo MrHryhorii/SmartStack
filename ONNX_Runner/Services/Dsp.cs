@@ -243,13 +243,14 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares Overdrive gains using two experimentally fitted quartic corrections.
-    /// The halves share their midpoint value and slope while retaining the original dry/wet ratio.
-    /// Reuses the equal-power roots; call once per buffer without runtime loudness analysis.
+    /// Prepares Overdrive weights for its eased wet strength and fixed output trim.
+    /// Two experimentally fitted cubic halves join with a shared value and slope.
+    /// Wet share grows throughout the transition; clean and full endpoints stay exact.
+    /// Call once per buffer. No input-level scan, extra PCM pass or allocation is used.
     /// </summary>
     public static void DriveGains(float t, out float dryGain, out float wetGain)
     {
-        if (t <= 0.001f || float.IsNaN(t))
+        if (t <= .001f || float.IsNaN(t))
         {
             dryGain = 1f;
             wetGain = 0f;
@@ -262,26 +263,17 @@ public static class Dsp
             return;
         }
 
-        EqualPowerGains(t, out dryGain, out wetGain);
-        float correction;
-        if (t == 0.5f)
+        if (t <= .5f)
         {
-            correction = 0.930806007f;
+            float u = 2f * t;
+            dryGain = ((0.0570820338f * u - 0.272099697f) * u - 0.0771108638f) * u + 1f;
+            wetGain = ((0.167265318f * u - 0.190992395f) * u + 0.514146117f) * u;
+            return;
         }
-        else if (t < 0.5f)
-        {
-            // The existing wet gain supplies sqrt(2*t), matching the low-intensity mix shape.
-            float u = wetGain * 1.41421356f;
-            correction = (((-0.057844468f * u - 0.232485028f) * u + 0.207646598f) * u + 0.0134889044f) * u + 1f;
-        }
-        else
-        {
-            // The existing dry gain supplies sqrt(2*(1-t)) near the full-effect endpoint.
-            float u = dryGain * 1.41421356f;
-            correction = (((2.01971197f * u - 4.01631705f) * u + 2.54274303f) * u - 0.615331945f) * u + 1f;
-        }
-        dryGain *= correction;
-        wetGain *= correction;
+
+        float uRight = 2f * (1f - t);
+        dryGain = ((-0.741279051f * uRight + 1.22475079f) * uRight + 0.224399738f) * uRight;
+        wetGain = ((0.274201121f * uRight - 0.672778562f) * uRight - 0.11100352f) * uRight + 1f;
     }
 
     /// <summary>Combines inputs with Drive gains prepared outside the sample loop.</summary>
@@ -340,18 +332,26 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares Chorus output gain from two experimentally fitted seventh-degree segments.
-    /// They share their midpoint value and slope; centered coordinates stabilize float rounding.
-    /// Evaluate once per buffer, then apply after the original additive nonlinear mixture.
+    /// Prepares Chorus output gain with two empirically fitted rational halves.
+    /// Shared midpoint values and slopes preserve a smooth join; clean/full gain stays one.
+    /// Apply once per buffer after the unchanged additive mixture, outside delay feedback.
     /// </summary>
     public static float ChorusGain(float t)
     {
         if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
-        if (t == .5f) return 1.0233542f;
-        float u = (t < .5f ? 2f * t : 2f * (1f - t)) - .5f;
+        if (t == .5f) return 1.03879979f;
         if (t < .5f)
-            return ((((((7.15550812f * u + 0.502754754f) * u - 3.18544345f) * u - 0.130990126f) * u + 0.354670923f) * u - 0.0737219082f) * u + 0.0219718745f) * u + 1.03043892f;
-        return ((((((14.3553259f * u - 4.96932268f) * u - 7.11726878f) * u + 2.08667079f) * u + 1.03844834f) * u - 0.250867563f) * u - 0.0157305491f) * u + 1.02162274f;
+        {
+            float u = 2f * t - .5f;
+            float numerator = (((-0.27393262f * u - 4.37512919f) * u + 0.10728295f) * u + 2.1131822f);
+            float denominator = (-4.28119018f * u * u + 2.07029755f);
+            return numerator / denominator;
+        }
+
+        float uRight = 2f * (1f - t) - .5f;
+        float numeratorRight = (((0.115456868f * uRight + 3.80479318f) * uRight + 0.00993557782f) * uRight + 0.0682016019f);
+        float denominatorRight = (3.73057947f * uRight * uRight + 0.0673551331f);
+        return numeratorRight / denominatorRight;
     }
 
     /// <summary>Retains the original delayed-voice blend and saturation, then applies prepared gain.</summary>
@@ -362,18 +362,26 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares Flanger output gain from two experimentally fitted cubic segments.
-    /// They share their midpoint value and slope; calibration retains each recorded clean/full level.
-    /// Evaluate once per buffer, then apply after the original additive nonlinear mixture.
+    /// Prepares Flanger output gain with two empirically fitted rational halves.
+    /// Shared midpoint values and slopes preserve a smooth join; clean/full gain stays one.
+    /// Apply once per buffer after the unchanged additive mixture, outside delay feedback.
     /// </summary>
     public static float FlangerGain(float t)
     {
         if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
-        if (t == .5f) return 1.04095209f;
-        float u = (t < .5f ? 2f * t : 2f * (1f - t)) - .5f;
+        if (t == .5f) return 1.06025798f;
         if (t < .5f)
-            return ((0.0178616755f * u + 0.0382889174f) * u + 0.0364867076f) * u + 1.01090384f;
-        return ((0.0547523536f * u - 0.15650019f) * u + 0.0272640362f) * u + 1.05960107f;
+        {
+            float u = 2f * t - .5f;
+            float numerator = ((((-0.914684569f * u - 2.13948337f) * u - 28.9072914f) * u + 0.595128826f) * u + 8.31411962f);
+            float denominator = (-28.4643044f * u * u + 8.11607609f);
+            return numerator / denominator;
+        }
+
+        float uRight = 2f * (1f - t) - .5f;
+        float numeratorRight = ((((0.420727168f * uRight + 0.299182342f) * uRight + 1.20960225f) * uRight - 0.0145376027f) * uRight + 0.701432982f);
+        float denominatorRight = (1.35363617f * uRight * uRight + 0.661590958f);
+        return numeratorRight / denominatorRight;
     }
 
     /// <summary>Retains Flanger feedback, delayed-voice proportions and saturation, then applies prepared gain.</summary>

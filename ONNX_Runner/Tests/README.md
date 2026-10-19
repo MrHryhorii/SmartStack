@@ -53,7 +53,7 @@ with independent ITU reference digests. Rolling decoder-glitch checks cover capt
 duration, low/high-frequency detection, live replacement, streaming partitions, and
 allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
 Mixer component checks retain the frozen voice moments used to fit the codec,
-Crusher, Tactical, FM, Overdrive, RingModulator, Chorus, Flanger, and Telephone
+Crusher, Tactical, FM, RingModulator, and Telephone
 coefficients. They protect coefficient evaluation, joins, endpoints and the recorded
 component-level tradeoffs. These historical moments do not represent the revised
 engine intensity path and must not be read as current waveform-level guarantees.
@@ -82,6 +82,26 @@ loaded only by the test runner. Checks cover the clean/full endpoints, current m
 windows, curve progression and bending, the preceding curve's quality budgets, streaming
 partitions, and zero-allocation mixing.
 
+Overdrive checks use current post-DC wet moments from 48 recordings at 21 strengths,
+including the eased wet strength and fixed output trim. Three base recordings are the
+primary calibration inputs; the remaining voices constrain selection and are not blind
+validation. Checks protect base midpoint windows and nearly ordered progression, catalog
+error budgets, joined gain values/slopes, increasing wet share, exact clean/full selection,
+stream partitions, and zero-allocation gain preparation. Independent routing checks use
+three rates and three input levels. Historical pre-trim moments remain in the research
+archive rather than defining the new signal path. RMS budgets describe these fixtures;
+they do not promise identical loudness or monotonicity for arbitrary input audio.
+
+Chorus and Flanger checks use current additive-waveform moments from the full voice
+catalog at 21 strengths, including eased internal intensity. Their prepared scalar gains
+follow the unchanged additive mixture, so delay modulation, feedback, saturation and
+voice proportions retain their character. Checks cover base-mean progression, midpoint
+coverage, bounded per-recording errors and reversals, smooth gain joins, exact endpoints,
+streaming partitions, zero-allocation preparation, and independent PCM checkpoints at
+three sample rates and input levels. Historical linear-intensity fixtures are retained
+in the development research archive. A common fixed correction cannot make every
+recording follow the same loudness path; recorded limits remain explicit.
+
 Separate engine-routing fixtures replay the unchanged synthetic inputs at three rates.
 Their expected levels come from frozen accepted effect algorithms, the declared
 `amount * (2 - amount)` wet-strength curve, and fixed output trims. The request amount
@@ -91,9 +111,8 @@ cassette and decoder-glitch intensity laws remain separate.
 Character-strength checks verify the prepared Overdrive and Tactical input strength,
 midpoint Bitcrusher quantization, and independent full-waveform checkpoints, peaks and
 RMS levels after the agreed output trims. Existing streaming and hot-loop allocation
-checks exercise the revised engine. Calibration of the external level curves after
-these changes is a separate step; the routing fixtures verify the declared processing,
-not ideal midpoint loudness.
+checks exercise the revised engine. Effects without current-path mixer checks above still need separate external-curve
+calibration; routing fixtures verify the declared processing, not ideal midpoint loudness.
 
 Bitcrusher quantization checks cover all 121 depths from 16.0 to 4.0 bits in
 0.1-bit steps, exact legacy quantization at every integer depth across all PCM16

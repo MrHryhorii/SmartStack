@@ -8,6 +8,8 @@
   <ItemGroup>
     <EmbeddedResource Include="TelephoneCurveMoments.json" LogicalName="TelephoneCurveMoments.json" />
     <EmbeddedResource Include="CrusherCurveMoments.json" LogicalName="CrusherCurveMoments.json" />
+    <EmbeddedResource Include="OverdriveCurveMoments.json" LogicalName="OverdriveCurveMoments.json" />
+    <EmbeddedResource Include="ModulationCurveMoments.json" LogicalName="ModulationCurveMoments.json" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../ONNX_Runner.csproj" />
     <Compile Include="../../Models/AudioSampleRate.cs" Link="Production/AudioSampleRate.cs" />
