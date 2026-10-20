@@ -194,9 +194,9 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares FmRadio gains using two experimentally fitted cubic corrections.
-    /// The halves share their midpoint value and slope while retaining the original dry/wet ratio.
-    /// Reuses the equal-power roots; call once per buffer without runtime loudness analysis.
+    /// Prepares fixed FM gains for a phase-aligned, full-character wet branch.
+    /// Quartic halves share their midpoint value and slope. The wet proportion
+    /// increases throughout the transition without runtime loudness analysis.
     /// </summary>
     public static void FmGains(float t, out float dryGain, out float wetGain)
     {
@@ -212,27 +212,23 @@ public static class Dsp
             wetGain = 1f;
             return;
         }
-
-        EqualPowerGains(t, out dryGain, out wetGain);
-        float correction;
         if (t == 0.5f)
         {
-            correction = 0.851101089f;
+            dryGain = 0.408240229f;
+            wetGain = 0.611240387f;
+            return;
         }
-        else if (t < 0.5f)
+        if (t < 0.5f)
         {
-            // The existing wet gain supplies sqrt(2*t), matching the low-intensity mix shape.
-            float u = wetGain * 1.41421356f;
-            correction = ((0.0887463403f * u + 0.28754265f) * u - 0.525187902f) * u + 1f;
+            float u = 2f * t;
+            dryGain = ((((0.620947242f * u + -1.31476724f) * u + 1.19296145f) * u + -1.09090126f) * u + 1.0f);
+            wetGain = ((((-0.744469345f * u + 1.63084114f) * u + -1.48721039f) * u + 1.21207905f) * u + 0.0f);
+            return;
         }
-        else
-        {
-            // Evaluate the second half from its exact full-effect endpoint.
-            float u = 2f * (1f - t);
-            correction = ((0.7655766f * u - 1.5403225f) * u + 0.625846988f) * u + 1f;
-        }
-        dryGain *= correction;
-        wetGain *= correction;
+
+        float uRight = 2f * (1f - t);
+        dryGain = ((((0.685223341f * uRight + -2.02143621f) * uRight + 1.74445307f) * uRight + -0.0f) * uRight + 0.0f);
+        wetGain = ((((-0.551138103f * uRight + 1.72749114f) * uRight + -1.56511271f) * uRight + -0.0f) * uRight + 1.0f);
     }
 
     /// <summary>Combines inputs with Fm gains prepared outside the sample loop.</summary>

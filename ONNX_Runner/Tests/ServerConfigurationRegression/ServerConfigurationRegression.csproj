@@ -12,6 +12,7 @@
     <EmbeddedResource Include="ModulationCurveMoments.json" LogicalName="ModulationCurveMoments.json" />
     <EmbeddedResource Include="RingCurveMoments.json" LogicalName="RingCurveMoments.json" />
     <EmbeddedResource Include="TacticalCurveMoments.json" LogicalName="TacticalCurveMoments.json" />
+    <EmbeddedResource Include="FmCurveMoments.json" LogicalName="FmCurveMoments.json" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../ONNX_Runner.csproj" />
     <Compile Include="../../Models/AudioSampleRate.cs" Link="Production/AudioSampleRate.cs" />
