@@ -24,6 +24,7 @@ var native = NativeAudioDependencies.Detect();
 
 if (!synthesisOnly)
 {
+    AllocationChecks.Run(Check);
     RequestAdapterChecks.Run(Check);
     EqualizerChecks.Run(Check);
     AudioEffectsChecks.Run(Check);

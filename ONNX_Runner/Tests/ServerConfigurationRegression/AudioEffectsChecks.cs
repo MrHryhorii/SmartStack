@@ -79,7 +79,65 @@ internal static class AudioEffectsChecks
                 long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
                 Require(allocated == 0, $"Hot processing allocated {allocated} bytes.");
             });
+            foreach (float amount in new[] { .0011f, .1f, .5f, .75f, 1f })
+                check($"Glitch trigger, playback and release allocate no managed bytes at {rate} Hz and {amount:R} intensity", () =>
+                    CheckTriggeredAllocations(rate, amount));
+            check($"Glitch reset restores the same seeded PCM at {rate} Hz", () =>
+            {
+                float[] input = Tone(rate, 200, .25f, rate * 2);
+                float[] first = (float[])input.Clone();
+                float[] replay = (float[])input.Clone();
+                var engine = NewEngine(rate);
+                engine.ApplyEffect(first, VoiceEffectType.DecoderGlitch, 1);
+                engine.Reset(123456);
+                engine.ApplyEffect(replay, VoiceEffectType.DecoderGlitch, 1);
+                Require(first.AsSpan().SequenceEqual(replay), "Reset changed PCM for the same input and seed.");
+            });
         }
+    }
+
+    /// <summary>Measures guaranteed trigger, active playback, rolling capture and release after warming each branch.</summary>
+    private static void CheckTriggeredAllocations(int rate, float amount)
+    {
+        var engine = NewEngine(rate);
+        float[] source = Tone(rate, 2000, .25f, rate);
+        float[] buffer = new float[source.Length];
+        Span<float> trigger = stackalloc float[1];
+        for (int i = 0; i < 3; i++)
+        {
+            PrepareTrigger(engine, amount);
+            source.AsSpan().CopyTo(buffer);
+            trigger[0] = .25f;
+            engine.ApplyEffect(trigger, VoiceEffectType.DecoderGlitch, amount);
+            engine.ApplyEffect(buffer, VoiceEffectType.DecoderGlitch, amount);
+        }
+
+        PrepareTrigger(engine, amount);
+        source.AsSpan().CopyTo(buffer);
+        trigger[0] = .25f;
+        long before = GC.GetAllocatedBytesForCurrentThread();
+        engine.ApplyEffect(trigger, VoiceEffectType.DecoderGlitch, amount);
+        long triggerBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        Require(State<bool>(GlitchField.GetValue(engine)!, "Frozen"), "The allocation check did not activate playback.");
+
+        before = GC.GetAllocatedBytesForCurrentThread();
+        engine.ApplyEffect(buffer, VoiceEffectType.DecoderGlitch, amount);
+        long playbackBytes = GC.GetAllocatedBytesForCurrentThread() - before;
+        Require(!State<bool>(GlitchField.GetValue(engine)!, "Frozen"), "Playback and release did not finish.");
+        Require(triggerBytes == 0 && playbackBytes == 0,
+            $"Trigger allocated {triggerBytes} bytes; playback and release allocated {playbackBytes} bytes.");
+    }
+
+    /// <summary>Forces only the random roll and detector readiness outside the measured interval.</summary>
+    private static void PrepareTrigger(AudioEffectsEngine engine, float amount)
+    {
+        engine.Reset(123456);
+        engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.DecoderGlitch, amount);
+        object state = GlitchField.GetValue(engine)!;
+        state.GetType().GetField("TriggerAccumulator")!.SetValue(state, 1f);
+        state.GetType().GetField("TriggerWindowTimer")!.SetValue(state, 1);
+        state.GetType().GetField("Energy")!.SetValue(state, .0625f);
+        GlitchField.SetValue(engine, state);
     }
 
     /// <summary>Compares every PCM16 input and every decoded codeword with independent ITU reference digests.</summary>

@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Keep exact allocation counters independent of background-GC accounting. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
   </PropertyGroup>
   <ItemGroup>
     <EmbeddedResource Include="TelephoneCurveMoments.json" LogicalName="TelephoneCurveMoments.json" />
