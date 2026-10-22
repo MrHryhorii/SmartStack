@@ -25,7 +25,7 @@ internal sealed class FmRadioEqualizer
         _kernel = Kernels.GetOrAdd(sampleRate, CreateKernel);
         int size = 1;
         while (size < _kernel.Length) size <<= 1;
-        _history = new float[size];
+        _history = new float[2 * size];
         _mask = size - 1;
     }
 
@@ -40,20 +40,19 @@ internal sealed class FmRadioEqualizer
     {
         int position = _position;
         int delay = DelaySamples;
-        _history[position] = sample;
+        _history[position] = _history[position + _mask + 1] = sample;
         dry = _history[(position - delay) & _mask];
-        float sum = _kernel[delay] * dry;
-        int last = _kernel.Length - 1;
-        for (int i = 0; i < delay; i++)
-            sum += _kernel[i] * (_history[(position - i) & _mask]
-                + _history[(position - last + i) & _mask]);
+        float sum = FmFir.Process(_kernel, _history, position + _mask + 2 - _kernel.Length);
         _position = (position + 1) & _mask;
         return sum;
     }
 
+    internal static int LatencyAt(int sampleRate) =>
+        Math.Max(16, (int)Math.Round(sampleRate * (128.0 / 22050.0)));
+
     private static float[] CreateKernel(int sampleRate)
     {
-        int delay = Math.Max(16, (int)Math.Round(sampleRate * (128.0 / 22050.0)));
+        int delay = LatencyAt(sampleRate);
         int length = 2 * delay + 1;
         int grid = 1;
         while (grid < length) grid <<= 1;
@@ -118,5 +117,29 @@ internal sealed class FmRadioEqualizer
             if (term < sum * 1e-16) break;
         }
         return sum;
+    }
+}
+
+/// <summary>Convolves symmetric FM kernels over contiguous duplicated ring history.</summary>
+internal static class FmFir
+{
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static float Process(float[] kernel, float[] history, int start)
+    {
+        if (!Vector.IsHardwareAccelerated)
+        {
+            int middle = kernel.Length / 2;
+            float scalar = kernel[middle] * history[start + middle];
+            for (int tap = 0; tap < middle; tap++)
+                scalar += kernel[tap] * (history[start + tap] + history[start + kernel.Length - 1 - tap]);
+            return scalar;
+        }
+        int i = 0;
+        Vector<float> sum = Vector<float>.Zero;
+        for (; i <= kernel.Length - Vector<float>.Count; i += Vector<float>.Count)
+            sum += new Vector<float>(kernel, i) * new Vector<float>(history, start + i);
+        float output = Vector.Sum(sum);
+        for (; i < kernel.Length; i++) output += kernel[i] * history[start + i];
+        return output;
     }
 }

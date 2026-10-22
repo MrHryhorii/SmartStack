@@ -194,41 +194,39 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares fixed FM gains for a phase-aligned, full-character wet branch.
-    /// Quartic halves share their midpoint value and slope. The wet proportion
-    /// increases throughout the transition without runtime loudness analysis.
+    /// Fixed FM gains fitted in two quartic halves with a shared midpoint value and slope.
+    /// The prepared full FM branch includes its manual output boost; no input analysis is performed.
     /// </summary>
     public static void FmGains(float t, out float dryGain, out float wetGain)
     {
-        if (t <= 0.001f || float.IsNaN(t))
+        if (t <= .001f || float.IsNaN(t))
         {
-            dryGain = 1f;
-            wetGain = 0f;
+            dryGain = 1;
+            wetGain = 0;
             return;
         }
-        if (t >= 1f)
+        if (t >= 1)
         {
-            dryGain = 0f;
-            wetGain = 1f;
+            dryGain = 0;
+            wetGain = 1;
             return;
         }
-        if (t == 0.5f)
+        if (t == .5f)
         {
-            dryGain = 0.408240229f;
-            wetGain = 0.611240387f;
+            dryGain = 0.551741719f;
+            wetGain = 0.476274043f;
             return;
         }
-        if (t < 0.5f)
+        if (t < .5f)
         {
-            float u = 2f * t;
-            dryGain = ((((0.620947242f * u + -1.31476724f) * u + 1.19296145f) * u + -1.09090126f) * u + 1.0f);
-            wetGain = ((((-0.744469345f * u + 1.63084114f) * u + -1.48721039f) * u + 1.21207905f) * u + 0.0f);
+            float u = 2 * t;
+            dryGain = ((((-1.05324185f * u + 2.34128022f) * u + -1.58125246f) * u + -0.155044287f) * u + 1f);
+            wetGain = ((((1.1927706f * u + -2.62879014f) * u + 1.74789405f) * u + 0.16439952f) * u + 0f);
             return;
         }
-
-        float uRight = 2f * (1f - t);
-        dryGain = ((((0.685223341f * uRight + -2.02143621f) * uRight + 1.74445307f) * uRight + -0.0f) * uRight + 0.0f);
-        wetGain = ((((-0.551138103f * uRight + 1.72749114f) * uRight + -1.56511271f) * uRight + -0.0f) * uRight + 1.0f);
+        float uRight = 2 * (1 - t);
+        dryGain = ((((0.394435048f * uRight + -1.10797596f) * uRight + 0.987580836f) * uRight + 0.277701855f) * uRight + 0f);
+        wetGain = ((((-0.287124693f * uRight + 0.815499723f) * uRight + -0.790798962f) * uRight + -0.261302054f) * uRight + 1f);
     }
 
     /// <summary>Combines inputs with Fm gains prepared outside the sample loop.</summary>

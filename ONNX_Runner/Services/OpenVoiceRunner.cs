@@ -415,13 +415,30 @@ public partial class OpenVoiceRunner : IDisposable
         }
     }
 
-    /// <summary>
-    /// Persists a tone-color embedding for reuse without re-running the extractor.
-    /// </summary>
-    public void SaveVoiceFingerprint(string path, float[] embedding)
+    private const int FingerprintHeaderLength = 16;
+    private const int FingerprintVersion = 2; // Correct BS.1770 K-weighting for reference normalization.
+
+    /// <summary>Checks normalization provenance before reusing a fingerprint whose WAV is still available.</summary>
+    public static bool IsVoiceFingerprintCurrent(string path, float referenceLufs, int embeddingLength)
     {
-        byte[] result = new byte[embedding.Length * sizeof(float)];
-        Buffer.BlockCopy(embedding, 0, result, 0, result.Length);
+        if (!File.Exists(path)) return false;
+        using var stream = File.OpenRead(path);
+        if (stream.Length != FingerprintHeaderLength + (long)embeddingLength * sizeof(float)) return false;
+        Span<byte> header = stackalloc byte[FingerprintHeaderLength];
+        stream.ReadExactly(header);
+        return header[..8].SequenceEqual("TSBVOICE"u8) &&
+            System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(header[8..]) == FingerprintVersion &&
+            System.Buffers.Binary.BinaryPrimitives.ReadSingleLittleEndian(header[12..]) == referenceLufs;
+    }
+
+    /// <summary>Persists an embedding with its normalization revision and target LUFS.</summary>
+    public void SaveVoiceFingerprint(string path, float[] embedding, float referenceLufs = -23f)
+    {
+        byte[] result = new byte[checked(FingerprintHeaderLength + embedding.Length * sizeof(float))];
+        "TSBVOICE"u8.CopyTo(result);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(8), FingerprintVersion);
+        System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(result.AsSpan(12), referenceLufs);
+        Buffer.BlockCopy(embedding, 0, result, FingerprintHeaderLength, embedding.Length * sizeof(float));
         File.WriteAllBytes(path, result);
     }
 
@@ -431,8 +448,17 @@ public partial class OpenVoiceRunner : IDisposable
     public float[] LoadVoiceFingerprint(string path)
     {
         byte[] data = File.ReadAllBytes(path);
-        float[] embedding = new float[data.Length / sizeof(float)];
-        Buffer.BlockCopy(data, 0, embedding, 0, data.Length);
+        int offset = data.AsSpan().StartsWith("TSBVOICE"u8) ? FingerprintHeaderLength : 0;
+        if (offset != 0 && (data.Length < FingerprintHeaderLength ||
+            System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(data.AsSpan(8)) != FingerprintVersion))
+            throw new InvalidDataException("Unsupported voice fingerprint version.");
+        int payloadLength = data.Length - offset;
+        if (payloadLength != checked(_config.Model.GinChannels * sizeof(float)))
+            throw new InvalidDataException("Voice fingerprint has an invalid embedding size.");
+        float[] embedding = new float[payloadLength / sizeof(float)];
+        Buffer.BlockCopy(data, offset, embedding, 0, payloadLength);
+        if (embedding.Any(value => !float.IsFinite(value)))
+            throw new InvalidDataException("Voice fingerprint contains non-finite values.");
         return embedding;
     }
 

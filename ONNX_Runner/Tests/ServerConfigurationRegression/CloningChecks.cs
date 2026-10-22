@@ -23,6 +23,26 @@ internal static class CloningChecks
         openVoice.UnloadExtractor();
         openVoice.VoiceLibrary["female"] = openVoice.LoadVoiceFingerprint(Path.Combine(voicesDirectory, "female.voice"));
 
+        await check("Voice fingerprints preserve payload and invalidate outdated normalization", () =>
+        {
+            string path = Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".voice");
+            float[] fingerprint = openVoice.VoiceLibrary["female"];
+            try
+            {
+                openVoice.SaveVoiceFingerprint(path, fingerprint, -23);
+                Require(OpenVoiceRunner.IsVoiceFingerprintCurrent(path, -23, fingerprint.Length), "Fresh fingerprint was not recognized.");
+                Require(!OpenVoiceRunner.IsVoiceFingerprintCurrent(path, -20, fingerprint.Length), "A changed normalization target retained the cache.");
+                Require(openVoice.LoadVoiceFingerprint(path).SequenceEqual(fingerprint), "Versioned fingerprint changed the embedding.");
+                var legacy = new byte[fingerprint.Length * sizeof(float)];
+                Buffer.BlockCopy(fingerprint, 0, legacy, 0, legacy.Length);
+                File.WriteAllBytes(path, legacy);
+                Require(!OpenVoiceRunner.IsVoiceFingerprintCurrent(path, -23, fingerprint.Length), "Legacy fingerprint bypassed regeneration.");
+                Require(openVoice.LoadVoiceFingerprint(path).SequenceEqual(fingerprint), "A legacy voice without its WAV became unreadable.");
+            }
+            finally { File.Delete(path); }
+            return Task.CompletedTask;
+        });
+
         var dsp = new DspSettings { EnableLowPassFilter = true, LowPassCutoffFrequency = 1000, VolumeBoosterDb = 0 };
         using var services = new ServiceCollection()
             .AddSingleton(config).AddSingleton(piper).AddSingleton(phonemizer).AddSingleton(openVoice).AddSingleton(processor)

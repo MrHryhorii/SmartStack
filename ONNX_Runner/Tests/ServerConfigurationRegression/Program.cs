@@ -33,6 +33,9 @@ if (!synthesisOnly)
     CrusherCurveChecks.Run(Check);
     TacticalMixingChecks.Run(Check);
     FmMixingChecks.Run(Check);
+    FmVoicePathChecks.Run(Check);
+    PeakLimiterChecks.Run(Check);
+    LufsMeterChecks.Run(Check);
     OverdriveMixingChecks.Run(Check);
     RingMixingChecks.Run(Check);
     ChorusMixingChecks.Run(Check);

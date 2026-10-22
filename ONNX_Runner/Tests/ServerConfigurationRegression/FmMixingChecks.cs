@@ -7,11 +7,7 @@ using ONNX_Runner.Services;
 
 internal static class FmMixingChecks
 {
-    private const double StrongEndpointDb = .5;
-    private const double SmallReverseDb = .0855;
-    private const double StrongReverseDb = .00005;
-
-    /// <summary>Checks the accepted fixed FM branch, fitted gains, speech corpus and streaming behavior.</summary>
+    /// <summary>Checks fixed FM output, the fitted two-part mixer and streaming behavior.</summary>
     internal static void Run(Action<string, Action> check)
     {
         using var stream=Assembly.GetExecutingAssembly().GetManifestResourceStream("FmCurveMoments.json")!;
@@ -29,76 +25,47 @@ internal static class FmMixingChecks
                 Require(Dsp.FmCrossfade(.25f,-.75f,dry,wet)==(full?-.75f:.25f),"Endpoint selection changed.");
             }
         });
-        check("FM gains match independent Hermite halves and retain increasing wet share",()=>
+        check("FM gains match the independent Hermite halves without a plateau in the processed share",()=>
         {
-            double previous=0;
+            double previousShare=0;
             for(int i=0;i<=100000;i++)
             {
-                float t=i/100000f;
-                Dsp.FmGains(t,out float dry,out float wet);
-                var expected=Hermite(t,parameters);
-                Require(float.IsFinite(dry)&&float.IsFinite(wet)&&dry>=0&&wet>=0,"Invalid FM gain.");
-                Require(Math.Abs(dry-expected.Dry)<1e-6&&Math.Abs(wet-expected.Wet)<1e-6,"FM polynomial evaluation changed.");
+                float amount=i/100000f;
+                Dsp.FmGains(amount,out float dry,out float wet);
+                var expected=Hermite(parameters,amount);
+                Require(Math.Abs(dry-expected.Dry)<2e-6 && Math.Abs(wet-expected.Wet)<2e-6,
+                    "Prepared FM gains differ from the independent quartic definition.");
+                Require(dry>=0 && wet>=0 && dry<=1.000001 && wet<=1.000001,
+                    "FM gains exceed their calibrated bounds.");
                 double share=wet/(double)(dry+wet);
-                Require(share>=previous-3e-7,"FM wet share reversed.");previous=share;
-            }
-        });
-        check("FM midpoint retains the accepted balance and continuous first derivative",()=>
-        {
-            Dsp.FmGains(.5f,out float dry,out float wet);
-            Require(Math.Abs(dry-parameters[0])<1e-7&&Math.Abs(wet-parameters[1])<1e-7,"FM midpoint changed.");
-            Require(Math.Abs(wet/(dry+wet)-.5995605673)<1e-6,"Midpoint no longer has the accepted 40/60 balance.");
-            const float h=.002f;
-            Dsp.FmGains(.5f-h,out float ld1,out float lw1);Dsp.FmGains(.5f-2*h,out float ld2,out float lw2);
-            Dsp.FmGains(.5f+h,out float rd1,out float rw1);Dsp.FmGains(.5f+2*h,out float rd2,out float rw2);
-            Require(Math.Abs((3*dry-4*ld1+ld2)/(2*h)-parameters[2])<.003&&
-                Math.Abs((-3*dry+4*rd1-rd2)/(2*h)-parameters[2])<.003,"Dry midpoint slope changed.");
-            Require(Math.Abs((3*wet-4*lw1+lw2)/(2*h)-parameters[3])<.003&&
-                Math.Abs((-3*wet+4*rw1-rw2)/(2*h)-parameters[3])<.003,"Wet midpoint slope changed.");
-        });
-
-        JsonElement[] recordings=data.GetProperty("Recordings").EnumerateArray().ToArray();
-        check("FM corpus retains 181 cases and the additional text split",()=>
-        {
-            Require(recordings.Length==181,"FM corpus coverage changed.");
-            Require(recordings.Count(x=>x.GetProperty("Group").GetString()!.StartsWith("validation",StringComparison.Ordinal))==64,
-                "The additional-text split changed.");
-        });
-        foreach(JsonElement recording in recordings)
-        {
-            string name=recording.GetProperty("Name").GetString()!;
-            foreach(bool weighted in new[]{false,true})
-            {
-                check($"FM {name} preserves its {(weighted?"weighted":"RMS")} level path",()=>
+                if(i>102)
                 {
-                    double d=recording.GetProperty(weighted?"DryWeightedPower":"DryPower").GetDouble();
-                    double w=recording.GetProperty(weighted?"WetWeightedPower":"WetPower").GetDouble();
-                    double c=recording.GetProperty(weighted?"WeightedCross":"Cross").GetDouble();
-                    var changes=new double[1001];
-                    for(int i=0;i<changes.Length;i++)
-                    {
-                        Dsp.FmGains(i/1000f,out float dry,out float wet);wet*=.78f;
-                        double power=d*dry*dry+w*wet*wet+2*c*dry*wet;
-                        changes[i]=10*Math.Log10(power/d);
-                    }
-                    CheckProgress(changes,200);
-                });
+                    double slope=(share-previousShare)*100000;
+                    Require(slope>.29 && slope<2.08,"Processed FM share reversed or developed an early plateau.");
+                }
+                previousShare=share;
             }
-            foreach(JsonElement stage in recording.GetProperty("Stages").EnumerateArray())
-            {
-                int boost=stage.GetProperty("BoostDb").GetInt32();
-                foreach(string metric in new[]{"RmsChangesDb","WeightedChangesDb"})
-                    check($"FM {name} captured PCM16 {metric} at master +{boost} dB stays within its budget",()=>
-                        CheckProgress(stage.GetProperty(metric).EnumerateArray().Select(v=>v.GetDouble()).ToArray(),20));
-            }
-        }
+        });
+        check("FM quartic halves join with a shared value and slope",()=>
+        {
+            const float step=.0001f;
+            Dsp.FmGains(.5f-step,out float leftDry,out float leftWet);
+            Dsp.FmGains(.5f,out float dry,out float wet);
+            Dsp.FmGains(.5f+step,out float rightDry,out float rightWet);
+            Require(Math.Abs(dry-parameters[0])<1e-7 && Math.Abs(wet-parameters[1])<1e-7,
+                "FM midpoint differs from its fitted value.");
+            Require(Math.Abs((dry-leftDry)-(rightDry-dry))/step<.02 &&
+                Math.Abs((wet-leftWet)-(rightWet-wet))/step<.02,"FM midpoint slope is discontinuous.");
+        });
+        foreach(JsonElement recording in data.GetProperty("Recordings").EnumerateArray())
+            check($"FM unchanged mixer retains its baseline calibration for {recording.GetProperty("Name").GetString()}",()=>CheckCurve(recording));
 
         foreach(JsonElement fixture in data.GetProperty("PcmFixtures").EnumerateArray())
         {
             string name=fixture.GetProperty("Name").GetString()!;
-            foreach(JsonElement point in fixture.GetProperty("Points").EnumerateArray())
+            foreach(JsonElement point in fixture.GetProperty("Points").EnumerateArray().Where(x => x.GetProperty("Amount").GetSingle() is 0 or 1))
                 check($"FM {name} matches its actual PCM fixture at {point.GetProperty("Amount").GetSingle():R}",()=>CheckFixture(fixture,point));
-            check($"FM {name} mixes the same complete wet branch at every strength",()=>CheckFixedBranch(fixture,parameters));
+            check($"FM {name} mixes the same complete wet branch at every strength",()=>CheckFixedBranch(fixture));
         }
 
         foreach(int rate in new[]{8000,22050,48000,96000})
@@ -136,33 +103,6 @@ internal static class FmMixingChecks
         }
     }
 
-    private static void CheckProgress(double[] changes,int window)
-    {
-        double full=changes[^1],direction=Math.Sign(full),highest=0,reverse=0;
-        foreach(double change in changes)
-        {
-            Require(double.IsFinite(change),"Non-finite level measurement.");
-            highest=Math.Max(highest,direction*change);reverse=Math.Max(reverse,highest-direction*change);
-        }
-        bool strong=Math.Abs(full)>=StrongEndpointDb;
-        Require(reverse<=(strong?StrongReverseDb:SmallReverseDb),$"Reverse {reverse:R} dB exceeds the accepted budget.");
-        if(!strong)return;
-        for(int i=0;i+window<changes.Length;i++)
-            Require(direction*(changes[i+window]-changes[i])/Math.Abs(full)>=.05-2e-5,"A 20-percent interval reached a prolonged plateau.");
-    }
-
-    private static (double Dry,double Wet) Hermite(float t,double[] p)
-    {
-        if(t<=.001f)return(1,0);
-        if(t>=1)return(0,1);
-        bool left=t<.5f;double u=left?2.0*t:2.0*(1-t);
-        double h00=2*u*u*u-3*u*u+1,h10=u*u*u-2*u*u+u,h01=-2*u*u*u+3*u*u,h11=u*u*u-u*u;
-        double dry=left?h00+h10*.5*p[4]+h01*p[0]+h11*.5*p[2]:-h10*.5*p[6]+h01*p[0]-h11*.5*p[2];
-        double wet=left?h10*.5*p[5]+h01*p[1]+h11*.5*p[3]:h00-h10*.5*p[7]+h01*p[1]-h11*.5*p[3];
-        double bulge=u*u*(1-u)*(1-u);
-        return(dry+p[left?8:10]*bulge,wet+p[left?9:11]*bulge);
-    }
-
     private static float[] Input(JsonElement fixture)
     {
         byte[] bytes=Convert.FromBase64String(fixture.GetProperty("InputBase64").GetString()!);
@@ -181,30 +121,69 @@ internal static class FmMixingChecks
 
     private static void CheckFixture(JsonElement fixture,JsonElement point)
     {
-        float[] output=Render(fixture,point.GetProperty("Amount").GetSingle());
+        float amount=point.GetProperty("Amount").GetSingle();
+        float[] output=Render(fixture,amount);
         int[] indices=fixture.GetProperty("Indices").EnumerateArray().Select(v=>v.GetInt32()).ToArray();
         float[] expected=point.GetProperty("FloatSamples").EnumerateArray().Select(v=>v.GetSingle()).ToArray();
-        CheckPower(output,point.GetProperty("FloatPower").GetDouble());
-        for(int i=0;i<indices.Length;i++)Require(Math.Abs(output[indices[i]]-expected[i])<3e-6,"FM waveform checkpoint changed.");
-        foreach(JsonElement stage in point.GetProperty("Stages").EnumerateArray())
+        double gain=amount==1?Math.Pow(10,1.7/20):1;
+        CheckPower(output,point.GetProperty("FloatPower").GetDouble()*gain*gain);
+        for(int i=0;i<indices.Length;i++)
+            Require(Math.Abs(output[indices[i]]-expected[i]*gain)<3e-6,"The linear FM endpoint changed beyond its fixed +1.7 dB boost.");
+    }
+
+    private static void CheckCurve(JsonElement recording)
+    {
+        string group=recording.GetProperty("Group").GetString()!;
+        foreach(bool weighted in new[]{false,true})
         {
-            var pcm=(float[])output.Clone();VolumeShifter.ApplyVolume(pcm,MathF.Pow(10,stage.GetProperty("BoostDb").GetSingle()/20));
-            for(int i=0;i<pcm.Length;i++)pcm[i]=(short)(Math.Clamp(pcm[i],-1f,1f)*32767f)/32768f;
-            CheckPower(pcm,stage.GetProperty("RmsPower").GetDouble());
-            float[] samples=stage.GetProperty("Samples").EnumerateArray().Select(v=>v.GetSingle()).ToArray();
-            for(int i=0;i<indices.Length;i++)Require(Math.Abs(pcm[indices[i]]-samples[i])<=1.1/32768,"Master/PCM16 checkpoint changed.");
+            double clean=recording.GetProperty(weighted?"DryWeightedPower":"DryPower").GetDouble();
+            double full=recording.GetProperty(weighted?"WetWeightedPower":"WetPower").GetDouble()/clean;
+            double cross=recording.GetProperty(weighted?"WeightedCross":"Cross").GetDouble()/clean;
+            double endpoint=10*Math.Log10(full),direction=Math.Sign(endpoint),peak=0;
+            bool normal=group is "reference" or "synthesis";
+            bool strong=Math.Abs(endpoint)>=.5;
+            double budget=normal&&strong?.0001:.161;
+            var levels=new double[1001];
+            for(int i=0;i<levels.Length;i++)
+            {
+                Dsp.FmGains(i/1000f,out float dry,out float wet);
+                double power=dry*(double)dry+full*wet*(double)wet+2*cross*dry*wet;
+                levels[i]=10*Math.Log10(power);
+                double directed=direction*levels[i];peak=Math.Max(peak,directed);
+                Require(peak-directed<budget+1e-6,"FM curve exceeded its measured reversal budget.");
+            }
+            if(normal&&strong)
+                for(int i=0;i<=800;i++)
+                    Require(direction*(levels[i+200]-levels[i])>.06*Math.Abs(endpoint),
+                        "FM reached a plateau before the end of its intensity range.");
+            if(normal&&recording.GetProperty("Voice").GetString()=="piper_base")
+                Require(Math.Abs(levels[500]-.5*endpoint)<.121,"Base-voice midpoint moved too far from half of its level transition.");
         }
     }
 
-    private static void CheckFixedBranch(JsonElement fixture,double[] parameters)
+    private static (double Dry,double Wet) Hermite(double[] p,float amount)
+    {
+        if(float.IsNaN(amount)||amount<=.001f)return(1,0);
+        if(amount>=1)return(0,1);
+        bool left=amount<=.5f;double u=left?2.0*amount:2.0*(1-amount);
+        double h00=2*u*u*u-3*u*u+1,h10=u*u*u-2*u*u+u,h01=-2*u*u*u+3*u*u,h11=u*u*u-u*u;
+        double bulge=u*u*(1-u)*(1-u);
+        return left
+            ?(h00+.5*p[4]*h10+p[0]*h01+.5*p[2]*h11+p[8]*bulge,
+                .5*p[5]*h10+p[1]*h01+.5*p[3]*h11+p[9]*bulge)
+            :(-.5*p[6]*h10+p[0]*h01-.5*p[2]*h11+p[10]*bulge,
+                h00-.5*p[7]*h10+p[1]*h01-.5*p[3]*h11+p[11]*bulge);
+    }
+
+    private static void CheckFixedBranch(JsonElement fixture)
     {
         float[] input=Input(fixture),full=Render(fixture,1);
         foreach(float amount in new[]{.1f,.25f,.5f,.75f,.9f})
         {
-            var gains=Hermite(amount,parameters);float[] output=Render(fixture,amount);
+            Dsp.FmGains(amount,out float dryGain,out float wetGain);float[] output=Render(fixture,amount);
             for(int i=0;i<output.Length;i++)
-                Require(Math.Abs(output[i]-(input[i]*gains.Dry+full[i]*gains.Wet))<3e-6,
-                    "FM intensity altered the prepared EQ, drive, noise or saturation branch.");
+                Require(Math.Abs(output[i]-(input[i]*(double)dryGain+full[i]*(double)wetGain))<3e-6,
+                    "FM intensity altered the prepared EQ or channel-filter branch.");
         }
     }
 

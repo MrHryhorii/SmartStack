@@ -261,9 +261,9 @@ if (piperConfig != null && piperModelPath != null)
                 {
                     string voiceName = Path.GetFileNameWithoutExtension(wavPath);
                     string fingerprintPath = Path.Combine(voicesDirectory, voiceName + ".voice");
-                    if (File.Exists(fingerprintPath))
+                    if (OpenVoiceRunner.IsVoiceFingerprintCurrent(fingerprintPath, clonerConfig.ReferenceAudioTargetLufs, toneConfig.Model.GinChannels))
                     {
-                        // Already fingerprinted on a previous run — nothing to do here.
+                        // Reuse fingerprints extracted with the current reference normalization.
                         continue;
                     }
 
@@ -300,7 +300,7 @@ if (piperConfig != null && piperModelPath != null)
                     if (frames == 0) continue;
 
                     var fingerprint = openVoice.ExtractToneColor(spec);
-                    openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint);
+                    openVoice.SaveVoiceFingerprint(fingerprintPath, fingerprint, clonerConfig.ReferenceAudioTargetLufs);
 
                     Console.ForegroundColor = ConsoleColor.Green;
                     Console.WriteLine($"   [SUCCESS] Fingerprint saved: {voiceName}.voice");

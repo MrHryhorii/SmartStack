@@ -109,6 +109,9 @@ internal static class AudioGenerationPipeline
         float boosterLinear = MathF.Pow(10f, ctx.DspConfig.VolumeBoosterDb / 20f);
         float targetVolume = requestedVolume * boosterLinear;
         bool useVolumeShift = equalizer != null || MathF.Abs(targetVolume - 1.0f) > 0.001f;
+        PeakLimiter? fmPeakLimiter = useEffect && effectType == VoiceEffectType.FmRadio
+            ? new PeakLimiter(ctx.ProcessingSampleRate, targetVolume)
+            : null;
         // =================================================================
         float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
         int silenceSamplesCount = (int)(ctx.ProcessingSampleRate * (ctx.ChunkerConfig.SentencePauseSeconds / currentSpeed));
@@ -422,15 +425,11 @@ internal static class AudioGenerationPipeline
                         // Device profiles color the completed signal, including generated DSP sound.
                         equalizer?.Apply(currentBuffer.AsSpan(0, currentLength));
 
-                        // Apply final output gain AFTER all DSP. This keeps effect drive, compression,
-                        // generated noise and spatial tails independent from the user's volume setting.
-                        // VolumeShifter also acts as the final soft limiter before encoding.
-                        if (useVolumeShift)
-                        {
-                            VolumeShifter.ApplyVolume(currentBuffer.AsSpan(0, currentLength), targetVolume, forceLimiter: equalizer != null);
-                        }
-
-                        WriteOutput(currentBuffer.AsSpan(0, currentLength), streamManager, outputResampler, filter);
+                        // Apply the master gain after all DSP. FM uses a continuous lookahead
+                        // limiter; other effects retain their established output processing.
+                        int outputLength = ApplyOutputVolume(currentBuffer.AsSpan(0, currentLength),
+                            fmPeakLimiter, useVolumeShift, targetVolume, equalizer != null);
+                        WriteOutput(currentBuffer.AsSpan(0, outputLength), streamManager, outputResampler, filter);
                         // SentencePauseSeconds belongs only to real sentence boundaries.
                         // EarlySplit and emergency chunks already carry their own punctuation/context.
                         if (chunk.IsSentenceFinished)
@@ -441,13 +440,9 @@ internal static class AudioGenerationPipeline
                             spatialEngine?.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
                             equalizer?.Apply(absoluteSilence.AsSpan());
 
-                            // Keep the generated DSP tail at the same final output gain as the main audio.
-                            if (useVolumeShift)
-                            {
-                                VolumeShifter.ApplyVolume(absoluteSilence.AsSpan(), targetVolume, forceLimiter: equalizer != null);
-                            }
-
-                            WriteOutput(absoluteSilence.AsSpan(), streamManager, outputResampler, filter);
+                            int silenceLength = ApplyOutputVolume(absoluteSilence.AsSpan(),
+                                fmPeakLimiter, useVolumeShift, targetVolume, equalizer != null);
+                            WriteOutput(absoluteSilence.AsSpan(0, silenceLength), streamManager, outputResampler, filter);
                         }
                         // Keep flushing every generated chunk so an EarlySplit chunk reaches the client
                         // immediately. The setting name is retained for configuration compatibility.
@@ -493,21 +488,17 @@ internal static class AudioGenerationPipeline
                             spatialEngine.ApplyEnvironment(probeSpan, envType, envIntensity);
                             equalizer?.Apply(probeSpan);
 
-                            // Apply the same final master gain to the reverb tail.
-                            if (useVolumeShift)
-                            {
-                                VolumeShifter.ApplyVolume(probeSpan, targetVolume, forceLimiter: equalizer != null);
-                            }
-
-                            WriteOutput(probeSpan, streamManager, outputResampler, filter);
+                            int tailLength = ApplyOutputVolume(probeSpan,
+                                fmPeakLimiter, useVolumeShift, targetVolume, equalizer != null);
+                            WriteOutput(probeSpan[..tailLength], streamManager, outputResampler, filter);
                             written += probeSamples;
                             float peak = 0f;
-                            for (int i = 0; i < probeSamples; i++)
+                            for (int i = 0; i < tailLength; i++)
                             {
                                 float absVal = MathF.Abs(tailProbe[i]);
                                 if (absVal > peak) peak = absVal;
                             }
-                            if (peak < silenceFloor) break; // tail has decayed below audibility
+                            if (tailLength > 0 && peak < silenceFloor) break; // tail has decayed below audibility
                         }
                     }
                     finally
@@ -519,6 +510,7 @@ internal static class AudioGenerationPipeline
                         targetStream.Flush();
                     }
                 }
+                FlushPeakLimiter(fmPeakLimiter, streamManager, outputResampler, filter);
                 // Flush the final fractional output block before the encoder is finalized.
                 outputResampler?.Complete(streamManager);
             }
@@ -562,10 +554,29 @@ internal static class AudioGenerationPipeline
             ctx.FinalSampleRate);
     }
 
+    private static int ApplyOutputVolume(Span<float> samples, PeakLimiter? limiter,
+        bool useVolumeShift, float volume, bool forceLimiter)
+    {
+        if (limiter != null) return limiter.Process(samples);
+        if (useVolumeShift) VolumeShifter.ApplyVolume(samples, volume, forceLimiter);
+        return samples.Length;
+    }
+
+    private static void FlushPeakLimiter(PeakLimiter? limiter, AudioStreamManager manager,
+        AudioOutputResampler? resampler, NAudio.Dsp.BiQuadFilter? filter)
+    {
+        if (limiter == null) return;
+        Span<float> tail = stackalloc float[256];
+        int count;
+        while ((count = limiter.Flush(tail)) > 0)
+            WriteOutput(tail[..count], manager, resampler, filter);
+    }
+
     /// <summary>Writes processed PCM through optional output resampling, applying the cloning filter before rate conversion.</summary>
     private static void WriteOutput(Span<float> samples, AudioStreamManager manager,
         AudioOutputResampler? resampler, NAudio.Dsp.BiQuadFilter? filter)
     {
+        if (samples.IsEmpty) return;
         if (resampler == null)
         {
             manager.WriteChunk(samples, filter);

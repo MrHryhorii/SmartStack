@@ -17,5 +17,6 @@
     <ProjectReference Include="../../ONNX_Runner.csproj" />
     <Compile Include="../../Models/AudioSampleRate.cs" Link="Production/AudioSampleRate.cs" />
     <Compile Include="../../Services/Synthesis/AudioOutputResampler.cs" Link="Production/AudioOutputResampler.cs" />
+    <Compile Include="../../Services/PeakLimiter.cs" Link="Production/PeakLimiter.cs" />
   </ItemGroup>
 </Project>

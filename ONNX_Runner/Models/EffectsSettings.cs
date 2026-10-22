@@ -35,7 +35,7 @@ public enum VoiceEffectType
     /// <summary>Military-grade CVSD codec simulation with heavy compression and slope-overload distortion.</summary>
     TacticalRadio,
 
-    /// <summary>Civilian handheld radio effect with an FM amplitude limiter and signal-dependent noise floor.</summary>
+    /// <summary>Analogue voice-radio audio path with fixed EQ, complementary emphasis and a band-limited modulation limiter.</summary>
     FmRadio,
 
     /// <summary>G.711 μ-law telephony companding; finer quantization near silence than A-law.</summary>

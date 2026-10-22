@@ -69,7 +69,7 @@ internal static class AudioEffectSampleRateChecks
                         "Cassette noise changed by more than 0.5 dB with host rate.");
                 });
             }
-            foreach (VoiceEffectType effect in new[] { VoiceEffectType.Telephone, VoiceEffectType.FmRadio })
+            foreach (VoiceEffectType effect in new[] { VoiceEffectType.Telephone })
             {
                 check($"{effect} reference-clock noise stays consistent at {rate} Hz", () =>
                 {

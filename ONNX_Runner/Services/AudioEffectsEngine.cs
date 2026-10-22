@@ -18,7 +18,7 @@ namespace ONNX_Runner.Services;
 ///   - Ring Crossfade: fitted common gains retain the RingModulator tremolo transition.
 ///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
-///   - FM Crossfade: fixed full-character wet branch, matched dry delay and prepared quartic gains.
+///   - FM Crossfade: fixed full-character wet branch, matched dry delay and prepared gains.
 ///   - Chorus / Flanger Add: original nonlinear summation, then a prepared effect-specific gain.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
@@ -53,7 +53,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // Apply after character generation; drive, compression and modulation stay intact.
     private const float OverdriveOutputGain = 0.5347782f;
     private const float TacticalOutputGain = 0.63f;
-    private const float FmOutputGain = 0.78f;
+    private const float FmOutputBoostDb = 1.7f;
+    private static readonly float FmOutputGain = .78f * MathF.Pow(10f, FmOutputBoostDb / 20f);
     private const float RingOutputGain = 0.91f;
     private const float ThermalReferenceCoeff = 0.00021773577f;
     private readonly EffectsSettings _config = config;
@@ -225,11 +226,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Discriminator: identifies which G.711 variant is active (shared struct, set in Setup).
         public bool G711ALaw; // false = mu-law, true = A-law
 
-        // FmRadio: envelope follower for signal-dependent noise modulation.
-        public float Envelope;
-        public float NoiseState;
-        public float NoiseCoeff; // pre-computed 1-pole LP coeff for noise smoothing (~800 Hz)
-
         // TacticalRadio: full CVSD-based signal chain.
         public float TacticalEnvelope;
         public FeedForwardCompressor TacticalCompressor;
@@ -267,7 +263,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     private readonly BiQuadFilter[] _filters = new BiQuadFilter[5];
     private int _filterCount;
-    private FmRadioEqualizer? _fmEqualizer;
+    private FmRadioProcessor? _fmProcessor;
     private VoiceEffectType _current = VoiceEffectType.None;
 
     private const int GlitchReferenceCaptureSamples = 4096;
@@ -308,7 +304,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         _delay.Clear();
         _dcBlocker.Reset();
-        _fmEqualizer?.Reset();
+        _fmProcessor?.Reset();
 
         Array.Clear(_filters, 0, _filters.Length);
         _filterCount = 0;
@@ -376,6 +372,19 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
 
         RoutingMode mode = GetRoutingMode(type);
+        if (mode == RoutingMode.FmCrossfade)
+        {
+            Dsp.FmGains(amount, out float dryGain, out float wetGain);
+            wetGain *= FmOutputGain;
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                float wet = _fmProcessor!.Process(Dsp.KillDenormal(buffer[i]), out float dry);
+                wet = _dcBlocker.Process(wet);
+                buffer[i] = Dsp.FmCrossfade(dry, wet, dryGain, wetGain);
+            }
+            return;
+        }
+
         // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
         // Tape and rolling glitches retain their own authored intensity laws.
         float effectAmount = mode == RoutingMode.StrictInsert ? amount : amount * (2f - amount);
@@ -403,14 +412,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             Dsp.TacticalGains(amount, out tacticalDryGain, out tacticalWetGain);
             tacticalWetGain *= TacticalOutputGain;
-        }
-
-        float fmDryGain = 1f;
-        float fmWetGain = 0f;
-        if (mode == RoutingMode.FmCrossfade)
-        {
-            Dsp.FmGains(amount, out fmDryGain, out fmWetGain);
-            fmWetGain *= FmOutputGain;
         }
 
         float driveDryGain = 1f;
@@ -477,17 +478,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 for (int f = 0; f < filterCount; f++)
                     filtered = filters[f].Transform(filtered);
 
-            // Match the FM dry delay to the fixed linear-phase equalizer.
-            if (mode == RoutingMode.FmCrossfade)
-                filtered = _fmEqualizer!.Process(filtered, out dry);
-
-            // Tactical keeps its evolving input; FM strength belongs to the outer mixer.
-            float processInput = mode == RoutingMode.FmCrossfade
-                ? Dsp.Lerp(dry, filtered, 1f)
-                : mode == RoutingMode.TacticalCrossfade
-                    ? Dsp.Lerp(dry, filtered, effectAmount)
-                    : filtered;
-
+            float processInput = mode == RoutingMode.TacticalCrossfade
+                ? Dsp.Lerp(dry, filtered, effectAmount) : filtered;
             float wet = Process(type, processInput, effectAmount);
             // Tape blends DC removal internally; rolling glitches preserve their captured samples.
             wet = type is not (VoiceEffectType.DecoderGlitch or VoiceEffectType.LoFiTape)
@@ -530,10 +522,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
                 case RoutingMode.StrictCrossfade:
                     buffer[i] = Dsp.Lerp(dry, wet, amount);
-                    break;
-
-                case RoutingMode.FmCrossfade:
-                    buffer[i] = Dsp.FmCrossfade(dry, wet, fmDryGain, fmWetGain);
                     break;
 
                 case RoutingMode.CodecCrossfade:
@@ -712,13 +700,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.FmRadio:
-                // Fixed FM magnitude response with the same delay in both mix branches.
-                _fmEqualizer ??= new FmRadioEqualizer(_sampleRate);
-                _fmEqualizer.Reset();
-
-                _radio = default;
-                // Pre-compute noise LP coefficient (~800 Hz): eliminates MathF.Exp per sample.
-                _radio.NoiseCoeff = 1f - MathF.Exp(-2f * MathF.PI * 800f / _sampleRate);
+                _fmProcessor ??= new FmRadioProcessor(_sampleRate);
+                _fmProcessor.Reset();
                 break;
 
             case VoiceEffectType.G711MuLaw:
@@ -792,7 +775,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.LoFiTape => LoFiTape(x, amount),
             VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
             VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
-            VoiceEffectType.FmRadio => FmRadio(x),
             VoiceEffectType.G711MuLaw => G711Codec(x, amount),
             VoiceEffectType.G711ALaw => G711Codec(x, amount),
             _ => x
@@ -1291,40 +1273,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // AsymmetricSaturation adds odd-harmonic gravel of an overdriven RF stage.
         const float outputTrim = 0.75f;
         float saturated = Dsp.AsymmetricSaturation(reconstructed * 1.4f) / 1.4f;
-        return Dsp.SoftClip(saturated * outputTrim);
-    }
-
-    /// <summary>
-    /// Simulates a civilian FM narrowband radio (PMR446 / FRS / consumer handheld transceiver).
-    /// Employs a soft limiter to collapse dynamic range and an envelope-tracked noise floor
-    /// to replicate the FM capture effect (noise rises naturally during pauses).
-    /// NoiseCoeff is pre-computed in Setup: no MathF.Exp in the hot path.
-    /// </summary>
-    private float FmRadio(float x)
-    {
-        // The full FM character stays fixed; intensity changes only its mix contribution.
-        const float drive = 2.2f;
-        float limited = Dsp.SoftClip(x * drive);
-
-        // Signal-dependent noise floor via FM capture effect.
-        float absX = MathF.Abs(x);
-        _radio.Envelope += (absX > _radio.Envelope ? _envAtt : _envRel) * (absX - _radio.Envelope);
-        _radio.Envelope = Dsp.KillDenormal(_radio.Envelope);
-
-        float captureSupression = 1.0f - Math.Clamp(_radio.Envelope * 6.0f, 0f, 1f);
-        float noiseAmount = captureSupression * 0.025f;
-        float rawNoise = NextReferencePink() * noiseAmount;
-
-        // Noise smoothing via pre-computed 1-pole LP (~800 Hz): no MathF.Exp per sample.
-        _radio.NoiseState += _radio.NoiseCoeff * (rawNoise - _radio.NoiseState);
-        _radio.NoiseState = Dsp.KillDenormal(_radio.NoiseState);
-
-        float withNoise = limited + _radio.NoiseState;
-
-        // Mild saturation: warmth of an analog FM demodulator.
-        const float outputTrim = 0.88f;
-        const float satDrive = 1.1f;
-        float saturated = Dsp.AsymmetricSaturation(withNoise * satDrive) / satDrive;
         return Dsp.SoftClip(saturated * outputTrim);
     }
 
