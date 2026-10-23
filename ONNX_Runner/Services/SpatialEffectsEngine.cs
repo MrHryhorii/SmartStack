@@ -101,6 +101,13 @@ public class SpatialEffectsEngine
 
     // InnerVoice: Dynamic 1-pole LP state
     private float _innerVoiceLpState;
+    private float _innerVoicePreparedAmount = float.NaN;
+    private float _innerVoiceStrength;
+    private float _innerVoiceInverseStrength;
+    private float _innerVoicePresenceGain;
+    private float _innerVoiceReverbGain;
+    private float _innerVoiceLpCoeff;
+    private bool _innerVoiceFullStrength;
 
     private float _muffledPreparedAmount = float.NaN;
     private float _muffledStrength;
@@ -237,7 +244,7 @@ public class SpatialEffectsEngine
     /// <summary>
     /// Quadratic mix (mix²) for additive/spatial environments gives finer control at low mix levels.
     /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff and saturation depth.
-    /// Underwater and InnerVoice use the same curve to blend their attenuation paths.
+    /// InnerVoice uses that intensity for internal coloration; Underwater uses it for blending.
     /// </summary>
     public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
     {
@@ -361,35 +368,20 @@ public class SpatialEffectsEngine
                 break;
 
             case SpatialEnvironment.InnerVoice:
-                // Dynamic cutoff from 8000Hz (transparent) to 1800Hz (disconnected from reality).
-                // A higher mix increasingly isolates the voice from the physical world.
-                float currentFreq = Dsp.Lerp(8000f, 1800f, inverseSquareMix);
-                float safeFreq = Math.Min(currentFreq, _sampleRate * 0.45f);
-                float lpCoeff = 1f - MathF.Exp(-2f * MathF.PI * safeFreq / _sampleRate);
-
+                PrepareInnerVoice(mix);
                 for (int i = 0; i < buffer.Length; i++)
                 {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-
-                    // Haas Effect: Blend dry signal with an 8ms micro-delay to collapse external 
-                    // spatialization and pull the voice directly "inside" the listener's head.
-                    _innerVoiceMicroDelay.Write(dry);
-                    float microDelayed = _innerVoiceMicroDelay.Read(_innerVoiceMicroDelaySamples);
-                    float presenceVoice = dry + microDelayed * 0.15f;
-
-                    // Apply gentle 1-pole LP to darken the presence voice without ruining TTS articulation.
-                    _innerVoiceLpState += lpCoeff * (presenceVoice - _innerVoiceLpState);
+                    float input = Dsp.KillDenormal(buffer[i]);
+                    _innerVoiceMicroDelay.Write(input);
+                    float delayed = _innerVoiceMicroDelay.Read(_innerVoiceMicroDelaySamples);
+                    float presence = input + delayed * _innerVoicePresenceGain;
+                    _innerVoiceLpState += _innerVoiceLpCoeff * (presence - _innerVoiceLpState);
                     _innerVoiceLpState = Dsp.KillDenormal(_innerVoiceLpState);
-
-                    // Reverb is generated from the close-up voice, giving it a massive spatial shadow.
-                    float wet = AlgorithmicReverb(presenceVoice);
-
-                    float mixed = _innerVoiceLpState + wet * inverseSquareMix * 0.45f;
-
-                    // Use Equal-Gain (Lerp) crossfade instead of Equal-Power. 
-                    // Since 'mixed' contains the correlated 'dry' signal, Equal-Power would cause 
-                    // an unnatural +3dB volume bump at the center of the mix.
-                    buffer[i] = Dsp.SoftClip(Dsp.Lerp(dry, mixed, inverseSquareMix));
+                    float reverb = AlgorithmicReverb(presence);
+                    float mixed = _innerVoiceLpState + reverb * _innerVoiceReverbGain;
+                    // Retain the accepted full expression's final floating-point rounding.
+                    if (_innerVoiceFullStrength) mixed = Dsp.Lerp(input, mixed, 1f);
+                    buffer[i] = Dsp.ModulationSaturate(mixed, _innerVoiceStrength, _innerVoiceInverseStrength);
                 }
                 break;
         }
@@ -398,6 +390,24 @@ public class SpatialEffectsEngine
     // =========================================================================
     // SETUP
     // =========================================================================
+
+    /// <summary>Prepares gradual direct coloration and one internally scaled reverb contribution.</summary>
+    private void PrepareInnerVoice(float amount)
+    {
+        if (_innerVoicePreparedAmount == amount) return;
+        _innerVoicePreparedAmount = amount;
+        float depth = Math.Clamp(amount, 0f, 1f);
+        float strength = depth * (2f - depth);
+        _innerVoiceStrength = strength;
+        _innerVoiceInverseStrength = 1f / strength;
+        _innerVoiceFullStrength = depth >= 1f;
+        _innerVoicePresenceGain = .15f * strength;
+        _innerVoiceReverbGain = .45f * strength;
+        float cutoff = Math.Min(1800f, _sampleRate * .45f);
+        float fullCoeff = 1f - MathF.Exp(-2f * MathF.PI * cutoff / _sampleRate);
+        // Unity coefficient is exact digital bypass; move the pole gradually to its full position.
+        _innerVoiceLpCoeff = _innerVoiceFullStrength ? fullCoeff : Dsp.Lerp(1f, fullCoeff, strength);
+    }
 
     /// <summary>Moves the complete input band toward the fixed 450 Hz full cutoff without level makeup.</summary>
     private void PrepareMuffled(float amount)
@@ -575,6 +585,7 @@ public class SpatialEffectsEngine
             // Massive (3.5s RT60) but extremely dark reverb to imply boundless mental space 
             // without reflecting real physical walls (150Hz HP / 1800Hz LP).
             case SpatialEnvironment.InnerVoice:
+                _innerVoicePreparedAmount = float.NaN;
                 ConfigureCombsByRt60(3.5f, 0.85f);
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(150f), 0.707f);
                 _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(1800f), 0.707f);
