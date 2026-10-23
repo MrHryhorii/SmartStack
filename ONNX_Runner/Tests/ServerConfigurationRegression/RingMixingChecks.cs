@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using ONNX_Runner.Models;
@@ -6,262 +7,273 @@ using ONNX_Runner.Services;
 internal static class RingMixingChecks
 {
     private static readonly Corpus Fixtures = Load();
+    private static readonly int[] Rates = [8000, 11025, 16000, 22050, 24000, 44100, 48000, 96000, 192000];
+    private static readonly FieldInfo RingField = typeof(AudioEffectsEngine)
+        .GetField("_ring", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
-    /// <summary>Checks the actual eased wet path, prepared level curve and unchanged effect proportions.</summary>
+    /// <summary>Checks only direct RingModulator processing and the tremolo-to-ring transition.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        VoiceRecord[] voices = Fixtures.Voices;
-        VoiceRecord[] basis = voices.Where(v => v.Voice == "piper_base").ToArray();
-        Require(voices.Length == 48 && basis.Length == 3 && Fixtures.Synthetic.Length == 9,
-            "The independent current-path fixtures are incomplete.");
-
-        check("RingModulator preserves exact endpoint and invalid-input gains", () =>
+        check("RingModulator retains independent full endpoints and measured level curves", () =>
         {
-            foreach (float amount in new[] { float.NegativeInfinity, -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
+            Require(Fixtures.Voices.Length == 31 && Fixtures.Synthetic.Length == 27, "Incomplete ring fixtures.");
+            Require(Fixtures.Voices.Count(v => v.Group == "dense") == 1, "Missing dense base curve.");
+        });
+        check("RingModulator correction retains unity endpoints and a modest positive range", () =>
+        {
+            foreach (float amount in new[] { -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
+                Require(Dsp.RingGain(amount) == 1f, "An endpoint or invalid-input correction changed.");
+            for (int i = 0; i <= 10000; i++)
             {
-                Dsp.RingGains(amount, out float dry, out float wet);
-                bool full = amount >= 1f;
-                Require(dry == (full ? 0f : 1f) && wet == (full ? 1f : 0f), "An endpoint gain changed.");
-                Require(Dsp.RingCrossfade(.25f, -.75f, dry, wet) == (full ? -.75f : .25f), "Endpoint selection changed.");
+                float gain = Dsp.RingGain(i / 10000f);
+                Require(float.IsFinite(gain) && gain > .99f && gain < 1.5f, "Correction left its calibrated range.");
             }
         });
-        check("RingModulator common correction is finite, positive and preserves increasing wet share", () =>
-        {
-            double previousShare = 0;
-            for (int i = 0; i <= 100000; i++)
-            {
-                float amount = i / 100000f;
-                Dsp.RingGains(amount, out float dry, out float wet);
-                double correction = Math.Sqrt(dry * (double)dry + wet * (double)wet);
-                Require(float.IsFinite(dry) && float.IsFinite(wet) && dry >= 0 && wet >= 0,
-                    "A prepared gain is invalid.");
-                Require(correction > .85 && correction < 1.1, "The common correction left its bounded range.");
-                double share = wet / (dry + (double)wet);
-                Require(share >= previousShare - 1e-7, "The wet share moved backwards.");
-                previousShare = share;
-                if (amount <= .001f || amount >= 1f) continue;
-                Dsp.EqualPowerGains(amount, out float a, out float b);
-                Require(Math.Abs(dry * b - wet * a) < 3e-7, "The correction changed the original dry/wet ratio.");
-            }
-        });
-        check("RingModulator root-coordinate halves share midpoint values and physical slopes", () =>
+        check("RingModulator gain halves share midpoint value and physical slope", () =>
         {
             const float h = .001f;
-            double middle = Correction(.5f);
-            double left = (3 * middle - 4 * Correction(.5f - h) + Correction(.5f - 2 * h)) / (2 * h);
-            double right = (-3 * middle + 4 * Correction(.5f + h) - Correction(.5f + 2 * h)) / (2 * h);
-            Require(Math.Abs(left - right) < .003, "The midpoint slope is discontinuous.");
-            Require(Math.Abs(Correction(MathF.BitDecrement(.5f)) - Correction(MathF.BitIncrement(.5f))) < 5e-7,
+            double middle = Dsp.RingGain(.5f);
+            double left = (3 * middle - 4 * Dsp.RingGain(.5f-h) + Dsp.RingGain(.5f-2*h)) / (2*h);
+            double right = (-3 * middle + 4 * Dsp.RingGain(.5f+h) - Dsp.RingGain(.5f+2*h)) / (2*h);
+            Require(Math.Abs(left-right) < .004, "The midpoint slope is discontinuous.");
+            Require(Math.Abs(Dsp.RingGain(MathF.BitDecrement(.5f))-Dsp.RingGain(MathF.BitIncrement(.5f))) < 3e-6,
                 "The midpoint value is discontinuous.");
         });
-        check("RingModulator prepared gain and mixing allocate zero managed bytes", () =>
+        check("RingModulator midpoint remains the boundary between tremolo and polarity reversal", () =>
         {
-            double checksum = 0;
-            for (int i = 0; i < 20000; i++) checksum += PreparedSample(i);
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 20000; i++) checksum += PreparedSample(i);
-            Require(GC.GetAllocatedBytesForCurrentThread() == before && double.IsFinite(checksum),
-                "Prepared mixing allocated memory.");
+            var engine = NewEngine(22050);
+            foreach (float amount in new[] { .0011f, .01f, .1f, .25f, .5f, .75f, 1f })
+            {
+                engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, amount);
+                float depth = Value(engine, "Depth");
+                Require(depth == amount, "Carrier depth no longer follows the declared intensity.");
+                Require(Value(engine, "SaturationDrive") == amount, "Saturation no longer approaches identity near zero.");
+                float minimum = 1f-2f*depth;
+                Require(amount <= .5f ? minimum >= 0f : minimum < 0f, "The tremolo-to-ring boundary moved.");
+            }
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, 1f);
+            Require(Value(engine, "Gain") == .91f && Value(engine, "Makeup") == 1.8f,
+                "The accepted full-strength gain or modulation makeup changed.");
         });
-
-        foreach (VoiceRecord voice in voices)
+        check("RingModulator output scalar cannot leave a hidden clean branch or alter modulation history", () =>
         {
-            Require(voice.Points.Length == 21, "A recorded current path is incomplete.");
-            check($"RingModulator current-path guide band holds for {voice.Name}", () =>
+            var a = NewEngine(22050); var b = NewEngine(22050); var muted = NewEngine(22050);
+            foreach (var engine in new[] { a, b, muted })
+                engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
+            SetValue(b, "Gain", Value(b, "Gain")*.5f); SetValue(muted, "Gain", 0f);
+            float[] first = Signal(22050, 22050, 1f), second = (float[])first.Clone(), zero = (float[])first.Clone();
+            a.ApplyEffect(first, VoiceEffectType.RingModulator, .5f);
+            b.ApplyEffect(second, VoiceEffectType.RingModulator, .5f);
+            muted.ApplyEffect(zero, VoiceEffectType.RingModulator, .5f);
+            for (int i = 0; i < first.Length; i++)
             {
-                foreach (Point point in voice.Points)
-                    Require(Math.Abs(Level(voice, point) - point.Amount * voice.FullChangeDb) < 1,
-                        "A current-path level exceeded the declared 1 dB guide band.");
+                Require(second[i] == first[i]*.5f, "Output gain changed state or internal processing.");
+                Require(zero[i] == 0f, "A separate clean branch survived the final scalar.");
+            }
+        });
+        check("RingModulator preparation is invalidated when returning from another effect", () =>
+        {
+            var engine = NewEngine(22050);
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
+            float expected = Value(engine, "Gain"); SetValue(engine, "Gain", 0f);
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Telephone, .5f);
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
+            Require(Value(engine, "Gain") == expected, "The previous effect left a stale ring cache.");
+            float[] actual = Signal(22050, 11025, 1f), fresh = (float[])actual.Clone();
+            engine.ApplyEffect(actual, VoiceEffectType.RingModulator, .5f);
+            NewEngine(22050).ApplyEffect(fresh, VoiceEffectType.RingModulator, .5f);
+            Require(SameBits(actual, fresh), "An empty effect switch changed the ring path.");
+        });
+        check("RingModulator parallel requests retain independent phase, noise, filters and gain", () =>
+        {
+            float[] input = Signal(22050, 22050, 1f), expected = (float[])input.Clone();
+            NewEngine(22050).ApplyEffect(expected, VoiceEffectType.RingModulator, .5f);
+            bool[] passed = new bool[24];
+            Parallel.For(0, passed.Length, i =>
+            {
+                float[] actual = (float[])input.Clone(); var engine = NewEngine(22050);
+                int block = 37+i;
+                for (int offset = 0; offset < actual.Length; offset += block)
+                    engine.ApplyEffect(actual.AsSpan(offset, Math.Min(block, actual.Length-offset)), VoiceEffectType.RingModulator, .5f);
+                passed[i] = SameBits(actual, expected);
             });
-            check($"RingModulator current-path reverse-step band holds for {voice.Name}", () =>
+            Require(passed.All(x => x), "Parallel requests shared DSP state.");
+        });
+        foreach (VoiceRecord voice in Fixtures.Voices)
+        {
+            check($"RingModulator retains measured RMS level bounds for {voice.Name} at scale {voice.Scale:R}", () =>
             {
-                double previous = 0;
-                foreach (Point point in voice.Points)
-                {
-                    double current = Level(voice, point);
-                    Require(Math.Sign(voice.FullChangeDb) * (previous - current) < .51,
-                        "An individual current-path reverse step exceeded its reported budget.");
-                    previous = current;
-                }
-            });
-            check($"RingModulator current-path endpoint escape band holds for {voice.Name}", () =>
-            {
+                Require(voice.Points[0].Amount == 0f && voice.Points[^1].Amount == 1f, "Missing measured endpoints.");
+                double full = voice.Points[^1].ExpectedDeltaDb, previous = 0;
                 foreach (Point point in voice.Points)
                 {
                     double level = Level(voice, point);
-                    Require(level >= Math.Min(0, voice.FullChangeDb) - .70 && level <= Math.Max(0, voice.FullChangeDb) + .70,
-                        "An individual current-path endpoint escape exceeded its reported budget.");
+                    Require(Math.Abs(level-point.ExpectedDeltaDb) < .0001, "Correction no longer matches measured PCM levels.");
+                    Require(Math.Abs(level-point.Amount*full) <= voice.GuideBudgetDb, "The measured guide error increased.");
+                    Require(Math.Sign(full)*(previous-level) <= voice.ReverseBudgetDb, "The measured reverse-step budget increased.");
+                    previous = level;
                 }
             });
         }
-        foreach (VoiceRecord voice in basis)
+        check("RingModulator dense base RMS curve remains ordered with a centered level midpoint", () =>
         {
-            check($"RingModulator base path stays ordered inside its clean/full window for {voice.Name}", () =>
+            VoiceRecord voice = Fixtures.Voices.Single(x => x.Group == "dense");
+            double previous = 0;
+            foreach (Point point in voice.Points)
             {
-                double previous = 0;
-                foreach (Point point in voice.Points)
-                {
-                    double current = Level(voice, point);
-                    Require(current >= previous - .0001 && current >= -.0001 && current <= voice.FullChangeDb + .0001,
-                        "A base-voice path reversed or left its clean/full window.");
-                    previous = current;
-                }
-            });
-        }
-        check("RingModulator base mean follows an ordered transition with a centered midpoint", () =>
-        {
-            double full = basis.Average(v => v.FullChangeDb), previous = 0, error = 0, baselineError = 0;
-            for (int i = 0; i <= 20; i++)
-            {
-                double mean = basis.Average(v => Level(v, v.Points[i]));
-                Require(mean >= previous - .0001, "The base mean reversed at a captured point.");
-                error += Math.Abs(mean - i / 20d * full) / 21;
-                baselineError += Math.Abs(basis.Average(v => v.Points[i].BaselineChangeDb) - i / 20d * full) / 21;
-                previous = mean;
+                double level = Level(voice, point);
+                Require(previous-level < .04, "A large base-voice reverse step returned.");
+                previous = level;
             }
-            Require(error < .04 && error < baselineError * .1, "The base-mean guide improvement regressed.");
-            Require(Math.Abs(basis.Average(v => Level(v, v.Points[10])) - full / 2) < 1e-5,
-                "The base mean midpoint moved from the half-dB guide.");
+            double midpoint = Level(voice, voice.Points.Single(p => p.Amount == .5f));
+            double full = voice.Points[^1].ExpectedDeltaDb;
+            Require(midpoint > .35*full && midpoint < .65*full, "The base midpoint left its useful level window.");
         });
-        check("RingModulator catalog controls retain the declared midpoint and average-error budgets", () =>
-        {
-            int windows = 0; double error = 0, baselineError = 0, meanError = 0;
-            foreach (VoiceRecord voice in voices)
-            {
-                double midpoint = Level(voice, voice.Points[10]);
-                if (midpoint >= Math.Min(0, voice.FullChangeDb) && midpoint <= Math.Max(0, voice.FullChangeDb)) windows++;
-                foreach (Point point in voice.Points)
-                {
-                    error += Math.Abs(Level(voice, point) - point.Amount * voice.FullChangeDb) / (48 * 21);
-                    baselineError += Math.Abs(point.BaselineChangeDb - point.Amount * voice.FullChangeDb) / (48 * 21);
-                }
-            }
-            for (int i = 0; i <= 20; i++)
-                meanError += Math.Abs(voices.Average(v => Level(v, v.Points[i]))
-                    - voices.Average(v => v.FullChangeDb) * i / 20d) / 21;
-            Require(windows >= 25, "Catalog midpoint coverage fell below the declared 25/48.");
-            Require(error < .19 && error < baselineError * .6 && meanError < .18,
-                "Catalog average-error improvement regressed.");
-        });
-
         foreach (SyntheticRecord record in Fixtures.Synthetic)
-        foreach (SyntheticPoint point in record.Points)
         {
-            check($"RingModulator independent wet routing at {record.Rate} Hz, scale {record.Scale:R}, amount {point.Amount:R}", () =>
+            check($"RingModulator preserves accepted full PCM at {record.Rate} Hz and scale {record.Scale:R}", () =>
             {
-                float[] clean = Signal(record.Rate, record.Rate * 3, record.Scale), actual = (float[])clean.Clone();
-                NewEngine(record.Rate).ApplyEffect(actual, VoiceEffectType.RingModulator, point.Amount);
-                double power = 0;
-                foreach (float sample in actual)
-                {
-                    Require(float.IsFinite(sample), "Non-finite effect output.");
-                    power += sample * (double)sample;
-                }
-                Dsp.RingGains(point.Amount, out float dryGain, out float wetGain); wetGain *= .91f;
-                double expectedPower = dryGain * (double)dryGain * record.DryPower
-                    + wetGain * (double)wetGain * point.WetPower + 2 * dryGain * (double)wetGain * point.Cross;
-                Require(Math.Abs(10 * Math.Log10(power / actual.Length / expectedPower)) < .0001,
-                    "Output power differs from independently captured post-DC wet moments.");
-                Require(point.WetIndices.Length == 16 && point.WetSamples.Length == 16, "Wet checkpoints are incomplete.");
-                for (int i = 0; i < point.WetIndices.Length; i++)
-                {
-                    int index = point.WetIndices[i];
-                    float expected = clean[index] * dryGain + point.WetSamples[i] * wetGain;
-                    Require(Math.Abs(actual[index] - expected) < 3e-7, "Correction changed a frozen wet waveform checkpoint.");
-                }
+                float[] actual = Signal(record.Rate, record.Rate*3, record.Scale);
+                NewEngine(record.Rate).ApplyEffect(actual, VoiceEffectType.RingModulator, 1f);
+                Require(actual.All(float.IsFinite), "Non-finite full output.");
+                Require(Math.Abs(RmsDb(actual)-record.RmsDbfs) < .002, "Full-output level changed.");
+                Require(record.Indices.Length == 16 && record.Samples.Length == 16, "Incomplete full PCM fixture.");
+                for (int i = 0; i < record.Indices.Length; i++)
+                    Require(Math.Abs(actual[record.Indices[i]]-record.Samples[i]) < 3e-6, "Full-output waveform changed.");
             });
         }
-        foreach (int rate in new[] { 8000, 22050, 48000 })
+        foreach (int rate in Rates)
         {
-            check($"RingModulator changing intensity is independent of streaming partitions at {rate} Hz", () =>
+            check($"RingModulator remains finite and independent of stream partitions at {rate} Hz", () =>
             {
-                float[] amounts = [0, .001f, .00101f, .05f, .25f, .4995f, .5f, .5005f, .85f, 1, .45f];
-                int size = rate / 8;
-                float[] whole = Signal(rate, size * amounts.Length, 1), split = (float[])whole.Clone();
+                float[] input = Signal(rate, rate/8, 1f);
+                foreach (float amount in new[] { .0011f, .01f, .25f, .5f, .75f, 1f })
+                {
+                    float[] whole = (float[])input.Clone(), split = (float[])input.Clone();
+                    NewEngine(rate).ApplyEffect(whole, VoiceEffectType.RingModulator, amount);
+                    var engine = NewEngine(rate);
+                    for (int i = 0; i < split.Length; i += 37)
+                        engine.ApplyEffect(split.AsSpan(i, Math.Min(37, split.Length-i)), VoiceEffectType.RingModulator, amount);
+                    Require(SameBits(whole, split), "Streaming boundaries changed output.");
+                    Require(whole.All(x => float.IsFinite(x) && Math.Abs(x) < 2), "Invalid direct output.");
+                }
+            });
+            check($"RingModulator changing intensity preserves streaming, reset and warm bypass at {rate} Hz", () =>
+            {
+                float[] amounts = [0f, .001f, .0011f, .01f, .25f, .4995f, .5f, .5005f, .75f, 1f, .45f];
+                int size = rate/20;
+                float[] whole = Signal(rate, size*amounts.Length, 1f), split = (float[])whole.Clone();
                 var a = NewEngine(rate); var b = NewEngine(rate);
                 for (int section = 0; section < amounts.Length; section++)
                 {
-                    a.ApplyEffect(whole.AsSpan(section * size, size), VoiceEffectType.RingModulator, amounts[section]);
+                    a.ApplyEffect(whole.AsSpan(section*size, size), VoiceEffectType.RingModulator, amounts[section]);
                     for (int i = 0; i < size; i += 257)
-                        b.ApplyEffect(split.AsSpan(section * size + i, Math.Min(257, size - i)),
-                            VoiceEffectType.RingModulator, amounts[section]);
+                        b.ApplyEffect(split.AsSpan(section*size+i, Math.Min(257, size-i)), VoiceEffectType.RingModulator, amounts[section]);
                 }
-                Require(MemoryMarshal.AsBytes(whole.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(split.AsSpan())),
-                    "Streaming partitions changed output.");
-            });
-            check($"RingModulator warm bypass remains exact at {rate} Hz", () =>
-            {
-                float[] clean = Signal(rate, rate / 4, 1); var engine = NewEngine(rate);
-                engine.ApplyEffect((float[])clean.Clone(), VoiceEffectType.RingModulator, .7f);
+                Require(SameBits(whole, split), "Changing intensity depends on partition size.");
                 foreach (float amount in new[] { 0f, .001f })
                 {
-                    float[] output = (float[])clean.Clone(); engine.ApplyEffect(output, VoiceEffectType.RingModulator, amount);
-                    Require(output.SequenceEqual(clean), "Warm bypass changed the original samples.");
+                    float[] clean = Signal(rate, 257, 1f), actual = (float[])clean.Clone();
+                    a.ApplyEffect(actual, VoiceEffectType.RingModulator, amount);
+                    Require(SameBits(clean, actual), "Warm bypass changed samples.");
                 }
+                float[] expected = Signal(rate, rate/8, 1f); NewEngine(rate).ApplyEffect(expected, VoiceEffectType.RingModulator, .5f);
+                a.Reset(123456); float[] reset = Signal(rate, rate/8, 1f); a.ApplyEffect(reset, VoiceEffectType.RingModulator, .5f);
+                Require(SameBits(reset, expected), "Reset retained prior phase, filters or cached parameters.");
+            });
+            check($"RingModulator preparation and hot processing allocate zero managed bytes at {rate} Hz", () =>
+            {
+                var engine = NewEngine(rate); float[] block = Signal(rate, 257, 1f);
+                for (int i = 0; i < 256; i++) engine.ApplyEffect(block, VoiceEffectType.RingModulator, .01f+i%99/100f);
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < 256; i++) engine.ApplyEffect(block, VoiceEffectType.RingModulator, .01f+i%99/100f);
+                Require(GC.GetAllocatedBytesForCurrentThread() == before, "Preparation or processing allocated managed memory.");
+            });
+            check($"RingModulator first active intensity approaches clean audio at {rate} Hz", () =>
+            {
+                float[] input = Signal(rate, rate, 1f), actual = (float[])input.Clone();
+                NewEngine(rate).ApplyEffect(actual, VoiceEffectType.RingModulator, .0011f);
+                double error = 0, power = 0;
+                for (int i = 0; i < input.Length; i++) { error += Math.Pow(actual[i]-input[i], 2); power += input[i]*(double)input[i]; }
+                Require(error < power*.0001, "Tiny intensity introduced a large filter or saturation discontinuity.");
             });
         }
-    }
-
-    /// <summary>Evaluates current prepared gains against the frozen independent wet moments.</summary>
-    private static double Level(VoiceRecord voice, Point point)
-    {
-        Dsp.RingGains(point.Amount, out float dry, out float wet); wet *= .91f;
-        double power = dry * (double)dry * voice.DryPower + wet * (double)wet * point.WetPower
-            + 2 * dry * (double)wet * point.Cross;
-        return 10 * Math.Log10(power / voice.DryPower);
-    }
-
-    /// <summary>Recovers the common scalar independently of its coordinate representation.</summary>
-    private static double Correction(float amount)
-    {
-        Dsp.RingGains(amount, out float dry, out float wet);
-        return Math.Sqrt(dry * (double)dry + wet * (double)wet);
-    }
-
-    /// <summary>Exercises both prepared gains and the unchanged per-sample combination.</summary>
-    private static float PreparedSample(int index)
-    {
-        Dsp.RingGains(index % 1001 / 1000f, out float dry, out float wet);
-        return Dsp.RingCrossfade(.2f, -.1f, dry, wet);
-    }
-
-    /// <summary>Recreates the exact multi-band routing input without audio assets.</summary>
-    private static float[] Signal(int rate, int count, float scale)
-    {
-        var signal = new float[count];
-        for (int i = 0; i < count; i++)
+        foreach (int rate in new[] { 8000, 22050, 48000 })
+        foreach (float amount in new[] { .25f, .5f, .75f, 1f })
         {
-            double t = (double)i / rate;
-            signal[i] = scale * (float)((.18 * Math.Sin(2 * Math.PI * 110 * t) + .08 * Math.Sin(2 * Math.PI * 330 * t)
-                + .05 * Math.Sin(2 * Math.PI * 1700 * t) + .03 * Math.Sin(2 * Math.PI * Math.Min(3200, rate * .3) * t))
-                * (.7 + .3 * Math.Sin(2 * Math.PI * .73 * t)));
+            check($"RingModulator has the declared carrier-to-sideband ratio at {rate} Hz and intensity {amount:R}", () =>
+            {
+                float[] tone = Enumerable.Range(0, rate*2).Select(i => .008f*(float)Math.Sin(2*Math.PI*1000*i/rate)).ToArray();
+                NewEngine(rate).ApplyEffect(tone, VoiceEffectType.RingModulator, amount);
+                double center = Amplitude(tone, rate, 1000), lower = Amplitude(tone, rate, 970), upper = Amplitude(tone, rate, 1030);
+                double side = (lower+upper)*.5, ratio = center/side, expected = 2*(1-amount)/amount;
+                Require(side > .0001 && Math.Abs(lower-upper) < side*.1, "Expected modulation sidebands are missing or unbalanced.");
+                Require(Math.Abs(ratio-expected) < .08*(1+expected), $"The tremolo-to-ring ratio changed: {ratio:R}, expected {expected:R}.");
+            });
         }
-        return signal;
+        check("RingModulator preserves digital silence throughout the intensity range", () =>
+        {
+            for (int i = 0; i <= 20; i++)
+            {
+                float[] silence = new float[22050]; NewEngine(22050).ApplyEffect(silence, VoiceEffectType.RingModulator, i/20f);
+                Require(silence.All(x => x == 0f), "The ring path generated audio from silence.");
+            }
+        });
     }
 
-    /// <summary>Creates isolated per-request effect state.</summary>
+    private static double Level(VoiceRecord voice, Point point) => point.Amount <= .001f ? 0
+        : point.UntrimmedRmsDbfs-voice.DryRmsDbfs+20*Math.Log10(Dsp.RingGain(point.Amount));
+    private static float Value(AudioEffectsEngine engine, string name)
+    {
+        object state = RingField.GetValue(engine)!;
+        return (float)state.GetType().GetField(name)!.GetValue(state)!;
+    }
+    private static void SetValue(AudioEffectsEngine engine, string name, float value)
+    {
+        object state = RingField.GetValue(engine)!; state.GetType().GetField(name)!.SetValue(state, value); RingField.SetValue(engine, state);
+    }
+    private static double Amplitude(float[] samples, int rate, double hz)
+    {
+        double sine = 0, cosine = 0;
+        for (int i = rate/2; i < rate/2+rate; i++)
+        {
+            double phase = 2*Math.PI*hz*i/rate; sine += samples[i]*Math.Sin(phase); cosine += samples[i]*Math.Cos(phase);
+        }
+        return 2*Math.Sqrt(sine*sine+cosine*cosine)/rate;
+    }
     private static AudioEffectsEngine NewEngine(int rate)
     {
         var engine = new AudioEffectsEngine(new(), rate); engine.Reset(123456); return engine;
     }
-
-    /// <summary>Loads numeric moments only in the standalone regression runner.</summary>
+    private static float[] Signal(int rate, int count, float scale)
+    {
+        var output = new float[count];
+        for (int i = 0; i < count; i++)
+        {
+            double t = i/(double)rate;
+            output[i] = scale*(float)((.18*Math.Sin(2*Math.PI*110*t)+.08*Math.Sin(2*Math.PI*330*t)
+                +.05*Math.Sin(2*Math.PI*1700*t)+.03*Math.Sin(2*Math.PI*Math.Min(3200, rate*.3)*t))
+                *(.7+.3*Math.Sin(2*Math.PI*.73*t)));
+        }
+        return output;
+    }
+    private static double RmsDb(ReadOnlySpan<float> samples)
+    {
+        double power = 0; foreach (float sample in samples) power += sample*(double)sample; return 10*Math.Log10(power/samples.Length);
+    }
+    private static bool SameBits(float[] a, float[] b) => MemoryMarshal.AsBytes(a.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(b.AsSpan()));
     private static Corpus Load()
     {
         using Stream stream = typeof(RingMixingChecks).Assembly.GetManifestResourceStream("RingCurveMoments.json")
-            ?? throw new InvalidDataException("Missing current-path RingModulator moments.");
-        return JsonSerializer.Deserialize<Corpus>(stream) ?? throw new InvalidDataException("Invalid RingModulator moments.");
+            ?? throw new InvalidDataException("Missing direct RingModulator level fixtures.");
+        return JsonSerializer.Deserialize<Corpus>(stream) ?? throw new InvalidDataException("Invalid direct RingModulator fixtures.");
     }
-
-    /// <summary>Reports an explicit signal contract failure.</summary>
     private static void Require(bool condition, string message)
     {
-        if (!condition) throw new InvalidDataException(message);
+        if (!condition) throw new InvalidOperationException(message);
     }
-
     private sealed record Corpus(VoiceRecord[] Voices, SyntheticRecord[] Synthetic);
-    private sealed record VoiceRecord(string Name, string Voice, int Rate, double DryPower, double FullChangeDb, Point[] Points);
-    private sealed record Point(float Amount, double WetPower, double Cross, double BaselineChangeDb);
-    private sealed record SyntheticRecord(string Name, int Rate, float Scale, double DryPower, SyntheticPoint[] Points);
-    private sealed record SyntheticPoint(float Amount, double WetPower, double Cross, int[] WetIndices, float[] WetSamples);
+    private sealed record VoiceRecord(string Name, string Group, float Scale, double DryRmsDbfs, double GuideBudgetDb, double ReverseBudgetDb, Point[] Points);
+    private sealed record Point(float Amount, double UntrimmedRmsDbfs, double ExpectedDeltaDb);
+    private sealed record SyntheticRecord(int Rate, float Scale, double RmsDbfs, int[] Indices, float[] Samples);
 }

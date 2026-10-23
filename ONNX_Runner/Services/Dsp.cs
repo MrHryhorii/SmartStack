@@ -257,53 +257,15 @@ public static class Dsp
         return dry * dryGain + wet * wetGain;
     }
 
-    /// <summary>
-    /// Prepares RingModulator gains with two empirically fitted cubic corrections.
-    /// The left half reuses sqrt(t); shared midpoint value and slope join both halves.
-    /// Keeps the eased wet algorithm and dry/wet ratio; evaluate once per buffer.
-    /// </summary>
-    public static void RingGains(float t, out float dryGain, out float wetGain)
+    /// <summary>Static ring-modulator playback correction, prepared outside the sample loop.</summary>
+    public static float RingGain(float amount)
     {
-        if (t <= 0.001f || float.IsNaN(t))
-        {
-            dryGain = 1f;
-            wetGain = 0f;
-            return;
-        }
-        if (t >= 1f)
-        {
-            dryGain = 0f;
-            wetGain = 1f;
-            return;
-        }
-
-        EqualPowerGains(t, out dryGain, out wetGain);
-        float correction;
-        if (t == 0.5f)
-        {
-            correction = 1.00849332f;
-        }
-        else if (t < 0.5f)
-        {
-            // Reuse the prepared wet root instead of evaluating another square root.
-            float u = wetGain * 1.41421356f;
-            correction = ((-0.0281309448f * u + 0.540940037f) * u - 0.50431577f) * u + 1f;
-        }
-        else
-        {
-            // Reverse the coordinate to retain the exact full-effect endpoint.
-            float u = 2f * (1f - t);
-            correction = ((-0.237859864f * u + 0.220640671f) * u + 0.0257125147f) * u + 1f;
-        }
-        dryGain *= correction;
-        wetGain *= correction;
-    }
-
-    /// <summary>Combines inputs with Ring gains prepared outside the sample loop.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float RingCrossfade(float dry, float wet, float dryGain, float wetGain)
-    {
-        return dry * dryGain + wet * wetGain;
+        if (!(amount > .001f) || amount >= 1f) return 1f;
+        float s = amount <= .5f ? amount * 2f : amount * 2f - 1f;
+        float db = amount <= .5f
+            ? ((-1.503896774f * s + 2.421650612f) * s + 1.356775113f) * s
+            : ((1.308648992f * s - 5.271563960f) * s + 1.688386016f) * s + 2.274528952f;
+        return MathF.Pow(10f, db / 20f);
     }
 
     /// <summary>Advances modulation depth and delayed level smoothly from clean to full.</summary>

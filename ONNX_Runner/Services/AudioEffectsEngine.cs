@@ -15,7 +15,7 @@ namespace ONNX_Runner.Services;
 ///
 /// DSP ROUTING MANIFESTO:
 ///   - Telephone Crossfade: prepared polynomial weights retain the complete handset signal chain.
-///   - Ring Crossfade: fitted common gains retain the RingModulator tremolo transition.
+///   - Ring Insert: internal carrier depth moves from tremolo to ring modulation; a scalar sets playback level.
 ///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
 ///   - FM Crossfade: fixed full-character wet branch, matched dry delay and prepared gains.
@@ -99,12 +99,23 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         CrusherInsert,
         TacticalCrossfade,
         DriveCrossfade,
-        RingCrossfade
+        RingInsert
     }
 
     // =========================================================================
     // EFFECT STATE STRUCTURES (Zero-Allocation)
     // =========================================================================
+
+    private struct RingState
+    {
+        public float PreparedAmount;
+        public float Depth;
+        public float Makeup;
+        public float SaturationDrive;
+        public float InverseDrive;
+        public float Gain;
+        public float FilterBlend;
+    }
 
     private struct ModulationState
     {
@@ -287,6 +298,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // =========================================================================
 
     private ModulationState _mod;
+    private RingState _ring;
     private BitcrusherState _bc;
     private TapeState _tape;
     private AzimuthState _azimuth;
@@ -326,6 +338,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _current = VoiceEffectType.None;
 
         _mod = default;
+        _ring.PreparedAmount = float.NaN;
 
         _bc.Phase = 1f;
         _bc.Hold = 0f;
@@ -408,6 +421,25 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
         }
 
+        if (mode == RoutingMode.RingInsert)
+        {
+            PrepareRing(amount);
+            BiQuadFilter highPass = _filters[0];
+            float filterBlend = _ring.FilterBlend;
+            bool fullFiltering = filterBlend >= 1f;
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                _thermal.Update(ref _noise, _thermalDriftCoeff);
+                _thermalValue = _thermal.State * _thermalNoiseGain;
+                float input = Dsp.KillDenormal(buffer[i]);
+                // Fade only below the stable biquad corner, before modulation of the entire signal.
+                float filtered = highPass.Transform(input);
+                if (!fullFiltering) filtered = Dsp.Lerp(input, filtered, filterBlend);
+                buffer[i] = _dcBlocker.Process(RingMod(filtered)) * _ring.Gain;
+            }
+            return;
+        }
+
         // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
         // Tape and rolling glitches retain their own authored intensity laws.
         float effectAmount = mode is RoutingMode.StrictInsert or RoutingMode.CrusherInsert
@@ -441,14 +473,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             Dsp.DriveGains(amount, out driveDryGain, out driveWetGain);
             driveWetGain *= OverdriveOutputGain;
-        }
-
-        float ringDryGain = 1f;
-        float ringWetGain = 0f;
-        if (mode == RoutingMode.RingCrossfade)
-        {
-            Dsp.RingGains(amount, out ringDryGain, out ringWetGain);
-            ringWetGain *= RingOutputGain;
         }
 
         // Per-buffer constants used by effect hot paths.
@@ -521,10 +545,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.DriveCrossfade(dry, wet, driveDryGain, driveWetGain);
                     break;
 
-                case RoutingMode.RingCrossfade:
-                    buffer[i] = Dsp.RingCrossfade(dry, wet, ringDryGain, ringWetGain);
-                    break;
-
                 case RoutingMode.StrictInsert:
                     buffer[i] = wet;
                     break;
@@ -556,7 +576,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Telephone => RoutingMode.TelephoneCrossfade,
             VoiceEffectType.Overdrive => RoutingMode.DriveCrossfade,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherInsert,
-            VoiceEffectType.RingModulator => RoutingMode.RingCrossfade,
+            VoiceEffectType.RingModulator => RoutingMode.RingInsert,
             VoiceEffectType.Flanger => RoutingMode.ModulationInsert,
             VoiceEffectType.Chorus => RoutingMode.ModulationInsert,
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
@@ -613,6 +633,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.RingModulator:
+                _ring.PreparedAmount = float.NaN;
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
 
@@ -790,7 +811,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Telephone => Telephone(x, amount),
             VoiceEffectType.Overdrive => Overdrive(x, amount),
             VoiceEffectType.Bitcrusher => Bitcrusher(x, amount),
-            VoiceEffectType.RingModulator => RingMod(x, amount),
             VoiceEffectType.LoFiTape => LoFiTape(x, amount),
             VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
             VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
@@ -939,19 +959,36 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return _bc.Hold;
     }
 
+    /// <summary>Prepares internal carrier depth, gradual filtering and output gain when intensity changes.</summary>
+    private void PrepareRing(float amount)
+    {
+        if (_ring.PreparedAmount == amount) return;
+        _ring.PreparedAmount = amount;
+        float depth = Math.Clamp(amount, 0f, 1f);
+        _ring.Depth = depth;
+        _ring.Makeup = 1f + .8f * depth;
+        _ring.SaturationDrive = depth;
+        _ring.InverseDrive = 1f / depth;
+        float trim = depth >= 1f ? RingOutputGain : Dsp.Lerp(1f, RingOutputGain, depth);
+        _ring.Gain = trim * Dsp.RingGain(depth);
+        float fullCutoff = Math.Min(130f, _sampleRate * .45f);
+        float cutoff = fullCutoff * depth;
+        float minimumCutoff = Math.Min(fullCutoff, _sampleRate * .0001f);
+        _ring.FilterBlend = Math.Min(1f, cutoff / minimumCutoff);
+        _filters[0].SetHighPassFilter(_sampleRate, Math.Max(cutoff, minimumCutoff), .707f);
+        _dcBlocker.SetCutoff(35f * depth);
+    }
+
     /// <summary>
-    /// Simulates a classic analog ring modulator.
-    /// Carrier frequency drifts with thermal state, replicating detuned oscillator instability.
-    /// At mid-intensity the effect transitions through tremolo — intentional design decision.
-    /// Returns a pure wet signal.
+    /// Modulates one signal without an outer clean branch. Half depth retains a unipolar tremolo
+    /// carrier; greater depths introduce polarity reversal and reach the accepted full ring character.
     /// </summary>
-    private float RingMod(float x, float amount)
+    private float RingMod(float x)
     {
         float freq = 30f + _thermalValue * 1.5f;
         _mod.RingPhase = Dsp.AdvancePhase(_mod.RingPhase, freq, _sampleRate);
-        float carrier = Dsp.Lerp(1f, Dsp.Sine(_mod.RingPhase), amount);
-        float makeupGain = 1f + 0.8f * amount;
-        return Dsp.SoftClip(x * carrier * makeupGain);
+        float carrier = Dsp.Lerp(1f, Dsp.Sine(_mod.RingPhase), _ring.Depth);
+        return Dsp.ModulationSaturate(x * carrier * _ring.Makeup, _ring.SaturationDrive, _ring.InverseDrive);
     }
 
     /// <summary>Prepares the complete modulation path only when intensity changes.</summary>
