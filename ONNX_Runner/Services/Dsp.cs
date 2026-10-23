@@ -99,49 +99,29 @@ public static class Dsp
         return dry * dryGain + wet * wetGain;
     }
 
-    /// <summary>
-    /// Prepares fitted Bitcrusher weights in two halves with a shared midpoint and slope.
-    /// Cubic numerators and one late quadratic denominator reduce transition-level humps.
-    /// Endpoint factors keep the disappearing branch nonnegative near clean/full output.
-    /// Call once per buffer; no input-level scan, extra PCM pass or allocation is used.
-    /// </summary>
-    public static void CrusherGains(float t, out float dryGain, out float wetGain)
+    /// <summary>Brings quantization forward while retaining exact clean/full endpoints.</summary>
+    public static float CrushStrength(float t)
     {
-        if (t <= .001f || float.IsNaN(t))
-        {
-            dryGain = 1f;
-            wetGain = 0f;
-            return;
-        }
-        if (t >= 1f)
-        {
-            dryGain = 0f;
-            wetGain = 1f;
-            return;
-        }
-
-        float centered = 2f * t - 1f;
-        if (centered <= 0f)
-        {
-            dryGain = 0.698755898f + centered * (-0.224722964f
-                + centered * (0.484005037f + centered * 0.407483898f));
-            wetGain = (1f + centered) * (0.465837265f
-                + centered * (-0.271710278f + centered * -0.737547543f));
-            return;
-        }
-
-        float inverse = 1f / (1f + -3.0530102f * centered * (1f - centered));
-        dryGain = (1f - centered) * (0.698755898f
-            + centered * (-1.65927595f + centered * 1.34332191f)) * inverse;
-        wetGain = 0.465837265f + centered * (0.194126987f
-            + centered * (-0.597301142f + centered * 0.937336889f)) * inverse;
+        t = Math.Clamp(t, 0f, 1f);
+        return t * (2f - t);
     }
 
-    /// <summary>Combines inputs with Crusher gains prepared outside the sample loop.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float CrusherCrossfade(float dry, float wet, float dryGain, float wetGain)
+    /// <summary>Starts sample holding gently; the full update clock remains half the source rate.</summary>
+    public static float CrushClock(float t)
     {
-        return dry * dryGain + wet * wetGain;
+        t = Math.Clamp(t, 0f, 1f);
+        return t * t * (3f - 2f * t);
+    }
+
+    /// <summary>Static two-part playback correction; no dry signal or runtime level analysis.</summary>
+    public static float CrushGain(float t)
+    {
+        if (!(t > .001f) || t >= 1f) return 1f;
+        float s = t <= .5f ? 2f * t : 2f * t - 1f;
+        float db = t <= .5f
+            ? ((-0.115586614f * s + 0.364015070f) * s + 0.301648196f) * s
+            : ((2.627098406f * s - 3.860093551f) * s + 0.682918494f) * s + 0.550076652f;
+        return MathF.Pow(10f, db / 20f);
     }
 
     /// <summary>
@@ -653,7 +633,10 @@ public struct DcBlocker(int sampleRate)
 {
     private float _x1 = 0f;
     private float _y1 = 0f;
-    private readonly float _r = 1f - (2f * MathF.PI * 35f / sampleRate);
+    private float _r = 1f - (2f * MathF.PI * 35f / sampleRate);
+
+    /// <summary>Changes the DC corner without resetting the streaming history.</summary>
+    public void SetCutoff(float frequency) => _r = 1f - (2f * MathF.PI * frequency / sampleRate);
 
     /// <summary>Removes DC offset from one sample while retaining the previous input and output.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

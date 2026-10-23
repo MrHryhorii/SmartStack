@@ -16,7 +16,7 @@ namespace ONNX_Runner.Services;
 /// DSP ROUTING MANIFESTO:
 ///   - Telephone Crossfade: prepared polynomial weights retain the complete handset signal chain.
 ///   - Ring Crossfade: fitted common gains retain the RingModulator tremolo transition.
-///   - Crusher Crossfade: experimentally calibrated parallel gains -> Bitcrusher.
+///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
 ///   - FM Crossfade: fixed full-character wet branch, matched dry delay and prepared gains.
 ///   - Chorus / Flanger Add: original nonlinear summation, then a prepared effect-specific gain.
@@ -96,7 +96,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         StrictCrossfade,
         FmCrossfade,
         CodecCrossfade,
-        CrusherCrossfade,
+        CrusherInsert,
         TacticalCrossfade,
         DriveCrossfade,
         RingCrossfade,
@@ -125,6 +125,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         public float Phase;
         public float Hold;
+        public float PreparedAmount;
+        public float Gain;
         public float ClockStep;
         public float Scale;
         public float InverseScale;
@@ -320,6 +322,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         _bc.Phase = 1f;
         _bc.Hold = 0f;
+        _bc.PreparedAmount = float.NaN;
 
         _tape.DropOut.Reset();
         _tape.Compressor.Reset();
@@ -387,7 +390,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
         // Tape and rolling glitches retain their own authored intensity laws.
-        float effectAmount = mode == RoutingMode.StrictInsert ? amount : amount * (2f - amount);
+        float effectAmount = mode is RoutingMode.StrictInsert or RoutingMode.CrusherInsert
+            ? amount : amount * (2f - amount);
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
@@ -401,10 +405,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode == RoutingMode.CodecCrossfade)
             Dsp.CubicGains(amount, out cubicDryGain, out cubicWetGain);
 
-        float crusherDryGain = 1f;
-        float crusherWetGain = 0f;
-        if (mode == RoutingMode.CrusherCrossfade)
-            Dsp.CrusherGains(amount, out crusherDryGain, out crusherWetGain);
+        float crusherGain = 1f;
 
         float tacticalDryGain = 1f;
         float tacticalWetGain = 0f;
@@ -440,6 +441,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             case VoiceEffectType.Bitcrusher:
                 PrepareBitcrusher(effectAmount);
+                crusherGain = _bc.Gain;
                 break;
 
             case VoiceEffectType.Overdrive:
@@ -492,8 +494,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.TelephoneCrossfade(dry, wet, telephoneDryGain, telephoneWetGain);
                     break;
 
-                case RoutingMode.CrusherCrossfade:
-                    buffer[i] = Dsp.CrusherCrossfade(dry, wet, crusherDryGain, crusherWetGain);
+                case RoutingMode.CrusherInsert:
+                    buffer[i] = wet * crusherGain;
                     break;
 
                 case RoutingMode.TacticalCrossfade:
@@ -546,7 +548,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             VoiceEffectType.Telephone => RoutingMode.TelephoneCrossfade,
             VoiceEffectType.Overdrive => RoutingMode.DriveCrossfade,
-            VoiceEffectType.Bitcrusher => RoutingMode.CrusherCrossfade,
+            VoiceEffectType.Bitcrusher => RoutingMode.CrusherInsert,
             VoiceEffectType.RingModulator => RoutingMode.RingCrossfade,
             VoiceEffectType.Flanger => RoutingMode.FlangerAdd,
             VoiceEffectType.Chorus => RoutingMode.ChorusAdd,
@@ -568,6 +570,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private void Setup(VoiceEffectType type)
     {
         _filterCount = 0;
+        _dcBlocker.SetCutoff(35f);
 
         float nyq = _sampleRate * 0.45f;
         // Caps filter frequencies at the configured Nyquist safety limit.
@@ -598,6 +601,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.Bitcrusher:
+                _bc.PreparedAmount = float.NaN;
+                _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
+                break;
+
             case VoiceEffectType.RingModulator:
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
@@ -716,18 +723,23 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
-    /// <summary>Prepares tenth-bit quantization and the unchanged decimation clock once per buffer.</summary>
+    /// <summary>Prepares continuous depth, a relative sample clock, and gradual bass filtering.</summary>
     private void PrepareBitcrusher(float amount)
     {
-        float bits = Math.Clamp(MathF.Round((16f - amount * 12f) * 10f) / 10f, 4f, 16f);
+        if (_bc.PreparedAmount == amount) return;
+        _bc.PreparedAmount = amount;
+        _bc.Gain = Dsp.CrushGain(amount);
+        float strength = Dsp.CrushStrength(amount);
+        float bits = Math.Clamp(16f - strength * 12f, 4f, 16f);
         _bc.Scale = MathF.Pow(2f, bits - 1f);
         _bc.InverseScale = 1f / _bc.Scale;
         // Fractional depths retain uniform integer codes within the signed PCM range.
         // Integer depths preserve the existing negative rail and one-code-short positive rail.
         _bc.MinValue = -(int)MathF.Floor(_bc.Scale);
         _bc.MaxValue = (int)MathF.Ceiling(_bc.Scale) - 1;
-        float targetRate = Dsp.Lerp((float)_sampleRate, Math.Min(_sampleRate, ReferenceSampleRate * 0.5f), amount);
-        _bc.ClockStep = targetRate / _sampleRate;
+        _bc.ClockStep = 1f - 0.5f * Dsp.CrushClock(amount);
+        _filters[0].SetHighPassFilter(_sampleRate, Math.Min(130f * strength, _sampleRate * .45f), .707f);
+        _dcBlocker.SetCutoff(35f * strength);
     }
 
     /// <summary>Prepares cassette component amounts and playback trim once per buffer.</summary>

@@ -4,128 +4,90 @@ using ONNX_Runner.Services;
 
 internal static class CrusherCurveChecks
 {
-    private sealed record Moment(float Amount, double WetPower, double Cross, double BaselineChangeDb);
-    private sealed record Recording(string Name, string Voice, int Rate, double DryPower, Moment[] Points);
-    private static readonly Recording[] Voices = Load();
+    private sealed record Point(float Amount, double UntrimmedLufs, double ExpectedDeltaLU);
+    private sealed record Recording(string Name, float Scale, int Rate, string Group, double DryLufs,
+        double MaxGuideErrorLU, double MaxReverseLU, Point[] Points);
+    private static readonly Recording[] Recordings = Load();
 
-    /// <summary>Protects current Crusher progression using independent powers and cross terms.</summary>
+    /// <summary>Checks the static playback curve against frozen offline loudness measurements.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        check("Crusher current fixtures retain all 16 voices and 21 original strengths", () =>
+        check("Crusher playback fixtures retain all recorded PCM probes and the dense base curve", () =>
         {
-            Require(Voices.Length == 48 && Voices.Select(x => x.Voice).Distinct().Count() == 16, "Incomplete voice catalog.");
-            foreach (Recording voice in Voices)
+            Require(Recordings.Length == 31 && Recordings.Sum(x => x.Points.Length) == 1555,
+                "Incomplete offline level fixtures.");
+            Require(Recordings.Count(x => x.Group == "dense") == 1, "Missing dense base curve.");
+            foreach (Recording recording in Recordings)
             {
-                Require(voice.Rate == 22050 && voice.DryPower > 0 && voice.Points.Length == 21, "Invalid original recording.");
-                for (int i = 0; i <= 20; i++) Require(voice.Points[i].Amount == i / 20f, "Primary strengths changed.");
+                Require(recording.Rate == 22050 && recording.Points[0].Amount == 0 && recording.Points[^1].Amount == 1,
+                    "Recorded endpoints changed.");
+                Require(recording.Points.All(x => double.IsFinite(x.UntrimmedLufs) && double.IsFinite(x.ExpectedDeltaLU)),
+                    "Invalid recorded loudness.");
             }
         });
-        foreach (Recording voice in Voices)
+        foreach (Recording recording in Recordings)
         {
-            check($"Crusher current guide and reverse-step budgets hold for {voice.Name}", () =>
+            check($"Crusher static playback correction retains recorded bounds for {recording.Name} at scale {recording.Scale:R}", () =>
             {
-                double full = Level(voice, 20), previous = 0;
-                for (int i = 0; i <= 20; i++)
+                double full = recording.Points[^1].ExpectedDeltaLU, previous = 0;
+                foreach (Point point in recording.Points)
                 {
-                    double value = Level(voice, i);
-                    Require(double.IsFinite(value), "Invalid current level.");
-                    Require(Math.Abs(value - i / 20d * full) < .8921, "The preceding worst-case voice error regressed.");
-                    Require(Math.Sign(full) * (previous - value) < .3501, "The reverse-step reduction regressed.");
+                    double value = Level(recording, point);
+                    Require(Math.Abs(value - point.ExpectedDeltaLU) < .005,
+                        "Playback correction no longer matches the recorded full-wet curve.");
+                    Require(Math.Abs(value - point.Amount * full) <= recording.MaxGuideErrorLU,
+                        "The measured clean/full guide error increased.");
+                    Require(Math.Sign(full) * (previous - value) <= recording.MaxReverseLU,
+                        "The measured local reverse-step budget increased.");
                     previous = value;
                 }
             });
         }
-        check("Crusher joined halves reduce catalog mean error and curve bending", () =>
+        check("Crusher dense base curve keeps its measured small reverse steps and meaningful midpoint", () =>
         {
-            double fullMean = Voices.Average(x => Level(x, 20));
-            double error = 0, oldError = 0, bend = 0, oldBend = 0, individualBend = 0, oldIndividualBend = 0;
-            var mean = new double[21]; var original = new double[21];
-            for (int i = 0; i <= 20; i++)
+            Recording recording = Recordings.Single(x => x.Group == "dense");
+            double previous = 0;
+            foreach (Point point in recording.Points)
             {
-                mean[i] = Voices.Average(x => Level(x, i));
-                original[i] = Voices.Average(x => x.Points[i].BaselineChangeDb);
-                error += Math.Abs(mean[i] - i / 20d * fullMean) / 21;
-                oldError += Math.Abs(original[i] - i / 20d * fullMean) / 21;
-                Require(Math.Abs(mean[i] - i / 20d * fullMean) < .15, "The near-flat catalog guide budget regressed.");
-                if (i < 2) continue;
-                bend += Math.Pow(mean[i] - 2 * mean[i - 1] + mean[i - 2], 2);
-                oldBend += Math.Pow(original[i] - 2 * original[i - 1] + original[i - 2], 2);
-                foreach (Recording voice in Voices)
-                {
-                    double a = Level(voice, i) - 2 * Level(voice, i - 1) + Level(voice, i - 2);
-                    double b = voice.Points[i].BaselineChangeDb - 2 * voice.Points[i - 1].BaselineChangeDb + voice.Points[i - 2].BaselineChangeDb;
-                    individualBend += a * a; oldIndividualBend += b * b;
-                }
+                double value = Level(recording, point);
+                Require(previous - value < .02, "A large base-voice reverse step returned.");
+                previous = value;
             }
-            Require(error < .07 && error < oldError * .3, "The mean-error reduction regressed.");
-            Require(bend < oldBend * .05 && individualBend < oldIndividualBend * .15, "Curve bending no longer improves.");
+            double midpoint = Level(recording, recording.Points.Single(x => x.Amount == .5f));
+            double full = Level(recording, recording.Points[^1]);
+            Require(midpoint > .35 * full && midpoint < .65 * full, "The base midpoint left its useful level window.");
         });
-        check("Crusher midpoint window coverage retains the measured improvement", () =>
+        foreach (int rate in new[] { 8000, 16000, 22050, 48000 })
         {
-            int count = Voices.Count(x => InWindow(Level(x, 10), Level(x, 20)));
-            Require(count >= 21, "Current midpoint-window coverage regressed.");
-        });
-        check("Crusher all three base-voice midpoints remain inside their clean/full windows", () =>
-        {
-            Recording[] voices = Voices.Where(x => x.Voice == "piper_base").ToArray();
-            Require(voices.Length == 3 && voices.All(x => InWindow(Level(x, 10), Level(x, 20))), "A base midpoint left its window.");
-        });
-        check("Crusher joined halves limit the measured base-voice hump and reverse steps", () =>
-        {
-            Recording[] voices = Voices.Where(x => x.Voice == "piper_base").ToArray();
-            double[] mean = Enumerable.Range(0, 21).Select(i => voices.Average(x => Level(x, i))).ToArray();
-            double reverse = 0;
-            for (int i = 1; i <= 20; i++)
-            {
-                double fall = Math.Max(mean[i-1]-mean[i], 0);
-                Require(fall < (i <= 10 ? .0052 : .0502), "The mean base-voice transition hump regressed.");
-                reverse += fall;
-            }
-            Require(mean.Max()-mean[20] < .0502 && reverse < .136,
-                "The preceding global mixer's base-voice wave returned.");
-        });
-        foreach (int rate in new[] { 8000, 22050, 48000 })
-        {
-            check($"Crusher preserves digital silence and quiet full quantization at {rate} Hz", () =>
+            check($"Crusher preserves digital silence and its full four-bit dead zone at {rate} Hz", () =>
             {
                 for (int i = 0; i <= 20; i++)
                 {
                     var engine = new AudioEffectsEngine(new(), rate); engine.Reset(123456);
                     float[] silence = new float[rate / 4];
                     engine.ApplyEffect(silence, VoiceEffectType.Bitcrusher, i / 20f);
-                    Require(silence.All(x => x == 0f), "The mixer introduced sound into digital silence.");
+                    Require(silence.All(x => x == 0f), "Crusher introduced sound into digital silence.");
                 }
                 float[] quiet = new float[rate];
                 for (int i = 0; i < quiet.Length; i++) quiet[i] = .03f * MathF.Sin(2 * MathF.PI * 220 * i / rate);
                 var full = new AudioEffectsEngine(new(), rate); full.Reset(123456);
-                full.ApplyEffect(quiet, VoiceEffectType.Bitcrusher, 1);
-                Require(quiet.All(x => x == 0f), "The full mixer changed the four-bit dead zone.");
+                full.ApplyEffect(quiet, VoiceEffectType.Bitcrusher, 1f);
+                Require(quiet.All(x => x == 0f), "The four-bit dead zone unexpectedly restored quiet input.");
             });
         }
     }
 
-    /// <summary>Evaluates independent frozen moments using only prepared production weights.</summary>
-    private static double Level(Recording voice, int index)
-    {
-        Moment point = voice.Points[index];
-        if (point.Amount <= .001f) return 0;
-        Dsp.CrusherGains(point.Amount, out float dry, out float wet);
-        double power = dry * (double)dry * voice.DryPower + wet * (double)wet * point.WetPower + 2 * dry * (double)wet * point.Cross;
-        return 10 * Math.Log10(power / voice.DryPower);
-    }
+    /// <summary>Applies only a scalar to recorded wet loudness; no runtime audio normalization is involved.</summary>
+    private static double Level(Recording recording, Point point) => point.Amount <= .001f ? 0
+        : point.UntrimmedLufs - recording.DryLufs + 20 * Math.Log10(Dsp.CrushGain(point.Amount));
 
-    /// <summary>Tests the soft clean/full midpoint window without imposing an exact halfway level.</summary>
-    private static bool InWindow(double value, double full) => value >= Math.Min(0, full) && value <= Math.Max(0, full);
-
-    /// <summary>Loads numeric fixtures only in the regression executable.</summary>
     private static Recording[] Load()
     {
         using Stream stream = typeof(CrusherCurveChecks).Assembly.GetManifestResourceStream("CrusherCurveMoments.json")
-            ?? throw new InvalidDataException("Missing current Crusher moments.");
-        return JsonSerializer.Deserialize<Recording[]>(stream) ?? throw new InvalidDataException("Invalid Crusher moments.");
+            ?? throw new InvalidDataException("Missing offline Crusher levels.");
+        return JsonSerializer.Deserialize<Recording[]>(stream) ?? throw new InvalidDataException("Invalid offline Crusher levels.");
     }
 
-    /// <summary>Reports a violated current-curve contract.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

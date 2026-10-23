@@ -36,8 +36,10 @@ internal static class CharacterStrengthChecks
             var engine = NewEngine(22050);
             engine.ApplyEffect(new float[] { .2f }, VoiceEffectType.Bitcrusher, .5f);
             object crusher = Field(engine, "_bc");
+            float scale = (float)crusher.GetType().GetField("Scale")!.GetValue(crusher)!;
             float held = (float)crusher.GetType().GetField("Hold")!.GetValue(crusher)!;
-            Require(held == .1875f, "Midpoint no longer reaches the declared stronger quantization grid.");
+            Require(scale == 64f && held * scale == MathF.Round(held * scale),
+                "Midpoint no longer reaches the declared seven-bit quantization grid.");
         });
 
         foreach (FullReference reference in FullReferences)

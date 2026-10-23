@@ -4,175 +4,135 @@ using ONNX_Runner.Services;
 
 internal static class CrusherMixingChecks
 {
-    // Frozen voice moments exercise the historical mixer coefficients, not the revised engine level path.
-    // Synthetic routing fixtures independently include the new strength curve and output trims.
-    /// <summary>Checks the accepted correction, recorded voice bounds, actual routing and stream state.</summary>
+    /// <summary>Protects wet-only routing, gradual onset, playback correction and stream state.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        check("Crusher preserves exact endpoint gains and the production bypass", () =>
+        check("Crusher scalar gain preserves unity at both endpoints", () =>
         {
             foreach (float amount in new[] { -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
-            {
-                Dsp.CrusherGains(amount, out float dry, out float wet);
-                bool full = amount >= 1f;
-                Require(dry == (full ? 0f : 1f) && wet == (full ? 1f : 0f), "Endpoint gains changed.");
-                Require(Dsp.CrusherCrossfade(.25f, -.75f, dry, wet) == (full ? -.75f : .25f),
-                    "Endpoint mixing changed the selected input.");
-            }
+                Require(Dsp.CrushGain(amount) == 1f, "Endpoint gain changed.");
         });
-        check("Crusher retains independently evaluated weight norms at all 21 primary points", () =>
+        check("Crusher correction remains finite, positive and modest across its range", () =>
         {
-            Require(GainNormReferences.Length == 21, "Missing fitted weight-norm fixtures.");
-            for (int i = 1; i < 20; i++)
+            for (int i = 0; i <= 100000; i++)
             {
-                Dsp.CrusherGains(i/20f, out float dry, out float wet);
-                double correctionDb = 10*Math.Log10(dry*(double)dry+wet*(double)wet);
-                Require(Math.Abs(correctionDb-GainNormReferences[i]) < .00001,
-                    $"The fitted weight-norm changed at intensity {i/20f:R}.");
+                float gain = Dsp.CrushGain(i / 100000f);
+                Require(float.IsFinite(gain) && gain > .99f && gain < 1.08f, "Playback trim left its calibrated range.");
             }
         });
-        check("Crusher gains stay finite while their wet share increases monotonically", () =>
-        {
-            float previousShare = 0;
-            for (int i = 101; i < 100000; i++)
-            {
-                float t = i/100000f;
-                Dsp.CrusherGains(t, out float dry, out float wet);
-                Require(float.IsFinite(dry) && float.IsFinite(wet) && dry >= 0f && wet >= 0f,
-                    "A calibrated gain is invalid.");
-                float share = wet / (dry + wet);
-                Require(share >= previousShare - 3e-7f, "Increasing intensity reduced the wet share.");
-                previousShare = share;
-            }
-        });
-        check("Crusher joined weight norm is smooth at its fitted midpoint", () =>
+        check("Crusher scalar halves meet continuously with a shared midpoint slope", () =>
         {
             const float h = .001f;
-            double middle = GainNorm(.5f);
-            double leftSlope = (3*middle-4*GainNorm(.5f-h)+GainNorm(.5f-2*h))/(2*h);
-            double rightSlope = (-3*middle+4*GainNorm(.5f+h)-GainNorm(.5f+2*h))/(2*h);
-            Require(Math.Abs(middle-0.83980007259307099) < 1e-7, "The fitted midpoint changed.");
-            Require(Math.Abs(leftSlope - (-0.15859706016817782)) < .001 && Math.Abs(rightSlope - (-0.15859706016817782)) < .001,
-                "The joined weight norm changed its fitted midpoint derivative.");
-            Require(Math.Abs(GainNorm(MathF.BitDecrement(.5f))-
-                GainNorm(MathF.BitIncrement(.5f))) < 3e-7, "The midpoint is discontinuous.");
+            double middle = Db(.5f);
+            double left = (3 * middle - 4 * Db(.5f - h) + Db(.5f - 2 * h)) / (2 * h);
+            double right = (-3 * middle + 4 * Db(.5f + h) - Db(.5f + 2 * h)) / (2 * h);
+            Require(Math.Abs(left - right) < .004, "Playback slope jumps at the midpoint.");
+            Require(Math.Abs(Db(MathF.BitDecrement(.5f)) - Db(MathF.BitIncrement(.5f))) < 3e-6,
+                "Playback gain jumps at the midpoint.");
         });
-        check("Crusher halves share their fitted dry and wet midpoint slopes", () =>
-        {
-            const float h = .001f;
-            Dsp.CrusherGains(.5f, out float dry, out float wet);
-            Dsp.CrusherGains(.5f-h, out float dl1, out float wl1);
-            Dsp.CrusherGains(.5f-2*h, out float dl2, out float wl2);
-            Dsp.CrusherGains(.5f+h, out float dr1, out float wr1);
-            Dsp.CrusherGains(.5f+2*h, out float dr2, out float wr2);
-            Require(Math.Abs(dry-0.69875589758602674) < 1e-7 && Math.Abs(wet-0.46583726505730888) < 1e-7,
-                "A half lost the shared midpoint weights.");
-            double dryLeft = (3d*dry-4d*dl1+dl2)/(2*h), dryRight = (-3d*dry+4d*dr1-dr2)/(2*h);
-            double wetLeft = (3d*wet-4d*wl1+wl2)/(2*h), wetRight = (-3d*wet+4d*wr1-wr2)/(2*h);
-            Require(Math.Abs(dryLeft-(-0.44944592742954015)) < .002 && Math.Abs(dryRight-(-0.44944592742954015)) < .002,
-                "Dry midpoint derivatives do not meet.");
-            Require(Math.Abs(wetLeft-(0.38825397485724722)) < .002 && Math.Abs(wetRight-(0.38825397485724722)) < .002,
-                "Wet midpoint derivatives do not meet.");
-        });
-        check("Crusher gain evaluation and prepared mixing allocate no managed bytes", () =>
+        check("Crusher scalar gain evaluation allocates no managed bytes", () =>
         {
             double sum = 0;
-            for (int i = 0; i < 20000; i++) sum += Sample(i);
+            for (int i = 0; i < 20000; i++) sum += Dsp.CrushGain(i % 1001 / 1000f);
             long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 20000; i++) sum += Sample(i);
-            long allocated = GC.GetAllocatedBytesForCurrentThread()-before;
-            Require(allocated == 0 && double.IsFinite(sum), $"Gain/mix processing allocated {allocated} bytes.");
-
-            static float Sample(int i)
-            {
-                Dsp.CrusherGains(i%1001/1000f, out float dry, out float wet);
-                return Dsp.CrusherCrossfade(.2f, -.1f, dry, wet);
-            }
+            for (int i = 0; i < 20000; i++) sum += Dsp.CrushGain(i % 1001 / 1000f);
+            Require(GC.GetAllocatedBytesForCurrentThread() == before && double.IsFinite(sum),
+                "Playback gain evaluation allocated managed memory.");
         });
-        Require(SyntheticReferences.Length == 12 && VoiceReferences.Length == 16, "Missing independent level fixtures.");
-        foreach (var reference in VoiceReferences)
+        foreach (int rate in new[] { 8000, 16000, 22050, 48000, 96000 })
         {
-            check($"Frozen mixer: Crusher stays within 1 dB of the recorded reference for {reference.Name}", () =>
+            check($"Bitcrusher retains no dry signal at intermediate quantizer dead zones at {rate} Hz", () =>
             {
-                Require(reference.Points.Length == 21, "Missing primary voice moments.");
-                foreach (var point in reference.Points)
-                {
-                    Dsp.CrusherGains(point.Amount, out float dry, out float wet);
-                    double power = dry*(double)dry*reference.DryPower+wet*(double)wet*point.WetPower+
-                        2*dry*(double)wet*point.Cross;
-                    double level = 10*Math.Log10(power/reference.DryPower);
-                    double expected = point.Amount*reference.FullChangeDb;
-                    Require(Math.Abs(level-expected) < 1,
-                        $"Recorded voice error exceeds 1 dB at {point.Amount:R}: {level-expected:F6} dB.");
-                }
+                float[] source = Signal(rate, rate / 4, .0001f);
+                Require(source.Any(x => x != 0f), "The dead-zone probe was silent.");
+                float[] output = (float[])source.Clone();
+                NewEngine(rate).ApplyEffect(output, VoiceEffectType.Bitcrusher, .5f);
+                Require(output.All(x => x == 0f), "An intermediate effect restored unquantized dry samples.");
             });
-        }
-        foreach (var reference in SyntheticReferences)
-        {
-            check($"Bitcrusher matches independent tenth-bit routing at {reference.Rate} Hz and {reference.Amount:R}", () =>
+            check($"Bitcrusher keeps low voice-band energy near zero intensity at {rate} Hz", () =>
             {
-                float[] input = Signal(reference.Rate, reference.Rate*3);
-                double level = Level(Process(input, reference.Rate, reference.Amount));
-                Require(Math.Abs(level-reference.RmsDbfs) < .01,
-                    $"Actual effect routing differs from the independent tenth-bit reference: {level:F6} dBFS.");
+                float[] source = new float[rate];
+                for (int i = 0; i < source.Length; i++) source[i] = .2f * MathF.Sin(2 * MathF.PI * 80 * i / rate);
+                float[] output = (float[])source.Clone();
+                NewEngine(rate).ApplyEffect(output, VoiceEffectType.Bitcrusher, .01f);
+                double delta = Level(output.AsSpan(rate / 2)) - Level(source.AsSpan(rate / 2));
+                Require(Math.Abs(delta) < .03, "Tiny intensity immediately removed the voice bass.");
             });
-        }
-        foreach (int rate in new[] { 8000, 22050, 48000 })
-        {
             check($"Bitcrusher changing intensity is independent of streaming partitions at {rate} Hz", () =>
             {
-                int size = rate/8;
+                int size = rate / 8;
                 float[] amounts = [0f, .001f, .00101f, .025f, .125f, .4995f, .5f, .5005f, .875f, .99f, 1f, .45f];
-                float[] whole = Signal(rate, size*amounts.Length), split = (float[])whole.Clone();
+                float[] whole = Signal(rate, size * amounts.Length), split = (float[])whole.Clone();
                 var wholeEngine = NewEngine(rate);
                 var splitEngine = NewEngine(rate);
                 for (int segment = 0; segment < amounts.Length; segment++)
                 {
-                    wholeEngine.ApplyEffect(whole.AsSpan(segment*size, size), VoiceEffectType.Bitcrusher, amounts[segment]);
+                    wholeEngine.ApplyEffect(whole.AsSpan(segment * size, size), VoiceEffectType.Bitcrusher, amounts[segment]);
                     for (int offset = 0; offset < size; offset += 257)
-                        splitEngine.ApplyEffect(split.AsSpan(segment*size+offset, Math.Min(257, size-offset)),
+                        splitEngine.ApplyEffect(split.AsSpan(segment * size + offset, Math.Min(257, size - offset)),
                             VoiceEffectType.Bitcrusher, amounts[segment]);
                 }
-                Require(MemoryMarshal.AsBytes(whole.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(split.AsSpan())),
-                    "Buffer boundaries changed the accepted intensity transition.");
+                Require(SameBits(whole, split), "Buffer boundaries changed the intensity transition.");
             });
-            check($"Bitcrusher preserves warm-state bypass at {rate} Hz", () =>
+            check($"Bitcrusher preserves warm-state bypass and deterministic reset at {rate} Hz", () =>
             {
                 var engine = NewEngine(rate);
-                float[] input = Signal(rate, rate/2), warm = (float[])input.Clone();
+                float[] input = Signal(rate, rate / 2), warm = (float[])input.Clone();
                 engine.ApplyEffect(warm, VoiceEffectType.Bitcrusher, .65f);
                 foreach (float amount in new[] { 0f, .001f })
                 {
                     float[] output = (float[])input.Clone();
                     engine.ApplyEffect(output, VoiceEffectType.Bitcrusher, amount);
-                    Require(MemoryMarshal.AsBytes(input.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(output.AsSpan())),
-                        "The production bypass changed input samples after warmup.");
+                    Require(SameBits(input, output), "Warm bypass changed the input.");
                 }
+                engine.Reset(123456);
+                float[] reset = (float[])input.Clone();
+                engine.ApplyEffect(reset, VoiceEffectType.Bitcrusher, .65f);
+                Require(SameBits(warm, reset), "Reset changed the seeded output.");
+            });
+            check($"Crusher cutoff settings cannot leak into another effect at {rate} Hz", () =>
+            {
+                float[] warm = Signal(rate, rate / 8);
+                var crusher = NewEngine(rate);
+                var control = NewEngine(rate);
+                crusher.ApplyEffect((float[])warm.Clone(), VoiceEffectType.Bitcrusher, .1f);
+                // Ring and Crusher advance the shared thermal generator by the same sample count.
+                control.ApplyEffect((float[])warm.Clone(), VoiceEffectType.RingModulator, .1f);
+                float[] a = Signal(rate, rate / 4), b = (float[])a.Clone();
+                crusher.ApplyEffect(a, VoiceEffectType.Telephone, .5f);
+                control.ApplyEffect(b, VoiceEffectType.Telephone, .5f);
+                Require(SameBits(a, b), "Crusher's adaptive DC corner leaked into Telephone.");
             });
         }
+        check("Bitcrusher preserves the accepted full-strength 22050 Hz synthetic level", () =>
+        {
+            const int rate = 22050;
+            var source = new float[rate * 3];
+            for (int i = 0; i < source.Length; i++)
+            {
+                double t = i / (double)rate;
+                source[i] = (float)((.18 * Math.Sin(2 * Math.PI * 110 * t) + .08 * Math.Sin(2 * Math.PI * 330 * t)
+                    + .05 * Math.Sin(2 * Math.PI * 1700 * t) + .03 * Math.Sin(2 * Math.PI * 3200 * t))
+                    * (.7 + .3 * Math.Sin(2 * Math.PI * .73 * t)));
+            }
+            NewEngine(rate).ApplyEffect(source, VoiceEffectType.Bitcrusher, 1f);
+            Require(Math.Abs(Level(source) - (-21.747021365760709)) < .0001,
+                "Full-strength character changed from the accepted level fixture.");
+        });
     }
 
-    /// <summary>Measures the fitted dry/wet weight norm without reading prepared coefficients.</summary>
-    private static double GainNorm(float amount)
-    {
-        Dsp.CrusherGains(amount, out float dry, out float wet);
-        return Math.Sqrt(dry*(double)dry+wet*(double)wet);
-    }
+    private static double Db(float amount) => 20 * Math.Log10(Dsp.CrushGain(amount));
 
-    /// <summary>Creates the independently recorded synthetic fixture input.</summary>
-    private static float[] Signal(int rate, int count)
+    /// <summary>Creates a voice-band probe without recording or model dependencies.</summary>
+    private static float[] Signal(int rate, int count, float amplitude = .2f)
     {
         var signal = new float[count];
-        for (int i = 0; i < signal.Length; i++)
-        {
-            double t = (double)i/rate;
-            signal[i] = (float)((.18*Math.Sin(2*Math.PI*110*t)+.08*Math.Sin(2*Math.PI*330*t)+
-                .05*Math.Sin(2*Math.PI*1700*t)+.03*Math.Sin(2*Math.PI*Math.Min(3200, rate*.3)*t))*(.7+.3*Math.Sin(2*Math.PI*.73*t)));
-        }
+        for (int i = 0; i < count; i++)
+            signal[i] = amplitude * (float)(.7 * Math.Sin(2 * Math.PI * 173 * i / rate)
+                + .3 * Math.Sin(2 * Math.PI * 1817 * i / rate));
         return signal;
     }
 
-    /// <summary>Creates deterministic per-request effect state.</summary>
     private static AudioEffectsEngine NewEngine(int rate)
     {
         var engine = new AudioEffectsEngine(new(), rate);
@@ -180,438 +140,18 @@ internal static class CrusherMixingChecks
         return engine;
     }
 
-    /// <summary>Processes the actual production effect without touching the fixture.</summary>
-    private static float[] Process(float[] input, int rate, float amount)
-    {
-        float[] output = (float[])input.Clone();
-        NewEngine(rate).ApplyEffect(output, VoiceEffectType.Bitcrusher, amount);
-        return output;
-    }
-
-    /// <summary>Measures complete unnormalized fixture RMS.</summary>
-    private static double Level(float[] samples)
+    private static double Level(ReadOnlySpan<float> samples)
     {
         double power = 0;
-        foreach (float x in samples) power += x*(double)x;
-        return 10*Math.Log10(power/samples.Length);
+        foreach (float sample in samples) power += sample * (double)sample;
+        return 10 * Math.Log10(power / samples.Length);
     }
 
-    /// <summary>Reports a failed signal contract to the console runner.</summary>
+    private static bool SameBits(float[] a, float[] b) =>
+        MemoryMarshal.AsBytes(a.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(b.AsSpan()));
+
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
     }
-
-    // Frozen independently from the accepted offline study, never regenerated during tests.
-    private static readonly double[] GainNormReferences =
-    [
-        0, -0.034299239137089446, -0.1703772569951342, -0.37680835789571376, -0.61889315585059601, -0.86175703370479095, -1.0755067219856254, -1.2417230701029409, -1.3585308635196325, -1.4410950803243927, -1.516481843145465, -1.5775269986954426, -1.5954055893017416, -1.577585804806807, -1.5283413944848672, -1.337484141913821, -0.92311831830298607, -0.54522418387904092, -0.31326694966537943, -0.15182847295566998, 0
-    ];
-    // Frozen wet moments plus independent joined-Hermite weights; full references unchanged.
-    // The tenth-bit quantizer and every historical voice moment remain unchanged.
-    private static readonly (int Rate, float Amount, double RmsDbfs)[] SyntheticReferences =
-    [
-        (8000, 0.1f, -19.51267790739638),
-        (8000, 0.5f, -21.730287303817605),
-        (8000, 0.9f, -22.036654531246185),
-        (8000, 1f, -21.67936886590627),
-        (22050, 0.1f, -19.512220285532614),
-        (22050, 0.5f, -21.726726263275118),
-        (22050, 0.9f, -22.109693858702446),
-        (22050, 1f, -21.747021365760709),
-        (48000, 0.1f, -19.511974633233081),
-        (48000, 0.5f, -21.718705303096137),
-        (48000, 0.9f, -22.130781725922716),
-        (48000, 1f, -21.778692880423286),
-    ];
-    // Unseen-text 22050 Hz voice moments: measured before integration, without PCM assets.
-    private static readonly VoiceReference[] VoiceReferences =
-    [
-        new("alloy", 0.002843379828247063, -1.183616157817585,
-        [
-            (0f, 0.002843379828247063, 0.002843379828247063),
-            (0.05f, 0.0018357827078846704, 0.00051211504860065144),
-            (0.1f, 0.0018354063099018201, 0.00051221867759770738),
-            (0.15f, 0.0018352291122802399, 0.00051233573958273158),
-            (0.2f, 0.0018360912023949187, 0.00051356130697486691),
-            (0.25f, 0.0018360072897802319, 0.00051451352735879278),
-            (0.3f, 0.0018351459168822798, 0.00051388773537416107),
-            (0.35f, 0.0018343092992685068, 0.00051394431439083174),
-            (0.4f, 0.0018356857630644275, 0.00051467478452878255),
-            (0.45f, 0.0018349718130019014, 0.0005149799658601637),
-            (0.5f, 0.0018354294606339381, 0.00051681779695500474),
-            (0.55f, 0.0018353499841055475, 0.00051547384811323883),
-            (0.6f, 0.0018369940560266959, 0.00051685103567011121),
-            (0.65f, 0.0018363157663721951, 0.00051553347509773783),
-            (0.7f, 0.0018391713780817318, 0.00051675617519561067),
-            (0.75f, 0.0018483700241072238, 0.00051788753706823046),
-            (0.8f, 0.0018864701600442167, 0.0005199187924567355),
-            (0.85f, 0.001885382339047371, 0.00051723233746492282),
-            (0.9f, 0.001991068728853134, 0.00051283501612297405),
-            (0.95f, 0.0019920546194798984, 0.00051129476688496235),
-            (1f, 0.0021650765804814222, 0.00050557886778874236),
-        ]),
-        new("ash", 0.0024726712873509586, -0.11524692813785165,
-        [
-            (0f, 0.0024726712873509586, 0.0024726712873509586),
-            (0.05f, 0.0019727078675657651, 0.00098893038429556743),
-            (0.1f, 0.0019734337875508172, 0.00099117413699507874),
-            (0.15f, 0.0019728889852516618, 0.00099280672566488641),
-            (0.2f, 0.0019734451999455925, 0.00099518251878172033),
-            (0.25f, 0.0019724602066394938, 0.00099670426085281521),
-            (0.3f, 0.001973077019609954, 0.00099861041670851712),
-            (0.35f, 0.0019726103078173381, 0.0010001479655291354),
-            (0.4f, 0.0019730413802884895, 0.0010022568184001627),
-            (0.45f, 0.0019725621908195669, 0.0010037850163747261),
-            (0.5f, 0.0019729629210868413, 0.0010060659174206509),
-            (0.55f, 0.0019741702055530727, 0.0010080125742233336),
-            (0.6f, 0.0019740211984037737, 0.001009710715699295),
-            (0.65f, 0.0019738454817612066, 0.0010096977437346244),
-            (0.7f, 0.0019752577012221067, 0.0010127518066968676),
-            (0.75f, 0.0019860967347237468, 0.0010145882862745076),
-            (0.8f, 0.0020206502610597404, 0.0010125673198909616),
-            (0.85f, 0.0020204746018930441, 0.0010123183077074458),
-            (0.9f, 0.0021126203579641236, 0.0010066566816992536),
-            (0.95f, 0.0021079916757337602, 0.0010071392588967864),
-            (1f, 0.0024079179988381067, 0.00098899632338184909),
-        ]),
-        new("ballad", 0.002611863283027083, -0.57974735835390689,
-        [
-            (0f, 0.002611863283027083, 0.002611863283027083),
-            (0.05f, 0.0019803100058168482, 0.0010164306341292058),
-            (0.1f, 0.0019802198088094314, 0.0010166484836388932),
-            (0.15f, 0.0019817109786094828, 0.0010178449711765822),
-            (0.2f, 0.0019804235453025217, 0.0010176432154781062),
-            (0.25f, 0.0019783900774233473, 0.0010177313353499362),
-            (0.3f, 0.0019816976725776413, 0.0010193562049893091),
-            (0.35f, 0.0019816139563475594, 0.0010196018467975919),
-            (0.4f, 0.0019813623451255687, 0.0010200225261665021),
-            (0.45f, 0.0019804852328129149, 0.0010204283576941431),
-            (0.5f, 0.0019780924145390314, 0.0010194057311156061),
-            (0.55f, 0.0019813281451751814, 0.0010209266626816122),
-            (0.6f, 0.0019815902665180807, 0.001021519768196859),
-            (0.65f, 0.0019851558797532379, 0.0010224915572594774),
-            (0.7f, 0.0019834900210172987, 0.0010225744421838868),
-            (0.75f, 0.0019952278291333332, 0.0010219469380499757),
-            (0.8f, 0.0020289191935668671, 0.0010191519004229105),
-            (0.85f, 0.0020265988481446427, 0.0010171225202779193),
-            (0.9f, 0.0021461324137697128, 0.0010227829057035955),
-            (0.95f, 0.0021521385273464673, 0.0010253589505049099),
-            (1f, 0.0022854709443410615, 0.0010002799294123572),
-        ]),
-        new("cedar", 0.0026729652820864061, 0.27877971227425408,
-        [
-            (0f, 0.0026729652820864061, 0.0026729652820864061),
-            (0.05f, 0.0023524198496687088, 0.0015478149321054605),
-            (0.1f, 0.0023530101982256221, 0.001550215866208551),
-            (0.15f, 0.0023528161096980117, 0.0015522320812576668),
-            (0.2f, 0.0023540843711578317, 0.0015545825637592102),
-            (0.25f, 0.0023530978030127363, 0.0015568339884125966),
-            (0.3f, 0.0023532244665687282, 0.0015588687340911296),
-            (0.35f, 0.0023528043605996964, 0.0015603795778697835),
-            (0.4f, 0.0023540588392218682, 0.0015629800462556606),
-            (0.45f, 0.0023524852955693057, 0.0015651028795318901),
-            (0.5f, 0.0023528098841174914, 0.0015677022887291725),
-            (0.55f, 0.0023539769135032559, 0.0015697585896713917),
-            (0.6f, 0.0023552377892563877, 0.0015717443792268534),
-            (0.65f, 0.0023567039091671889, 0.0015734893354649216),
-            (0.7f, 0.0023564736162168141, 0.00157548185027417),
-            (0.75f, 0.0023672354212984441, 0.0015775962031766922),
-            (0.8f, 0.0024038870070659654, 0.001579904450163309),
-            (0.85f, 0.0024010517057864813, 0.001582004193262751),
-            (0.9f, 0.0025059233336921002, 0.0015767042875989418),
-            (0.95f, 0.0025071825796623192, 0.0015776362397968882),
-            (1f, 0.0028501734431470201, 0.0015567080511837555),
-        ]),
-        new("coral", 0.0017379639729347982, 0.85872085469862569,
-        [
-            (0f, 0.0017379639729347982, 0.0017379639729347982),
-            (0.05f, 0.001664190633607453, 0.0013162389476269933),
-            (0.1f, 0.0016629027145080456, 0.0013157119248217448),
-            (0.15f, 0.0016643539851183735, 0.0013166350644790174),
-            (0.2f, 0.0016651449455855367, 0.0013169933637246709),
-            (0.25f, 0.0016634769363209677, 0.0013167427459854504),
-            (0.3f, 0.0016623661639928846, 0.0013168354442452252),
-            (0.35f, 0.0016654544413869773, 0.0013178325591952911),
-            (0.4f, 0.0016647407309209601, 0.001317709201026032),
-            (0.45f, 0.0016646027582898275, 0.0013177072037107633),
-            (0.5f, 0.0016636340977634946, 0.0013177256422971806),
-            (0.55f, 0.0016652670734465856, 0.0013182720106365638),
-            (0.6f, 0.0016656624454208337, 0.0013192606246104752),
-            (0.65f, 0.0016684891386696829, 0.0013178372090759016),
-            (0.7f, 0.0016686881081518945, 0.001319257727050206),
-            (0.75f, 0.0016787305082981276, 0.0013198560055498751),
-            (0.8f, 0.0017098996947734126, 0.0013201905214279797),
-            (0.85f, 0.0017115755059266987, 0.0013201132528360558),
-            (0.9f, 0.0017783033936165978, 0.0012988447597178942),
-            (0.95f, 0.0017845522421991763, 0.0013005622195623621),
-            (1f, 0.0021179361100533804, 0.0012979053849018942),
-        ]),
-        new("echo", 0.0023551490682516304, 0.4067631494210186,
-        [
-            (0f, 0.0023551490682516304, 0.0023551490682516304),
-            (0.05f, 0.0021012356771237879, 0.0014854271541710564),
-            (0.1f, 0.0021018331979640744, 0.0014864784320270414),
-            (0.15f, 0.0021023159163747369, 0.0014871686423306941),
-            (0.2f, 0.0020998042155260742, 0.0014879142757693372),
-            (0.25f, 0.0020974088501179836, 0.0014880089615261856),
-            (0.3f, 0.0021030258495440802, 0.0014902981281160262),
-            (0.35f, 0.0021010834754982373, 0.0014902923272304457),
-            (0.4f, 0.0021015991449051695, 0.0014913097935630743),
-            (0.45f, 0.0021006606643245969, 0.0014919329119031889),
-            (0.5f, 0.0021001111291938305, 0.001492280044195811),
-            (0.55f, 0.0021019516152381997, 0.0014944176637847952),
-            (0.6f, 0.0021039132465795599, 0.0014959288984455336),
-            (0.65f, 0.0021068457321918432, 0.0014975139402269382),
-            (0.7f, 0.0021042030631816524, 0.0014976564316163997),
-            (0.75f, 0.0021184247825724247, 0.0014995869571476485),
-            (0.8f, 0.0021517578104181985, 0.0014999896288317789),
-            (0.85f, 0.0021511922003191468, 0.0014985568738483535),
-            (0.9f, 0.0022342017879167049, 0.001494529036720191),
-            (0.95f, 0.0022384593645798641, 0.0014959077084268195),
-            (1f, 0.002586394188573381, 0.0014875142333471791),
-        ]),
-        new("fable", 0.0028249476782369384, 0.039612653794830588,
-        [
-            (0f, 0.0028249476782369384, 0.0028249476782369384),
-            (0.05f, 0.0024199823013253065, 0.0015313184177301778),
-            (0.1f, 0.0024208746754094046, 0.0015343633301064623),
-            (0.15f, 0.0024189008033782006, 0.0015357469985132685),
-            (0.2f, 0.0024220358619642655, 0.0015393831762766997),
-            (0.25f, 0.002420202998044416, 0.0015414789445411818),
-            (0.3f, 0.0024211605889138217, 0.0015440378120483069),
-            (0.35f, 0.0024200355477330838, 0.0015452788898484358),
-            (0.4f, 0.0024194496074808423, 0.0015478218193314592),
-            (0.45f, 0.0024213895493060667, 0.001550954312913425),
-            (0.5f, 0.0024207404495682774, 0.0015532382730964417),
-            (0.55f, 0.0024219424243903795, 0.0015557294927464257),
-            (0.6f, 0.0024212626916472173, 0.0015576307211240285),
-            (0.65f, 0.0024230087855752632, 0.0015592631752294863),
-            (0.7f, 0.0024242920754151426, 0.0015623503526108846),
-            (0.75f, 0.0024331715142432548, 0.0015644631200745595),
-            (0.8f, 0.0024614936766376326, 0.001563371093162854),
-            (0.85f, 0.0024660303166530568, 0.0015663050445899674),
-            (0.9f, 0.0025613600307808474, 0.0015650880374278369),
-            (0.95f, 0.0025657458530783735, 0.0015698782842629589),
-            (1f, 0.0028508323208871148, 0.0015560681486786075),
-        ]),
-        new("female", 0.0034263738043532918, 0.20007667909443921,
-        [
-            (0f, 0.0034263738043532918, 0.0034263738043532918),
-            (0.05f, 0.0031390989181069328, 0.0020325006843407104),
-            (0.1f, 0.0031389659869647327, 0.0020361088850592429),
-            (0.15f, 0.0031378956884282167, 0.0020387677155941819),
-            (0.2f, 0.0031375370423752835, 0.0020424657877888687),
-            (0.25f, 0.00314020818437032, 0.0020467567804358425),
-            (0.3f, 0.0031376919467691841, 0.0020490621387519036),
-            (0.35f, 0.0031401744075719488, 0.0020538679992609912),
-            (0.4f, 0.0031390516654157719, 0.0020569410416884115),
-            (0.45f, 0.0031378682526082991, 0.0020593179688587807),
-            (0.5f, 0.0031390096524766564, 0.0020637090119436283),
-            (0.55f, 0.0031415189709867856, 0.0020683645135118559),
-            (0.6f, 0.0031413887887899528, 0.0020709109740083376),
-            (0.65f, 0.003142595632687453, 0.0020740111194762238),
-            (0.7f, 0.0031439803283472073, 0.0020776599135195655),
-            (0.75f, 0.0031500233466878053, 0.002080401989778343),
-            (0.8f, 0.0031823641779666692, 0.0020828992857897652),
-            (0.85f, 0.0031768676779714432, 0.0020840629850325683),
-            (0.9f, 0.0032979312886412433, 0.002078873681315048),
-            (0.95f, 0.0032875086995868682, 0.0020799395918191022),
-            (1f, 0.0035879171745886568, 0.002075872690497851),
-        ]),
-        new("male", 0.0016908650829871716, -0.3958148924549697,
-        [
-            (0f, 0.0016908650829871716, 0.0016908650829871716),
-            (0.05f, 0.0012035960138413989, 0.00042337093321233847),
-            (0.1f, 0.0012035235537049037, 0.00042405775438353772),
-            (0.15f, 0.0012032572959142377, 0.00042459030866719708),
-            (0.2f, 0.0012035864263286284, 0.00042514943089618054),
-            (0.25f, 0.0012037541905505727, 0.00042615600561179349),
-            (0.3f, 0.0012033426870118762, 0.00042686489314961546),
-            (0.35f, 0.0012035412814380597, 0.00042734813196208956),
-            (0.4f, 0.0012036063075488417, 0.00042826496325357096),
-            (0.45f, 0.0012033943494219785, 0.00042914709066544369),
-            (0.5f, 0.0012038970135892432, 0.00042996685167634522),
-            (0.55f, 0.0012043604373365286, 0.00043007539182542549),
-            (0.6f, 0.0012041405021937213, 0.00043097968590512974),
-            (0.65f, 0.0012075598728874062, 0.00043220669463600456),
-            (0.7f, 0.0012077462926024188, 0.00043267945242553843),
-            (0.75f, 0.0012170369877588935, 0.00043305832322306566),
-            (0.8f, 0.0012513975391852928, 0.00043290749968466079),
-            (0.85f, 0.0012476706214688254, 0.00043240399694141396),
-            (0.9f, 0.0013050153428497146, 0.00041776899797964614),
-            (0.95f, 0.001304576684601729, 0.00041782535258280278),
-            (1f, 0.0015435740424466847, 0.00042273726566915889),
-        ]),
-        new("marin", 0.0034501677910643873, 0.13812332875302882,
-        [
-            (0f, 0.0034501677910643873, 0.0034501677910643873),
-            (0.05f, 0.003120494020309823, 0.0019189163103529683),
-            (0.1f, 0.0031204269067253978, 0.0019214325881525176),
-            (0.15f, 0.003119480023757326, 0.0019232928886558035),
-            (0.2f, 0.0031199920875035225, 0.001926589975992696),
-            (0.25f, 0.00312022393721197, 0.0019289600402860063),
-            (0.3f, 0.0031199617118196341, 0.0019318211868472178),
-            (0.35f, 0.003122232103275324, 0.0019354029561146049),
-            (0.4f, 0.0031200091590102286, 0.0019367926229776403),
-            (0.45f, 0.0031180927818340483, 0.0019381647040323416),
-            (0.5f, 0.0031190559178926993, 0.0019416327810207574),
-            (0.55f, 0.0031208825604307276, 0.0019442464370509264),
-            (0.6f, 0.00311908836196398, 0.0019460291767563745),
-            (0.65f, 0.0031228490001842029, 0.001949269983367376),
-            (0.7f, 0.0031250697147830958, 0.0019531643734529008),
-            (0.75f, 0.003128762164352017, 0.001951925915477245),
-            (0.8f, 0.0031681654816321366, 0.0019562202527990012),
-            (0.85f, 0.0031710887979479368, 0.0019591711862618089),
-            (0.9f, 0.0032747551008459083, 0.0019534489534016584),
-            (0.95f, 0.003266170797221169, 0.0019526654611035936),
-            (1f, 0.0035616607422910345, 0.0019030929313334276),
-        ]),
-        new("nova", 0.0035429952508683332, 0.38013722556885188,
-        [
-            (0f, 0.0035429952508683332, 0.0035429952508683332),
-            (0.05f, 0.0033563168086201568, 0.0024628639128062456),
-            (0.1f, 0.0033559268543184697, 0.0024663848351293666),
-            (0.15f, 0.0033554239004075607, 0.0024700629553955212),
-            (0.2f, 0.0033550786235123655, 0.0024735381472050944),
-            (0.25f, 0.0033538972301037019, 0.0024772829082465816),
-            (0.3f, 0.0033557342699197146, 0.0024815268395818966),
-            (0.35f, 0.0033546908248309154, 0.0024849230188603456),
-            (0.4f, 0.0033556387233383595, 0.0024885719944288064),
-            (0.45f, 0.0033548405852409785, 0.0024917660137430729),
-            (0.5f, 0.0033546839752513469, 0.0024959893128981064),
-            (0.55f, 0.0033556285253397004, 0.0024996222593238445),
-            (0.6f, 0.0033547777256330825, 0.0025028570639272826),
-            (0.65f, 0.0033562228723561394, 0.0025061846067827164),
-            (0.7f, 0.0033589890574667156, 0.0025109578660427491),
-            (0.75f, 0.0033685980824088566, 0.0025142166518929096),
-            (0.8f, 0.0034084023083701064, 0.0025214007275263942),
-            (0.85f, 0.0033980033739461654, 0.0025208607832319153),
-            (0.9f, 0.003506647633828634, 0.0025153071360528448),
-            (0.95f, 0.0035116022087817072, 0.0025204401152586343),
-            (1f, 0.0038670901165325888, 0.002524997093380746),
-        ]),
-        new("onyx", 0.00284883794896816, -0.77138442986836209,
-        [
-            (0f, 0.00284883794896816, 0.00284883794896816),
-            (0.05f, 0.002127012394308327, 0.0011989457107456263),
-            (0.1f, 0.00212663501454916, 0.0011990717868047064),
-            (0.15f, 0.0021278501163678504, 0.0011992881139204201),
-            (0.2f, 0.002127750933302943, 0.0012003142210438925),
-            (0.25f, 0.0021272077691031773, 0.0012006605880704186),
-            (0.3f, 0.0021280139814397192, 0.001200803395553974),
-            (0.35f, 0.0021286507965116797, 0.0012017432342859543),
-            (0.4f, 0.002127124564372493, 0.0012014546587355512),
-            (0.45f, 0.0021271342493722695, 0.0012010761832170708),
-            (0.5f, 0.0021272140751124086, 0.0012023072730524629),
-            (0.55f, 0.002128394955545506, 0.0012018894093792343),
-            (0.6f, 0.0021319077785164906, 0.0012045894190730432),
-            (0.65f, 0.0021321342627865694, 0.0012041733222225132),
-            (0.7f, 0.0021328915693716584, 0.0012046530567579551),
-            (0.75f, 0.0021404475726249411, 0.0012023366746693293),
-            (0.8f, 0.0021693679002599102, 0.0012020968913701805),
-            (0.85f, 0.0021733285406234713, 0.0012039380459782098),
-            (0.9f, 0.0022965237853565237, 0.0011902026388052695),
-            (0.95f, 0.0022925725929706592, 0.0011911157833608195),
-            (1f, 0.0023852247268857539, 0.0011273156911522917),
-        ]),
-        new("piper_base", 0.0021363241410659777, 0.73592303878656318,
-        [
-            (0f, 0.0021363241410659777, 0.0021363241410659777),
-            (0.05f, 0.0020498266774835096, 0.0016233130982765615),
-            (0.1f, 0.0020499927293300487, 0.0016203714347266557),
-            (0.15f, 0.0020505734540472447, 0.0016157485213672271),
-            (0.2f, 0.0020468191280608667, 0.0016128464720365232),
-            (0.25f, 0.0020494053414930676, 0.0016098660058077949),
-            (0.3f, 0.0020504430551933281, 0.0016062755574470652),
-            (0.35f, 0.0020495941487002926, 0.001602422521700295),
-            (0.4f, 0.0020471962517312689, 0.0015992454782961748),
-            (0.45f, 0.0020531911314428928, 0.0015984334338930942),
-            (0.5f, 0.0020526230639936784, 0.0015934452180484163),
-            (0.55f, 0.0020497692252018107, 0.0015891727771109472),
-            (0.6f, 0.00204953154877043, 0.0015859197633481844),
-            (0.65f, 0.0020508543405601135, 0.0015809336031636283),
-            (0.7f, 0.00205514101541002, 0.0015812033252478595),
-            (0.75f, 0.0020598253909695852, 0.0015746298144601895),
-            (0.8f, 0.0020976356232821408, 0.0015718397058012152),
-            (0.85f, 0.0020994681990963069, 0.001569503136064657),
-            (0.9f, 0.0021979770999806273, 0.0015549923029235253),
-            (0.95f, 0.0021937901133627434, 0.0015507819480986714),
-            (1f, 0.002530809476850757, 0.0015398599538626581),
-        ]),
-        new("sage", 0.0037324854465279793, 0.091764320365158011,
-        [
-            (0f, 0.0037324854465279793, 0.0037324854465279793),
-            (0.05f, 0.0034016379045607491, 0.0022102160750609484),
-            (0.1f, 0.0034009763927840865, 0.0022130898346314049),
-            (0.15f, 0.0034014198450674901, 0.0022155810303415347),
-            (0.2f, 0.0034008932644435867, 0.0022183616198412038),
-            (0.25f, 0.003404251307677878, 0.0022222094987358063),
-            (0.3f, 0.0034010038588020981, 0.0022241008080580828),
-            (0.35f, 0.0034008063650252363, 0.002226429813096082),
-            (0.4f, 0.0034001641835156257, 0.002229567473650601),
-            (0.45f, 0.0034013548930519116, 0.0022318417185233134),
-            (0.5f, 0.0034018362375260172, 0.0022354795875353627),
-            (0.55f, 0.0034017499907443051, 0.0022379559780928843),
-            (0.6f, 0.0034007159340213922, 0.0022398169378180822),
-            (0.65f, 0.0034055124484464916, 0.002244205839388968),
-            (0.7f, 0.0034047427731694851, 0.0022473080711587611),
-            (0.75f, 0.0034148604986767952, 0.0022471559879221606),
-            (0.8f, 0.00344738309924766, 0.0022476408664453516),
-            (0.85f, 0.0034508767233437051, 0.0022525044446532094),
-            (0.9f, 0.0035917935007247315, 0.0022509565528076926),
-            (0.95f, 0.0035912216170469499, 0.0022535497630075257),
-            (1f, 0.0038121901515872567, 0.0021967801728436293),
-        ]),
-        new("shimmer", 0.0041457419191879659, -0.24692979771351362,
-        [
-            (0f, 0.0041457419191879659, 0.0041457419191879659),
-            (0.05f, 0.0034819438968238456, 0.0017137196880649629),
-            (0.1f, 0.003481571738571488, 0.0017173784460252787),
-            (0.15f, 0.0034816079904950417, 0.0017216201339506809),
-            (0.2f, 0.0034819141481386047, 0.0017261077660261004),
-            (0.25f, 0.0034824915200491208, 0.0017301859904522976),
-            (0.3f, 0.0034810022077598609, 0.0017327427957128363),
-            (0.35f, 0.0034826579114923058, 0.0017379899640188516),
-            (0.4f, 0.0034823796804631666, 0.0017418332669743193),
-            (0.45f, 0.0034814071568559334, 0.0017457636893186944),
-            (0.5f, 0.0034828473468030345, 0.001750260160566309),
-            (0.55f, 0.0034846544753283568, 0.0017545228993451367),
-            (0.6f, 0.0034840123657717257, 0.0017581141462328571),
-            (0.65f, 0.0034867365749744268, 0.0017620393001557255),
-            (0.7f, 0.0034872302195336625, 0.001766405030474847),
-            (0.75f, 0.0034953798187670718, 0.001769349885551921),
-            (0.8f, 0.003525889035016468, 0.0017722579661937892),
-            (0.85f, 0.0035223320278232719, 0.0017732390553421456),
-            (0.9f, 0.0036712032357244149, 0.001776737021876662),
-            (0.95f, 0.003663705414928753, 0.0017764685708548222),
-            (1f, 0.0039166005730248031, 0.0017853534316158886),
-        ]),
-        new("verse", 0.0022512436863146479, -0.24932714695342068,
-        [
-            (0f, 0.0022512436863146479, 0.0022512436863146479),
-            (0.05f, 0.0018429488026769512, 0.00099556640395191535),
-            (0.1f, 0.0018427990814904197, 0.00099607763416096132),
-            (0.15f, 0.0018418447993732135, 0.00099686194409423392),
-            (0.2f, 0.0018423143025994822, 0.00099720320562222205),
-            (0.25f, 0.0018421331904595164, 0.00099838448583440976),
-            (0.3f, 0.0018418097968556967, 0.00099898669475161983),
-            (0.35f, 0.0018450106644704331, 0.0010007207106584996),
-            (0.4f, 0.0018424980467877496, 0.00099989845114065298),
-            (0.45f, 0.0018427539777610038, 0.0010011643272224585),
-            (0.5f, 0.0018421929613417444, 0.0010018995557770259),
-            (0.55f, 0.0018426255164619067, 0.0010015016513994614),
-            (0.6f, 0.0018433225354863695, 0.0010023851556500802),
-            (0.65f, 0.0018465758875856055, 0.0010034825010836162),
-            (0.7f, 0.0018479531089180099, 0.0010044966519422642),
-            (0.75f, 0.0018574253124922138, 0.0010051009171170944),
-            (0.8f, 0.0018933645682876813, 0.0010035715177670354),
-            (0.85f, 0.0018949012455030125, 0.001004490914809087),
-            (0.9f, 0.0019766756886828388, 0.0010000015518052572),
-            (0.95f, 0.0019706757849967827, 0.0009967151464801492),
-            (1f, 0.0021256403874871572, 0.00093577444447689258),
-        ]),
-    ];
-    private sealed record VoiceReference(string Name, double DryPower, double FullChangeDb,
-        (float Amount, double WetPower, double Cross)[] Points);
 }
