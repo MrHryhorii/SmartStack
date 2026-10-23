@@ -19,7 +19,7 @@ internal static class OverdriveCharacterChecks
             OverdriveMixingChecks.NewEngine(22050).ApplyEffect(middle, VoiceEffectType.Overdrive, .5f);
             OverdriveMixingChecks.NewEngine(22050).ApplyEffect(full, VoiceEffectType.Overdrive, 1f);
             double midpoint = ProjectedThd(middle, 22050);
-            Require(midpoint is > .027 and < .029 && midpoint < ProjectedThd(full, 22050),
+            Require(midpoint is > .04 and < .10 && midpoint < ProjectedThd(full, 22050),
                 "The reference midpoint lost its milder harmonic character.");
         });
         foreach (int rate in new[] { 8000, 22050, 48000 })

@@ -4,141 +4,96 @@ using ONNX_Runner.Services;
 
 internal static class OverdriveCurveChecks
 {
-    private sealed record Moment(float Amount, double WetPower, double Cross, double BaselineChangeDb);
-    private sealed record Recording(string Name, string Voice, int Rate, float Scale, double DryPower, Moment[] Points);
-    private sealed record Fixtures(string SignalPath, float OutputGain, float DriveRange, Recording[] Voices, Recording[] Synthetic);
-    private static readonly Fixtures Data = Load();
+    private static readonly Corpus Fixtures = Load();
 
-    /// <summary>Protects the current eased wet path using independently captured powers and cross terms.</summary>
+    /// <summary>Checks captured voice powers and independent synthetic PCM references.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        check("Overdrive current fixtures retain 16 voices, three input scales and 21 strengths", () =>
+        check("Overdrive retains measured voices, the dense base curve and independent endpoints", () =>
         {
-            Require(Data.SignalPath == "amount*(2-amount); post-DC wet; fixed output trim"
-                && Data.OutputGain == .5347782f && Data.DriveRange == 4.808956f,
-                "The fixture describes a different wet path.");
-            Require(Data.Voices.Length == 48 && Data.Voices.Select(x => x.Voice).Distinct().Count() == 16,
-                "Incomplete voice catalog.");
-            Require(Data.Voices.Count(x => x.Voice == "piper_base") == 3 && Data.Synthetic.Length == 9,
-                "Missing primary recordings or synthetic holdouts.");
-            foreach (Recording record in Data.Voices.Concat(Data.Synthetic))
-            {
-                Require(record.DryPower > 0 && record.Points.Length == 21, "Invalid recording.");
-                for (int i = 0; i <= 20; i++)
-                {
-                    Moment point = record.Points[i];
-                    Require(point.Amount == i / 20f && double.IsFinite(point.WetPower) && double.IsFinite(point.Cross),
-                        "Primary strengths or moments changed.");
-                    Require(point.Cross * point.Cross <= record.DryPower * point.WetPower + 1e-14,
-                        "The frozen moments violate the signal-power bound.");
-                }
-            }
+            Require(Fixtures.Voices.Length == 31 && Fixtures.Synthetic.Length == 27, "Incomplete Overdrive fixtures.");
+            Require(Fixtures.Voices.Count(x => x.Group == "dense") == 1, "Missing dense base curve.");
+            Require(Fixtures.Routing.Length == 9, "Missing independent synthetic routing references.");
         });
-        foreach (Recording voice in Data.Voices)
+        foreach (VoiceRecord voice in Fixtures.Voices)
         {
-            check($"Overdrive current guide and reverse-step budgets hold for {voice.Name}", () =>
+            check($"Overdrive retains measured RMS bounds for {voice.Name} at scale {voice.Scale:R}", () =>
             {
-                double full = Change(voice, 20), previous = 0;
-                for (int i = 0; i <= 20; i++)
+                Require(voice.Points[0].Amount == 0 && voice.Points[^1].Amount == 1, "Missing endpoints.");
+                double full = voice.Points[^1].ExpectedDeltaDb, previous = 0;
+                foreach (Point point in voice.Points)
                 {
-                    double level = Change(voice, i);
-                    Require(double.IsFinite(level), "Invalid current level.");
-                    Require(Math.Abs(level - i / 20d * full) < 1.634, "The current catalog guide budget regressed.");
-                    Require(Math.Sign(full) * (previous - level) < .287, "The current reverse-step budget regressed.");
-                    Require(level >= Math.Min(0, full) - 1.272 && level <= Math.Max(0, full) + 1.272,
-                        "The current endpoint-window budget regressed.");
+                    double level = Level(voice, point);
+                    Require(Math.Abs(level-point.ExpectedDeltaDb) < .0001, "Scalar correction differs from measured PCM.");
+                    Require(Math.Abs(level-point.Amount*full) <= voice.GuideBudgetDb, "The measured guide budget regressed.");
+                    Require(Math.Sign(full)*(previous-level) <= voice.ReverseBudgetDb, "The measured reverse-step budget regressed.");
                     previous = level;
                 }
             });
         }
-        check("Overdrive all three base-voice midpoints stay inside their clean/full windows", () =>
+        check("Overdrive dense base RMS remains ordered with a useful level midpoint", () =>
         {
-            foreach (Recording voice in Data.Voices.Where(x => x.Voice == "piper_base"))
+            VoiceRecord voice = Fixtures.Voices.Single(x => x.Group == "dense");
+            double previous = 0;
+            foreach (Point point in voice.Points)
             {
-                double middle = Change(voice, 10), full = Change(voice, 20);
-                Require(middle >= Math.Min(0, full) && middle <= Math.Max(0, full), "A primary midpoint left its window.");
+                double level = Level(voice, point);
+                Require(previous-level < .04, "A large base-voice reverse step returned.");
+                previous = level;
             }
+            double midpoint = Level(voice, voice.Points.Single(p => p.Amount == .5f));
+            double full = voice.Points[^1].ExpectedDeltaDb;
+            Require(midpoint > .35*full && midpoint < .65*full, "The base midpoint left its level window.");
         });
-        check("Overdrive current base-voice mean progresses without the preceding double hump", () =>
+        foreach (SyntheticRecord record in Fixtures.Synthetic)
         {
-            Recording[] voices = Data.Voices.Where(x => x.Voice == "piper_base").ToArray();
-            double[] mean = Enumerable.Range(0, 21).Select(i => voices.Average(x => Change(x, i))).ToArray();
-            for (int i = 1; i <= 20; i++)
+            check($"Overdrive retains accepted full PCM at {record.Rate} Hz and scale {record.Scale:R}", () =>
             {
-                // Stronger saturation retains a measured 0.00402 dB reverse step with the accepted mixer.
-                Require(mean[i] >= mean[i - 1] - .005, "The base mean reversed beyond its small fitting tolerance.");
-                Require(mean[i] <= mean[20] + .002 && mean[i] >= -.002, "The base mean left its endpoint window.");
-            }
-            // The soft criterion is an ordered window; an exact arithmetic midpoint is not required.
-            Require(mean[10] >= 0 && mean[10] <= mean[20], "The primary mean midpoint escaped its window.");
-            Require(Math.Abs(mean[20] - 1.0334693810110946) < .00001,
-                "Stronger saturation changed the calibrated base-mean full level.");
-            foreach (Recording voice in voices)
-            {
-                for (int i = 1; i <= 20; i++)
-                    Require(Change(voice, i) >= Change(voice, i - 1) - .03, "A primary recording acquired a large reverse step.");
-            }
-        });
-        check("Overdrive stronger saturation retains the preceding catalog guide-error budgets", () =>
+                float[] actual = OverdriveMixingChecks.Signal(record.Rate, record.Rate*3, record.Scale);
+                OverdriveMixingChecks.NewEngine(record.Rate).ApplyEffect(actual, VoiceEffectType.Overdrive, 1f);
+                Require(actual.All(float.IsFinite), "Non-finite full output.");
+                Require(Math.Abs(OverdriveMixingChecks.RmsDb(actual)-record.RmsDbfs) < .002, "Full output level changed.");
+                Require(record.Indices.Length == 16 && record.Samples.Length == 16, "Incomplete full PCM fixture.");
+                for (int i = 0; i < record.Indices.Length; i++)
+                    Require(Math.Abs(actual[record.Indices[i]]-record.Samples[i]) < 3e-6, "Full output waveform changed.");
+            });
+        }
+        foreach (RoutingRecord record in Fixtures.Routing)
         {
-            double meanError = 0, oldMeanError = 0, individualError = 0, oldIndividualError = 0;
-            for (int i = 0; i <= 20; i++)
+            check($"Overdrive direct routing matches captured intermediate PCM at {record.Rate} Hz and scale {record.Scale:R}", () =>
             {
-                double mean = 0, oldMean = 0, guide = 0;
-                foreach (Recording voice in Data.Voices)
+                Require(record.Points.Length == 21, "Incomplete intermediate routing fixture.");
+                foreach (RoutingPoint point in record.Points)
                 {
-                    double target = i / 20d * Change(voice, 20), current = Change(voice, i);
-                    double precedingTarget = i / 20d * voice.Points[20].BaselineChangeDb;
-                    mean += current; oldMean += voice.Points[i].BaselineChangeDb; guide += target;
-                    individualError += Math.Abs(current - target);
-                    oldIndividualError += Math.Abs(voice.Points[i].BaselineChangeDb - precedingTarget);
+                    float[] input = OverdriveMixingChecks.Signal(record.Rate, record.Rate*3, record.Scale);
+                    OverdriveMixingChecks.NewEngine(record.Rate).ApplyEffect(input, VoiceEffectType.Overdrive, point.Amount);
+                    Require(input.All(float.IsFinite), "Non-finite direct output.");
+                    Require(Math.Abs(OverdriveMixingChecks.RmsDb(input)-point.ExpectedRmsDbfs) < .002,
+                        "Direct routing differs from the independently captured PCM powers.");
                 }
-                meanError += Math.Abs(mean - guide) / (48 * 21);
-                double precedingGuide = Data.Voices.Sum(x => i / 20d * x.Points[20].BaselineChangeDb);
-                oldMeanError += Math.Abs(oldMean - precedingGuide) / (48 * 21);
-            }
-            Require(meanError < .215 && meanError <= oldMeanError + .002, "The catalog mean guide error regressed.");
-            Require(individualError / (48 * 21) < .27 && individualError <= oldIndividualError + .002 * 48 * 21,
-                "The individual catalog guide error regressed.");
-        });
-        foreach (Recording record in Data.Synthetic)
-        foreach (int index in Enumerable.Range(0, 21))
-        {
-            check($"Overdrive current wet routing matches independent moments for {record.Name} at {index * 5}%", () =>
-            {
-                float[] signal = OverdriveMixingChecks.Signal(record.Rate, record.Rate * 3, record.Scale);
-                OverdriveMixingChecks.NewEngine(record.Rate).ApplyEffect(signal, VoiceEffectType.Overdrive, index / 20f);
-                Require(signal.All(float.IsFinite), "The real engine returned nonfinite PCM.");
-                double expected = 10 * Math.Log10(record.DryPower) + Change(record, index);
-                Require(Math.Abs(OverdriveMixingChecks.Level(signal) - expected) < .002,
-                    "The engine differs from its independently captured current wet path.");
             });
         }
     }
 
-    /// <summary>Combines current gains with frozen pre-trim wet moments, including dry/wet correlation.</summary>
-    private static double Change(Recording record, int index)
-    {
-        Moment point = record.Points[index];
-        if (point.Amount <= .001f) return 0;
-        Dsp.DriveGains(point.Amount, out float dry, out float wet);
-        wet *= Data.OutputGain;
-        double power = dry * (double)dry * record.DryPower + wet * (double)wet * point.WetPower
-            + 2 * dry * (double)wet * point.Cross;
-        return 10 * Math.Log10(power / record.DryPower);
-    }
+    private static double Level(VoiceRecord voice, Point point) => point.Amount <= .001f ? 0
+        : point.UntrimmedRmsDbfs-voice.DryRmsDbfs+20*Math.Log10(Dsp.DriveGain(point.Amount));
 
-    /// <summary>Loads numeric evidence in the test executable only; the server never reads this resource.</summary>
-    private static Fixtures Load()
+    private static Corpus Load()
     {
         using Stream stream = typeof(OverdriveCurveChecks).Assembly.GetManifestResourceStream("OverdriveCurveMoments.json")
-            ?? throw new InvalidDataException("Missing current Overdrive moments.");
-        return JsonSerializer.Deserialize<Fixtures>(stream) ?? throw new InvalidDataException("Invalid current Overdrive moments.");
+            ?? throw new InvalidDataException("Missing direct Overdrive level fixtures.");
+        return JsonSerializer.Deserialize<Corpus>(stream) ?? throw new InvalidDataException("Invalid direct Overdrive fixtures.");
     }
 
-    /// <summary>Reports a violated current-path contract without treating RMS as a listening assessment.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
     }
+
+    private sealed record Corpus(VoiceRecord[] Voices, SyntheticRecord[] Synthetic, RoutingRecord[] Routing);
+    private sealed record VoiceRecord(string Name, string Group, float Scale, double DryRmsDbfs, double GuideBudgetDb, double ReverseBudgetDb, Point[] Points);
+    private sealed record Point(float Amount, double UntrimmedRmsDbfs, double ExpectedDeltaDb);
+    private sealed record SyntheticRecord(int Rate, float Scale, double RmsDbfs, int[] Indices, float[] Samples);
+    private sealed record RoutingRecord(int Rate, float Scale, RoutingPoint[] Points);
+    private sealed record RoutingPoint(float Amount, double UntrimmedRmsDbfs, double ExpectedRmsDbfs);
 }

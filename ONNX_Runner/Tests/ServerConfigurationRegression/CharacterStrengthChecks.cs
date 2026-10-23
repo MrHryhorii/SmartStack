@@ -7,18 +7,16 @@ internal static class CharacterStrengthChecks
     /// <summary>Checks declared internal strength and full-output character independently of historical mixer fits.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        foreach (var point in new (float Amount, float Drive)[]
+        foreach (float amount in new[] { .01f, .05f, .1f, .25f, .5f, .75f, .95f, 1f })
         {
-            (.01f, 1.0956982f), (.05f, 1.4688733f), (.1f, 1.9137017f), (.25f, 3.1039183f),
-            (.5f, 4.606717f), (.75f, 5.508396f), (.95f, 5.7969337f), (1f, 5.808956f)
-        })
-        {
-            check($"Overdrive prepares the declared eased strength at {point.Amount:R}", () =>
+            check($"Overdrive prepares gradual direct saturation at {amount:R}", () =>
             {
                 var engine = NewEngine(22050);
-                engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Overdrive, point.Amount);
-                float drive = (float)Field(engine, "_overdriveDrive");
-                Require(MathF.Abs(drive - point.Drive) < 1e-6f, "The request is no longer mapped to the declared wet strength.");
+                engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Overdrive, amount);
+                object state = Field(engine, "_drive");
+                float drive = (float)state.GetType().GetField("Drive")!.GetValue(state)!;
+                float expected = 5.808956f*amount*(2f-amount);
+                Require(MathF.Abs(drive-expected) < 1e-6f, "Direct saturation no longer fades with intensity.");
             });
         }
 

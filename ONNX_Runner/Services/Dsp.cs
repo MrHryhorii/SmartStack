@@ -216,45 +216,15 @@ public static class Dsp
         return dry * dryGain + wet * wetGain;
     }
 
-    /// <summary>
-    /// Prepares Overdrive weights for its eased wet strength and fixed output trim.
-    /// Two experimentally fitted cubic halves join with a shared value and slope.
-    /// Wet share grows throughout the transition; clean and full endpoints stay exact.
-    /// Call once per buffer. No input-level scan, extra PCM pass or allocation is used.
-    /// </summary>
-    public static void DriveGains(float t, out float dryGain, out float wetGain)
+    /// <summary>Static Overdrive playback correction, prepared outside the sample loop.</summary>
+    public static float DriveGain(float amount)
     {
-        if (t <= .001f || float.IsNaN(t))
-        {
-            dryGain = 1f;
-            wetGain = 0f;
-            return;
-        }
-        if (t >= 1f)
-        {
-            dryGain = 0f;
-            wetGain = 1f;
-            return;
-        }
-
-        if (t <= .5f)
-        {
-            float u = 2f * t;
-            dryGain = ((0.0570820338f * u - 0.272099697f) * u - 0.0771108638f) * u + 1f;
-            wetGain = ((0.167265318f * u - 0.190992395f) * u + 0.514146117f) * u;
-            return;
-        }
-
-        float uRight = 2f * (1f - t);
-        dryGain = ((-0.741279051f * uRight + 1.22475079f) * uRight + 0.224399738f) * uRight;
-        wetGain = ((0.274201121f * uRight - 0.672778562f) * uRight - 0.11100352f) * uRight + 1f;
-    }
-
-    /// <summary>Combines inputs with Drive gains prepared outside the sample loop.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float DriveCrossfade(float dry, float wet, float dryGain, float wetGain)
-    {
-        return dry * dryGain + wet * wetGain;
+        if (!(amount > .001f) || amount >= 1f) return 1f;
+        float s = amount <= .5f ? amount * 2f : amount * 2f - 1f;
+        float db = amount <= .5f
+            ? ((-2.344765913f * s + 8.911313896f) * s - 9.410726014f) * s
+            : ((-.539464856f * s + 2.006038849f) * s + 1.377604038f) * s - 2.844178031f;
+        return MathF.Pow(10f, db / 20f);
     }
 
     /// <summary>Static ring-modulator playback correction, prepared outside the sample loop.</summary>

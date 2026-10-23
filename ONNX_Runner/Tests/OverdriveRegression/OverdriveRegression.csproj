@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Isolate exact allocation accounting from background GC in the test host only. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../ONNX_Runner.csproj" />
+    <Compile Include="../ServerConfigurationRegression/AllocationChecks.cs" Link="AllocationChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/OverdriveMixingChecks.cs" Link="OverdriveMixingChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/OverdriveCurveChecks.cs" Link="OverdriveCurveChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/OverdriveCharacterChecks.cs" Link="OverdriveCharacterChecks.cs" />
+    <EmbeddedResource Include="../ServerConfigurationRegression/OverdriveCurveMoments.json" LogicalName="OverdriveCurveMoments.json" />
+  </ItemGroup>
+</Project>
