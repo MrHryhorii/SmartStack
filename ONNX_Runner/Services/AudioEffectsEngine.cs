@@ -19,7 +19,7 @@ namespace ONNX_Runner.Services;
 ///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
 ///   - FM Crossfade: fixed full-character wet branch, matched dry delay and prepared gains.
-///   - Chorus / Flanger Add: original nonlinear summation, then a prepared effect-specific gain.
+///   - Modulation Insert: complete Chorus/Flanger processors with prepared scalar playback gains.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 ///   - Filtered Crossfade: TacticalRadio retains its evolving EQ input; FM uses a fixed equalizer.
@@ -91,7 +91,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private enum RoutingMode
     {
         TelephoneCrossfade,
-        FlangerAdd,
+        ModulationInsert,
         StrictInsert,
         StrictCrossfade,
         FmCrossfade,
@@ -99,8 +99,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         CrusherInsert,
         TacticalCrossfade,
         DriveCrossfade,
-        RingCrossfade,
-        ChorusAdd
+        RingCrossfade
     }
 
     // =========================================================================
@@ -109,6 +108,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     private struct ModulationState
     {
+        public float PreparedAmount;
+        public float Strength;
+        public float Gain;
+        public float SaturationDrive;
+        public float InverseDrive;
+        public float Base1, Base2, Depth1, Depth2;
+        public float WetScale, Feedback;
+        public bool FullStrength;
         public float RingPhase;
         public float FlangerPhase;
         public float ChorusPhase;
@@ -388,6 +395,19 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
         }
 
+        if (mode == RoutingMode.ModulationInsert)
+        {
+            PrepareModulation(type, amount);
+            bool chorus = type == VoiceEffectType.Chorus;
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                _thermal.Update(ref _noise, _thermalDriftCoeff);
+                _thermalValue = _thermal.State * _thermalNoiseGain;
+                buffer[i] = chorus ? Chorus(buffer[i]) : Flanger(buffer[i]);
+            }
+            return;
+        }
+
         // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
         // Tape and rolling glitches retain their own authored intensity laws.
         float effectAmount = mode is RoutingMode.StrictInsert or RoutingMode.CrusherInsert
@@ -430,11 +450,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             Dsp.RingGains(amount, out ringDryGain, out ringWetGain);
             ringWetGain *= RingOutputGain;
         }
-
-        float modulationBlend = mode is RoutingMode.ChorusAdd or RoutingMode.FlangerAdd
-            ? Dsp.ModulationBlend(amount) : amount;
-        float chorusGain = mode == RoutingMode.ChorusAdd ? Dsp.ChorusGain(amount) : 1f;
-        float flangerGain = mode == RoutingMode.FlangerAdd ? Dsp.FlangerGain(amount) : 1f;
 
         // Per-buffer constants used by effect hot paths.
         switch (type)
@@ -510,14 +525,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.RingCrossfade(dry, wet, ringDryGain, ringWetGain);
                     break;
 
-                case RoutingMode.ChorusAdd:
-                    buffer[i] = Dsp.ChorusCrossfade(dry, wet, modulationBlend, chorusGain);
-                    break;
-
-                case RoutingMode.FlangerAdd:
-                    buffer[i] = Dsp.FlangerCrossfade(dry, wet, modulationBlend, flangerGain);
-                    break;
-
                 case RoutingMode.StrictInsert:
                     buffer[i] = wet;
                     break;
@@ -550,8 +557,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Overdrive => RoutingMode.DriveCrossfade,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherInsert,
             VoiceEffectType.RingModulator => RoutingMode.RingCrossfade,
-            VoiceEffectType.Flanger => RoutingMode.FlangerAdd,
-            VoiceEffectType.Chorus => RoutingMode.ChorusAdd,
+            VoiceEffectType.Flanger => RoutingMode.ModulationInsert,
+            VoiceEffectType.Chorus => RoutingMode.ModulationInsert,
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
             VoiceEffectType.TacticalRadio => RoutingMode.TacticalCrossfade,
@@ -610,10 +617,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.Flanger:
+                _mod.PreparedAmount = float.NaN;
                 _mod.FlangerPhaseInc = PhaseInc(0.45f);
                 break;
 
             case VoiceEffectType.Chorus:
+                _mod.PreparedAmount = float.NaN;
                 _mod.ChorusPhaseInc = PhaseInc(0.55f);
                 _mod.ChorusPhaseInc2 = PhaseInc(0.83f);
                 break;
@@ -782,8 +791,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Overdrive => Overdrive(x, amount),
             VoiceEffectType.Bitcrusher => Bitcrusher(x, amount),
             VoiceEffectType.RingModulator => RingMod(x, amount),
-            VoiceEffectType.Flanger => Flanger(x, amount),
-            VoiceEffectType.Chorus => Chorus(x, amount),
             VoiceEffectType.LoFiTape => LoFiTape(x, amount),
             VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
             VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
@@ -947,42 +954,64 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return Dsp.SoftClip(x * carrier * makeupGain);
     }
 
-    /// <summary>
-    /// Simulates a classic analog flanger using a single modulated delay line with feedback.
-    /// LFO phase incremented by pre-computed FlangerPhaseInc: no division in the hot path.
-    /// Returns a pure wet signal (the delayed component only).
-    /// </summary>
-    private float Flanger(float x, float amount)
+    /// <summary>Prepares the complete modulation path only when intensity changes.</summary>
+    private void PrepareModulation(VoiceEffectType type, float amount)
+    {
+        if (_mod.PreparedAmount == amount) return;
+        _mod.PreparedAmount = amount;
+        float strength = Dsp.ModulationStrength(amount);
+        _mod.Strength = strength;
+        _mod.SaturationDrive = strength;
+        _mod.InverseDrive = 1f / strength;
+        _mod.FullStrength = amount >= 1f;
+        bool chorus = type == VoiceEffectType.Chorus;
+        _mod.Gain = chorus ? Dsp.ChorusGain(amount) : Dsp.FlangerGain(amount);
+        // Keep the authored full delay; intensity controls modulation depth and delayed level.
+        float baseStrength = amount >= 1f ? strength : 1f;
+        _mod.Base1 = .1f + (chorus ? 14.9f : 1.7f) * baseStrength;
+        _mod.Base2 = .1f + 23.9f * baseStrength;
+        _mod.Depth1 = (chorus ? 6f : 1.1f) * strength;
+        _mod.Depth2 = 7f * strength;
+        _mod.WetScale = (chorus ? .45f : .72f) * strength;
+        _mod.Feedback = .75f * strength;
+    }
+
+    /// <summary>Runs the complete flanger, including its feedback, DC removal and output scalar.</summary>
+    private float Flanger(float dry)
     {
         _mod.FlangerPhase += _mod.FlangerPhaseInc;
         if (_mod.FlangerPhase >= 2f * MathF.PI) _mod.FlangerPhase -= 2f * MathF.PI;
-
-        float delayMs = 0.1f + 1.7f * amount + Dsp.Sine(_mod.FlangerPhase) * (1.1f * amount);
+        float delayMs = _mod.Base1 + Dsp.Sine(_mod.FlangerPhase) * _mod.Depth1;
         float delayed = _delay.Read(Math.Max(0f, delayMs * _msToSamples + _preWriteReadOffset));
-        _delay.Write(Dsp.SoftClip(x + delayed * 0.75f));
-        return delayed * (0.72f * amount);
+        float feedbackInput = Dsp.KillDenormal(dry) + delayed * _mod.Feedback;
+        _delay.Write(Dsp.ModulationSaturate(feedbackInput, _mod.SaturationDrive, _mod.InverseDrive));
+        return FinishModulation(dry, _dcBlocker.Process(delayed * _mod.WetScale));
     }
 
-    /// <summary>
-    /// Simulates a classic analog chorus effect using two modulated delay lines.
-    /// Both LFO phases incremented by pre-computed increments: no division in the hot path.
-    /// </summary>
-    private float Chorus(float x, float amount)
+    /// <summary>Runs the complete two-voice chorus without an additional outer crossfade.</summary>
+    private float Chorus(float dry)
     {
         _mod.ChorusPhase += _mod.ChorusPhaseInc;
         _mod.ChorusPhase2 += _mod.ChorusPhaseInc2;
         if (_mod.ChorusPhase >= 2f * MathF.PI) _mod.ChorusPhase -= 2f * MathF.PI;
         if (_mod.ChorusPhase2 >= 2f * MathF.PI) _mod.ChorusPhase2 -= 2f * MathF.PI;
-
-        float wow = _thermalValue * 0.006f * amount;
-        float d1 = 0.1f + 14.9f * amount + Dsp.Sine(_mod.ChorusPhase) * (6.0f * amount) + wow;
-        float d2 = 0.1f + 23.9f * amount + Dsp.Sine(_mod.ChorusPhase2) * (7.0f * amount) - wow;
-
+        float wow = _thermalValue * .006f * _mod.Strength;
+        float d1 = _mod.Base1 + Dsp.Sine(_mod.ChorusPhase) * _mod.Depth1 + wow;
+        float d2 = _mod.Base2 + Dsp.Sine(_mod.ChorusPhase2) * _mod.Depth2 - wow;
         float s1 = _delay.Read(Math.Max(0f, d1 * _msToSamples + _preWriteReadOffset));
         float s2 = _delay.Read(Math.Max(0f, d2 * _msToSamples + _preWriteReadOffset));
-        _delay.Write(x);
+        _delay.Write(Dsp.KillDenormal(dry));
+        return FinishModulation(dry, _dcBlocker.Process((s1 + s2) * _mod.WetScale));
+    }
 
-        return (s1 + s2) * (0.45f * amount);
+    /// <summary>Adds the delayed component and applies gradual saturation followed by static gain.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float FinishModulation(float dry, float wet)
+    {
+        float shaped = Dsp.ModulationSaturate(dry + wet * .85f, _mod.SaturationDrive, _mod.InverseDrive);
+        // Preserve the accepted full-strength expression's final floating-point rounding.
+        if (_mod.FullStrength) shaped = dry + (shaped - dry);
+        return shaped * _mod.Gain;
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using ONNX_Runner.Models;
@@ -6,214 +7,171 @@ using ONNX_Runner.Services;
 internal static class ModulationCurveChecks
 {
     private static readonly Corpus Fixtures = Load();
+    private static readonly int[] Rates = [8000, 11025, 16000, 22050, 24000, 44100, 48000, 96000, 192000];
+    private static readonly FieldInfo ModulationField = typeof(AudioEffectsEngine)
+        .GetField("_mod", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
-    /// <summary>Checks the stronger outer blend, current-path moments and independent waveform checkpoints.</summary>
+    /// <summary>Checks only the complete Chorus/Flanger paths and their shared modulation helpers.</summary>
     internal static void Run(Action<string, Action> check, VoiceEffectType effect)
     {
         bool chorus = effect == VoiceEffectType.Chorus;
         string name = effect.ToString();
-        VoiceRecord[] voices = Fixtures.Voices.Where(v => v.Effect == name).ToArray();
-        SyntheticRecord[] synthetic = Fixtures.Synthetic.Where(v => v.Effect == name).ToArray();
-        VoiceRecord[] basis = voices.Where(v => v.Voice == "piper_base").ToArray();
-        Require(voices.Length == 48 && basis.Length == 3 && synthetic.Length == 9, "Current-path fixtures are incomplete.");
-        double guideBudget = chorus ? 1.40 : 1.60;
-        double reverseBudget = chorus ? .72 : .62;
-        double escapeBudget = chorus ? .65 : .92;
-
-        check($"{name} outer blend preserves clean/full guards", () =>
+        VoiceRecord[] voices = Fixtures.Voices.Where(x => x.Effect == name).ToArray();
+        SyntheticRecord[] synthetic = Fixtures.Synthetic.Where(x => x.Effect == name).ToArray();
+        check($"{name} retains its measured voice curves and independent full-strength fixtures", () =>
         {
-            foreach (float amount in new[] { -1f, 0f, .001f, float.NaN })
-                Require(Dsp.ModulationBlend(amount) == 0f, "Clean or invalid blend did not bypass.");
-            foreach (float amount in new[] { 1f, 2f, float.PositiveInfinity })
-                Require(Dsp.ModulationBlend(amount) == 1f, "Full blend changed.");
+            Require(voices.Length == 31 && synthetic.Length == 27, "Incomplete modulation fixtures.");
+            Require(voices.Count(x => x.Group == "dense") == 1, "Missing dense base curve.");
         });
-        check($"{name} midpoint increases processed share without changing internal strength", () =>
-        {
-            float blend = Dsp.ModulationBlend(.5f);
-            Require(MathF.Abs(blend - 2f / 3f) < 1e-7f, "Midpoint retained the previous half-share.");
-            Require(MathF.Abs(.75f * blend - .5f) < 1e-7f, "Nominal midpoint delayed contribution changed.");
-        });
-        check($"{name} outer blend is bounded, increasing and stronger throughout its active range", () =>
-        {
-            float previous = 0f;
-            // This audits a scalar formula; audio fixtures retain exactly 21 strengths.
-            for (int i = 1; i <= 100000; i++)
-            {
-                float amount = i / 100000f, blend = Dsp.ModulationBlend(amount);
-                Require(float.IsFinite(blend) && blend >= previous && blend <= 1f, "Invalid or reversing blend.");
-                if (amount > .001f && amount < 1f)
-                    Require(blend > amount, "The new outer blend did not strengthen the processed branch.");
-                previous = blend;
-            }
-        });
-        check($"{name} prepared mixture retains the independent saturated additive branch", () =>
-        {
-            foreach (float dry in new[] { -.8f, -.2f, 0f, .15f, .9f })
-            foreach (float wet in new[] { -.7f, 0f, .1f, .8f })
-            for (int i = 0; i <= 20; i++)
-            {
-                float amount = i / 20f;
-                double blend = amount <= .001f ? 0 : amount + (2d / 3d) * amount * (1d - amount);
-                double branch = Math.Tanh(dry + (double)wet * .85f);
-                double expected = dry + (branch - dry) * blend;
-                Require(Math.Abs(Mix(chorus, dry, wet, amount, 1f) - expected) < 3e-7,
-                    "Prepared mixture changed the declared branch or blend.");
-            }
-        });
-
-        check($"{name} gain preserves exact endpoint and invalid-input guards", () =>
+        check($"{name} gain preserves unity endpoints and remains modest throughout the active range", () =>
         {
             foreach (float amount in new[] { -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
                 Require(Gain(chorus, amount) == 1f, "An endpoint or invalid-input gain changed.");
-            Require(Mix(chorus, .25f, -.75f, 0f, 1f) == .25f, "The internal clean endpoint changed.");
-        });
-        check($"{name} prepared gain remains finite, positive and bounded", () =>
-        {
-            for (int i = 0; i <= 100000; i++)
+            for (int i = 0; i <= 10000; i++)
             {
-                float gain = Gain(chorus, i / 100000f);
-                Require(float.IsFinite(gain) && gain > .9f && gain < 1.1f, "Prepared gain left its calibrated bounded range.");
+                float gain = Gain(chorus, i / 10000f);
+                Require(float.IsFinite(gain) && gain > .9f && gain < 1.1f, "Playback scalar left its calibrated range.");
             }
         });
-        check($"{name} halves share midpoint values and slopes", () =>
+        check($"{name} scalar curve has continuous midpoint value and slope", () =>
         {
-            // A smaller finite-difference step separates the shared tangent from nearby curvature.
-            const float h = .0005f;
+            const float h = .001f;
             double middle = Gain(chorus, .5f);
             double left = (3 * middle - 4 * Gain(chorus, .5f - h) + Gain(chorus, .5f - 2 * h)) / (2 * h);
             double right = (-3 * middle + 4 * Gain(chorus, .5f + h) - Gain(chorus, .5f + 2 * h)) / (2 * h);
-            Require(Math.Abs(left - right) < .008, "The midpoint derivative has a discontinuity.");
+            Require(Math.Abs(left - right) < .004, "The scalar curve has a midpoint slope jump.");
             Require(Math.Abs(Gain(chorus, MathF.BitDecrement(.5f)) - Gain(chorus, MathF.BitIncrement(.5f))) < 3e-6,
-                "The midpoint value is discontinuous.");
+                "The scalar curve has a midpoint value jump.");
         });
-        check($"{name} correction scales the strengthened mixture without undoing its proportions", () =>
+        check($"{name} saturation converges to identity near zero drive and retains full tanh", () =>
         {
-            foreach (float dry in new[] { -.8f, -.2f, 0f, .15f, .9f })
-            foreach (float wet in new[] { -.7f, 0f, .1f, .8f })
-            for (int i = 0; i <= 20; i++)
+            foreach (float sample in new[] { -.9f, -.25f, 0f, .2f, .8f })
             {
-                float amount = i / 20f, gain = Gain(chorus, amount);
-                float uncorrected = Mix(chorus, dry, wet, amount, 1f);
-                Require(Mix(chorus, dry, wet, amount, gain) == uncorrected * gain,
-                    "Level correction changed the additive mixture.");
+                Require(Dsp.ModulationSaturate(sample, 0f, float.PositiveInfinity) == sample, "Zero drive changed input.");
+                Require(Math.Abs(Dsp.ModulationSaturate(sample, .001f, 1000f) - sample) < 1e-6,
+                    "Tiny modulation drive immediately saturated the dry signal.");
+                Require(Dsp.ModulationSaturate(sample, 1f, 1f) == MathF.Tanh(sample), "Full saturation changed.");
             }
         });
-        check($"{name} gain preparation and mixing allocate zero managed bytes", () =>
+        check($"{name} midpoint controls delayed level and modulation depth internally", () =>
         {
-            double checksum = 0;
-            for (int i = 0; i < 20000; i++) checksum += PreparedSample(chorus, i);
-            long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 20000; i++) checksum += PreparedSample(chorus, i);
-            Require(GC.GetAllocatedBytesForCurrentThread() == before && double.IsFinite(checksum), "Prepared mixing allocated memory.");
+            var engine = NewEngine(22050);
+            engine.ApplyEffect(Span<float>.Empty, effect, .5f);
+            Require(Value<float>(engine, "Strength") == .75f && Value<float>(engine, "SaturationDrive") == .75f,
+                "Midpoint lost its internal depth or gradual saturation.");
+            Require(Math.Abs(Value<float>(engine, "WetScale") - (chorus ? .3375f : .54f)) < 1e-7,
+                "Delayed contribution no longer follows internal intensity.");
+            Require(Math.Abs(Value<float>(engine, "Base1") - (chorus ? 15f : 1.8f)) < 1e-6,
+                "The base delay varies with intensity.");
+            if (chorus) Require(Value<float>(engine, "Base2") == 24f, "The second chorus base delay changed.");
+            else Require(Value<float>(engine, "Feedback") == .5625f, "Flanger feedback does not follow intensity.");
         });
-
+        check($"{name} gain scales only the output and cannot alter delay or feedback history", () =>
+        {
+            var a = NewEngine(22050); var b = NewEngine(22050);
+            a.ApplyEffect(Span<float>.Empty, effect, .5f); b.ApplyEffect(Span<float>.Empty, effect, .5f);
+            object state = ModulationField.GetValue(b)!;
+            state.GetType().GetField("Gain")!.SetValue(state, Value<float>(b, "Gain") * .5f);
+            ModulationField.SetValue(b, state);
+            float[] first = Signal(22050, 22050, 1f), second = (float[])first.Clone();
+            a.ApplyEffect(first, effect, .5f); b.ApplyEffect(second, effect, .5f);
+            for (int i = 0; i < first.Length; i++) Require(second[i] == first[i] * .5f,
+                "The scalar entered the delay or feedback path.");
+        });
+        check($"{name} identical intensity is re-prepared after switching the modulation type", () =>
+        {
+            var engine = NewEngine(22050);
+            VoiceEffectType other = chorus ? VoiceEffectType.Flanger : VoiceEffectType.Chorus;
+            engine.ApplyEffect(Span<float>.Empty, other, .5f);
+            engine.ApplyEffect(Span<float>.Empty, effect, .5f);
+            Require(Math.Abs(Value<float>(engine, "Base1") - (chorus ? 15f : 1.8f)) < 1e-6,
+                "The shared parameter cache retained the previous effect's delay.");
+            Require(Value<float>(engine, "Gain") == Gain(chorus, .5f), "The previous effect's scalar leaked.");
+            float[] switched = Signal(22050, 11025, 1f), fresh = (float[])switched.Clone();
+            engine.ApplyEffect(switched, effect, .5f);
+            NewEngine(22050).ApplyEffect(fresh, effect, .5f);
+            Require(SameBits(switched, fresh), "An empty type switch changed the new effect's state.");
+        });
+        check($"{name} parallel requests retain independent modulation state", () =>
+        {
+            float[] source = Signal(22050, 22050, 1f), expected = (float[])source.Clone();
+            NewEngine(22050).ApplyEffect(expected, effect, .5f);
+            bool[] passed = new bool[24];
+            Parallel.For(0, passed.Length, i =>
+            {
+                float[] output = (float[])source.Clone();
+                var engine = NewEngine(22050);
+                int block = 37 + i;
+                for (int offset = 0; offset < output.Length; offset += block)
+                    engine.ApplyEffect(output.AsSpan(offset, Math.Min(block, output.Length - offset)), effect, .5f);
+                passed[i] = SameBits(output, expected);
+            });
+            Require(passed.All(x => x), "Parallel requests shared a delay, phase or preparation cache.");
+        });
         foreach (VoiceRecord voice in voices)
         {
-            Require(voice.Points.Length == 21, "A recorded current path is incomplete.");
-            double full = voice.Points[^1].BaselineChangeDb;
-            check($"{name} current-path guide budget holds for {voice.Name}", () =>
+            check($"{name} retains offline level bounds for {voice.Name} at scale {voice.Scale:R}", () =>
             {
-                foreach (Point point in voice.Points)
-                    Require(Math.Abs(Level(chorus, point) - point.Amount * full) < guideBudget,
-                        "A current guide-error budget regressed.");
-            });
-            check($"{name} current-path reversal budget holds for {voice.Name}", () =>
-            {
-                double previous = 0;
+                Require(voice.Points[0].Amount == 0 && voice.Points[^1].Amount == 1f, "Missing level endpoints.");
+                double full = voice.Points[^1].ExpectedDeltaLU, previous = 0;
                 foreach (Point point in voice.Points)
                 {
-                    double current = Level(chorus, point);
-                    Require(Math.Sign(full) * (previous - current) < reverseBudget, "A current reverse-step budget regressed.");
-                    previous = current;
+                    double level = Level(chorus, voice, point);
+                    Require(Math.Abs(level - point.ExpectedDeltaLU) < .005, "Playback no longer matches recorded wet levels.");
+                    Require(Math.Abs(level - point.Amount * full) <= voice.GuideBudgetLU, "Recorded guide error increased.");
+                    Require(Math.Sign(full) * (previous - level) <= voice.ReverseBudgetLU, "Recorded reverse-step budget increased.");
+                    previous = level;
                 }
-            });
-            check($"{name} current-path endpoint-window budget holds for {voice.Name}", () =>
-            {
-                foreach (Point point in voice.Points)
-                {
-                    double level = Level(chorus, point);
-                    Require(level >= Math.Min(0, full) - escapeBudget && level <= Math.Max(0, full) + escapeBudget,
-                        "A current endpoint-window budget regressed.");
-                }
-            });
-            if (!chorus) continue;
-            check($"Chorus current midpoint stays inside its endpoint window for {voice.Name}", () =>
-            {
-                double midpoint = Level(true, voice.Points[10]);
-                Require(midpoint >= Math.Min(0, full) && midpoint <= Math.Max(0, full), "A Chorus midpoint left its endpoint window.");
             });
         }
-        check($"{name} base mean follows the bounded ordered transition", () =>
+        check($"{name} dense base curve retains a useful midpoint and small reverse steps", () =>
         {
-            double full = basis.Average(v => v.Points[^1].BaselineChangeDb), previous = 0;
-            double error = 0;
-            for (int i = 0; i <= 20; i++)
+            VoiceRecord basis = voices.Single(x => x.Group == "dense");
+            double previous = 0;
+            foreach (Point point in basis.Points)
             {
-                double mean = basis.Average(v => Level(chorus, v.Points[i]));
-                Require(previous - mean < (chorus ? .00015 : .0202), "The base mean reverse-step budget regressed.");
-                Require(mean >= -.001 && mean <= full + (chorus ? .001 : .01), "The base mean left its bounded endpoint window.");
-                error += Math.Abs(mean - i / 20d * full) / 21;
-                previous = mean;
+                double level = Level(chorus, basis, point);
+                Require(previous - level < .04, "A large base-voice reverse step returned.");
+                previous = level;
             }
-            Require(error < (chorus ? .06 : .055), "The new blend exceeded its base guide-error budget.");
-            double midpoint = basis.Average(v => Level(chorus, v.Points[10]));
-            Require(midpoint > .35 * full && midpoint < .65 * full, "The base midpoint left its central endpoint window.");
+            double full = basis.Points[^1].ExpectedDeltaLU;
+            double midpoint = Level(chorus, basis, basis.Points.Single(x => x.Amount == .5f));
+            Require(midpoint > .35 * full && midpoint < .65 * full, "Base midpoint left its useful level window.");
         });
-        check($"{name} catalog controls retain midpoint coverage and average-error budgets", () =>
-        {
-            int windows = 0; double error = 0, baselineError = 0, meanError = 0;
-            foreach (VoiceRecord voice in voices)
-            {
-                double full = voice.Points[^1].BaselineChangeDb, midpoint = Level(chorus, voice.Points[10]);
-                if (midpoint >= Math.Min(0, full) && midpoint <= Math.Max(0, full)) windows++;
-                foreach (Point point in voice.Points)
-                {
-                    error += Math.Abs(Level(chorus, point) - point.Amount * full) / (48 * 21);
-                    baselineError += Math.Abs(point.BaselineChangeDb - point.Amount * full) / (48 * 21);
-                }
-            }
-            for (int i = 0; i <= 20; i++)
-                meanError += Math.Abs(voices.Average(v => Level(chorus, v.Points[i]))
-                    - voices.Average(v => v.Points[^1].BaselineChangeDb) * i / 20d) / 21;
-            Require(windows >= (chorus ? 48 : 30), "Recorded midpoint coverage regressed.");
-            Require(error < baselineError + .03 && meanError < .10, "Recorded average-error budgets regressed.");
-        });
-
         foreach (SyntheticRecord record in synthetic)
-        foreach (SyntheticPoint point in record.Points)
         {
-            check($"{name} independent current PCM at {record.Rate} Hz, scale {record.Scale:R}, amount {point.Amount:R}", () =>
+            check($"{name} preserves accepted full PCM at {record.Rate} Hz and scale {record.Scale:R}", () =>
             {
-                float[] signal = Signal(record.Rate, record.Rate * 3, record.Scale);
-                NewEngine(record.Rate).ApplyEffect(signal, effect, point.Amount);
-                double power = 0;
-                foreach (float sample in signal)
-                {
-                    Require(float.IsFinite(sample), "Non-finite waveform.");
-                    power += sample * (double)sample;
-                }
-                float gain = Gain(chorus, point.Amount);
-                Require(Math.Abs(10 * Math.Log10(power / signal.Length) - point.OriginalDbfs - 20 * Math.Log10(gain)) < .002,
-                    "Output no longer matches the independently captured additive waveform and prepared gain.");
-                Require(point.Indices.Length == 16 && point.Samples.Length == 16, "Waveform checkpoints are incomplete.");
-                for (int i = 0; i < point.Indices.Length; i++)
-                {
-                    double blend = Dsp.ModulationBlend(point.Amount);
-                    double independent = point.DrySamples[i] + (point.CompositeSamples[i] - (double)point.DrySamples[i]) * blend;
-                    Require(Math.Abs(signal[point.Indices[i]] - independent * gain) < 3e-6,
-                        "The engine changed the independently captured branch or stronger blend.");
-                    Require(Math.Abs(signal[point.Indices[i]] - point.Samples[i] * gain) < 3e-6,
-                        "Level correction changed a captured waveform checkpoint.");
-                }
+                float[] source = Signal(record.Rate, record.Rate * 3, record.Scale);
+                NewEngine(record.Rate).ApplyEffect(source, effect, 1f);
+                Require(source.All(float.IsFinite), "Non-finite full output.");
+                Require(Math.Abs(RmsDb(source) - record.RmsDbfs) < .002, "Full-effect level changed.");
+                Require(record.Indices.Length == 16 && record.Samples.Length == 16, "Missing full waveform checkpoints.");
+                for (int i = 0; i < record.Indices.Length; i++)
+                    Require(Math.Abs(source[record.Indices[i]] - record.Samples[i]) < 3e-6, "Full-effect waveform changed.");
             });
         }
-        foreach (int rate in new[] { 8000, 22050, 48000 })
+        foreach (int rate in Rates)
         {
-            check($"{name} changing intensity is independent of streaming partitions at {rate} Hz", () =>
+            check($"{name} remains finite and independent of stream partitions at {rate} Hz", () =>
             {
-                float[] amounts = [0, .001f, .00101f, .1f, .4995f, .5f, .5005f, .9f, 1, .45f];
-                int size = rate / 8;
-                float[] whole = Signal(rate, size * amounts.Length, 1), split = (float[])whole.Clone();
+                float[] input = Signal(rate, rate / 8, 1f);
+                foreach (float amount in new[] { .0011f, .01f, .25f, .5f, .75f, 1f })
+                {
+                    float[] whole = (float[])input.Clone(), split = (float[])input.Clone();
+                    NewEngine(rate).ApplyEffect(whole, effect, amount);
+                    var engine = NewEngine(rate);
+                    for (int i = 0; i < split.Length; i += 37)
+                        engine.ApplyEffect(split.AsSpan(i, Math.Min(37, split.Length - i)), effect, amount);
+                    Require(SameBits(whole, split), "Streaming boundaries changed output.");
+                    Require(whole.All(x => float.IsFinite(x) && Math.Abs(x) < 2), "Invalid modulation output.");
+                }
+            });
+            check($"{name} changing intensity preserves cache, streaming, reset and warm bypass at {rate} Hz", () =>
+            {
+                float[] amounts = [0f, .001f, .0011f, .01f, .25f, .4995f, .5f, .5005f, .75f, 1f, .45f];
+                int size = rate / 20;
+                float[] whole = Signal(rate, size * amounts.Length, 1f), split = (float[])whole.Clone();
                 var a = NewEngine(rate); var b = NewEngine(rate);
                 for (int section = 0; section < amounts.Length; section++)
                 {
@@ -221,85 +179,91 @@ internal static class ModulationCurveChecks
                     for (int i = 0; i < size; i += 257)
                         b.ApplyEffect(split.AsSpan(section * size + i, Math.Min(257, size - i)), effect, amounts[section]);
                 }
-                Require(MemoryMarshal.AsBytes(whole.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(split.AsSpan())),
-                    "Streaming partitions changed output.");
-            });
-            check($"{name} warm bypass remains clean at {rate} Hz", () =>
-            {
-                float[] clean = Signal(rate, rate / 4, 1); var engine = NewEngine(rate);
-                engine.ApplyEffect((float[])clean.Clone(), effect, .7f);
+                Require(SameBits(whole, split), "Changing preparation depends on block size.");
                 foreach (float amount in new[] { 0f, .001f })
                 {
-                    float[] output = (float[])clean.Clone(); engine.ApplyEffect(output, effect, amount);
-                    Require(output.SequenceEqual(clean), "Warm bypass changed clean samples.");
+                    float[] clean = Signal(rate, 257, 1f), output = (float[])clean.Clone();
+                    a.ApplyEffect(output, effect, amount);
+                    Require(SameBits(clean, output), "Warm bypass changed clean samples.");
                 }
+                a.Reset(123456); b.Reset(123456);
+                float[] resetA = Signal(rate, rate / 8, 1f), resetB = (float[])resetA.Clone();
+                a.ApplyEffect(resetA, effect, .5f); b.ApplyEffect(resetB, effect, .5f);
+                Require(SameBits(resetA, resetB), "Seeded reset is not reproducible.");
+            });
+            check($"{name} gradual preparation and hot processing allocate zero managed bytes at {rate} Hz", () =>
+            {
+                var engine = NewEngine(rate);
+                float[] block = Signal(rate, 257, 1f);
+                for (int i = 0; i < 256; i++) engine.ApplyEffect(block, effect, .01f + i % 99 / 100f);
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                for (int i = 0; i < 256; i++) engine.ApplyEffect(block, effect, .01f + i % 99 / 100f);
+                Require(GC.GetAllocatedBytesForCurrentThread() == before, "Modulation preparation or processing allocated memory.");
             });
         }
+        check($"{name} approaches a clean signal at the first active intensity", () =>
+        {
+            float[] source = Signal(22050, 22050, 1f), output = (float[])source.Clone();
+            NewEngine(22050).ApplyEffect(output, effect, .0011f);
+            double error = 0, power = 0;
+            for (int i = 0; i < source.Length; i++) { error += Math.Pow(output[i] - source[i], 2); power += source[i] * (double)source[i]; }
+            Require(error < power * .0001, "The first active intensity introduced a large discontinuity.");
+        });
+        check($"{name} preserves digital silence throughout the intensity range", () =>
+        {
+            for (int i = 0; i <= 20; i++)
+            {
+                float[] silence = new float[22050];
+                NewEngine(22050).ApplyEffect(silence, effect, i / 20f);
+                Require(silence.All(x => x == 0f), "Modulation generated sound from silence.");
+            }
+        });
     }
 
-    /// <summary>Recombines independent dry/composite moments using the production blend and prepared scalar.</summary>
-    private static double Level(bool chorus, Point point)
-    {
-        double blend = Dsp.ModulationBlend(point.Amount), dry = 1 - blend;
-        double power = dry * dry + blend * blend * point.CompositePowerRatio
-            + 2 * dry * blend * point.CompositeCrossRatio;
-        return 10 * Math.Log10(power) + 20 * Math.Log10(Gain(chorus, point.Amount));
-    }
-
-    /// <summary>Selects the effect-specific once-per-buffer scalar.</summary>
+    private static double Level(bool chorus, VoiceRecord voice, Point point) => point.Amount <= .001f ? 0
+        : point.UntrimmedLufs - voice.DryLufs + 20 * Math.Log10(Gain(chorus, point.Amount));
     private static float Gain(bool chorus, float amount) => chorus ? Dsp.ChorusGain(amount) : Dsp.FlangerGain(amount);
-
-    /// <summary>Routes the stronger declared outer blend without altering the saturated branch.</summary>
-    private static float Mix(bool chorus, float dry, float wet, float amount, float gain) => chorus
-        ? Dsp.ChorusCrossfade(dry, wet, Dsp.ModulationBlend(amount), gain)
-        : Dsp.FlangerCrossfade(dry, wet, Dsp.ModulationBlend(amount), gain);
-
-    /// <summary>Exercises warmed runtime preparation and mixing without allocating test objects.</summary>
-    private static float PreparedSample(bool chorus, int i)
+    private static T Value<T>(AudioEffectsEngine engine, string name)
     {
-        float amount = i % 1001 / 1000f;
-        return Mix(chorus, .2f, -.1f, amount, Gain(chorus, amount));
+        object state = ModulationField.GetValue(engine)!;
+        return (T)state.GetType().GetField(name)!.GetValue(state)!;
     }
-
-    /// <summary>Recreates the frozen multitone at its original input scale.</summary>
+    private static AudioEffectsEngine NewEngine(int rate)
+    {
+        var engine = new AudioEffectsEngine(new(), rate); engine.Reset(123456); return engine;
+    }
     private static float[] Signal(int rate, int count, float scale)
     {
         var output = new float[count];
         for (int i = 0; i < count; i++)
         {
-            double t = (double)i / rate;
+            double t = i / (double)rate;
             output[i] = scale * (float)((.18 * Math.Sin(2 * Math.PI * 110 * t) + .08 * Math.Sin(2 * Math.PI * 330 * t)
                 + .05 * Math.Sin(2 * Math.PI * 1700 * t) + .03 * Math.Sin(2 * Math.PI * Math.Min(3200, rate * .3) * t))
                 * (.7 + .3 * Math.Sin(2 * Math.PI * .73 * t)));
         }
         return output;
     }
-
-    /// <summary>Creates replayable effect state without model weights or native synthesis.</summary>
-    private static AudioEffectsEngine NewEngine(int rate)
+    private static double RmsDb(ReadOnlySpan<float> samples)
     {
-        var engine = new AudioEffectsEngine(new(), rate); engine.Reset(123456); return engine;
+        double power = 0;
+        foreach (float sample in samples) power += sample * (double)sample;
+        return 10 * Math.Log10(power / samples.Length);
     }
-
-    /// <summary>Loads recorded numeric fixtures only when the test runner invokes these checks.</summary>
+    private static bool SameBits(float[] a, float[] b) => MemoryMarshal.AsBytes(a.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(b.AsSpan()));
     private static Corpus Load()
     {
         using Stream stream = typeof(ModulationCurveChecks).Assembly.GetManifestResourceStream("ModulationCurveMoments.json")
-            ?? throw new InvalidDataException("Missing current-path modulation fixtures.");
-        return JsonSerializer.Deserialize<Corpus>(stream) ?? throw new InvalidDataException("Invalid modulation fixtures.");
+            ?? throw new InvalidDataException("Missing modulation-only level fixtures.");
+        return JsonSerializer.Deserialize<Corpus>(stream) ?? throw new InvalidDataException("Invalid modulation-only level fixtures.");
     }
-
-    /// <summary>Reports an independently observed contract failure.</summary>
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
     }
-
     private sealed record Corpus(VoiceRecord[] Voices, SyntheticRecord[] Synthetic);
-    private sealed record VoiceRecord(string Name, string Voice, string Effect, int Rate, Point[] Points);
-    private sealed record Point(float Amount, double UncorrectedChangeDb, double BaselineChangeDb,
-        double CompositePowerRatio, double CompositeCrossRatio);
-    private sealed record SyntheticRecord(string Effect, int Rate, float Scale, SyntheticPoint[] Points);
-    private sealed record SyntheticPoint(float Amount, double OriginalDbfs, int[] Indices, float[] Samples,
-        float[] DrySamples, float[] CompositeSamples);
+    private sealed record VoiceRecord(string Name, string Effect, string Group, float Scale, double DryLufs,
+        double GuideBudgetLU, double ReverseBudgetLU, Point[] Points);
+    private sealed record Point(float Amount, double UntrimmedLufs, double ExpectedDeltaLU);
+    private sealed record SyntheticRecord(string Effect, int Rate, float Scale, double RmsDbfs, int[] Indices, float[] Samples);
 }

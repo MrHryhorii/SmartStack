@@ -306,77 +306,38 @@ public static class Dsp
         return dry * dryGain + wet * wetGain;
     }
 
-    /// <summary>
-    /// Prepares the outer Chorus/Flanger blend once per buffer.
-    /// The quadratic raises the processed share to two thirds at the request midpoint.
-    /// With the unchanged eased wet strength, nominal delayed contribution reaches half of full.
-    /// </summary>
+    /// <summary>Advances modulation depth and delayed level smoothly from clean to full.</summary>
+    public static float ModulationStrength(float amount)
+    {
+        amount = Math.Clamp(amount, 0f, 1f);
+        return amount * (2f - amount);
+    }
+
+    /// <summary>Removes saturation continuously as drive approaches zero; unity drive retains tanh.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float ModulationBlend(float amount)
+    public static float ModulationSaturate(float sample, float drive, float inverseDrive) =>
+        drive > 0f ? MathF.Tanh(sample * drive) * inverseDrive : sample;
+
+    /// <summary>Static two-part chorus playback correction, prepared outside the sample loop.</summary>
+    public static float ChorusGain(float amount)
     {
-        if (amount <= .001f || float.IsNaN(amount)) return 0f;
-        if (amount >= 1f) return 1f;
-        return amount + (2f / 3f) * amount * (1f - amount);
+        if (!(amount > .001f) || amount >= 1f) return 1f;
+        float s = amount <= .5f ? amount * 2f : amount * 2f - 1f;
+        float db = amount <= .5f
+            ? ((-0.148290302f * s + 0.126378862f) * s - 0.076988553f) * s
+            : ((0.231938323f * s + 0.136063404f) * s - 0.269101734f) * s - 0.098899993f;
+        return MathF.Pow(10f, db / 20f);
     }
 
-    /// <summary>
-    /// Prepares Chorus output gain with two empirically fitted rational halves.
-    /// Shared midpoint values and slopes preserve a smooth join; clean/full gain stays one.
-    /// Apply once per buffer after the stronger outer blend, outside delay feedback.
-    /// </summary>
-    public static float ChorusGain(float t)
+    /// <summary>Static two-part flanger playback correction, prepared outside the sample loop.</summary>
+    public static float FlangerGain(float amount)
     {
-        if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
-        if (t == .5f) return 1.03566193f;
-        if (t < .5f)
-        {
-            float u = 2f * t - .5f;
-            float numerator = ((((-0.303560057f * u - 0.189747621f) * u - 1.31784643f) * u + 0.0830988377f) * u + 1.36626508f);
-            float denominator = (-1.36823033f * u * u + 1.34205758f);
-            return numerator / denominator;
-        }
-
-        float uRight = 2f * (1f - t) - .5f;
-        float numeratorRight = ((((0.410710288f * uRight + 0.0659920946f) * uRight + 3.60087619f) * uRight + 0.0191639087f) * uRight + 0.0919425263f);
-        float denominatorRight = (3.6334975f * uRight * uRight + 0.0916256246f);
-        return numeratorRight / denominatorRight;
-    }
-
-    /// <summary>Combines the unchanged saturated Chorus branch using the prepared outer blend and gain.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float ChorusCrossfade(float dry, float wet, float blend, float gain)
-    {
-        return Lerp(dry, SoftClip(dry + wet * .85f), blend) * gain;
-    }
-
-    /// <summary>
-    /// Prepares Flanger output gain with two empirically fitted rational halves.
-    /// Shared midpoint values and slopes preserve a smooth join; clean/full gain stays one.
-    /// Apply once per buffer after the stronger outer blend, outside delay feedback.
-    /// </summary>
-    public static float FlangerGain(float t)
-    {
-        if (t <= .001f || t >= 1f || float.IsNaN(t)) return 1f;
-        if (t == .5f) return 1.05223483f;
-        if (t < .5f)
-        {
-            float u = 2f * t - .5f;
-            float numerator = ((((1.16806412f * u - 3.09658653f) * u - 42.5090101f) * u + 0.826381459f) * u + 11.5803659f);
-            float denominator = (-40.9222665f * u * u + 11.2305666f);
-            return numerator / denominator;
-        }
-
-        float uRight = 2f * (1f - t) - .5f;
-        float numeratorRight = ((((0.815267683f * uRight + 0.284995762f) * uRight - 0.260169203f) * uRight - 0.0190141146f) * uRight + 1.04020548f);
-        float denominatorRight = (-0.0180616669f * uRight * uRight + 1.00451542f);
-        return numeratorRight / denominatorRight;
-    }
-
-    /// <summary>Combines the unchanged saturated Flanger branch using the prepared outer blend and gain.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float FlangerCrossfade(float dry, float wet, float blend, float gain)
-    {
-        return Lerp(dry, SoftClip(dry + wet * .85f), blend) * gain;
+        if (!(amount > .001f) || amount >= 1f) return 1f;
+        float s = amount <= .5f ? amount * 2f : amount * 2f - 1f;
+        float db = amount <= .5f
+            ? ((0.551390440f * s - 1.666701525f) * s + 1.434298655f) * s
+            : ((1.223033317f * s - 1.297087813f) * s - 0.244933075f) * s + 0.318987570f;
+        return MathF.Pow(10f, db / 20f);
     }
 
     /// <summary>
