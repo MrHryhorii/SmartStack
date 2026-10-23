@@ -469,42 +469,9 @@ internal static class AudioGenerationPipeline
                 bool extendTail = request.ExtendReverbTail ?? ctx.EffectsConfig.ExtendReverbTailOnFinish;
                 if (extendTail && spatialEngine != null)
                 {
-                    float silenceFloor = ctx.EffectsConfig.ReverbTailSilenceFloor;     // perceptual silence threshold
-                    const float maxTailSeconds = 4.0f;          // safety cap for environments that never fully settle
-                    int probeSamples = ctx.ProcessingSampleRate / 50; // 20ms probe blocks
-                    int maxSamples = (int)(ctx.ProcessingSampleRate * maxTailSeconds);
-                    int written = 0;
-                    // Reuse a pooled buffer for the silent reverb-tail probes.
-                    // Rent() may return an array larger than requested, so every access below
-                    // is explicitly bounded to probeSamples.
-                    float[] tailProbe = ArrayPool<float>.Shared.Rent(probeSamples);
-                    try
-                    {
-                        while (written < maxSamples)
-                        {
-                            Array.Clear(tailProbe, 0, probeSamples);
-                            var probeSpan = tailProbe.AsSpan(0, probeSamples);
-                            // effectsEngine intentionally NOT applied here — see note above.
-                            spatialEngine.ApplyEnvironment(probeSpan, envType, envIntensity);
-                            equalizer?.Apply(probeSpan);
-
-                            int tailLength = ApplyOutputVolume(probeSpan,
-                                fmPeakLimiter, useVolumeShift, targetVolume, equalizer != null);
-                            WriteOutput(probeSpan[..tailLength], streamManager, outputResampler, filter);
-                            written += probeSamples;
-                            float peak = 0f;
-                            for (int i = 0; i < tailLength; i++)
-                            {
-                                float absVal = MathF.Abs(tailProbe[i]);
-                                if (absVal > peak) peak = absVal;
-                            }
-                            if (tailLength > 0 && peak < silenceFloor) break; // tail has decayed below audibility
-                        }
-                    }
-                    finally
-                    {
-                        ArrayPool<float>.Shared.Return(tailProbe);
-                    }
+                    DrainSpatialTail(spatialEngine, envType, envIntensity, ctx.ProcessingSampleRate,
+                        ctx.EffectsConfig.ReverbTailSilenceFloor, equalizer, fmPeakLimiter,
+                        useVolumeShift, targetVolume, streamManager, outputResampler, filter, cancellationToken);
                     if (flushAfterEachSentence)
                     {
                         targetStream.Flush();
@@ -552,6 +519,44 @@ internal static class AudioGenerationPipeline
         return new GenerationResult(
             streamManager.SamplesWritten,
             ctx.FinalSampleRate);
+    }
+
+    /// <summary>Drains spatial state until a complete reflection window stays quiet or the safety cap is reached.</summary>
+    private static void DrainSpatialTail(SpatialEffectsEngine spatialEngine, SpatialEnvironment environment,
+        float intensity, int sampleRate, float silenceFloor, AudioEqualizer? equalizer,
+        PeakLimiter? limiter, bool useVolumeShift, float volume, AudioStreamManager manager,
+        AudioOutputResampler? outputResampler, NAudio.Dsp.BiQuadFilter? filter, CancellationToken cancellationToken)
+    {
+        const int maxTailSeconds = 4;
+        int probeSamples = Math.Max(1, sampleRate / 50);
+        int maxSamples = checked(sampleRate * maxTailSeconds);
+        int quietWindow = spatialEngine.TailSilenceWindowSamples;
+        int quietSamples = 0, processed = 0;
+        float[] probe = ArrayPool<float>.Shared.Rent(probeSamples);
+        try
+        {
+            while (processed < maxSamples)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int length = Math.Min(probeSamples, maxSamples - processed);
+                var samples = probe.AsSpan(0, length);
+                samples.Clear();
+                // Character noise generators must not keep an otherwise finished spatial tail alive.
+                spatialEngine.ApplyEnvironment(samples, environment, intensity);
+                equalizer?.Apply(samples);
+                int outputLength = ApplyOutputVolume(samples, limiter, useVolumeShift, volume, equalizer != null);
+                WriteOutput(samples[..outputLength], manager, outputResampler, filter);
+                processed += length;
+                float peak = 0f;
+                for (int i = 0; i < outputLength; i++) peak = Math.Max(peak, MathF.Abs(probe[i]));
+                quietSamples = peak < silenceFloor ? quietSamples + outputLength : 0;
+                if (quietSamples >= quietWindow) break;
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(probe);
+        }
     }
 
     private static int ApplyOutputVolume(Span<float> samples, PeakLimiter? limiter,

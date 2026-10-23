@@ -33,6 +33,7 @@ namespace ONNX_Runner.Services;
 public class SpatialEffectsEngine
 {
     private readonly int _sampleRate;
+    private readonly int _reverbSilenceWindowSamples;
     private const float SpeedOfSound = 343f;
 
     // =========================================================================
@@ -171,11 +172,10 @@ public class SpatialEffectsEngine
         for (int i = 0; i < combSizes.Length; i++)
             _combs[i] = new CombFilter(combSizes[i]);
 
-        _allPasses =
-        [
-            new(ScaleToPrime(225)), new(ScaleToPrime(341)),
-            new(ScaleToPrime(441)), new(ScaleToPrime(556))
-        ];
+        int allPassA = ScaleToPrime(225), allPassB = ScaleToPrime(341);
+        int allPassC = ScaleToPrime(441), allPassD = ScaleToPrime(556);
+        _allPasses = [new(allPassA), new(allPassB), new(allPassC), new(allPassD)];
+        _reverbSilenceWindowSamples = combSizes[^1] + allPassA + allPassB + allPassC + allPassD;
 
         _stageLateralDelay = new DelayBuffer(SamplesFor(42f));
         _dungeonFlutter = new DelayBuffer(SamplesFor(10f));
@@ -217,6 +217,30 @@ public class SpatialEffectsEngine
     // =========================================================================
     // PUBLIC API
     // =========================================================================
+
+    /// <summary>Quiet observation span covering the active reflection path before a tail can end.</summary>
+    internal int TailSilenceWindowSamples
+    {
+        get
+        {
+            int probeSamples = Math.Max(1, _sampleRate / 50);
+            if (_current is SpatialEnvironment.None or SpatialEnvironment.Muffled) return probeSamples;
+            float pathSamples = _current switch
+            {
+                SpatialEnvironment.Forest => Math.Max(_forestNearSamples, _forestFarSamples),
+                SpatialEnvironment.Stage => _reverbSilenceWindowSamples + _stagePreDelaySamples,
+                SpatialEnvironment.Dungeon => _reverbSilenceWindowSamples + _dungeonPreDelaySamples,
+                SpatialEnvironment.Cave => Math.Max(_caveFarSamples, _reverbSilenceWindowSamples + _caveNearSamples),
+                SpatialEnvironment.Underwater => Math.Max(_underwaterDelaySamples, _reverbSilenceWindowSamples),
+                SpatialEnvironment.InnerVoice => _reverbSilenceWindowSamples + _innerVoiceMicroDelaySamples,
+                _ => _reverbSilenceWindowSamples
+            };
+            // Dense feedback can rise again after a quiet pass; observe two complete path spans.
+            // Forest needs one complete interval between its discrete echo returns.
+            int passes = _current == SpatialEnvironment.Forest ? 1 : 2;
+            return Math.Max(probeSamples, (int)MathF.Ceiling(pathSamples * passes) + 2);
+        }
+    }
 
     /// <summary>Clears delay, filter, modulation, and tail state before reusing the environment processor.</summary>
     public void Reset()
