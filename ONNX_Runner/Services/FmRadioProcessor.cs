@@ -26,6 +26,7 @@ internal sealed class FmRadioProcessor
     private int _dryPosition;
 
     internal int DelaySamples { get; }
+    internal int PendingSamples { get; private set; }
 
     internal FmRadioProcessor(int sampleRate)
     {
@@ -46,11 +47,14 @@ internal sealed class FmRadioProcessor
         Array.Clear(_channelHistory);
         Array.Clear(_dryHistory);
         _inputPosition = _channelPosition = _dryPosition = 0;
+        PendingSamples = 0;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal float Process(float sample, out float dry)
     {
+        // Cascaded symmetric FIRs retain twice their total group delay after the last input.
+        PendingSamples = sample != 0f ? 2 * DelaySamples : Math.Max(0, PendingSamples - 1);
         int dryMask = _dryHistory.Length - 1;
         _dryHistory[_dryPosition] = sample;
         dry = _dryHistory[(_dryPosition - DelaySamples) & dryMask];

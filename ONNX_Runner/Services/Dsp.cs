@@ -528,6 +528,9 @@ public struct DcBlocker(int sampleRate)
     private float _y1 = 0f;
     private float _r = 1f - (2f * MathF.PI * 35f / sampleRate);
 
+    /// <summary>Magnitude of the next output with zero input; bounds the remaining stable one-pole decay.</summary>
+    internal readonly float PendingMagnitude => MathF.Abs(-_x1 + _r * _y1);
+
     /// <summary>Changes the DC corner without resetting the streaming history.</summary>
     public void SetCutoff(float frequency) => _r = 1f - (2f * MathF.PI * frequency / sampleRate);
 

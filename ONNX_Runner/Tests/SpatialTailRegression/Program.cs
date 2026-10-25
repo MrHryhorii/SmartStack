@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Reflection.Emit;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -12,7 +13,10 @@ internal static class SpatialTailRegressionProgram
     private static readonly SpatialEnvironment[] Environments = Enum.GetValues<SpatialEnvironment>().Where(x=>x!=SpatialEnvironment.None).ToArray();
     private static readonly Type Pipeline = typeof(SpatialEffectsEngine).Assembly.GetType("ONNX_Runner.Services.Synthesis.AudioGenerationPipeline")!;
     private static readonly MethodInfo Drain = Pipeline.GetMethod("DrainSpatialTail",BindingFlags.NonPublic|BindingFlags.Static)!;
-    private static readonly MethodInfo FlushLimiter = Pipeline.GetMethod("FlushPeakLimiter",BindingFlags.NonPublic|BindingFlags.Static)!;
+    private static readonly MethodInfo FlushLimiter = Pipeline.GetMethod("FlushOutputVolume",BindingFlags.NonPublic|BindingFlags.Static)!;
+    private static readonly Type ResamplerType = Pipeline.Assembly.GetType("ONNX_Runner.Services.Synthesis.AudioOutputResampler")!;
+    private static readonly OutputWrite WriteOutput = BindWriter();
+    private delegate void OutputWrite(Span<float> samples, AudioStreamManager manager, object? resampler, BiQuadFilter? filter, VolumeShifter volume);
     private static readonly List<object> Evidence = [];
     private static int _checks, _failures;
 
@@ -83,7 +87,9 @@ internal static class SpatialTailRegressionProgram
             {
                 var engine=new SpatialEffectsEngine(rate); engine.ApplyEnvironment(new float[1],SpatialEnvironment.Muffled,.25f);
                 using var output=new MemoryStream(); using var manager=new AudioStreamManager(AudioFormat.Pcm,rate,output);
-                Invoke(Drain,[engine,SpatialEnvironment.Muffled,.25f,rate,.005f,null,null,false,1f,manager,null,null,CancellationToken.None]);
+                var volume = new VolumeShifter(rate, 1);
+                Invoke(Drain,[engine,SpatialEnvironment.Muffled,.25f,rate,.005f,null,volume,1f,manager,null,null,CancellationToken.None]);
+                Invoke(FlushLimiter,[volume,manager,CancellationToken.None]);
                 Require(manager.SamplesWritten==Math.Max(1,rate/50),"A non-echoing quiet path gained a long hold.");
             });
         }
@@ -93,7 +99,7 @@ internal static class SpatialTailRegressionProgram
             var engine=new SpatialEffectsEngine(22050); engine.ApplyEnvironment(new float[1],SpatialEnvironment.Forest,.25f);
             using var output=new MemoryStream(); using var manager=new AudioStreamManager(AudioFormat.Pcm,22050,output);
             bool stopped=false;
-            try {Invoke(Drain,[engine,SpatialEnvironment.Forest,.25f,22050,.005f,null,null,false,1f,manager,null,null,cancellation.Token]);}
+            try {Invoke(Drain,[engine,SpatialEnvironment.Forest,.25f,22050,.005f,null,new VolumeShifter(22050,1),1f,manager,null,null,cancellation.Token]);}
             catch(OperationCanceledException){stopped=true;}
             Require(stopped && manager.SamplesWritten==0,"Canceled tail output was emitted.");
         });
@@ -103,9 +109,9 @@ internal static class SpatialTailRegressionProgram
             using var manager=new AudioStreamManager(AudioFormat.Pcm,22050,output);
             var engine=new SpatialEffectsEngine(22050); engine.ApplyEnvironment(Burst(22050),SpatialEnvironment.Forest,.25f);
             bool stopped=false;
-            try{Invoke(Drain,[engine,SpatialEnvironment.Forest,.25f,22050,.005f,null,null,false,1f,manager,null,null,cancellation.Token]);}
+            try{Invoke(Drain,[engine,SpatialEnvironment.Forest,.25f,22050,.005f,null,new VolumeShifter(22050,1),1f,manager,null,null,cancellation.Token]);}
             catch(OperationCanceledException){stopped=true;}
-            Require(stopped && manager.SamplesWritten==441,"The drain continued after cancellation.");
+            Require(stopped && manager.SamplesWritten==441-new VolumeShifter(22050,1).LatencySamples,"The drain continued after cancellation.");
         });
         Check("Parallel tail drains retain independent request state",()=>
         {
@@ -132,10 +138,10 @@ internal static class SpatialTailRegressionProgram
                 finally{System.Buffers.ArrayPool<float>.Shared.Return(expected.Buffer);}
             });
         }
-        Check("The spatial tail survives output limiter priming and final flush",()=>
+        Check("The spatial tail survives fragmented prefix input and final volume flush",()=>
         {
-            TailOutput plain=Capture(22050,SpatialEnvironment.Forest,.25f,.3f,volume:.5f,writePrefix:false);
-            TailOutput limited=Capture(22050,SpatialEnvironment.Forest,.25f,.3f,volume:.5f,writePrefix:false,limiterEnabled:true);
+            TailOutput plain=Capture(22050,SpatialEnvironment.Forest,.25f,.3f,volume:.5f);
+            TailOutput limited=Capture(22050,SpatialEnvironment.Forest,.25f,.3f,volume:.5f,prefixBlock:17);
             Require(plain.Bytes.AsSpan().SequenceEqual(limited.Bytes),"Limiter priming or flush lost spatial tail samples.");
         });
         Console.WriteLine($"Result: {_checks-_failures}/{_checks} spatial tail checks passed");
@@ -150,7 +156,6 @@ internal static class SpatialTailRegressionProgram
         float[] reference=new float[prefix+rate*4]; Burst(rate).CopyTo(reference,0);
         new SpatialEffectsEngine(rate).ApplyEnvironment(reference,environment,amount);
         if(profiles) AudioEqualizer.Create(["telephony-class-application"],rate)!.Apply(reference);
-        if(volume!=1 || profiles) VolumeShifter.ApplyVolume(reference,volume,forceLimiter:profiles);
         // Include the final cloning-cleanup filter in the same order as WriteOutput.
         if(profiles)
         {
@@ -159,18 +164,20 @@ internal static class SpatialTailRegressionProgram
         }
         int frames=actual.Bytes.Length/2;
         Require(actual.GeneratedFrames>0 && actual.GeneratedFrames<=rate*4,"Invalid tail length.");
-        byte[] expected=Encode(reference.AsSpan(0,frames),rate);
+        float[] retained=reference.AsSpan(0,frames).ToArray();
+        VolumeShifter.ApplyVolume(retained,volume,rate);
+        byte[] expected=Encode(retained,rate);
         Require(expected.AsSpan().SequenceEqual(actual.Bytes),"Draining or the output chain changed retained PCM.");
-        float omitted=Peak(reference.AsSpan(frames));
+        float omitted=Peak(reference.AsSpan(frames))*Math.Abs(volume);
         int lastAbove=frames;
-        for(int i=frames;i<reference.Length;i++) if(Math.Abs(reference[i])>=.005f)lastAbove=i;
+        for(int i=frames;i<reference.Length;i++) if(Math.Abs(reference[i]*volume)>=.005f)lastAbove=i;
         Evidence.Add(new{Rate=rate,Environment=environment.ToString(),Amount=amount,PauseSeconds=pause,Volume=volume,Profiles=profiles,
             GeneratedMilliseconds=actual.GeneratedFrames*1000.0/rate,OmittedPeak=omitted,LastLaterAudibleMilliseconds=(lastAbove-frames)*1000.0/rate});
         Require(omitted<.00501f,$"The drain stopped before a later audible reflection: peak {omitted:R}, tail {actual.GeneratedFrames*1000.0/rate:F1} ms, later gap {(lastAbove-frames)*1000.0/rate:F1} ms.");
     }
 
     private static TailOutput Capture(int rate,SpatialEnvironment environment,float amount,float pause,float volume=1,bool profiles=false,
-        float floor=.005f,bool writePrefix=true,int targetRate=0,bool limiterEnabled=false)
+        float floor=.005f,bool writePrefix=true,int targetRate=0,int prefixBlock=int.MaxValue)
     {
         int prefix=Burst(rate).Length+(int)(rate*pause);
         float[] initial=new float[prefix]; Burst(rate).CopyTo(initial,0);
@@ -178,29 +185,35 @@ internal static class SpatialTailRegressionProgram
         AudioEqualizer? equalizer=profiles?AudioEqualizer.Create(["telephony-class-application"],rate):null;
         BiQuadFilter? filter=profiles?BiQuadFilter.LowPassFilter(rate,Math.Min(1800f,rate*.45f),.707f):null;
         equalizer?.Apply(initial);
-        if(volume!=1 || profiles) VolumeShifter.ApplyVolume(initial,volume,forceLimiter:profiles);
         using var output=new MemoryStream(); using var manager=new AudioStreamManager(AudioFormat.Pcm,targetRate>0?targetRate:rate,output);
-        if(writePrefix) manager.WriteChunk(initial,filter);
-        object? resampler=null,limiter=null;
+        object? resampler=null;
+        var outputVolume=new VolumeShifter(targetRate>0?targetRate:rate,volume);
         if(targetRate>0)
         {
             Type type=Pipeline.Assembly.GetType("ONNX_Runner.Services.Synthesis.AudioOutputResampler")!;
             resampler=Activator.CreateInstance(type,BindingFlags.Instance|BindingFlags.NonPublic,null,[rate,targetRate],null);
         }
-        if(limiterEnabled)
-        {
-            Type type=Pipeline.Assembly.GetType("ONNX_Runner.Services.PeakLimiter")!;
-            limiter=Activator.CreateInstance(type,BindingFlags.Instance|BindingFlags.NonPublic,null,[rate,volume],null);
-        }
         try
         {
-            Invoke(Drain,[engine,environment,amount,rate,floor,equalizer,limiter,volume!=1 || profiles,volume,manager,resampler,filter,CancellationToken.None]);
-            Invoke(FlushLimiter,[limiter,manager,resampler,filter]);
-            if(resampler!=null) resampler.GetType().GetMethod("Complete",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(resampler,[manager]);
+            if(writePrefix)
+                for(int offset=0;offset<initial.Length;offset+=Math.Min(prefixBlock,initial.Length-offset))
+                    WriteOutput(initial.AsSpan(offset,Math.Min(prefixBlock,initial.Length-offset)),manager,resampler,filter,outputVolume);
+            Invoke(Drain,[engine,environment,amount,rate,floor,equalizer,outputVolume,volume,manager,resampler,filter,CancellationToken.None]);
+            if(resampler!=null) resampler.GetType().GetMethod("Complete",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(resampler,[manager,outputVolume,CancellationToken.None]);
+            Invoke(FlushLimiter,[outputVolume,manager,CancellationToken.None]);
         }
         finally{(resampler as IDisposable)?.Dispose();}
         int generated=checked((int)manager.SamplesWritten)-(writePrefix?prefix:0);
         return new(output.ToArray(),generated);
+    }
+    private static OutputWrite BindWriter()
+    {
+        var method=new DynamicMethod("CallOutputWriter",typeof(void),[typeof(Span<float>),typeof(AudioStreamManager),typeof(object),typeof(BiQuadFilter),typeof(VolumeShifter)],typeof(SpatialTailRegressionProgram).Module,true);
+        var il=method.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0); il.Emit(OpCodes.Ldarg_1); il.Emit(OpCodes.Ldarg_2); il.Emit(OpCodes.Castclass,ResamplerType);
+        il.Emit(OpCodes.Ldarg_3); il.Emit(OpCodes.Ldarg_S,(byte)4);
+        il.Emit(OpCodes.Call,Pipeline.GetMethod("WriteOutput",BindingFlags.NonPublic|BindingFlags.Static)!); il.Emit(OpCodes.Ret);
+        return method.CreateDelegate<OutputWrite>();
     }
     private static void Invoke(MethodInfo method,object?[] args)
     {

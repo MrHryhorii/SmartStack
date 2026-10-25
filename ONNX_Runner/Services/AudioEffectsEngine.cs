@@ -296,6 +296,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private readonly BiQuadFilter[] _filters = new BiQuadFilter[5];
     private int _filterCount;
     private FmRadioProcessor? _fmProcessor;
+    private float _fmDryGain;
+    private float _fmWetGain;
+    private const float CompletionSilenceFloor = 1e-7f;
     private VoiceEffectType _current = VoiceEffectType.None;
 
     private const int GlitchReferenceCaptureSamples = 4096;
@@ -334,6 +337,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _delay.Clear();
         _dcBlocker.Reset();
         _fmProcessor?.Reset();
+        _fmDryGain = _fmWetGain = 0f;
 
         Array.Clear(_filters, 0, _filters.Length);
         _filterCount = 0;
@@ -378,6 +382,27 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _radio.TacticalCompressor.Reset();
     }
 
+    /// <summary>Reports retained audio for effects that support finite request completion.</summary>
+    internal bool HasPendingOutput => _current == VoiceEffectType.FmRadio && _fmProcessor != null &&
+        (_fmProcessor.PendingSamples > 0 || _dcBlocker.PendingMagnitude * MathF.Abs(_fmWetGain) > CompletionSilenceFloor);
+
+    /// <summary>Writes retained effect audio only; repeated calls stop when its filters are drained.</summary>
+    internal int Complete(Span<float> destination)
+    {
+        int written = 0;
+        while (written < destination.Length && HasPendingOutput)
+            destination[written++] = ProcessFm(0f, _fmDryGain, _fmWetGain);
+        return written;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private float ProcessFm(float sample, float dryGain, float wetGain)
+    {
+        float wet = _fmProcessor!.Process(Dsp.KillDenormal(sample), out float dry);
+        wet = _dcBlocker.Process(wet);
+        return Dsp.FmCrossfade(dry, wet, dryGain, wetGain);
+    }
+
     /// <summary>
     /// Applies the specified audio effect to the input buffer in-place.
     /// The amount parameter controls the intensity of the effect (0 = no effect, 1 = full effect).
@@ -408,12 +433,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             Dsp.FmGains(amount, out float dryGain, out float wetGain);
             wetGain *= FmOutputGain;
+            _fmDryGain = dryGain;
+            _fmWetGain = wetGain;
             for (int i = 0; i < buffer.Length; i++)
-            {
-                float wet = _fmProcessor!.Process(Dsp.KillDenormal(buffer[i]), out float dry);
-                wet = _dcBlocker.Process(wet);
-                buffer[i] = Dsp.FmCrossfade(dry, wet, dryGain, wetGain);
-            }
+                buffer[i] = ProcessFm(buffer[i], dryGain, wetGain);
             return;
         }
 

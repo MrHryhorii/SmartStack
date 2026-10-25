@@ -108,10 +108,7 @@ internal static class AudioGenerationPipeline
         // Evaluated as a single float multiply, applying flat compensation without an extra audio pass.
         float boosterLinear = MathF.Pow(10f, ctx.DspConfig.VolumeBoosterDb / 20f);
         float targetVolume = requestedVolume * boosterLinear;
-        bool useVolumeShift = equalizer != null || MathF.Abs(targetVolume - 1.0f) > 0.001f;
-        PeakLimiter? fmPeakLimiter = useEffect && effectType == VoiceEffectType.FmRadio
-            ? new PeakLimiter(ctx.ProcessingSampleRate, targetVolume)
-            : null;
+        var outputVolume = new VolumeShifter(ctx.FinalSampleRate, targetVolume);
         // =================================================================
         float currentSpeed = (request.Speed > 0.1f) ? request.Speed : 1.0f;
         int silenceSamplesCount = (int)(ctx.ProcessingSampleRate * (ctx.ChunkerConfig.SentencePauseSeconds / currentSpeed));
@@ -425,11 +422,8 @@ internal static class AudioGenerationPipeline
                         // Device profiles color the completed signal, including generated DSP sound.
                         equalizer?.Apply(currentBuffer.AsSpan(0, currentLength));
 
-                        // Apply the master gain after all DSP. FM uses a continuous lookahead
-                        // limiter; other effects retain their established output processing.
-                        int outputLength = ApplyOutputVolume(currentBuffer.AsSpan(0, currentLength),
-                            fmPeakLimiter, useVolumeShift, targetVolume, equalizer != null);
-                        WriteOutput(currentBuffer.AsSpan(0, outputLength), streamManager, outputResampler, filter);
+                        // Cleanup and output conversion precede the common final gain and peak protection.
+                        WriteOutput(currentBuffer.AsSpan(0, currentLength), streamManager, outputResampler, filter, outputVolume);
                         // SentencePauseSeconds belongs only to real sentence boundaries.
                         // EarlySplit and emergency chunks already carry their own punctuation/context.
                         if (chunk.IsSentenceFinished)
@@ -440,9 +434,7 @@ internal static class AudioGenerationPipeline
                             spatialEngine?.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
                             equalizer?.Apply(absoluteSilence.AsSpan());
 
-                            int silenceLength = ApplyOutputVolume(absoluteSilence.AsSpan(),
-                                fmPeakLimiter, useVolumeShift, targetVolume, equalizer != null);
-                            WriteOutput(absoluteSilence.AsSpan(0, silenceLength), streamManager, outputResampler, filter);
+                            WriteOutput(absoluteSilence.AsSpan(), streamManager, outputResampler, filter, outputVolume);
                         }
                         // Keep flushing every generated chunk so an EarlySplit chunk reaches the client
                         // immediately. The setting name is retained for configuration compatibility.
@@ -460,6 +452,13 @@ internal static class AudioGenerationPipeline
                         if (rentedBuffer3 != null) ArrayPool<float>.Shared.Return(rentedBuffer3);
                     }
                 }
+                // Complete delayed character audio before draining spatial reflections or output protection.
+                if (effectsEngine?.HasPendingOutput == true)
+                {
+                    DrainEffectTail(effectsEngine, spatialEngine, envType, envIntensity, ctx.ProcessingSampleRate,
+                        equalizer, outputVolume, streamManager,
+                        outputResampler, filter, cancellationToken);
+                }
                 // =================================================================
                 // REVERB TAIL EXTENSION (Flushes spatial acoustics once at the end)
                 // =================================================================
@@ -470,16 +469,16 @@ internal static class AudioGenerationPipeline
                 if (extendTail && spatialEngine != null)
                 {
                     DrainSpatialTail(spatialEngine, envType, envIntensity, ctx.ProcessingSampleRate,
-                        ctx.EffectsConfig.ReverbTailSilenceFloor, equalizer, fmPeakLimiter,
-                        useVolumeShift, targetVolume, streamManager, outputResampler, filter, cancellationToken);
+                        ctx.EffectsConfig.ReverbTailSilenceFloor, equalizer, outputVolume,
+                        targetVolume, streamManager, outputResampler, filter, cancellationToken);
                     if (flushAfterEachSentence)
                     {
                         targetStream.Flush();
                     }
                 }
-                FlushPeakLimiter(fmPeakLimiter, streamManager, outputResampler, filter);
-                // Flush the final fractional output block before the encoder is finalized.
-                outputResampler?.Complete(streamManager);
+                // Final converted samples must enter peak protection before its retained audio is emitted.
+                outputResampler?.Complete(streamManager, outputVolume, cancellationToken);
+                FlushOutputVolume(outputVolume, streamManager, cancellationToken);
             }
             catch (Exception ex)
             {
@@ -521,10 +520,38 @@ internal static class AudioGenerationPipeline
             ctx.FinalSampleRate);
     }
 
+    /// <summary>Passes retained character audio through the remaining request stages without reapplying the effect.</summary>
+    private static void DrainEffectTail(AudioEffectsEngine effectsEngine, SpatialEffectsEngine? spatialEngine,
+        SpatialEnvironment environment, float intensity, int sampleRate, AudioEqualizer? equalizer,
+        VolumeShifter outputVolume, AudioStreamManager manager,
+        AudioOutputResampler? outputResampler, NAudio.Dsp.BiQuadFilter? filter, CancellationToken cancellationToken)
+    {
+        if (!effectsEngine.HasPendingOutput) return;
+
+        int probeSamples = Math.Max(1, sampleRate / 50);
+        float[] probe = ArrayPool<float>.Shared.Rent(probeSamples);
+        try
+        {
+            while (effectsEngine.HasPendingOutput)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int length = effectsEngine.Complete(probe.AsSpan(0, probeSamples));
+                var samples = probe.AsSpan(0, length);
+                spatialEngine?.ApplyEnvironment(samples, environment, intensity);
+                equalizer?.Apply(samples);
+                WriteOutput(samples, manager, outputResampler, filter, outputVolume);
+            }
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(probe);
+        }
+    }
+
     /// <summary>Drains spatial state until a complete reflection window stays quiet or the safety cap is reached.</summary>
     private static void DrainSpatialTail(SpatialEffectsEngine spatialEngine, SpatialEnvironment environment,
         float intensity, int sampleRate, float silenceFloor, AudioEqualizer? equalizer,
-        PeakLimiter? limiter, bool useVolumeShift, float volume, AudioStreamManager manager,
+        VolumeShifter outputVolume, float volume, AudioStreamManager manager,
         AudioOutputResampler? outputResampler, NAudio.Dsp.BiQuadFilter? filter, CancellationToken cancellationToken)
     {
         const int maxTailSeconds = 4;
@@ -544,12 +571,12 @@ internal static class AudioGenerationPipeline
                 // Character noise generators must not keep an otherwise finished spatial tail alive.
                 spatialEngine.ApplyEnvironment(samples, environment, intensity);
                 equalizer?.Apply(samples);
-                int outputLength = ApplyOutputVolume(samples, limiter, useVolumeShift, volume, equalizer != null);
-                WriteOutput(samples[..outputLength], manager, outputResampler, filter);
-                processed += length;
                 float peak = 0f;
-                for (int i = 0; i < outputLength; i++) peak = Math.Max(peak, MathF.Abs(probe[i]));
-                quietSamples = peak < silenceFloor ? quietSamples + outputLength : 0;
+                for (int i = 0; i < length; i++) peak = Math.Max(peak, MathF.Abs(probe[i]));
+                peak *= MathF.Abs(volume);
+                WriteOutput(samples, manager, outputResampler, filter, outputVolume);
+                processed += length;
+                quietSamples = peak < silenceFloor ? quietSamples + length : 0;
                 if (quietSamples >= quietWindow) break;
             }
         }
@@ -559,35 +586,35 @@ internal static class AudioGenerationPipeline
         }
     }
 
-    private static int ApplyOutputVolume(Span<float> samples, PeakLimiter? limiter,
-        bool useVolumeShift, float volume, bool forceLimiter)
+    private static void FlushOutputVolume(VolumeShifter volume, AudioStreamManager manager,
+        CancellationToken cancellationToken)
     {
-        if (limiter != null) return limiter.Process(samples);
-        if (useVolumeShift) VolumeShifter.ApplyVolume(samples, volume, forceLimiter);
-        return samples.Length;
-    }
-
-    private static void FlushPeakLimiter(PeakLimiter? limiter, AudioStreamManager manager,
-        AudioOutputResampler? resampler, NAudio.Dsp.BiQuadFilter? filter)
-    {
-        if (limiter == null) return;
         Span<float> tail = stackalloc float[256];
-        int count;
-        while ((count = limiter.Flush(tail)) > 0)
-            WriteOutput(tail[..count], manager, resampler, filter);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int count = volume.Flush(tail);
+            if (count == 0) return;
+            manager.WriteChunk(tail[..count]);
+        }
     }
 
-    /// <summary>Writes processed PCM through optional output resampling, applying the cloning filter before rate conversion.</summary>
+    /// <summary>Filters and converts PCM before applying the common final gain and peak protection.</summary>
     private static void WriteOutput(Span<float> samples, AudioStreamManager manager,
-        AudioOutputResampler? resampler, NAudio.Dsp.BiQuadFilter? filter)
+        AudioOutputResampler? resampler, NAudio.Dsp.BiQuadFilter? filter, VolumeShifter volume)
     {
         if (samples.IsEmpty) return;
-        if (resampler == null)
+        if (resampler != null)
         {
-            manager.WriteChunk(samples, filter);
+            resampler.Write(samples, manager, filter, volume);
             return;
         }
-        resampler.Write(samples, manager, filter);
+        if (filter != null)
+        {
+            for (int i = 0; i < samples.Length; i++) samples[i] = filter.Transform(samples[i]);
+        }
+        int written = volume.Process(samples);
+        manager.WriteChunk(samples[..written]);
     }
 
     /// <summary>

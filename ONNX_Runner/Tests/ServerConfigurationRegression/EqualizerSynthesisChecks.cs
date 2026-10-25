@@ -104,7 +104,7 @@ internal static class EqualizerSynthesisChecks
                         "Active profile was ignored or changed audio duration.");
                     float[] expected = (float[])drySamples.Clone();
                     AudioEqualizer.Create([id], config.Audio.SampleRate)!.Apply(expected);
-                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
+                    VolumeShifter.ApplyVolume(expected, 1f, config.Audio.SampleRate);
                     Near(expected, WavSamples(actual));
                 });
             }
@@ -122,7 +122,7 @@ internal static class EqualizerSynthesisChecks
                 float[] expected = (float[])drySamples.Clone();
                 var ids = new[] { "telephony-class-application", "telephony-class-application" };
                 AudioEqualizer.Create(ids, config.Audio.SampleRate)!.Apply(expected);
-                VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
+                VolumeShifter.ApplyVolume(expected, 1f, config.Audio.SampleRate);
                 Near(expected, WavSamples(twice));
             });
 
@@ -140,7 +140,7 @@ internal static class EqualizerSynthesisChecks
                         .ApplyEnvironment(expected, SpatialEnvironment.LivingRoom, .25f);
                     AudioEqualizer.Create(["telephony-class-application"], config.Audio.SampleRate)!.Apply(expected);
                     float[] actual = WavSamples(await Read(["telephony-class-application"], effect, environment));
-                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
+                    VolumeShifter.ApplyVolume(expected, 1f, config.Audio.SampleRate);
                     Near(expected, actual);
                 });
             }
@@ -174,7 +174,7 @@ internal static class EqualizerSynthesisChecks
                     new AudioEffectsEngine(effects, config.Audio.SampleRate).ApplyEffect(expected, VoiceEffectType.RingModulator, .5f);
                     new SpatialEffectsEngine(config.Audio.SampleRate).ApplyEnvironment(expected, SpatialEnvironment.LivingRoom, .25f);
                     AudioEqualizer.Create(ids, config.Audio.SampleRate)!.Apply(expected);
-                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
+                    VolumeShifter.ApplyVolume(expected, 1f, config.Audio.SampleRate);
                     float[] actual = WavSamples(await Read(ids, "RingModulator", "LivingRoom"));
                     Near(expected, actual, .0002f);
                 });
@@ -185,21 +185,13 @@ internal static class EqualizerSynthesisChecks
                         "Tail disappeared, changed speech length, or exceeded the cap.");
                     var spatial = new SpatialEffectsEngine(config.Audio.SampleRate);
                     var equalizer = AudioEqualizer.Create(ids, config.Audio.SampleRate)!;
-                    float[] expected = (float[])drySamples.Clone();
+                    float[] expected = new float[actual.Length];
+                    drySamples.CopyTo(expected, 0);
                     spatial.ApplyEnvironment(expected, SpatialEnvironment.ConcreteHall, .25f);
                     equalizer.Apply(expected);
-                    VolumeShifter.ApplyVolume(expected, 1f, forceLimiter: true);
-                    Near(expected, actual.AsSpan(0, expected.Length), .0002f);
-                    int probeLength = config.Audio.SampleRate / 50;
-                    for (int offset = expected.Length; offset < actual.Length; offset += probeLength)
-                    {
-                        int length = Math.Min(probeLength, actual.Length - offset);
-                        float[] probe = new float[length];
-                        spatial.ApplyEnvironment(probe, SpatialEnvironment.ConcreteHall, .25f);
-                        equalizer.Apply(probe);
-                        VolumeShifter.ApplyVolume(probe, 1f, forceLimiter: true);
-                        Near(probe, actual.AsSpan(offset, length), .0002f);
-                    }
+                    // Final gain has one continuous lookahead/release history across speech and tail.
+                    VolumeShifter.ApplyVolume(expected, 1f, config.Audio.SampleRate);
+                    Near(expected, actual, .0002f);
                     Require(actual.All(float.IsFinite) && actual.Max(Math.Abs) <= 1f, "Filtered reverb produced invalid PCM.");
                     byte[] buffered = await Read(ids, environment: "ConcreteHall", format: AudioFormat.Pcm, extendTail: true);
                     byte[] streamed = await Read(ids, environment: "ConcreteHall", format: AudioFormat.Pcm, stream: true, extendTail: true);
@@ -219,11 +211,16 @@ internal static class EqualizerSynthesisChecks
                     float[] actual = PcmSamples(buffered);
                     double expectedLength = nativeSamples.Length * (double)rate / config.Audio.SampleRate;
                     Require(Math.Abs(actual.Length - expectedLength) <= 1, "Output rate changed logical audio duration.");
+                    float[] beforeVolume = (float[])drySamples.Clone();
+                    new AudioEffectsEngine(effects, config.Audio.SampleRate).ApplyEffect(beforeVolume, VoiceEffectType.RingModulator, .5f);
+                    new SpatialEffectsEngine(config.Audio.SampleRate).ApplyEnvironment(beforeVolume, SpatialEnvironment.LivingRoom, .25f);
+                    AudioEqualizer.Create(["telephony-class-application"], config.Audio.SampleRate)!.Apply(beforeVolume);
                     var reference = new NAudio.Wave.SampleProviders.WdlResamplingSampleProvider(
-                        new FloatSource(nativeSamples, config.Audio.SampleRate), rate);
+                        new FloatSource(beforeVolume, config.Audio.SampleRate), rate);
                     float[] expected = new float[actual.Length + 2];
                     int count = reference.Read(expected, 0, expected.Length);
                     Require(Math.Abs(count - actual.Length) <= 1, "Reference output has a different sample count.");
+                    VolumeShifter.ApplyVolume(expected.AsSpan(0, count), 1f, rate);
                     Near(expected.AsSpan(0, Math.Min(count, actual.Length)), actual.AsSpan(0, Math.Min(count, actual.Length)), .00015f);
                 });
             }
