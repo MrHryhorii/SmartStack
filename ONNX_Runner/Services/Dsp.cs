@@ -273,43 +273,6 @@ public static class Dsp
     }
 
     /// <summary>
-    /// Prepares Telephone weights from one empirically fitted rational quartic curve.
-    /// Positive Bernstein coefficients keep the shared denominator at least one.
-    /// The wet share increases smoothly, with no midpoint join; endpoints stay exact.
-    /// Call once per buffer. Mixing needs no level analysis, extra pass or allocation.
-    /// </summary>
-    public static void TelephoneGains(float t, out float dryGain, out float wetGain)
-    {
-        if (t <= .001f || float.IsNaN(t))
-        {
-            dryGain = 1f;
-            wetGain = 0f;
-            return;
-        }
-        if (t >= 1f)
-        {
-            dryGain = 0f;
-            wetGain = 1f;
-            return;
-        }
-
-        float s = 1f - t;
-        float s2 = s * s, t2 = t * t, cross = s * t;
-        float b0 = s2 * s2, b1 = cross * s2, b2 = cross * cross;
-        float b3 = cross * t2, b4 = t2 * t2;
-        float scale = 1f / (b0 + 126.780807f * b1 + 75.7484541f * b2 + 19.2256392f * b3 + b4);
-        dryGain = (b0 + 127.225773f * b1 + 51.4515467f * b2 + 0.712533685f * b3) * scale;
-        wetGain = (5.8789886f * b1 + 102.327607f * b2 + 19.4047641f * b3 + b4) * scale;
-    }
-
-    /// <summary>Combines inputs using prepared Telephone weights without additional per-sample work.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float TelephoneCrossfade(float dry, float wet, float dryGain, float wetGain)
-    {
-        return dry * dryGain + wet * wetGain;
-    }
-
-    /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
     /// triggering a ~100x performance penalty in the FPU on x86 without SSE DAZ mode.

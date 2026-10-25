@@ -1,6 +1,7 @@
 using ONNX_Runner.Models;
 using System.Runtime.CompilerServices;
 using System.Numerics;
+using System.Buffers;
 using NAudio.Dsp;
 
 namespace ONNX_Runner.Services;
@@ -14,7 +15,7 @@ namespace ONNX_Runner.Services;
 ///   - Zero-Allocation: DSP loop generates zero garbage. String parsing is offloaded to the caller.
 ///
 /// DSP ROUTING MANIFESTO:
-///   - Telephone Crossfade: prepared polynomial weights retain the complete handset signal chain.
+///   - Power-Matched Crossfade: fixed Telephone character with measured dry/wet power interpolation.
 ///   - Ring Insert: internal carrier depth moves from tremolo to ring modulation; a scalar sets playback level.
 ///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Drive Insert: gradual asymmetric saturation and adaptive filters; a scalar sets playback level.
@@ -91,7 +92,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     private enum RoutingMode
     {
-        TelephoneCrossfade,
+        PowerMatchedCrossfade,
         ModulationInsert,
         StrictInsert,
         StrictCrossfade,
@@ -407,7 +408,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// Applies the specified audio effect to the input buffer in-place.
     /// The amount parameter controls the intensity of the effect (0 = no effect, 1 = full effect).
     /// External blends retain the request amount; most wet algorithms receive an eased strength.
-    /// FM keeps its complete wet character fixed and changes only the prepared mixing gains.
+    /// FM and Telephone keep their complete wet character fixed while intensity controls their blends.
     /// Optimized for real-time processing with zero allocations in the audio thread.
     /// </summary>
     public void ApplyEffect(Span<float> buffer, VoiceEffectType type, float amount)
@@ -429,6 +430,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
 
         RoutingMode mode = GetRoutingMode(type);
+        if (mode == RoutingMode.PowerMatchedCrossfade)
+        {
+            ApplyTelephone(buffer, amount);
+            return;
+        }
         if (mode == RoutingMode.FmCrossfade)
         {
             Dsp.FmGains(amount, out float dryGain, out float wetGain);
@@ -499,11 +505,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
-        float telephoneDryGain = 1f;
-        float telephoneWetGain = 0f;
-        if (mode == RoutingMode.TelephoneCrossfade)
-            Dsp.TelephoneGains(amount, out telephoneDryGain, out telephoneWetGain);
-
         float cubicDryGain = 1f;
         float cubicWetGain = 0f;
         if (mode == RoutingMode.CodecCrossfade)
@@ -567,10 +568,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             // The early amount guard handles bypass; active routing follows the effect's signal structure.
             switch (mode)
             {
-                case RoutingMode.TelephoneCrossfade:
-                    buffer[i] = Dsp.TelephoneCrossfade(dry, wet, telephoneDryGain, telephoneWetGain);
-                    break;
-
                 case RoutingMode.CrusherInsert:
                     buffer[i] = wet * crusherGain;
                     break;
@@ -607,7 +604,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         return type switch
         {
-            VoiceEffectType.Telephone => RoutingMode.TelephoneCrossfade,
+            VoiceEffectType.Telephone => RoutingMode.PowerMatchedCrossfade,
             VoiceEffectType.Overdrive => RoutingMode.DriveInsert,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherInsert,
             VoiceEffectType.RingModulator => RoutingMode.RingInsert,
@@ -843,7 +840,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         return type switch
         {
-            VoiceEffectType.Telephone => Telephone(x, amount),
             VoiceEffectType.Bitcrusher => Bitcrusher(x, amount),
             VoiceEffectType.LoFiTape => LoFiTape(x, amount),
             VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
@@ -938,6 +934,45 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // EFFECT ALGORITHMS
     // =========================================================================
 
+    /// <summary>Generates fixed full-strength Telephone PCM, then mixes and matches the supplied buffer.</summary>
+    private void ApplyTelephone(Span<float> buffer, float amount)
+    {
+        if (buffer.IsEmpty) return;
+        if (amount >= 1f)
+        {
+            ProcessTelephoneWet(buffer);
+            return;
+        }
+
+        float[] rented = ArrayPool<float>.Shared.Rent(buffer.Length);
+        try
+        {
+            Span<float> dry = rented.AsSpan(0, buffer.Length);
+            buffer.CopyTo(dry);
+            ProcessTelephoneWet(buffer);
+            PowerMatchedMixer.Mix(dry, buffer, amount);
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rented);
+        }
+    }
+
+    /// <summary>Retains the accepted full-strength filters, noise, saturation and DC-removal state.</summary>
+    private void ProcessTelephoneWet(Span<float> buffer)
+    {
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float dry = buffer[i];
+            float filtered = Dsp.KillDenormal(dry);
+            _thermal.Update(ref _noise, _thermalDriftCoeff);
+            _thermalValue = _thermal.State * _thermalNoiseGain;
+            for (int f = 0; f < _filterCount; f++) filtered = _filters[f].Transform(filtered);
+            float wet = _dcBlocker.Process(Telephone(filtered, 1f));
+            // Preserve the accepted full-output floating-point expression, including signed zero.
+            buffer[i] = dry * 0f + wet;
+        }
+    }
 
     /// <summary>
     /// Simulates the characteristic distortion and line noise of a POTS telephone connection.
