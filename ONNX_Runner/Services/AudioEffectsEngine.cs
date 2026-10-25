@@ -968,7 +968,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             _thermal.Update(ref _noise, _thermalDriftCoeff);
             _thermalValue = _thermal.State * _thermalNoiseGain;
             for (int f = 0; f < _filterCount; f++) filtered = _filters[f].Transform(filtered);
-            float wet = _dcBlocker.Process(Telephone(filtered, 1f));
+            float wet = _dcBlocker.Process(Telephone(filtered));
             // Preserve the accepted full-output floating-point expression, including signed zero.
             buffer[i] = dry * 0f + wet;
         }
@@ -979,10 +979,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// Pink noise is thermally modulated to replicate the unpredictable hiss of aging hardware.
     /// Returns a pure wet signal.
     /// </summary>
-    private float Telephone(float x, float amount)
+    private float Telephone(float x)
     {
-        float noise = NextReferencePink() * (0.003f + _thermalValue * 0.002f + 0.018f * amount * amount) * amount;
-        float drive = 1f + amount * 2.5f;
+        const float drive = 3.5f;
+        float noise = NextReferencePink() * (0.003f + _thermalValue * 0.002f + 0.018f);
         float wet = Dsp.AsymmetricSaturation(x * drive + noise);
         return wet / drive;
     }
