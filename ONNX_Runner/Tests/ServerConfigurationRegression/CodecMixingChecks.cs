@@ -4,217 +4,203 @@ using ONNX_Runner.Services;
 
 internal static class CodecMixingChecks
 {
-    // Midpoints follow frozen multitone levels plus the independently fitted common correction.
-    // Full-effect references retain the accepted, unchanged waveform.
-    private static readonly (int Rate, VoiceEffectType Effect, double Midpoint, double Full)[] References =
+    private static readonly int[] Rates = [8000, 11025, 16000, 22050, 24000, 44100, 48000, 96000, 192000];
+    private static readonly VoiceEffectType[] Effects = [VoiceEffectType.G711MuLaw, VoiceEffectType.G711ALaw];
+    private static readonly float[] Amounts = [0, .001f, .00101f, .01f, .1f, .25f, .5f, .65f, .9f, .99f, .9999f, 1];
+    private static readonly (int Rate, VoiceEffectType Effect, double Full)[] References =
     [
-        (8000, VoiceEffectType.G711MuLaw, -18.1536254402, -20.1166058264),
-        (8000, VoiceEffectType.G711ALaw, -18.1549339615, -20.1216184393),
-        (22050, VoiceEffectType.G711MuLaw, -18.1501359852, -20.2596146032),
-        (22050, VoiceEffectType.G711ALaw, -18.1508317287, -20.2613109183),
-        (48000, VoiceEffectType.G711MuLaw, -18.1605712274, -20.2951385248),
-        (48000, VoiceEffectType.G711ALaw, -18.1605263924, -20.2956794489)
+        (8000, VoiceEffectType.G711MuLaw, -20.1166058264),
+        (8000, VoiceEffectType.G711ALaw, -20.1216184393),
+        (22050, VoiceEffectType.G711MuLaw, -20.2596146032),
+        (22050, VoiceEffectType.G711ALaw, -20.2613109183),
+        (48000, VoiceEffectType.G711MuLaw, -20.2951385248),
+        (48000, VoiceEffectType.G711ALaw, -20.2956794489)
     ];
 
-    // Regular five-percent steps plus the bypass edge and points near the full-effect endpoint.
-    private static readonly float[] Amounts = Enumerable.Range(0, 21).Select(i => i / 20f)
-        .Concat(new[] { .001f, .00101f, .0052f, .925f, .975f, .99f, .995f, .999f, .9999f })
-        .Order().ToArray();
-
-    /// <summary>Checks the approved codec curve, loudness progression, stream state, and hot-loop allocations.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        check("Cubic gains preserve and clamp the dry/full endpoints", () =>
+        foreach (int rate in Rates)
+        foreach (VoiceEffectType effect in Effects)
         {
-            foreach (float amount in new[] { -1f, 0f, 1f, 2f })
+            check($"{effect} interpolates fixed endpoints and restores measured power at {rate} Hz", () =>
             {
-                Dsp.CubicGains(amount, out float dry, out float wet);
-                bool full = amount >= 1f;
-                Require(dry == (full ? 0f : 1f) && wet == (full ? 1f : 0f),
-                    "Endpoint gains differ from exact dry/full bypass.");
-                Require(Dsp.CubicCrossfade(.25f, -.75f, dry, wet) == (full ? -.75f : .25f),
-                    "Endpoint crossfade changed the selected input.");
-            }
-        });
-
-        check("Cubic halves meet with the approved midpoint value and slope", () =>
-        {
-            const float h = .005f;
-            Dsp.CubicGains(.5f, out float middleDry, out float middleWet);
-            Dsp.CubicGains(.5f - h, out float leftDry, out float leftWet);
-            Dsp.CubicGains(.5f - 2 * h, out float farLeftDry, out float farLeftWet);
-            Dsp.CubicGains(.5f + h, out float rightDry, out float rightWet);
-            Dsp.CubicGains(.5f + 2 * h, out float farRightDry, out float farRightWet);
-            Dsp.CubicGains(MathF.BitDecrement(.5f), out float adjacentLeftDry, out float adjacentLeftWet);
-            Dsp.CubicGains(MathF.BitIncrement(.5f), out float adjacentRightDry, out float adjacentRightWet);
-            Require(Math.Abs(middleDry - .6068605903761474) < 1e-7 && middleDry == middleWet,
-                "The independently approved midpoint changed.");
-            Require(Math.Abs(adjacentLeftDry - adjacentRightDry) < 2e-7 &&
-                Math.Abs(adjacentLeftWet - adjacentRightWet) < 2e-7,
-                "Adjacent intensities reveal a midpoint discontinuity.");
-            double dryLeftSlope = (3.0 * middleDry - 4.0 * leftDry + farLeftDry) / (2 * h);
-            double dryRightSlope = (-3.0 * middleDry + 4.0 * rightDry - farRightDry) / (2 * h);
-            double wetLeftSlope = (3.0 * middleWet - 4.0 * leftWet + farLeftWet) / (2 * h);
-            double wetRightSlope = (-3.0 * middleWet + 4.0 * rightWet - farRightWet) / (2 * h);
-            Require(Math.Abs(dryLeftSlope + .6527793124905132) < .001 &&
-                Math.Abs(dryRightSlope + .6527793124905132) < .001 &&
-                Math.Abs(wetLeftSlope - .7297164037958086) < .001 &&
-                Math.Abs(wetRightSlope - .7297164037958086) < .001,
-                "One-sided slopes no longer meet at the approved midpoint.");
-        });
-
-        check("Cubic gains stay finite and nonnegative throughout the transition", () =>
-        {
-            for (int i = 0; i <= 10000; i++) VerifyGains(i / 10000f);
-            VerifyGains(MathF.BitDecrement(1f));
-        });
-
-        foreach (var reference in References)
-        {
-            int rate = reference.Rate;
-            VoiceEffectType effect = reference.Effect;
-            check($"{effect} retains approved midpoint and full-effect levels at {rate} Hz", () =>
-            {
-                float[] input = Signal(rate, rate * 3, 1f);
-                double midpoint = Level(Process(input, rate, effect, .5f));
-                double full = Level(Process(input, rate, effect, 1f));
-                Require(Math.Abs(midpoint - reference.Midpoint) < .01,
-                    $"Midpoint differs from the independently recorded prototype: {midpoint:F6} dBFS.");
-                Require(Math.Abs(full - reference.Full) < .01,
-                    $"Full effect differs from the unchanged reference: {full:F6} dBFS.");
-            });
-
-            foreach (float inputScale in new[] { .25f, 1f, 2f })
-            foreach (float boostDb in new[] { 0f, 8f })
-            {
-                check($"{effect} follows its loudness window at {rate} Hz, {inputScale:0.00} input, {boostDb:0} dB gain", () =>
+                float[] dry = Signal(rate, rate / 2), full = (float[])dry.Clone();
+                Engine(rate).ApplyEffect(full, effect, 1);
+                foreach (float amount in Amounts)
                 {
-                    float[] dry = Signal(rate, rate * 3, inputScale);
-                    float gain = MathF.Pow(10f, boostDb / 20f);
-                    double cleanLevel = OutputLevel(Process(dry, rate, effect, 0f), gain, out double cleanFloatLevel);
-                    double fullLevel = OutputLevel(Process(dry, rate, effect, 1f), gain, out double fullFloatLevel);
-                    double minimum = Math.Min(cleanLevel, fullLevel);
-                    double maximum = Math.Max(cleanLevel, fullLevel);
-                    double previous = cleanLevel;
-                    foreach (float amount in Amounts)
-                    {
-                        double current = OutputLevel(Process(dry, rate, effect, amount), gain, out double floatLevel);
-                        if (amount == .5f)
-                            Require(floatLevel >= Math.Min(cleanFloatLevel, fullFloatLevel) - 1e-9 &&
-                                floatLevel <= Math.Max(cleanFloatLevel, fullFloatLevel) + 1e-9,
-                                "The pre-PCM midpoint no longer passes its original endpoint window.");
-                        Require(current >= minimum - 1e-5 && current <= maximum + 1e-5,
-                            $"At {amount:R}, {current:F6} is outside clean/full levels {cleanLevel:F6}/{fullLevel:F6} dBFS.");
-                        Require(fullLevel <= cleanLevel ? current <= previous + 1e-5 : current >= previous - 1e-5,
-                            $"At {amount:R}, loudness reversed direction: {previous:F6} to {current:F6} dBFS.");
-                        previous = current;
-                    }
-                });
-            }
-
-            check($"{effect} changing intensity is independent of stream partitions at {rate} Hz", () =>
-            {
-                float[] whole = Signal(rate, rate * 4, 1f);
-                float[] split = (float[])whole.Clone();
-                var wholeEngine = NewEngine(rate);
-                var splitEngine = NewEngine(rate);
-                float[] amounts = [.05f, .45f, .5f, .55f, .95f, 1f, .001f, .25f];
-                int segmentLength = rate / 2;
-                for (int segment = 0; segment < amounts.Length; segment++)
-                {
-                    int start = segment * segmentLength;
-                    wholeEngine.ApplyEffect(whole.AsSpan(start, segmentLength), effect, amounts[segment]);
-                    for (int offset = 0; offset < segmentLength; offset += 257)
-                        splitEngine.ApplyEffect(split.AsSpan(start + offset, Math.Min(257, segmentLength - offset)),
-                            effect, amounts[segment]);
+                    float[] actual = (float[])dry.Clone();
+                    Engine(rate).ApplyEffect(actual, effect, amount);
+                    if (amount <= .001f) { Require(Same(dry, actual), "Codec bypass changed PCM."); continue; }
+                    if (amount == 1) { Require(Same(full, actual), "The full codec endpoint changed."); continue; }
+                    Require(Same(Expected(dry, full, amount), actual),
+                        "Codec intensity changed the fixed wet character or the shared mixing law.");
+                    double target = (1 - (double)amount) * Power(dry) + amount * Power(full);
+                    Require(Math.Abs(10 * Math.Log10(Power(actual) / target)) < 1e-6,
+                        "The codec did not restore the interpolated endpoint power.");
                 }
-                Require(MemoryMarshal.AsBytes(whole.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(split.AsSpan())),
-                    "Buffer partitions changed the intensity transition.");
             });
-
-            check($"{effect} cubic mixing allocates no managed bytes after warmup at {rate} Hz", () =>
+            check($"{effect} retains fixed wet state while intensity changes at {rate} Hz", () =>
             {
-                var engine = NewEngine(rate);
-                float[] source = Signal(rate, 2048, 1f);
-                float[] buffer = new float[source.Length];
-                foreach (float amount in new[] { .1f, .5f, .9f })
+                var actual = Engine(rate); var full = Engine(rate);
+                float[] amounts = [.2f, .8f, .001f, .5f, 1, .05f, .95f, 1];
+                for (int step = 0; step < amounts.Length; step++)
                 {
-                    for (int i = 0; i < 200; i++)
-                    {
-                        source.CopyTo(buffer, 0);
-                        engine.ApplyEffect(buffer, effect, amount);
-                    }
+                    float amount = amounts[step];
+                    float[] input = Signal(rate, 257, step * 257), a = (float[])input.Clone(), b = (float[])input.Clone();
+                    if (amount > .001f) full.ApplyEffect(b, effect, 1);
+                    actual.ApplyEffect(a, effect, amount);
+                    float[] expected = amount <= .001f ? input : amount == 1 ? b : Expected(input, b, amount);
+                    Require(Same(expected, a), "Intensity changed codec/filter/noise state instead of only mixing.");
+                }
+            });
+            check($"{effect} restores each analysis buffer while retaining wet stream state at {rate} Hz", () =>
+            {
+                var actual = Engine(rate); var full = Engine(rate);
+                float[] source = Signal(rate, rate / 3);
+                for (int offset = 0; offset < source.Length; offset += 257)
+                {
+                    float[] dry = source.AsSpan(offset, Math.Min(257, source.Length - offset)).ToArray();
+                    float[] a = (float[])dry.Clone(), b = (float[])dry.Clone();
+                    full.ApplyEffect(b, effect, 1);
+                    actual.ApplyEffect(a, effect, .5f);
+                    Require(Same(Expected(dry, b, .5f), a), "The analysis buffer used incorrect codec state or power.");
+                }
+            });
+            check($"{effect} full processing is independent of partitions at {rate} Hz", () =>
+            {
+                float[] whole = Signal(rate, rate / 2), split = (float[])whole.Clone();
+                Engine(rate).ApplyEffect(whole, effect, 1);
+                var engine = Engine(rate);
+                for (int offset = 0; offset < split.Length; offset += 257)
+                    engine.ApplyEffect(split.AsSpan(offset, Math.Min(257, split.Length - offset)), effect, 1);
+                Require(Same(whole, split), "Codec wet state depends on buffer partitions.");
+            });
+            check($"{effect} reset reproduces mixed PCM at {rate} Hz", () =>
+            {
+                var engine = Engine(rate);
+                float[] source = Signal(rate, 4096), first = (float[])source.Clone(), replay = (float[])source.Clone();
+                engine.ApplyEffect(first, effect, .5f);
+                engine.Reset(123456);
+                engine.ApplyEffect(replay, effect, .5f);
+                Require(Same(first, replay), "Reset did not reproduce codec PCM.");
+            });
+            check($"{effect} warmed mixing allocates no managed bytes at {rate} Hz", () =>
+            {
+                var engine = Engine(rate);
+                float[] source = Signal(rate, 2048), buffer = new float[source.Length];
+                foreach (float amount in new[] { .1f, .5f, .9f, 1f })
+                {
+                    for (int i = 0; i < 16; i++) { source.CopyTo(buffer, 0); engine.ApplyEffect(buffer, effect, amount); }
                     long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 500; i++)
-                    {
-                        source.CopyTo(buffer, 0);
-                        engine.ApplyEffect(buffer, effect, amount);
-                    }
-                    long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                    Require(allocated == 0, $"Warm processing at {amount:R} allocated {allocated} bytes.");
+                    for (int i = 0; i < 32; i++) { source.CopyTo(buffer, 0); engine.ApplyEffect(buffer, effect, amount); }
+                    Require(GC.GetAllocatedBytesForCurrentThread() == before, "Warmed codec processing allocated.");
                 }
+            });
+        }
+        foreach (var reference in References)
+            check($"{reference.Effect} retains its independent full-output reference at {reference.Rate} Hz", () =>
+            {
+                float[] samples = Signal(reference.Rate, reference.Rate * 3);
+                Engine(reference.Rate).ApplyEffect(samples, reference.Effect, 1);
+                Require(Math.Abs(10 * Math.Log10(Power(samples)) - reference.Full) < .01,
+                    "The original full codec output level changed.");
+            });
+        foreach (VoiceEffectType effect in Effects)
+        {
+            check($"{effect} preserves empty, silent and signed-zero bypass buffers", () =>
+            {
+                var engine = Engine(22050);
+                engine.ApplyEffect(Span<float>.Empty, effect, .5f);
+                foreach (float amount in new[] { 0f, .001f })
+                {
+                    float[] input = [-0f, 0f, float.Epsilon, -.25f, .5f], actual = (float[])input.Clone();
+                    engine.ApplyEffect(actual, effect, amount);
+                    Require(Same(input, actual), "The bypass changed a sample or signed zero.");
+                }
+                float[] silence = new float[4096];
+                engine.ApplyEffect(silence, effect, .5f);
+                Require(silence.All(float.IsFinite), "Silence created non-finite codec output.");
+            });
+            check($"{effect} release into exact silence stays finite through subnormal filter tails", () =>
+            {
+                const int rate = 22050;
+                float[] source = new float[rate * 3];
+                Signal(rate, 257).CopyTo(source, 0);
+                float[] full = (float[])source.Clone();
+                Engine(rate).ApplyEffect(full, effect, 1);
+                var engine = Engine(rate);
+                for (int offset = 0; offset < source.Length; offset += rate / 2)
+                {
+                    int length = Math.Min(rate / 2, source.Length - offset);
+                    float[] dry = source.AsSpan(offset, length).ToArray();
+                    float[] wet = full.AsSpan(offset, length).ToArray();
+                    float[] actual = (float[])dry.Clone();
+                    engine.ApplyEffect(actual, effect, .05f);
+                    Require(actual.All(float.IsFinite) && Same(Expected(dry, wet, .05f), actual),
+                        "A silent-tail buffer changed wet state or created invalid normalization.");
+                }
+            });
+            check($"{effect} disabled global effects preserve input PCM", () =>
+            {
+                var engine = new AudioEffectsEngine(new EffectsSettings { EnableGlobalEffects = false }, 22050);
+                float[] input = Signal(22050, 4096), actual = (float[])input.Clone();
+                engine.ApplyEffect(actual, effect, .5f);
+                Require(Same(input, actual), "Disabled effects changed PCM.");
+            });
+            check($"{effect} concurrent requests retain independent state", () =>
+            {
+                float[] input = Signal(22050, 4096), expected = (float[])input.Clone();
+                Engine(22050).ApplyEffect(expected, effect, .5f);
+                Parallel.For(0, 12, _ =>
+                {
+                    float[] actual = (float[])input.Clone();
+                    Engine(22050).ApplyEffect(actual, effect, .5f);
+                    Require(Same(expected, actual), "Concurrent codec requests shared state.");
+                });
             });
         }
     }
 
-    /// <summary>Checks the curve's bounds, including its intentional small wet-gain overshoot.</summary>
-    private static void VerifyGains(float amount)
+    private static float[] Expected(float[] dry, float[] full, float amount)
     {
-        Dsp.CubicGains(amount, out float dry, out float wet);
-        Require(float.IsFinite(dry) && float.IsFinite(wet) && dry >= 0f && dry <= 1f && wet >= 0f && wet <= 1.07f,
-            $"Invalid cubic gains at {amount:R}: {dry:R}/{wet:R}.");
+        float[] mixed = new float[dry.Length];
+        double sourceEnergy = 0, wetEnergy = 0, mixedEnergy = 0;
+        for (int i = 0; i < mixed.Length; i++)
+        {
+            mixed[i] = (float)((1 - (double)amount) * dry[i] + amount * (double)full[i]);
+            sourceEnergy += dry[i] * (double)dry[i];
+            wetEnergy += full[i] * (double)full[i];
+            mixedEnergy += mixed[i] * (double)mixed[i];
+        }
+        if (mixedEnergy == 0) return mixed;
+        double target = ((1 - (double)amount) * sourceEnergy + amount * wetEnergy) / mixed.Length;
+        double gain = Math.Sqrt(target / (mixedEnergy / mixed.Length));
+        for (int i = 0; i < mixed.Length; i++) mixed[i] = (float)(mixed[i] * gain);
+        return mixed;
     }
 
-    /// <summary>Processes one fixture with deterministic per-request filter and codec state.</summary>
-    private static float[] Process(float[] input, int rate, VoiceEffectType effect, float amount)
-    {
-        float[] result = (float[])input.Clone();
-        NewEngine(rate).ApplyEffect(result, effect, amount);
-        return result;
-    }
-
-    /// <summary>Creates the actual engine with a fixed seed and default effect settings.</summary>
-    private static AudioEffectsEngine NewEngine(int rate)
+    private static AudioEffectsEngine Engine(int rate)
     {
         var engine = new AudioEffectsEngine(new EffectsSettings(), rate);
         engine.Reset(123456);
         return engine;
     }
-
-    /// <summary>Generates the fixed mixed-band fixture used by the independent prototype study.</summary>
-    private static float[] Signal(int rate, int length, float scale)
+    private static float[] Signal(int rate, int length, int offset = 0)
     {
-        float[] signal = new float[length];
-        for (int i = 0; i < signal.Length; i++)
-            signal[i] = scale * (float)(.18 * Math.Sin(2 * Math.PI * 173 * i / rate)
-                + .12 * Math.Sin(2 * Math.PI * 971 * i / rate)
-                + .04 * Math.Sin(2 * Math.PI * 2309 * i / rate));
-        return signal;
+        float[] result = new float[length];
+        for (int i = 0; i < length; i++)
+            result[i] = (float)(.18 * Math.Sin(2 * Math.PI * 173 * (i + offset) / rate)
+                + .12 * Math.Sin(2 * Math.PI * 971 * (i + offset) / rate)
+                + .04 * Math.Sin(2 * Math.PI * 2309 * (i + offset) / rate));
+        return result;
     }
-
-    /// <summary>Measures RMS in dBFS without changing waveform amplitude.</summary>
-    private static double Level(float[] samples)
+    private static double Power(float[] samples)
     {
-        double power = 0;
-        foreach (float sample in samples) power += sample * (double)sample;
-        return 10 * Math.Log10(power / samples.Length);
+        double energy = 0;
+        foreach (float sample in samples) energy += sample * (double)sample;
+        return energy / samples.Length;
     }
-
-    /// <summary>Measures the mastered PCM16 output with the server's clamp, scale, and truncation convention.</summary>
-    private static double OutputLevel(float[] samples, float gain, out double floatLevel)
-    {
-        VolumeShifter.ApplyVolume(samples, gain);
-        floatLevel = Level(samples);
-        double power = 0;
-        foreach (float sample in samples)
-        {
-            float decoded = (short)(Math.Clamp(sample, -1f, 1f) * 32767f) / 32768f;
-            power += decoded * (double)decoded;
-        }
-        return 10 * Math.Log10(power / samples.Length);
-    }
-
-    /// <summary>Reports a failed fixture or semantic contract.</summary>
+    private static bool Same(float[] a, float[] b) => MemoryMarshal.AsBytes(a.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(b.AsSpan()));
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);

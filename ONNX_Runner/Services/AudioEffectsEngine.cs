@@ -15,7 +15,7 @@ namespace ONNX_Runner.Services;
 ///   - Zero-Allocation: DSP loop generates zero garbage. String parsing is offloaded to the caller.
 ///
 /// DSP ROUTING MANIFESTO:
-///   - Power-Matched Crossfade: fixed Telephone character with measured dry/wet power interpolation.
+///   - Power-Matched Crossfade: fixed Telephone and G.711 character with measured dry/wet power interpolation.
 ///   - Ring Insert: internal carrier depth moves from tremolo to ring modulation; a scalar sets playback level.
 ///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Drive Insert: gradual asymmetric saturation and adaptive filters; a scalar sets playback level.
@@ -25,7 +25,6 @@ namespace ONNX_Runner.Services;
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 ///   - Filtered Crossfade: TacticalRadio retains its evolving EQ input; FM uses a fixed equalizer.
-///   - Codec Crossfade: Processes a fully band-limited G.711 signal, then uses matched cubic gains.
 /// </summary>
 ///
 /// DESIGN PHILOSOPHY:
@@ -97,7 +96,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         StrictInsert,
         StrictCrossfade,
         FmCrossfade,
-        CodecCrossfade,
         CrusherInsert,
         TacticalCrossfade,
         DriveInsert,
@@ -408,7 +406,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// Applies the specified audio effect to the input buffer in-place.
     /// The amount parameter controls the intensity of the effect (0 = no effect, 1 = full effect).
     /// External blends retain the request amount; most wet algorithms receive an eased strength.
-    /// FM and Telephone keep their complete wet character fixed while intensity controls their blends.
+    /// FM, Telephone and G.711 keep their complete wet character fixed while intensity controls their blends.
     /// Optimized for real-time processing with zero allocations in the audio thread.
     /// </summary>
     public void ApplyEffect(Span<float> buffer, VoiceEffectType type, float amount)
@@ -432,7 +430,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         RoutingMode mode = GetRoutingMode(type);
         if (mode == RoutingMode.PowerMatchedCrossfade)
         {
-            ApplyTelephone(buffer, amount);
+            ApplyPowerMatched(buffer, type, amount);
             return;
         }
         if (mode == RoutingMode.FmCrossfade)
@@ -504,11 +502,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             ? amount : amount * (2f - amount);
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
-
-        float cubicDryGain = 1f;
-        float cubicWetGain = 0f;
-        if (mode == RoutingMode.CodecCrossfade)
-            Dsp.CubicGains(amount, out cubicDryGain, out cubicWetGain);
 
         float crusherGain = 1f;
 
@@ -584,12 +577,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                     buffer[i] = Dsp.Lerp(dry, wet, amount);
                     break;
 
-                case RoutingMode.CodecCrossfade:
-                    // Preserve the accepted full-strength floating-point expression.
-                    buffer[i] = amount >= 1f
-                        ? Dsp.Lerp(dry, wet, amount)
-                        : Dsp.CubicCrossfade(dry, wet, cubicDryGain, cubicWetGain);
-                    break;
             }
         }
     }
@@ -605,6 +592,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return type switch
         {
             VoiceEffectType.Telephone => RoutingMode.PowerMatchedCrossfade,
+            VoiceEffectType.G711MuLaw => RoutingMode.PowerMatchedCrossfade,
+            VoiceEffectType.G711ALaw => RoutingMode.PowerMatchedCrossfade,
             VoiceEffectType.Overdrive => RoutingMode.DriveInsert,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherInsert,
             VoiceEffectType.RingModulator => RoutingMode.RingInsert,
@@ -614,8 +603,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
             VoiceEffectType.TacticalRadio => RoutingMode.TacticalCrossfade,
             VoiceEffectType.FmRadio => RoutingMode.FmCrossfade,
-            VoiceEffectType.G711MuLaw => RoutingMode.CodecCrossfade,
-            VoiceEffectType.G711ALaw => RoutingMode.CodecCrossfade,
             _ => RoutingMode.StrictInsert
         };
     }
@@ -775,7 +762,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.G711MuLaw:
             case VoiceEffectType.G711ALaw:
-                // Both G.711 variants share a 300-3400 Hz wet path, blended via CodecCrossfade.
+                // Both G.711 variants share a fixed 300-3400 Hz wet path.
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(300f), 0.707f);
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3400f), 0.707f);
 
@@ -844,8 +831,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.LoFiTape => LoFiTape(x, amount),
             VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
             VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
-            VoiceEffectType.G711MuLaw => G711Codec(x, amount),
-            VoiceEffectType.G711ALaw => G711Codec(x, amount),
             _ => x
         };
     }
@@ -934,13 +919,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // EFFECT ALGORITHMS
     // =========================================================================
 
-    /// <summary>Generates fixed full-strength Telephone PCM, then mixes and matches the supplied buffer.</summary>
-    private void ApplyTelephone(Span<float> buffer, float amount)
+    /// <summary>Generates fixed full-strength PCM, then mixes and matches the supplied buffer.</summary>
+    private void ApplyPowerMatched(Span<float> buffer, VoiceEffectType type, float amount)
     {
         if (buffer.IsEmpty) return;
         if (amount >= 1f)
         {
-            ProcessTelephoneWet(buffer);
+            ProcessPowerMatchedWet(buffer, type);
             return;
         }
 
@@ -949,13 +934,24 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             Span<float> dry = rented.AsSpan(0, buffer.Length);
             buffer.CopyTo(dry);
-            ProcessTelephoneWet(buffer);
+            ProcessPowerMatchedWet(buffer, type);
             PowerMatchedMixer.Mix(dry, buffer, amount);
         }
         finally
         {
             ArrayPool<float>.Shared.Return(rented);
         }
+    }
+
+    /// <summary>Selects the fixed processor once per buffer, outside the sample loop.</summary>
+    private void ProcessPowerMatchedWet(Span<float> buffer, VoiceEffectType type)
+    {
+        if (type == VoiceEffectType.Telephone)
+        {
+            ProcessTelephoneWet(buffer);
+            return;
+        }
+        ProcessG711Wet(buffer);
     }
 
     /// <summary>Retains the accepted full-strength filters, noise, saturation and DC-removal state.</summary>
@@ -1461,13 +1457,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// Converts normalized float PCM to signed 16-bit linear PCM, runs a real 8-bit
     /// segmented mu-law or A-law encode/decode round-trip, then converts back to float.
     /// The 300-3400 Hz telephone bandwidth is applied by Setup before this stage.
-    /// Intensity is handled exclusively by CodecCrossfade, so the codec itself always
+    /// Intensity is handled exclusively by PowerMatchedMixer, so the codec itself always
     /// has the same transfer characteristic and does not act as a volume control.
     /// </summary>
-    private float G711Codec(float x, float amount)
+    private float G711Codec(float x)
     {
-        _ = amount;
-
         float input = Math.Clamp(x, -1.0f, 1.0f);
 
         // Preserve the full signed PCM16 range: -1.0 -> -32768, +1.0 -> +32767.
@@ -1483,6 +1477,24 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Standard signed PCM16 normalization. No makeup gain or extra saturation here:
         // final server volume/limiting is intentionally handled later in the DSP pipeline.
         return decoded / 32768f;
+    }
+
+    /// <summary>Retains the full codec filters, state and accepted endpoint rounding.</summary>
+    private void ProcessG711Wet(Span<float> buffer)
+    {
+        int filterCount = _filterCount;
+        BiQuadFilter[] filters = _filters;
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float dry = buffer[i];
+            float filtered = Dsp.KillDenormal(dry);
+            _thermal.Update(ref _noise, _thermalDriftCoeff);
+            _thermalValue = _thermal.State * _thermalNoiseGain;
+            for (int f = 0; f < filterCount; f++) filtered = filters[f].Transform(filtered);
+            float wet = _dcBlocker.Process(G711Codec(filtered));
+            // Keep the original full-effect floating-point expression at every intensity.
+            buffer[i] = Dsp.Lerp(dry, wet, 1f);
+        }
     }
 
     /// <summary>Finds the magnitude segment used by G.711 A-law companding.</summary>
