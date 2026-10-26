@@ -15,12 +15,11 @@ namespace ONNX_Runner.Services;
 ///   - Zero-Allocation: DSP loop generates zero garbage. String parsing is offloaded to the caller.
 ///
 /// DSP ROUTING MANIFESTO:
-///   - Power-Matched Crossfade: fixed Telephone and G.711 character with measured dry/wet power interpolation.
+///   - Power-Matched Crossfade: fixed Telephone, G.711 and FM character with measured dry/wet power interpolation.
 ///   - Ring Insert: internal carrier depth moves from tremolo to ring modulation; a scalar sets playback level.
 ///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Drive Insert: gradual asymmetric saturation and adaptive filters; a scalar sets playback level.
 ///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
-///   - FM Crossfade: fixed full-character wet branch, matched dry delay and prepared gains.
 ///   - Modulation Insert: complete Chorus/Flanger processors with prepared scalar playback gains.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
@@ -95,7 +94,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         ModulationInsert,
         StrictInsert,
         StrictCrossfade,
-        FmCrossfade,
         CrusherInsert,
         TacticalCrossfade,
         DriveInsert,
@@ -295,8 +293,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private readonly BiQuadFilter[] _filters = new BiQuadFilter[5];
     private int _filterCount;
     private FmRadioProcessor? _fmProcessor;
-    private float _fmDryGain;
-    private float _fmWetGain;
+    private float _fmAmount;
     private const float CompletionSilenceFloor = 1e-7f;
     private VoiceEffectType _current = VoiceEffectType.None;
 
@@ -336,7 +333,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _delay.Clear();
         _dcBlocker.Reset();
         _fmProcessor?.Reset();
-        _fmDryGain = _fmWetGain = 0f;
+        _fmAmount = 0f;
 
         Array.Clear(_filters, 0, _filters.Length);
         _filterCount = 0;
@@ -383,23 +380,54 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     /// <summary>Reports retained audio for effects that support finite request completion.</summary>
     internal bool HasPendingOutput => _current == VoiceEffectType.FmRadio && _fmProcessor != null &&
-        (_fmProcessor.PendingSamples > 0 || _dcBlocker.PendingMagnitude * MathF.Abs(_fmWetGain) > CompletionSilenceFloor);
+        (_fmProcessor.PendingSamples > 0 || _dcBlocker.PendingMagnitude * FmOutputGain > CompletionSilenceFloor);
 
     /// <summary>Writes retained effect audio only; repeated calls stop when its filters are drained.</summary>
     internal int Complete(Span<float> destination)
     {
+        if (destination.IsEmpty || !HasPendingOutput) return 0;
+        if (_fmAmount >= 1f) return CompleteFmWet(destination, Span<float>.Empty);
+
+        float[] rented = ArrayPool<float>.Shared.Rent(destination.Length);
+        try
+        {
+            Span<float> dry = rented.AsSpan(0, destination.Length);
+            int written = CompleteFmWet(destination, dry);
+            PowerMatchedMixer.Mix(dry[..written], destination[..written], _fmAmount);
+            return written;
+        }
+        finally
+        {
+            ArrayPool<float>.Shared.Return(rented);
+        }
+    }
+
+    /// <summary>Drains the fixed wet state conservatively; the late wet-only mix cannot exceed this level.</summary>
+    private int CompleteFmWet(Span<float> destination, Span<float> dry)
+    {
         int written = 0;
+        if (dry.IsEmpty)
+        {
+            while (written < destination.Length && HasPendingOutput)
+                destination[written++] = ProcessFmWet(0f, out _);
+            return written;
+        }
         while (written < destination.Length && HasPendingOutput)
-            destination[written++] = ProcessFm(0f, _fmDryGain, _fmWetGain);
+        {
+            destination[written] = ProcessFmWet(0f, out float delayed);
+            dry[written] = delayed;
+            written++;
+        }
         return written;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float ProcessFm(float sample, float dryGain, float wetGain)
+    private float ProcessFmWet(float sample, out float dry)
     {
-        float wet = _fmProcessor!.Process(Dsp.KillDenormal(sample), out float dry);
+        float wet = _fmProcessor!.Process(Dsp.KillDenormal(sample), out dry);
         wet = _dcBlocker.Process(wet);
-        return Dsp.FmCrossfade(dry, wet, dryGain, wetGain);
+        // Preserve the accepted full-effect multiplication and signed-zero expression.
+        return dry * 0f + wet * FmOutputGain;
     }
 
     /// <summary>
@@ -431,16 +459,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (mode == RoutingMode.PowerMatchedCrossfade)
         {
             ApplyPowerMatched(buffer, type, amount);
-            return;
-        }
-        if (mode == RoutingMode.FmCrossfade)
-        {
-            Dsp.FmGains(amount, out float dryGain, out float wetGain);
-            wetGain *= FmOutputGain;
-            _fmDryGain = dryGain;
-            _fmWetGain = wetGain;
-            for (int i = 0; i < buffer.Length; i++)
-                buffer[i] = ProcessFm(buffer[i], dryGain, wetGain);
             return;
         }
 
@@ -602,7 +620,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
             VoiceEffectType.TacticalRadio => RoutingMode.TacticalCrossfade,
-            VoiceEffectType.FmRadio => RoutingMode.FmCrossfade,
+            VoiceEffectType.FmRadio => RoutingMode.PowerMatchedCrossfade,
             _ => RoutingMode.StrictInsert
         };
     }
@@ -922,6 +940,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// <summary>Generates fixed full-strength PCM, then mixes and matches the supplied buffer.</summary>
     private void ApplyPowerMatched(Span<float> buffer, VoiceEffectType type, float amount)
     {
+        if (type == VoiceEffectType.FmRadio) _fmAmount = amount;
         if (buffer.IsEmpty) return;
         if (amount >= 1f)
         {
@@ -933,8 +952,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         try
         {
             Span<float> dry = rented.AsSpan(0, buffer.Length);
-            buffer.CopyTo(dry);
-            ProcessPowerMatchedWet(buffer, type);
+            ProcessPowerMatchedWet(buffer, type, dry);
             PowerMatchedMixer.Mix(dry, buffer, amount);
         }
         finally
@@ -944,14 +962,36 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>Selects the fixed processor once per buffer, outside the sample loop.</summary>
-    private void ProcessPowerMatchedWet(Span<float> buffer, VoiceEffectType type)
+    private void ProcessPowerMatchedWet(Span<float> buffer, VoiceEffectType type, Span<float> dry = default)
     {
+        if (type == VoiceEffectType.FmRadio)
+        {
+            ProcessFmWet(buffer, dry);
+            return;
+        }
+        if (!dry.IsEmpty) buffer.CopyTo(dry);
         if (type == VoiceEffectType.Telephone)
         {
             ProcessTelephoneWet(buffer);
             return;
         }
         ProcessG711Wet(buffer);
+    }
+
+    /// <summary>Generates the fixed radio endpoint and its equally delayed clean reference.</summary>
+    private void ProcessFmWet(Span<float> buffer, Span<float> dry)
+    {
+        if (dry.IsEmpty)
+        {
+            for (int i = 0; i < buffer.Length; i++)
+                buffer[i] = ProcessFmWet(buffer[i], out _);
+            return;
+        }
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            buffer[i] = ProcessFmWet(buffer[i], out float delayed);
+            dry[i] = delayed;
+        }
     }
 
     /// <summary>Retains the accepted full-strength filters, noise, saturation and DC-removal state.</summary>

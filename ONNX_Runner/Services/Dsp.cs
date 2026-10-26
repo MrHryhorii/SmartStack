@@ -131,49 +131,6 @@ public static class Dsp
         return dry * dryGain + wet * wetGain;
     }
 
-    /// <summary>
-    /// Fixed FM gains fitted in two quartic halves with a shared midpoint value and slope.
-    /// The prepared full FM branch includes its manual output boost; no input analysis is performed.
-    /// </summary>
-    public static void FmGains(float t, out float dryGain, out float wetGain)
-    {
-        if (t <= .001f || float.IsNaN(t))
-        {
-            dryGain = 1;
-            wetGain = 0;
-            return;
-        }
-        if (t >= 1)
-        {
-            dryGain = 0;
-            wetGain = 1;
-            return;
-        }
-        if (t == .5f)
-        {
-            dryGain = 0.551741719f;
-            wetGain = 0.476274043f;
-            return;
-        }
-        if (t < .5f)
-        {
-            float u = 2 * t;
-            dryGain = ((((-1.05324185f * u + 2.34128022f) * u + -1.58125246f) * u + -0.155044287f) * u + 1f);
-            wetGain = ((((1.1927706f * u + -2.62879014f) * u + 1.74789405f) * u + 0.16439952f) * u + 0f);
-            return;
-        }
-        float uRight = 2 * (1 - t);
-        dryGain = ((((0.394435048f * uRight + -1.10797596f) * uRight + 0.987580836f) * uRight + 0.277701855f) * uRight + 0f);
-        wetGain = ((((-0.287124693f * uRight + 0.815499723f) * uRight + -0.790798962f) * uRight + -0.261302054f) * uRight + 1f);
-    }
-
-    /// <summary>Combines inputs with Fm gains prepared outside the sample loop.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float FmCrossfade(float dry, float wet, float dryGain, float wetGain)
-    {
-        return dry * dryGain + wet * wetGain;
-    }
-
     /// <summary>Static Overdrive playback correction, prepared outside the sample loop.</summary>
     public static float DriveGain(float amount)
     {

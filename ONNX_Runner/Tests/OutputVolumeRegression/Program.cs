@@ -65,7 +65,7 @@ internal static class OutputVolumeRegressionProgram
             foreach (float amount in new[] { .25f, 1f })
             {
                 float[] source = Enumerable.Range(0, rate / 5 + 7).Select(i => i > rate / 5 - rate / 200 ? .2f * MathF.Cos(i * .7f) : 0).ToArray();
-                float[] completed = EffectNew(source, rate, NewEffect.FmRadio, amount, true);
+                float[] completed = EffectNew(source, rate, NewEffect.FmRadio, amount, true, Split);
                 Require(completed.Length > source.Length, "The finite radio response was not retained.");
                 Encoded actual = ActualNew(source, rate, target, 2.5118864f, true, Split, NewEffect.FmRadio, amount);
                 float[] reference = Reference(completed, rate, target, 2.5118864f, true);
@@ -112,7 +112,7 @@ internal static class OutputVolumeRegressionProgram
         Require(matches.All(x => x), "Concurrent requests shared output state.");
         _checks++;
         Save(report, new { Passed = _checks, HardwareAccelerated = Vector.IsHardwareAccelerated,
-            Scope = "Actual character-only output writer, same output with fragmented input, final resampler drain before limiter flush, PCM16 reference equality, finite sample peaks, FM completion, linear quiet gain, cancellation and request isolation.", Residuals = residuals, Evidence = evidence });
+            Scope = "Actual character-only output writer, same output with fragmented input, final resampler drain before limiter flush, PCM16 reference equality, finite sample peaks, FM completion with matching analysis buffers, linear quiet gain, cancellation and request isolation.", Residuals = residuals, Evidence = evidence });
         Console.WriteLine($"Passed {_checks} character-output integration checks.");
     }
 
@@ -177,12 +177,13 @@ internal static class OutputVolumeRegressionProgram
         return output.ToArray();
     }
 
-    private static float[] EffectNew(float[] source, int rate, NewEffect type, float amount, bool complete)
+    private static float[] EffectNew(float[] source, int rate, NewEffect type, float amount, bool complete, int[]? blocks = null)
     {
         float[] result = (float[])source.Clone();
         var engine = new NewEngine(new(), rate);
         engine.Reset(123456);
-        engine.ApplyEffect(result, type, amount);
+        if (blocks == null) engine.ApplyEffect(result, type, amount);
+        else EachBlock(result, blocks, samples => engine.ApplyEffect(samples, type, amount));
         if (!complete) return result;
         var output = new List<float>(result);
         Operation drain = typeof(NewEngine).GetMethod("Complete", HiddenInstance)!.CreateDelegate<Operation>(engine);
