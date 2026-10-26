@@ -20,13 +20,19 @@ internal static class CharacterStrengthChecks
             });
         }
 
-        check("Tactical codec strength follows the same eased input as radio filtering", () =>
+        check("Tactical codec keeps full internal adaptation independently of request intensity", () =>
         {
-            var engine = NewEngine(22050);
-            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.TacticalRadio, .5f);
-            object radio = Field(engine, "_radio");
-            float root = (float)radio.GetType().GetField("TacticalSqrtAmount")!.GetValue(radio)!;
-            Require(MathF.Abs(root * root - .75f) < 1e-6f, "The radio codec retained linear internal strength.");
+            foreach (float amount in new[] { .1f, .5f, .9f })
+            {
+                var engine = NewEngine(22050); var reference = NewEngine(22050);
+                float[] source = Signal(22050, 4096), actual = (float[])source.Clone();
+                engine.ApplyEffect(actual, VoiceEffectType.TacticalRadio, amount);
+                reference.ApplyEffect(source, VoiceEffectType.TacticalRadio, 1);
+                object radio = Field(engine, "_radio"), full = Field(reference, "_radio");
+                foreach (string name in new[] { "TacticalEnvelope", "CvsdHistory", "CvsdStepSize", "CvsdAccumulator", "ReconState", "CvsdClockPhase" })
+                    Require(Equals(radio.GetType().GetField(name)!.GetValue(radio), full.GetType().GetField(name)!.GetValue(full)),
+                        "Request intensity changed the fixed codec's adaptive state.");
+            }
         });
 
         check("Bitcrusher reaches seven-bit wet quantization at request midpoint", () =>

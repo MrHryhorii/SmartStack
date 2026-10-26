@@ -25,7 +25,21 @@ internal static class AudioEffectSampleRateChecks
                         var engine = NewEngine(rate);
                         for (int offset = 0; offset < split.Length; offset += 257)
                             engine.ApplyEffect(split.AsSpan(offset, Math.Min(257, split.Length - offset)), effect, amount);
-                        Require(whole.AsSpan().SequenceEqual(split), "Buffer partitions changed output.");
+                        bool adaptive = effect is VoiceEffectType.Telephone or VoiceEffectType.G711MuLaw
+                            or VoiceEffectType.G711ALaw or VoiceEffectType.FmRadio or VoiceEffectType.TacticalRadio;
+                        if (!adaptive || amount == 0 || amount == 1)
+                            Require(whole.AsSpan().SequenceEqual(split), "Full processing or fixed-gain streaming depends on partitions.");
+                        else
+                        {
+                            // Adaptive matching measures each supplied buffer; compare identical analysis partitions.
+                            float[] replay = (float[])source.Clone();
+                            var repeat = NewEngine(rate);
+                            for (int offset = 0; offset < replay.Length; offset += 257)
+                                repeat.ApplyEffect(replay.AsSpan(offset, Math.Min(257, replay.Length - offset)), effect, amount);
+                            Require(split.AsSpan().SequenceEqual(replay), "Matching analysis partitions changed adaptive PCM.");
+                        }
+                        Require(split.All(value => float.IsFinite(value) && Math.Abs(value) < 2),
+                            "Fragmented moderate input produced invalid or excessive output.");
                         Require(whole.All(value => float.IsFinite(value) && Math.Abs(value) < 2),
                             "Moderate input produced invalid or excessive output.");
                         if (amount == 0 || effect == VoiceEffectType.None)
@@ -35,10 +49,19 @@ internal static class AudioEffectSampleRateChecks
                 check($"{effect} hot processing allocates no managed bytes at {rate} Hz", () =>
                 {
                     var engine = NewEngine(rate);
-                    float[] block = Signal(rate, 257);
-                    for (int i = 0; i < 128; i++) engine.ApplyEffect(block, effect, .75f);
+                    float[] source = Signal(rate, 257), block = new float[source.Length];
+                    // Every block is fresh input; feeding prior output back would measure an artificial feedback loop.
+                    for (int i = 0; i < 128; i++)
+                    {
+                        source.CopyTo(block, 0);
+                        engine.ApplyEffect(block, effect, .75f);
+                    }
                     long before = GC.GetAllocatedBytesForCurrentThread();
-                    for (int i = 0; i < 128; i++) engine.ApplyEffect(block, effect, .75f);
+                    for (int i = 0; i < 128; i++)
+                    {
+                        source.CopyTo(block, 0);
+                        engine.ApplyEffect(block, effect, .75f);
+                    }
                     Require(GC.GetAllocatedBytesForCurrentThread() == before, "Sample loop allocated memory.");
                 });
             }

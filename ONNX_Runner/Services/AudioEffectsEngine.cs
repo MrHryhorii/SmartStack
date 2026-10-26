@@ -15,15 +15,13 @@ namespace ONNX_Runner.Services;
 ///   - Zero-Allocation: DSP loop generates zero garbage. String parsing is offloaded to the caller.
 ///
 /// DSP ROUTING MANIFESTO:
-///   - Power-Matched Crossfade: fixed Telephone, G.711 and FM character with measured dry/wet power interpolation.
+///   - Power-Matched Crossfade: fixed Telephone, G.711, FM and TacticalRadio character with measured power interpolation.
 ///   - Ring Insert: internal carrier depth moves from tremolo to ring modulation; a scalar sets playback level.
 ///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Drive Insert: gradual asymmetric saturation and adaptive filters; a scalar sets playback level.
-///   - Tactical Crossfade: fitted gains with the existing evolving EQ input -> TacticalRadio.
 ///   - Modulation Insert: complete Chorus/Flanger processors with prepared scalar playback gains.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
-///   - Filtered Crossfade: TacticalRadio retains its evolving EQ input; FM uses a fixed equalizer.
 /// </summary>
 ///
 /// DESIGN PHILOSOPHY:
@@ -95,7 +93,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         StrictInsert,
         StrictCrossfade,
         CrusherInsert,
-        TacticalCrossfade,
         DriveInsert,
         RingInsert
     }
@@ -277,8 +274,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public int CvsdClockPhase;
         public float CvsdPrevious;
 
-        // Hoisted from per-sample sqrt(amount): set in ApplyEffect before the sample loop.
-        public float TacticalSqrtAmount;
     }
 
     // =========================================================================
@@ -434,7 +429,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// Applies the specified audio effect to the input buffer in-place.
     /// The amount parameter controls the intensity of the effect (0 = no effect, 1 = full effect).
     /// External blends retain the request amount; most wet algorithms receive an eased strength.
-    /// FM, Telephone and G.711 keep their complete wet character fixed while intensity controls their blends.
+    /// FM, Telephone, G.711 and TacticalRadio keep fixed wet settings while intensity controls their blends.
     /// Optimized for real-time processing with zero allocations in the audio thread.
     /// </summary>
     public void ApplyEffect(Span<float> buffer, VoiceEffectType type, float amount)
@@ -523,14 +518,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         float crusherGain = 1f;
 
-        float tacticalDryGain = 1f;
-        float tacticalWetGain = 0f;
-        if (mode == RoutingMode.TacticalCrossfade)
-        {
-            Dsp.TacticalGains(amount, out tacticalDryGain, out tacticalWetGain);
-            tacticalWetGain *= TacticalOutputGain;
-        }
-
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
@@ -541,12 +528,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.LoFiTape:
                 PrepareTape(amount);
-                break;
-
-            case VoiceEffectType.TacticalRadio:
-                // Hoist the shaped intensity root above the sample loop for TacticalRadio.
-                // MathF.Sqrt is called once per buffer instead of once per sample.
-                _radio.TacticalSqrtAmount = MathF.Sqrt(effectAmount);
                 break;
 
             case VoiceEffectType.DecoderGlitch:
@@ -569,9 +550,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 for (int f = 0; f < filterCount; f++)
                     filtered = filters[f].Transform(filtered);
 
-            float processInput = mode == RoutingMode.TacticalCrossfade
-                ? Dsp.Lerp(dry, filtered, effectAmount) : filtered;
-            float wet = Process(type, processInput, effectAmount);
+            float wet = Process(type, filtered, effectAmount);
             // Tape blends DC removal internally; rolling glitches preserve their captured samples.
             wet = type is not (VoiceEffectType.DecoderGlitch or VoiceEffectType.LoFiTape)
                 ? _dcBlocker.Process(wet) : wet;
@@ -581,10 +560,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             {
                 case RoutingMode.CrusherInsert:
                     buffer[i] = wet * crusherGain;
-                    break;
-
-                case RoutingMode.TacticalCrossfade:
-                    buffer[i] = Dsp.TacticalCrossfade(dry, wet, tacticalDryGain, tacticalWetGain);
                     break;
 
                 case RoutingMode.StrictInsert:
@@ -619,7 +594,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Chorus => RoutingMode.ModulationInsert,
             VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
-            VoiceEffectType.TacticalRadio => RoutingMode.TacticalCrossfade,
+            VoiceEffectType.TacticalRadio => RoutingMode.PowerMatchedCrossfade,
             VoiceEffectType.FmRadio => RoutingMode.PowerMatchedCrossfade,
             _ => RoutingMode.StrictInsert
         };
@@ -848,7 +823,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Bitcrusher => Bitcrusher(x, amount),
             VoiceEffectType.LoFiTape => LoFiTape(x, amount),
             VoiceEffectType.DecoderGlitch => DecoderGlitch(x, amount),
-            VoiceEffectType.TacticalRadio => TacticalRadio(x, amount),
             _ => x
         };
     }
@@ -973,6 +947,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (type == VoiceEffectType.Telephone)
         {
             ProcessTelephoneWet(buffer);
+            return;
+        }
+        if (type == VoiceEffectType.TacticalRadio)
+        {
+            ProcessTacticalWet(buffer);
             return;
         }
         ProcessG711Wet(buffer);
@@ -1434,14 +1413,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// <summary>
     /// Tactical / military radio: author's perceptual model of SINCGARS / AN/PRC-class voice.
     /// All CVSD timing constants are pre-computed in Setup: zero MathF.Exp in the hot path.
-    /// sqrt(amount) is hoisted above the sample loop in ApplyEffect via TacticalSqrtAmount.
+    /// The step size adapts to codec history; request intensity is handled by PowerMatchedMixer.
     /// </summary>
-    private float TacticalRadio(float x, float amount)
+    private float TacticalRadio(float x)
     {
-        // amount is consumed as pre-computed TacticalSqrtAmount (hoisted in ApplyEffect).
-        // Retained as a parameter for API consistency with the Process dispatch table.
-        _ = amount;
-
         float absX = MathF.Abs(x);
 
         // Compander: two-state gain for intelligibility under noise.
@@ -1475,8 +1450,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             else
                 _radio.CvsdStepSize *= _radio.StepDecay;
             _radio.CvsdStepSize = Math.Clamp(_radio.CvsdStepSize, _radio.MinStep, _radio.MaxStep);
-            float scaledStep = _radio.CvsdStepSize * _radio.TacticalSqrtAmount;
-            _radio.CvsdAccumulator += bit ? scaledStep : -scaledStep;
+            _radio.CvsdAccumulator += bit ? _radio.CvsdStepSize : -_radio.CvsdStepSize;
             _radio.CvsdAccumulator *= _radio.AccumDecay;
             _radio.CvsdAccumulator = Math.Clamp(_radio.CvsdAccumulator, -1.2f, 1.2f);
             _radio.CvsdAccumulator = Dsp.KillDenormal(_radio.CvsdAccumulator);
@@ -1490,6 +1464,24 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         const float outputTrim = 0.75f;
         float saturated = Dsp.AsymmetricSaturation(reconstructed * 1.4f) / 1.4f;
         return Dsp.SoftClip(saturated * outputTrim);
+    }
+
+    /// <summary>Runs the accepted full TacticalRadio input, adaptive codec and playback trim.</summary>
+    private void ProcessTacticalWet(Span<float> buffer)
+    {
+        int filterCount = _filterCount;
+        BiQuadFilter[] filters = _filters;
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float dry = buffer[i];
+            float filtered = Dsp.KillDenormal(dry);
+            _thermal.Update(ref _noise, _thermalDriftCoeff);
+            _thermalValue = _thermal.State * _thermalNoiseGain;
+            for (int f = 0; f < filterCount; f++) filtered = filters[f].Transform(filtered);
+            // Preserve the full-strength input rounding: the CVSD feedback is sensitive to it.
+            float wet = _dcBlocker.Process(TacticalRadio(Dsp.Lerp(dry, filtered, 1f)));
+            buffer[i] = dry * 0f + wet * TacticalOutputGain;
+        }
     }
 
     /// <summary>

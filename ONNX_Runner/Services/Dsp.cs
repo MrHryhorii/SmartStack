@@ -82,55 +82,6 @@ public static class Dsp
         return MathF.Pow(10f, db / 20f);
     }
 
-    /// <summary>
-    /// Prepares TacticalRadio gains for its eased input EQ, codec strength and fixed output trim.
-    /// Two empirically fitted quartic halves share their midpoint value and intensity slope.
-    /// Preserves the equal-power dry/wet ratio and reuses its prepared roots once per buffer.
-    /// </summary>
-    public static void TacticalGains(float t, out float dryGain, out float wetGain)
-    {
-        if (t <= 0.001f || float.IsNaN(t))
-        {
-            dryGain = 1f;
-            wetGain = 0f;
-            return;
-        }
-        if (t >= 1f)
-        {
-            dryGain = 0f;
-            wetGain = 1f;
-            return;
-        }
-
-        EqualPowerGains(t, out dryGain, out wetGain);
-        float correction;
-        if (t == 0.5f)
-        {
-            correction = 0.862721205f;
-        }
-        else if (t < 0.5f)
-        {
-            // Reuse the wet root to shape the low-intensity transition.
-            float u = wetGain * 1.41421356f;
-            correction = (((-0.677354693f * u + 1.27634215f) * u - 0.0871671513f) * u - 0.649099052f) * u + 1f;
-        }
-        else
-        {
-            // Evaluate from exact full wet to preserve its accepted waveform.
-            float u = 2f * (1f - t);
-            correction = (((0.659005046f * u - 1.58438516f) * u + 1.18094683f) * u - 0.392845571f) * u + 1f;
-        }
-        dryGain *= correction;
-        wetGain *= correction;
-    }
-
-    /// <summary>Combines inputs with Tactical gains prepared outside the sample loop.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static float TacticalCrossfade(float dry, float wet, float dryGain, float wetGain)
-    {
-        return dry * dryGain + wet * wetGain;
-    }
-
     /// <summary>Static Overdrive playback correction, prepared outside the sample loop.</summary>
     public static float DriveGain(float amount)
     {
