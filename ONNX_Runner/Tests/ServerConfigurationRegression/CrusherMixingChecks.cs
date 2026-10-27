@@ -1,43 +1,49 @@
 using System.Runtime.InteropServices;
+using System.Reflection;
 using ONNX_Runner.Models;
 using ONNX_Runner.Services;
 
 internal static class CrusherMixingChecks
 {
-    /// <summary>Protects wet-only routing, gradual onset, playback correction and stream state.</summary>
+    /// <summary>Protects wet-only routing, gradual onset, measured playback gain and stream state.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        check("Crusher scalar gain preserves unity at both endpoints", () =>
+        check("Crusher bypass and disabled effects do not prepare a quantizer", () =>
         {
-            foreach (float amount in new[] { -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
-                Require(Dsp.CrushGain(amount) == 1f, "Endpoint gain changed.");
-        });
-        check("Crusher correction remains finite, positive and modest across its range", () =>
-        {
-            for (int i = 0; i <= 100000; i++)
+            foreach (float amount in new[] { 0f, .001f })
             {
-                float gain = Dsp.CrushGain(i / 100000f);
-                Require(float.IsFinite(gain) && gain > .99f && gain < 1.08f, "Playback trim left its calibrated range.");
+                var engine = NewEngine(22050);
+                float[] input = Signal(22050, 4096), output = (float[])input.Clone();
+                engine.ApplyEffect(output, VoiceEffectType.Bitcrusher, amount);
+                Require(SameBits(input, output) && State<float>(engine, "Scale") == 0f, "Bypass prepared or changed PCM.");
             }
+            var disabled = new AudioEffectsEngine(new() { EnableGlobalEffects = false }, 22050);
+            float[] source = Signal(22050, 4096), actual = (float[])source.Clone();
+            disabled.ApplyEffect(actual, VoiceEffectType.Bitcrusher, 1f);
+            Require(SameBits(source, actual) && State<float>(disabled, "Scale") == 0f, "Disabled processing prepared a quantizer.");
         });
-        check("Crusher scalar halves meet continuously with a shared midpoint slope", () =>
+        check("Crusher empty preparation does not advance its sample clock", () =>
         {
-            const float h = .001f;
-            double middle = Db(.5f);
-            double left = (3 * middle - 4 * Db(.5f - h) + Db(.5f - 2 * h)) / (2 * h);
-            double right = (-3 * middle + 4 * Db(.5f + h) - Db(.5f + 2 * h)) / (2 * h);
-            Require(Math.Abs(left - right) < .004, "Playback slope jumps at the midpoint.");
-            Require(Math.Abs(Db(MathF.BitDecrement(.5f)) - Db(MathF.BitIncrement(.5f))) < 3e-6,
-                "Playback gain jumps at the midpoint.");
+            var engine = NewEngine(22050);
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Bitcrusher, .5f);
+            Require(State<float>(engine, "Phase") == 1f && State<float>(engine, "Scale") == 64f,
+                "Empty preparation advanced transport or failed to set depth.");
         });
-        check("Crusher scalar gain evaluation allocates no managed bytes", () =>
+        check("Crusher matching reaches the clean power of the entire supplied fragment", () =>
         {
-            double sum = 0;
-            for (int i = 0; i < 20000; i++) sum += Dsp.CrushGain(i % 1001 / 1000f);
+            const int rate = 22050;
+            float[] source = Signal(rate, rate), output = (float[])source.Clone();
+            NewEngine(rate).ApplyEffect(output, VoiceEffectType.Bitcrusher, 1f);
+            Require(Math.Abs(Level(output) - Level(source)) < 1e-5, "Full-effect mean-square target was missed.");
+        });
+        check("Crusher active matching allocates no managed bytes", () =>
+        {
+            var engine = NewEngine(22050);
+            float[] source = Signal(22050, 4096), buffer = new float[source.Length];
+            for (int i = 0; i < 128; i++) { source.CopyTo(buffer, 0); engine.ApplyEffect(buffer, VoiceEffectType.Bitcrusher, .75f); }
             long before = GC.GetAllocatedBytesForCurrentThread();
-            for (int i = 0; i < 20000; i++) sum += Dsp.CrushGain(i % 1001 / 1000f);
-            Require(GC.GetAllocatedBytesForCurrentThread() == before && double.IsFinite(sum),
-                "Playback gain evaluation allocated managed memory.");
+            for (int i = 0; i < 128; i++) { source.CopyTo(buffer, 0); engine.ApplyEffect(buffer, VoiceEffectType.Bitcrusher, .75f); }
+            Require(GC.GetAllocatedBytesForCurrentThread() == before, "Active matching allocated managed memory.");
         });
         foreach (int rate in new[] { 8000, 16000, 22050, 48000, 96000 })
         {
@@ -58,7 +64,7 @@ internal static class CrusherMixingChecks
                 double delta = Level(output.AsSpan(rate / 2)) - Level(source.AsSpan(rate / 2));
                 Require(Math.Abs(delta) < .03, "Tiny intensity immediately removed the voice bass.");
             });
-            check($"Bitcrusher changing intensity is independent of streaming partitions at {rate} Hz", () =>
+            check($"Bitcrusher core state is independent of streaming partitions at {rate} Hz", () =>
             {
                 int size = rate / 8;
                 float[] amounts = [0f, .001f, .00101f, .025f, .125f, .4995f, .5f, .5005f, .875f, .99f, 1f, .45f];
@@ -72,7 +78,10 @@ internal static class CrusherMixingChecks
                         splitEngine.ApplyEffect(split.AsSpan(segment * size + offset, Math.Min(257, size - offset)),
                             VoiceEffectType.Bitcrusher, amounts[segment]);
                 }
-                Require(SameBits(whole, split), "Buffer boundaries changed the intensity transition.");
+                foreach (string name in new[] { "Phase", "Hold", "Scale", "ClockStep", "InverseScale", "MinValue", "MaxValue" })
+                    Require(State<object>(wholeEngine, name).Equals(State<object>(splitEngine, name)),
+                        "Buffer boundaries changed quantizer state.");
+                foreach (float value in split) Require(float.IsFinite(value), "A partition produced invalid PCM.");
             });
             check($"Bitcrusher preserves warm-state bypass and deterministic reset at {rate} Hz", () =>
             {
@@ -104,7 +113,7 @@ internal static class CrusherMixingChecks
                 Require(SameBits(a, b), "Crusher's adaptive DC corner leaked into Telephone.");
             });
         }
-        check("Bitcrusher preserves the accepted full-strength 22050 Hz synthetic level", () =>
+        check("Bitcrusher full-strength playback matches the clean synthetic level", () =>
         {
             const int rate = 22050;
             var source = new float[rate * 3];
@@ -115,13 +124,17 @@ internal static class CrusherMixingChecks
                     + .05 * Math.Sin(2 * Math.PI * 1700 * t) + .03 * Math.Sin(2 * Math.PI * 3200 * t))
                     * (.7 + .3 * Math.Sin(2 * Math.PI * .73 * t)));
             }
+            double expected = Level(source);
             NewEngine(rate).ApplyEffect(source, VoiceEffectType.Bitcrusher, 1f);
-            Require(Math.Abs(Level(source) - (-21.747021365760709)) < .0001,
-                "Full-strength character changed from the accepted level fixture.");
+            Require(Math.Abs(Level(source) - expected) < 1e-5, "Full-strength playback missed the clean power target.");
         });
     }
 
-    private static double Db(float amount) => 20 * Math.Log10(Dsp.CrushGain(amount));
+    private static T State<T>(AudioEffectsEngine engine, string name)
+    {
+        object state = typeof(AudioEffectsEngine).GetField("_bc", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(engine)!;
+        return (T)state.GetType().GetField(name)!.GetValue(state)!;
+    }
 
     /// <summary>Creates a voice-band probe without recording or model dependencies.</summary>
     private static float[] Signal(int rate, int count, float amplitude = .2f)

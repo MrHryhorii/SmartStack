@@ -71,17 +71,6 @@ public static class Dsp
         return t * t * (3f - 2f * t);
     }
 
-    /// <summary>Static two-part playback correction; no dry signal or runtime level analysis.</summary>
-    public static float CrushGain(float t)
-    {
-        if (!(t > .001f) || t >= 1f) return 1f;
-        float s = t <= .5f ? 2f * t : 2f * t - 1f;
-        float db = t <= .5f
-            ? ((-0.115586614f * s + 0.364015070f) * s + 0.301648196f) * s
-            : ((2.627098406f * s - 3.860093551f) * s + 0.682918494f) * s + 0.550076652f;
-        return MathF.Pow(10f, db / 20f);
-    }
-
     /// <summary>Static Overdrive playback correction, prepared outside the sample loop.</summary>
     public static float DriveGain(float amount)
     {

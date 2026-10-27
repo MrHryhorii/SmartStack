@@ -17,7 +17,7 @@ namespace ONNX_Runner.Services;
 /// DSP ROUTING MANIFESTO:
 ///   - Power-Matched Crossfade: fixed Telephone, G.711, FM and TacticalRadio character with measured power interpolation.
 ///   - Ring Insert: internal carrier depth moves from tremolo to ring modulation; a scalar sets playback level.
-///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
+///   - Crusher Insert: intensity controls degradation; measured buffer power sets playback level.
 ///   - Drive Insert: gradual asymmetric saturation and adaptive filters; a scalar sets playback level.
 ///   - Modulation Insert: complete Chorus/Flanger processors with prepared scalar playback gains.
 ///   - Tape Insert: intrinsic record/playback character, slow voice-only level correction, additive hiss.
@@ -56,6 +56,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private static readonly float FmOutputGain = .78f * MathF.Pow(10f, FmOutputBoostDb / 20f);
     private const float RingOutputGain = 0.91f;
     private const float ThermalReferenceCoeff = 0.00021773577f;
+    private const double CrusherMaximumLevelGain = 4;
     private readonly EffectsSettings _config = config;
     private readonly int _sampleRate = sampleRate > 0
         ? sampleRate : throw new ArgumentOutOfRangeException(nameof(sampleRate));
@@ -152,7 +153,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float Phase;
         public float Hold;
         public float PreparedAmount;
-        public float Gain;
+        public double Gain;
+        public int GainRampSamples;
         public float ClockStep;
         public float Scale;
         public float InverseScale;
@@ -471,6 +473,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
         }
 
+        if (mode == RoutingMode.CrusherInsert)
+        {
+            ApplyBitcrusher(buffer, amount);
+            return;
+        }
+
         if (mode == RoutingMode.ModulationInsert)
         {
             PrepareModulation(type, amount);
@@ -525,21 +533,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
         // Tape and rolling glitches retain their own authored intensity laws.
-        float effectAmount = mode is RoutingMode.StrictInsert or RoutingMode.CrusherInsert
+        float effectAmount = mode is RoutingMode.StrictInsert
             ? amount : amount * (2f - amount);
         int filterCount = _filterCount;
         BiQuadFilter[] filters = _filters;
 
-        float crusherGain = 1f;
-
         // Per-buffer constants used by effect hot paths.
         switch (type)
         {
-            case VoiceEffectType.Bitcrusher:
-                PrepareBitcrusher(effectAmount);
-                crusherGain = _bc.Gain;
-                break;
-
             case VoiceEffectType.DecoderGlitch:
                 // Hoist sqrt(amount) above the sample loop for Glitch duration.
                 _glitch.SqrtAmount = MathF.Sqrt(amount);
@@ -568,10 +569,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             // The early amount guard handles bypass; active routing follows the effect's signal structure.
             switch (mode)
             {
-                case RoutingMode.CrusherInsert:
-                    buffer[i] = wet * crusherGain;
-                    break;
-
                 case RoutingMode.StrictInsert:
                     buffer[i] = wet;
                     break;
@@ -651,6 +648,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.Bitcrusher:
                 _bc.PreparedAmount = float.NaN;
+                _bc.Gain = 1;
+                _bc.GainRampSamples = Math.Max(2, (int)Math.Round(_sampleRate * .005));
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
 
@@ -791,7 +790,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         if (_bc.PreparedAmount == amount) return;
         _bc.PreparedAmount = amount;
-        _bc.Gain = Dsp.CrushGain(amount);
         float strength = Dsp.CrushStrength(amount);
         float bits = Math.Clamp(16f - strength * 12f, 4f, 16f);
         _bc.Scale = MathF.Pow(2f, bits - 1f);
@@ -1071,11 +1069,43 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _dcBlocker.SetCutoff(35f * strength);
     }
 
+    /// <summary>Runs intrinsic degradation once, then matches mean-square power over the supplied buffer.</summary>
+    private void ApplyBitcrusher(Span<float> buffer, float amount)
+    {
+        PrepareBitcrusher(amount);
+        if (buffer.IsEmpty) return;
+        BiQuadFilter highPass = _filters[0];
+        double referenceEnergy = 0, processedEnergy = 0;
+        bool hasQuantizedSignal = false;
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float reference = buffer[i];
+            float filtered = Dsp.KillDenormal(reference);
+            _thermal.Update(ref _noise, _thermalDriftCoeff);
+            _thermalValue = _thermal.State * _thermalNoiseGain;
+            float quantized = Bitcrusher(highPass.Transform(filtered), amount);
+            hasQuantizedSignal |= quantized != 0f;
+            float processed = _dcBlocker.Process(quantized);
+            referenceEnergy += reference * (double)reference;
+            processedEnergy += processed * (double)processed;
+            buffer[i] = processed;
+        }
+        // A decaying DC-filter tail is not recoverable voice when the quantizer emitted only zeros.
+        if (!hasQuantizedSignal)
+        {
+            for (int i = 0; i < buffer.Length; i++) buffer[i] = (float)(buffer[i] * _bc.Gain);
+            return;
+        }
+        // The bound prevents rejected bands or rare quantizer codes from becoming excessive makeup gain.
+        _bc.Gain = PowerMatcher.MatchRamped(buffer, referenceEnergy / buffer.Length,
+            processedEnergy / buffer.Length, _bc.Gain, _bc.GainRampSamples, CrusherMaximumLevelGain).Gain;
+    }
+
     /// <summary>
     /// Simulates the true aliasing and quantization artifacts of a lo-fi bitcrusher.
     /// Strictly relies on Zero-Order Hold (decimation) and amplitude quantization.
     /// The metallic character arises naturally from foldover frequencies and staircase waveforms.
-    /// Bit depth changes in 0.1-bit steps while the decimation rate varies continuously.
+    /// Bit depth and the decimation rate vary continuously.
     /// Silence remains exactly zero; full intensity retains the signed 4-bit / 16-level signal.
     /// </summary>
     private float Bitcrusher(float x, float amount)

@@ -25,9 +25,10 @@ internal static class AudioEffectSampleRateChecks
                         var engine = NewEngine(rate);
                         for (int offset = 0; offset < split.Length; offset += 257)
                             engine.ApplyEffect(split.AsSpan(offset, Math.Min(257, split.Length - offset)), effect, amount);
-                        bool adaptive = effect is VoiceEffectType.Telephone or VoiceEffectType.G711MuLaw
-                            or VoiceEffectType.G711ALaw or VoiceEffectType.FmRadio or VoiceEffectType.TacticalRadio;
-                        if (!adaptive || amount == 0 || amount == 1)
+                        bool matchesEachBuffer = effect == VoiceEffectType.Bitcrusher || amount < 1 && effect is
+                            VoiceEffectType.Telephone or VoiceEffectType.G711MuLaw or VoiceEffectType.G711ALaw
+                            or VoiceEffectType.FmRadio or VoiceEffectType.TacticalRadio;
+                        if (!matchesEachBuffer || amount == 0)
                             Require(whole.AsSpan().SequenceEqual(split), "Full processing or fixed-gain streaming depends on partitions.");
                         else
                         {

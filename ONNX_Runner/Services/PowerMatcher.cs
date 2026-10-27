@@ -71,6 +71,58 @@ public static class PowerMatcher
         return result;
     }
 
+    /// <summary>Matches buffer power with a bounded linear gain transition from the preceding buffer.</summary>
+    public static Result MatchRamped(Span<float> samples, double targetPower, double measuredPower,
+        double startGain, int transitionSamples, double maximumGain)
+    {
+        if (!double.IsFinite(maximumGain) || maximumGain < 1)
+            throw new ArgumentOutOfRangeException(nameof(maximumGain));
+        if (!double.IsFinite(startGain) || startGain < 0 || startGain > maximumGain)
+            throw new ArgumentOutOfRangeException(nameof(startGain));
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(transitionSamples);
+        Result constant = CalculateGain(targetPower, measuredPower);
+        if (samples.IsEmpty || measuredPower == 0) return new Result(startGain, constant.Matched);
+
+        int head = Math.Min(transitionSamples, samples.Length);
+        double prefixEnergy = 0, endEnergy = 0, crossEnergy = 0, startEnergy = 0;
+        double step = head > 1 ? 1d / (head - 1) : 1;
+        for (int i = 0; i < head; i++)
+        {
+            double endWeight = head > 1 ? i * step : 1;
+            double startWeight = 1 - endWeight;
+            double energy = samples[i] * (double)samples[i];
+            prefixEnergy += energy;
+            endEnergy += energy * endWeight * endWeight;
+            crossEnergy += energy * endWeight * startWeight;
+            startEnergy += energy * startWeight * startWeight;
+        }
+
+        // The gain envelope's output power is a*g^2 + 2*b*g + c.
+        double a = Math.Max(0, measuredPower - prefixEnergy / samples.Length) + endEnergy / samples.Length;
+        double b = crossEnergy / samples.Length * startGain;
+        double c = startEnergy / samples.Length * startGain * startGain;
+        double remaining = targetPower - c;
+        double gain = 0;
+        bool attainable = remaining >= 0 && a > 0;
+        if (attainable)
+        {
+            // This positive-root form avoids subtraction of nearly equal values.
+            double denominator = b + Math.Sqrt(b * b + a * remaining);
+            gain = denominator > 0 ? remaining / denominator : 0;
+        }
+        if (a == 0) { gain = constant.Gain; attainable = c == targetPower; }
+        bool matched = attainable && gain <= maximumGain;
+        gain = Math.Min(gain, maximumGain);
+
+        for (int i = 0; i < head; i++)
+        {
+            double weight = head > 1 ? i * step : 1;
+            samples[i] = (float)(samples[i] * (startGain + (gain - startGain) * weight));
+        }
+        for (int i = head; i < samples.Length; i++) samples[i] = (float)(samples[i] * gain);
+        return new Result(gain, matched);
+    }
+
     /// <summary>Computes the matching scalar without processing PCM, for fused output passes.</summary>
     public static Result CalculateGain(double targetPower, double measuredPower)
     {
