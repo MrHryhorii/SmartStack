@@ -13,7 +13,7 @@ internal static class CassettePlaybackChecks
     private static readonly MethodInfo Process = typeof(AudioEffectsEngine)
         .GetMethod("LoFiTape", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
-    /// <summary>Checks the playback resonance, bounded trim and scalar-only placement after cassette processing.</summary>
+    /// <summary>Checks playback resonance and independent scalar trims before voice-only level correction.</summary>
     internal static void Run(Action<string, Action> check)
     {
         foreach (int rate in Rates)
@@ -48,7 +48,7 @@ internal static class CassettePlaybackChecks
                 Require(OutputGain(engine) == 1f, "Playback trim does not approach clean gain.");
             });
 
-            check($"Cassette playback trim scales the completed voice and noise at {rate} Hz", () =>
+            check($"Cassette playback trim scales voice and independent noise before correction at {rate} Hz", () =>
             {
                 foreach (float amount in new[] { .01f, .25f, .5f, .75f, 1f })
                 {
@@ -68,7 +68,11 @@ internal static class CassettePlaybackChecks
                             + .11 * Math.Sin(2 * Math.PI * 971 * i / rate)) : 0f;
                         float expected = processUnit(input, amount) * gain;
                         Require(processActual(input, amount) == expected,
-                            "Playback trim changed upstream saturation, filter state, or voice/noise proportions.");
+                            "Playback trim changed upstream saturation or voice filter state.");
+                        object actualState = Tape.GetValue(actual)!, referenceState = Tape.GetValue(unit)!;
+                        float noise = (float)actualState.GetType().GetField("NoiseSample")!.GetValue(actualState)!;
+                        float unitNoise = (float)referenceState.GetType().GetField("NoiseSample")!.GetValue(referenceState)!;
+                        Require(noise == unitNoise * gain, "Background trim entered voice normalization.");
                     }
                 }
             });

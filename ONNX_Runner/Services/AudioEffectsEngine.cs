@@ -20,6 +20,7 @@ namespace ONNX_Runner.Services;
 ///   - Crusher Insert: intensity controls degradation; a prepared scalar sets playback level.
 ///   - Drive Insert: gradual asymmetric saturation and adaptive filters; a scalar sets playback level.
 ///   - Modulation Insert: complete Chorus/Flanger processors with prepared scalar playback gains.
+///   - Tape Insert: intrinsic record/playback character, slow voice-only level correction, additive hiss.
 ///   - Strict Insert: wet -> Complete signal chain transformations; the amount-zero guard preserves bypass.
 ///   - Strict Crossfade: Dsp.Lerp(dry, wet, amount) -> For effects where the wet signal is not strictly additive.
 /// </summary>
@@ -94,7 +95,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         StrictCrossfade,
         CrusherInsert,
         DriveInsert,
-        RingInsert
+        RingInsert,
+        TapeInsert
     }
 
     // =========================================================================
@@ -198,6 +200,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float SpeakerMix;
         public float PerceptualTrim;
         public float OutputGain;
+        public float ReferenceSample;
+        public float NoiseSample;
+        public TapeVoiceNormalizer Level;
+        public DelayBuffer? ReferenceDelay;
+        public TapeNoiseFilter NoiseBump, NoiseResonance, NoiseHp, NoiseLp;
+        public DcBlocker NoiseDc;
 
         // Pre-computed LFO phase increments: eliminates per-sample 2pi*f/fs multiply.
         public float LofiPhaseInc;     // 0.4 Hz   (primary wow)
@@ -457,6 +465,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
         }
 
+        if (mode == RoutingMode.TapeInsert)
+        {
+            ApplyTape(buffer, amount);
+            return;
+        }
+
         if (mode == RoutingMode.ModulationInsert)
         {
             PrepareModulation(type, amount);
@@ -526,10 +540,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 crusherGain = _bc.Gain;
                 break;
 
-            case VoiceEffectType.LoFiTape:
-                PrepareTape(amount);
-                break;
-
             case VoiceEffectType.DecoderGlitch:
                 // Hoist sqrt(amount) above the sample loop for Glitch duration.
                 _glitch.SqrtAmount = MathF.Sqrt(amount);
@@ -592,7 +602,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.RingModulator => RoutingMode.RingInsert,
             VoiceEffectType.Flanger => RoutingMode.ModulationInsert,
             VoiceEffectType.Chorus => RoutingMode.ModulationInsert,
-            VoiceEffectType.LoFiTape => RoutingMode.StrictInsert,
+            VoiceEffectType.LoFiTape => RoutingMode.TapeInsert,
             VoiceEffectType.DecoderGlitch => RoutingMode.StrictInsert,
             VoiceEffectType.TacticalRadio => RoutingMode.PowerMatchedCrossfade,
             VoiceEffectType.FmRadio => RoutingMode.PowerMatchedCrossfade,
@@ -702,6 +712,17 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _tape.BoomboxResonance = CreateTapeResonance(_sampleRate);
                 _tape.BoomboxHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(70f), 0.707f);
                 _tape.BoomboxLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(7500f), 0.707f);
+                // Independent filter histories keep playback hiss outside voice level correction.
+                _tape.NoiseBump = TapeNoiseFilter.Peak(_sampleRate, Safe(120f), 0.8f, 4.0f);
+                _tape.NoiseResonance = TapeNoiseFilter.Peak(_sampleRate, Safe(700f), 1f, 1.5f);
+                _tape.NoiseHp = TapeNoiseFilter.HighPass(_sampleRate, Safe(70f), 0.707f);
+                _tape.NoiseLp = TapeNoiseFilter.LowPass(_sampleRate, Safe(7500f), 0.707f);
+                _tape.NoiseDc = new DcBlocker(_sampleRate);
+                int referenceCapacity = (int)BitOperations.RoundUpToPowerOf2(
+                    (uint)Math.Max(16, (int)Math.Ceiling(_sampleRate * .004) + 2));
+                _tape.ReferenceDelay = new DelayBuffer(referenceCapacity);
+                _tape.Level = new TapeVoiceNormalizer(_sampleRate);
+                _tape.ReferenceSample = _tape.NoiseSample = 0;
 
                 // Pre-compute independent LFO phase increments for both wow components,
                 // flutter, and azimuth modulation. The secondary wow oscillator needs its own
@@ -790,13 +811,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float amountSq = amount * amount;
         // Quadratic ease-out has finite initial slope; sqrt(amount) would exaggerate tiny settings.
         _tape.CharacterAmount = amount * (2f - amount);
-        _tape.PreEmphScale = 0.8f * amount;
-        _tape.SatDrive = 1f + 2.0f * amount;
-        _tape.SatCompensation = 1f / (1f + 0.35f * amount);
-        _tape.CompThreshold = Dsp.Lerp(1.0f, 0.38f, amount);
-        _tape.CompMakeup = Dsp.Lerp(1f, 0.90f, amount);
+        float character = _tape.CharacterAmount;
+        _tape.PreEmphScale = 0.8f * character;
+        _tape.SatDrive = 1f + 2.0f * character;
+        _tape.SatCompensation = 1f / (1f + 0.35f * character);
+        _tape.CompThreshold = Dsp.Lerp(1.0f, 0.38f, character);
+        _tape.CompMakeup = Dsp.Lerp(1f, 0.90f, character);
         _tape.DelayMs = 0.1f * _tape.CharacterAmount + 1.3f * amount;
-        _tape.HfCutScale = 0.50f * amount;
+        _tape.HfCutScale = 0.50f * character;
         _tape.AzimuthMix = amountSq * 0.45f;
         _tape.HissGain = (float)Math.Sqrt(ReferenceHissEnergy.At(amountSq) / _tape.HissEnergy.At(amountSq));
         float grainGain = _sampleRate == ReferenceSampleRate ? 1f
@@ -809,8 +831,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _tape.FlutterNoiseScale = 0.50f * amount;
         _tape.SpeakerMix = amountSq;
         _tape.PerceptualTrim = 1f - 0.25f * amountSq;
-        // Follow the existing saturation's small-signal gain rise, without a runtime level scan.
-        float saturationLift = amount * (_tape.SatDrive * _tape.SatCompensation - 1f);
+        // Retain the authored playback/noise trim while record character now develops earlier.
+        // The voice-only detector corrects residual level differences independently of this floor.
+        float nominalRecordGain = (1f + 2f * amount) / (1f + .35f * amount);
+        float saturationLift = amount * (nominalRecordGain - 1f);
         _tape.OutputGain = 1f / (1f + TapePlaybackCompensation * saturationLift);
     }
 
@@ -1168,11 +1192,21 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return shaped * _mod.Gain;
     }
 
-    /// <summary>
-    /// Simulates the characteristic warmth and modulation of analog cassette tape.
-    /// All LFO phase increments and IIR filter coefficients are pre-computed in Setup.
-    /// _msToSamples is stored as a class-level readonly field.
-    /// </summary>
+    /// <summary>Runs cassette voice correction before independently colored background noise is added.</summary>
+    private void ApplyTape(Span<float> buffer, float amount)
+    {
+        PrepareTape(amount);
+        _tape.Level.SetAmount(amount);
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            _thermal.Update(ref _noise, _thermalDriftCoeff);
+            _thermalValue = _thermal.State * _thermalNoiseGain;
+            float voice = LoFiTape(Dsp.KillDenormal(buffer[i]), amount);
+            buffer[i] = _tape.Level.Process(voice, _tape.ReferenceSample) + _tape.NoiseSample;
+        }
+    }
+
+    /// <summary>Runs record, transport and playback voice stages; exposes independent playback noise.</summary>
     private float LoFiTape(float x, float amount)
     {
         // Rumble filter: cuts subsonic noise before the saturation stage.
@@ -1186,7 +1220,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // Tape saturation: magnetic oxide overdrive.
         float sat = Dsp.SoftClip(preEmph * _tape.SatDrive);
-        float saturated = Dsp.Lerp(preEmph, sat * _tape.SatCompensation, amount);
+        float saturated = Dsp.Lerp(preEmph, sat * _tape.SatCompensation, _tape.CharacterAmount);
 
         // Tape/record-level compression: broadband dynamics for cassette-like density.
         // This is not a Dolby noise-reduction encoder/decoder model.
@@ -1194,9 +1228,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                                   _tape.CompAttackCoeff, _tape.CompReleaseCoeff);
 
         // Mild record-stage trim complements the amplitude compressor.
-        float recorded = Dsp.Lerp(saturated, comp * _tape.CompMakeup, amount);
+        float recorded = Dsp.Lerp(saturated, comp * _tape.CompMakeup, _tape.CharacterAmount);
 
         _delay.Write(recorded);
+        _tape.ReferenceDelay!.Write(input);
 
         // Wow and Flutter: pitch instability from motor defect and tape friction.
         // Phase advanced by pre-computed increments: no per-sample division.
@@ -1221,6 +1256,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         // Dropout: stochastic volume dip simulating oxide shedding.
         float dropped = _tape.DropOut.Process(pitchWarped, amount, ref _noise, _sampleRate, _tapeSlew);
+        _tape.ReferenceSample = _tape.ReferenceDelay!.Read(modulatedDelayMs * _msToSamples)
+            * _tape.DropOut.Gain;
 
         // De-emphasis: restores spectral balance after playback head.
         _tape.DeState += _tape.DeCoeff * (dropped - _tape.DeState);
@@ -1240,7 +1277,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         float azimuthSignal = Dsp.Lerp(deEmph, _azimuth.FilterState, _tape.AzimuthMix);
 
-        // Bias grain and hiss: intentionally audible cassette/playback-amplifier noise floor.
+        // Oxide grain and hiss approximate the additive cassette/playback noise floor.
+        // This audio-band texture does not simulate the ultrasonic record-bias oscillator.
         // Hiss is shaped into an upper-band "shhh" rather than full-band digital white noise.
         float biasGrain = _noise.NextWhite() * _tape.BiasGrainScale;
         float rawHiss = _noise.NextWhite() * (_tape.HissAmount
@@ -1254,7 +1292,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _tape.HissState = Dsp.KillDenormal(_tape.HissState);
 
         float coloredHiss = _tape.HissColor?.Transform(_tape.HissState) ?? _tape.HissState;
-        float tapeSignal = azimuthSignal + biasGrain + coloredHiss * amount;
+        float background = biasGrain + coloredHiss * amount;
+        float tapeSignal = azimuthSignal;
 
         // Speaker simulation: cheap plastic enclosure coloring (quadratic blend).
         if (_tape.BoomboxBump != null && _tape.BoomboxResonance != null
@@ -1270,9 +1309,16 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float playback = Dsp.Lerp(trimmed, Dsp.SoftClip(trimmed), amount);
         float dcFiltered = _dcBlocker.Process(playback);
 
-        // Playback trim follows saturation and DC removal, scaling voice and noise together.
         float output = _tape.CharacterAmount >= 1f ? dcFiltered
             : Dsp.Lerp(playback, dcFiltered, _tape.CharacterAmount);
+
+        // Playback electronics color the additive floor without voice-driven saturation or gain.
+        float coloredNoise = _tape.NoiseLp.Transform(_tape.NoiseHp.Transform(
+            _tape.NoiseResonance.Transform(_tape.NoiseBump.Transform(background))));
+        background = Dsp.Lerp(background, coloredNoise, _tape.SpeakerMix) * _tape.PerceptualTrim;
+        float noiseDc = _tape.NoiseDc.Process(background);
+        _tape.NoiseSample = (_tape.CharacterAmount >= 1f ? noiseDc
+            : Dsp.Lerp(background, noiseDc, _tape.CharacterAmount)) * _tape.OutputGain;
         return output * _tape.OutputGain;
     }
 

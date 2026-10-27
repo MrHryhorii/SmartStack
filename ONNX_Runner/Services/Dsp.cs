@@ -453,6 +453,9 @@ public struct TapeDropout
     private float _targetDepth;
     private float _currentDepth;
 
+    /// <summary>Current intentional amplitude loss, also used by level analysis.</summary>
+    public readonly float Gain => 1f - _currentDepth;
+
     /// <summary>Clears the oscillator phase and smoothed modulation depth.</summary>
     public void Reset()
     {
