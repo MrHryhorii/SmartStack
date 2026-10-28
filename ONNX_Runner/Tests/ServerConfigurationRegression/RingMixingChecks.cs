@@ -14,30 +14,88 @@ internal static class RingMixingChecks
     /// <summary>Checks only direct RingModulator processing and the tremolo-to-ring transition.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        check("RingModulator retains independent full endpoints and measured level curves", () =>
+        WindowedPowerMatcherChecks.Run(check);
+        check("RingModulator bypass does not construct or advance a level matcher", () =>
         {
-            Require(Fixtures.Voices.Length == 31 && Fixtures.Synthetic.Length == 27, "Incomplete ring fixtures.");
-            Require(Fixtures.Voices.Count(v => v.Group == "dense") == 1, "Missing dense base curve.");
-        });
-        check("RingModulator correction retains unity endpoints and a modest positive range", () =>
-        {
-            foreach (float amount in new[] { -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
-                Require(Dsp.RingGain(amount) == 1f, "An endpoint or invalid-input correction changed.");
-            for (int i = 0; i <= 10000; i++)
+            foreach (float amount in new[] { 0f, .001f })
             {
-                float gain = Dsp.RingGain(i / 10000f);
-                Require(float.IsFinite(gain) && gain > .99f && gain < 1.5f, "Correction left its calibrated range.");
+                var engine = NewEngine(22050);
+                float[] source = Signal(22050, 4096, 1f), output = (float[])source.Clone();
+                engine.ApplyEffect(output, VoiceEffectType.RingModulator, amount);
+                Require(SameBits(source, output) && Level(engine) is null, "Bypass prepared normalization or changed PCM.");
             }
         });
-        check("RingModulator gain halves share midpoint value and physical slope", () =>
+        check("RingModulator tiny intensity cannot inherit a preceding tremolo makeup gain", () =>
         {
-            const float h = .001f;
-            double middle = Dsp.RingGain(.5f);
-            double left = (3 * middle - 4 * Dsp.RingGain(.5f-h) + Dsp.RingGain(.5f-2*h)) / (2*h);
-            double right = (-3 * middle + 4 * Dsp.RingGain(.5f+h) - Dsp.RingGain(.5f+2*h)) / (2*h);
-            Require(Math.Abs(left-right) < .004, "The midpoint slope is discontinuous.");
-            Require(Math.Abs(Dsp.RingGain(MathF.BitDecrement(.5f))-Dsp.RingGain(MathF.BitIncrement(.5f))) < 3e-6,
-                "The midpoint value is discontinuous.");
+            const int rate = 48000;
+            float[] tone = Enumerable.Range(0, rate).Select(i => .1f*(float)Math.Sin(2*Math.PI*1000*i/rate)).ToArray();
+            var engine = NewEngine(rate);
+            engine.ApplyEffect((float[])tone.Clone(), VoiceEffectType.RingModulator, .5f);
+            float[] actual = (float[])tone.Clone();
+            engine.ApplyEffect(actual, VoiceEffectType.RingModulator, .0011f);
+            Require(Math.Abs(RmsDb(actual)-RmsDb(tone)) < .05, "An earlier effect intensity left a hidden output boost.");
+        });
+        check("RingModulator quiet lead-in cannot create a loud first-syllable gain spike", () =>
+        {
+            const int rate = 48000;
+            float[] source = Enumerable.Range(0, rate/2).Select(i => i < rate/10 ? .001f
+                : .1f*(float)Math.Sin(2*Math.PI*1000*i/rate)).ToArray();
+            float[] actual = (float[])source.Clone(), reference = (float[])source.Clone();
+            var adaptive = NewEngine(rate); var fixedGain = NewEngine(rate);
+            adaptive.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
+            fixedGain.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
+            SetLevel(fixedGain, FixedGain(rate, Level(adaptive).Gain));
+            adaptive.ApplyEffect(actual, VoiceEffectType.RingModulator, .5f);
+            fixedGain.ApplyEffect(reference, VoiceEffectType.RingModulator, .5f);
+            float actualPeak = actual.AsSpan(rate/10, rate/20).ToArray().Max(MathF.Abs);
+            float referencePeak = reference.AsSpan(rate/10, rate/20).ToArray().Max(MathF.Abs);
+            Require(actualPeak <= referencePeak*1.15f, "A quiet lead-in caused excessive first-syllable makeup.");
+        });
+        foreach (int rate in Rates)
+        foreach (float amount in new[] { .25f, .5f, .75f, 1f })
+        {
+            check($"RingModulator restores settled tone power at {rate} Hz and intensity {amount:R}", () =>
+            {
+                float[] source = Enumerable.Range(0, rate*2).Select(i => .1f*(float)Math.Sin(2*Math.PI*1000*i/rate)).ToArray();
+                float[] output = (float[])source.Clone();
+                NewEngine(rate).ApplyEffect(output, VoiceEffectType.RingModulator, amount);
+                double delta = RmsDb(output.AsSpan(rate))-RmsDb(source.AsSpan(rate));
+                Require(Math.Abs(delta) < .05, "The settled tone missed its reference power.");
+            });
+        }
+        check("RingModulator retains deep midpoint tremolo with tiny incoming buffers", () =>
+        {
+            const int rate = 48000;
+            float[] samples = Enumerable.Range(0, rate*4).Select(i => .1f*(float)Math.Sin(2*Math.PI*1000*i/rate)).ToArray();
+            var engine = NewEngine(rate);
+            for (int offset = 0; offset < samples.Length; offset += 37)
+                engine.ApplyEffect(samples.AsSpan(offset, Math.Min(37, samples.Length-offset)), VoiceEffectType.RingModulator, .5f);
+            double sum = 0, sine = 0, cosine = 0;
+            for (int offset = rate/2; offset+48 <= samples.Length; offset += 48)
+            {
+                double envelope = Math.Sqrt(PowerMatcher.Measure(samples.AsSpan(offset, 48)));
+                double phase = 2*Math.PI*30*(offset+23.5)/rate;
+                sum += envelope; sine += envelope*Math.Sin(phase); cosine += envelope*Math.Cos(phase);
+            }
+            double depth = 2*Math.Sqrt(sine*sine+cosine*cosine)/sum;
+            Require(depth > .98 && depth < 1.02, "Normalization followed and flattened the intended tremolo.");
+        });
+        check("RingModulator full ring retains its sixty-hertz amplitude envelope", () =>
+        {
+            const int rate = 48000;
+            float[] samples = Enumerable.Range(0, rate*4).Select(i => .1f*(float)Math.Sin(2*Math.PI*1000*i/rate)).ToArray();
+            var engine = NewEngine(rate);
+            for (int offset = 0; offset < samples.Length; offset += 37)
+                engine.ApplyEffect(samples.AsSpan(offset, Math.Min(37, samples.Length-offset)), VoiceEffectType.RingModulator, 1f);
+            double sum = 0, sine = 0, cosine = 0;
+            for (int offset = rate/2; offset+48 <= samples.Length; offset += 48)
+            {
+                double envelope = Math.Sqrt(PowerMatcher.Measure(samples.AsSpan(offset, 48)));
+                double phase = 2*Math.PI*60*(offset+23.5)/rate;
+                sum += envelope; sine += envelope*Math.Sin(phase); cosine += envelope*Math.Cos(phase);
+            }
+            double depth = 2*Math.Sqrt(sine*sine+cosine*cosine)/sum;
+            Require(depth > .63 && depth < .69, "Normalization flattened the absolute envelope of full ring modulation.");
         });
         check("RingModulator midpoint remains the boundary between tremolo and polarity reversal", () =>
         {
@@ -52,15 +110,15 @@ internal static class RingMixingChecks
                 Require(amount <= .5f ? minimum >= 0f : minimum < 0f, "The tremolo-to-ring boundary moved.");
             }
             engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, 1f);
-            Require(Value(engine, "Gain") == .91f && Value(engine, "Makeup") == 1.8f,
-                "The accepted full-strength gain or modulation makeup changed.");
+            Require(!Level(engine).HasSamples && Value(engine, "Makeup") == 1.8f,
+                "Empty preparation advanced analysis or changed modulation makeup.");
         });
         check("RingModulator output scalar cannot leave a hidden clean branch or alter modulation history", () =>
         {
             var a = NewEngine(22050); var b = NewEngine(22050); var muted = NewEngine(22050);
             foreach (var engine in new[] { a, b, muted })
                 engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
-            SetValue(b, "Gain", Value(b, "Gain")*.5f); SetValue(muted, "Gain", 0f);
+            SetLevel(a, FixedGain(22050, 1f)); SetLevel(b, FixedGain(22050, .5f)); SetLevel(muted, FixedGain(22050, 0f));
             float[] first = Signal(22050, 22050, 1f), second = (float[])first.Clone(), zero = (float[])first.Clone();
             a.ApplyEffect(first, VoiceEffectType.RingModulator, .5f);
             b.ApplyEffect(second, VoiceEffectType.RingModulator, .5f);
@@ -75,10 +133,10 @@ internal static class RingMixingChecks
         {
             var engine = NewEngine(22050);
             engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
-            float expected = Value(engine, "Gain"); SetValue(engine, "Gain", 0f);
+            double expected = Level(engine).Gain; Level(engine).Reset(0);
             engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Telephone, .5f);
             engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, .5f);
-            Require(Value(engine, "Gain") == expected, "The previous effect left a stale ring cache.");
+            Require(Level(engine).Gain == expected, "The previous effect left a stale ring cache.");
             float[] actual = Signal(22050, 11025, 1f), fresh = (float[])actual.Clone();
             engine.ApplyEffect(actual, VoiceEffectType.RingModulator, .5f);
             NewEngine(22050).ApplyEffect(fresh, VoiceEffectType.RingModulator, .5f);
@@ -99,42 +157,15 @@ internal static class RingMixingChecks
             });
             Require(passed.All(x => x), "Parallel requests shared DSP state.");
         });
-        foreach (VoiceRecord voice in Fixtures.Voices)
-        {
-            check($"RingModulator retains measured RMS level bounds for {voice.Name} at scale {voice.Scale:R}", () =>
-            {
-                Require(voice.Points[0].Amount == 0f && voice.Points[^1].Amount == 1f, "Missing measured endpoints.");
-                double full = voice.Points[^1].ExpectedDeltaDb, previous = 0;
-                foreach (Point point in voice.Points)
-                {
-                    double level = Level(voice, point);
-                    Require(Math.Abs(level-point.ExpectedDeltaDb) < .0001, "Correction no longer matches measured PCM levels.");
-                    Require(Math.Abs(level-point.Amount*full) <= voice.GuideBudgetDb, "The measured guide error increased.");
-                    Require(Math.Sign(full)*(previous-level) <= voice.ReverseBudgetDb, "The measured reverse-step budget increased.");
-                    previous = level;
-                }
-            });
-        }
-        check("RingModulator dense base RMS curve remains ordered with a centered level midpoint", () =>
-        {
-            VoiceRecord voice = Fixtures.Voices.Single(x => x.Group == "dense");
-            double previous = 0;
-            foreach (Point point in voice.Points)
-            {
-                double level = Level(voice, point);
-                Require(previous-level < .04, "A large base-voice reverse step returned.");
-                previous = level;
-            }
-            double midpoint = Level(voice, voice.Points.Single(p => p.Amount == .5f));
-            double full = voice.Points[^1].ExpectedDeltaDb;
-            Require(midpoint > .35*full && midpoint < .65*full, "The base midpoint left its useful level window.");
-        });
         foreach (SyntheticRecord record in Fixtures.Synthetic)
         {
-            check($"RingModulator preserves accepted full PCM at {record.Rate} Hz and scale {record.Scale:R}", () =>
+            check($"RingModulator preserves the accepted full modulation kernel at {record.Rate} Hz and scale {record.Scale:R}", () =>
             {
                 float[] actual = Signal(record.Rate, record.Rate*3, record.Scale);
-                NewEngine(record.Rate).ApplyEffect(actual, VoiceEffectType.RingModulator, 1f);
+                var engine = NewEngine(record.Rate);
+                engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.RingModulator, 1f);
+                SetLevel(engine, FixedGain(record.Rate, .91f));
+                engine.ApplyEffect(actual, VoiceEffectType.RingModulator, 1f);
                 Require(actual.All(float.IsFinite), "Non-finite full output.");
                 Require(Math.Abs(RmsDb(actual)-record.RmsDbfs) < .002, "Full-output level changed.");
                 Require(record.Indices.Length == 16 && record.Samples.Length == 16, "Incomplete full PCM fixture.");
@@ -221,16 +252,22 @@ internal static class RingMixingChecks
         });
     }
 
-    private static double Level(VoiceRecord voice, Point point) => point.Amount <= .001f ? 0
-        : point.UntrimmedRmsDbfs-voice.DryRmsDbfs+20*Math.Log10(Dsp.RingGain(point.Amount));
+    private static WindowedPowerMatcher Level(AudioEffectsEngine engine)
+    {
+        object state = RingField.GetValue(engine)!;
+        return (WindowedPowerMatcher)state.GetType().GetField("Level")!.GetValue(state)!;
+    }
+    private static WindowedPowerMatcher FixedGain(int rate, double gain) =>
+        new(rate, gain, windowMs: 60000, warmupMs: 60000);
+    private static void SetLevel(AudioEffectsEngine engine, WindowedPowerMatcher level)
+    {
+        object state = RingField.GetValue(engine)!;
+        state.GetType().GetField("Level")!.SetValue(state, level); RingField.SetValue(engine, state);
+    }
     private static float Value(AudioEffectsEngine engine, string name)
     {
         object state = RingField.GetValue(engine)!;
         return (float)state.GetType().GetField(name)!.GetValue(state)!;
-    }
-    private static void SetValue(AudioEffectsEngine engine, string name, float value)
-    {
-        object state = RingField.GetValue(engine)!; state.GetType().GetField(name)!.SetValue(state, value); RingField.SetValue(engine, state);
     }
     private static double Amplitude(float[] samples, int rate, double hz)
     {

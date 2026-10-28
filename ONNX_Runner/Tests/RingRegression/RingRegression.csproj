@@ -11,6 +11,7 @@
     <ProjectReference Include="../../ONNX_Runner.csproj" />
     <Compile Include="../ServerConfigurationRegression/AllocationChecks.cs" Link="AllocationChecks.cs" />
     <Compile Include="../ServerConfigurationRegression/RingMixingChecks.cs" Link="RingMixingChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/WindowedPowerMatcherChecks.cs" Link="WindowedPowerMatcherChecks.cs" />
     <EmbeddedResource Include="../ServerConfigurationRegression/RingCurveMoments.json" LogicalName="RingCurveMoments.json" />
   </ItemGroup>
 </Project>

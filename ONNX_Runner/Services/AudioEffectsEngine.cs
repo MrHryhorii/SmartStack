@@ -54,7 +54,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private const float TacticalOutputGain = 0.63f;
     private const float FmOutputBoostDb = 1.7f;
     private static readonly float FmOutputGain = .78f * MathF.Pow(10f, FmOutputBoostDb / 20f);
-    private const float RingOutputGain = 0.91f;
     private const float ThermalReferenceCoeff = 0.00021773577f;
     private const double CrusherMaximumLevelGain = 4;
     private readonly EffectsSettings _config = config;
@@ -122,7 +121,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float Makeup;
         public float SaturationDrive;
         public float InverseDrive;
-        public float Gain;
+        public WindowedPowerMatcher? Level;
         public float FilterBlend;
     }
 
@@ -497,6 +496,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             BiQuadFilter highPass = _filters[0];
             float filterBlend = _ring.FilterBlend;
             bool fullFiltering = filterBlend >= 1f;
+            WindowedPowerMatcher level = _ring.Level!;
             for (int i = 0; i < buffer.Length; i++)
             {
                 _thermal.Update(ref _noise, _thermalDriftCoeff);
@@ -505,7 +505,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 // Fade only below the stable biquad corner, before modulation of the entire signal.
                 float filtered = highPass.Transform(input);
                 if (!fullFiltering) filtered = Dsp.Lerp(input, filtered, filterBlend);
-                buffer[i] = _dcBlocker.Process(RingMod(filtered)) * _ring.Gain;
+                float processed = _dcBlocker.Process(RingMod(filtered));
+                buffer[i] = level.Process(input, processed);
             }
             return;
         }
@@ -654,6 +655,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.RingModulator:
                 _ring.PreparedAmount = float.NaN;
+                // Average speech-level changes without following the 30 Hz modulation.
+                _ring.Level ??= new WindowedPowerMatcher(_sampleRate, windowMs: 1200f, maximumRiseDbPerSecond: 24);
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
 
@@ -1131,7 +1134,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return _bc.Hold;
     }
 
-    /// <summary>Prepares internal carrier depth, gradual filtering and output gain when intensity changes.</summary>
+    /// <summary>Prepares carrier depth, gradual filtering and the initial linear-carrier power estimate.</summary>
     private void PrepareRing(float amount)
     {
         if (_ring.PreparedAmount == amount) return;
@@ -1141,8 +1144,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _ring.Makeup = 1f + .8f * depth;
         _ring.SaturationDrive = depth;
         _ring.InverseDrive = 1f / depth;
-        float trim = depth >= 1f ? RingOutputGain : Dsp.Lerp(1f, RingOutputGain, depth);
-        _ring.Gain = trim * Dsp.RingGain(depth);
+        double carrierPower = (1d - depth) * (1d - depth) + .5 * depth * depth;
+        _ring.Level!.Reset(1d / (_ring.Makeup * Math.Sqrt(carrierPower)));
         float fullCutoff = Math.Min(130f, _sampleRate * .45f);
         float cutoff = fullCutoff * depth;
         float minimumCutoff = Math.Min(fullCutoff, _sampleRate * .0001f);
