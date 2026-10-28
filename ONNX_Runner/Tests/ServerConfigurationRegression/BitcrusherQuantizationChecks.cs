@@ -69,13 +69,49 @@ internal static class BitcrusherQuantizationChecks
                 "Quantization reached its four-bit endpoint early.");
             Require(Value<float>(a, "ClockStep") > Value<float>(b, "ClockStep"), "Sample holding stopped progressing.");
         });
-        foreach (int rate in new[] { 8000, 11025, 16000, 22050, 24000, 44100, 48000, 96000, 192000 })
+        foreach (var point in new (int Rate, float Amount, float Fraction)[]
         {
-            check($"Bitcrusher full clock follows half of its actual input rate at {rate} Hz", () =>
+            (22050, .25f, .669833762f), (22050, .5f, .545253866f), (22050, .75f, .505444643f),
+            (16000, .5f, .721898748f), (16000, 1f, 11025f / 16000), (8000, 1f, 1f),
+            (48000, .5f, .276054729f), (48000, 1f, 11025f / 48000),
+            (96000, 1f, 11025f / 96000), (192000, 1f, 11025f / 192000)
+        })
+        {
+            check($"Bitcrusher sample holding reaches its logarithmic update rate at request {point.Amount:R} and {point.Rate} Hz", () =>
             {
-                var engine = PreparedEngine(rate, 1f);
-                Require(Value<float>(engine, "ClockStep") == .5f && Value<float>(engine, "Scale") == 8f,
-                    "Full effect depends on a fixed reference-rate clock or file bit depth.");
+                const int count = 4096;
+                var engine = PreparedEngine(point.Rate, point.Amount);
+                object state = StateField.GetValue(engine)!;
+                // A fine grid makes every selected source sample distinct without changing the prepared clock.
+                state.GetType().GetField("Scale")!.SetValue(state, 65536f);
+                state.GetType().GetField("InverseScale")!.SetValue(state, 1f / 65536f);
+                state.GetType().GetField("MinValue")!.SetValue(state, -65536);
+                state.GetType().GetField("MaxValue")!.SetValue(state, 65535);
+                StateField.SetValue(engine, state);
+                int updates = 0;
+                float previous = -1f;
+                for (int i = 0; i < count; i++)
+                {
+                    float actual = Quantize(engine, (i + 1f) / (count + 2f), point.Amount);
+                    if (actual != previous) updates++;
+                    previous = actual;
+                }
+                Require(Math.Abs(updates - count * point.Fraction) <= 2,
+                    "The held waveform did not follow the source-relative update rate.");
+            });
+        }
+        foreach (var point in new (int Rate, float UpdateRate)[]
+        {
+            (8000, 8000), (11025, 11025), (16000, 11025), (22050, 11025), (24000, 11025),
+            (44100, 11025), (48000, 11025), (96000, 11025), (192000, 11025)
+        })
+        {
+            check($"Bitcrusher full clock reaches {point.UpdateRate:R} Hz at input {point.Rate} Hz", () =>
+            {
+                var engine = PreparedEngine(point.Rate, 1f);
+                Require(MathF.Abs(Value<float>(engine, "ClockStep") * point.Rate - point.UpdateRate) < .02f
+                    && Value<float>(engine, "ClockStep") <= 1f && Value<float>(engine, "Scale") == 8f,
+                    "Full effect missed the source-safe target or changed the four-bit grid.");
             });
         }
         foreach (int rate in new[] { 8000, 22050, 48000 })

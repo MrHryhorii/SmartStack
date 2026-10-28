@@ -229,8 +229,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private struct AzimuthState
     {
         public float Phase;
-        public float CoeffMin;
-        public float CoeffMax;
+        public Dsp.OnePoleCurve Curve;
         public float FilterState;
     }
 
@@ -702,8 +701,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 _tape.CompAttackCoeff = FeedForwardCompressor.TimeToCoeff(2f, _sampleRate);
                 _tape.CompReleaseCoeff = FeedForwardCompressor.TimeToCoeff(200f, _sampleRate);
 
-                _azimuth.CoeffMax = 1f - MathF.Exp(-2f * MathF.PI * Safe(11000f) / _sampleRate);
-                _azimuth.CoeffMin = 1f - MathF.Exp(-2f * MathF.PI * Safe(4500f) / _sampleRate);
+                float referenceHigh = 1f - MathF.Exp(-2f * MathF.PI * (ReferenceSampleRate * .45f) / ReferenceSampleRate);
+                float referenceLow = 1f - MathF.Exp(-2f * MathF.PI * 4500f / ReferenceSampleRate);
+                _azimuth.Curve = Dsp.MatchOnePoleResponse(_sampleRate, ReferenceSampleRate, referenceHigh, referenceLow, 4500f);
                 _azimuth.Phase = 0f;
                 _azimuth.FilterState = 0f;
 
@@ -785,7 +785,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
-    /// <summary>Prepares continuous depth, a relative sample clock, and gradual bass filtering.</summary>
+    /// <summary>Prepares continuous depth, a logarithmic transition to a fixed update target, and gradual bass filtering.</summary>
     private void PrepareBitcrusher(float amount)
     {
         if (_bc.PreparedAmount == amount) return;
@@ -798,7 +798,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Integer depths preserve the existing negative rail and one-code-short positive rail.
         _bc.MinValue = -(int)MathF.Floor(_bc.Scale);
         _bc.MaxValue = (int)MathF.Ceiling(_bc.Scale) - 1;
-        _bc.ClockStep = 1f - 0.5f * Dsp.CrushClock(amount);
+        float fullClockStep = Math.Min(1f, 11025f / _sampleRate);
+        _bc.ClockStep = MathF.Pow(fullClockStep, Dsp.CrushClock(amount));
         _filters[0].SetHighPassFilter(_sampleRate, Math.Min(130f * strength, _sampleRate * .45f), .707f);
         _dcBlocker.SetCutoff(35f * strength);
     }
@@ -1300,7 +1301,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (_azimuth.Phase >= 2f * MathF.PI) _azimuth.Phase -= 2f * MathF.PI;
 
         float azimuthMod = 0.5f + 0.5f * Dsp.Sine(_azimuth.Phase);
-        float currentAzimuthCoeff = Dsp.Lerp(_azimuth.CoeffMax, _azimuth.CoeffMin, azimuthMod * amount);
+        float currentAzimuthCoeff = _azimuth.Curve.At(azimuthMod * amount);
 
         _azimuth.FilterState += currentAzimuthCoeff * (deEmph - _azimuth.FilterState);
         _azimuth.FilterState = Dsp.KillDenormal(_azimuth.FilterState);

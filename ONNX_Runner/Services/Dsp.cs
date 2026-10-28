@@ -64,11 +64,11 @@ public static class Dsp
         return t * (2f - t);
     }
 
-    /// <summary>Starts sample holding gently; the full update clock remains half the source rate.</summary>
+    /// <summary>Maps intensity to cubic ease-out sample-holding strength.</summary>
     public static float CrushClock(float t)
     {
         t = Math.Clamp(t, 0f, 1f);
-        return t * t * (3f - 2f * t);
+        return t * (3f - t * (3f - t));
     }
 
     /// <summary>Static Overdrive playback correction, prepared outside the sample loop.</summary>
@@ -244,6 +244,44 @@ public static class Dsp
         if (sampleRate == 48000) return coeffAt48k;
         float power = 48000f / sampleRate;
         return 1f - MathF.Pow(1f - coeffAt48k, power);
+    }
+
+    /// <summary>A cubic control curve for the feedforward coefficient of a unity-DC one-pole filter.</summary>
+    public readonly record struct OnePoleCurve(float High, float Low, float Bend, float Skew)
+    {
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float At(float position)
+        {
+            position = Math.Clamp(position, 0f, 1f);
+            return Lerp(High, Low, position)
+                + position * (1f - position) * (Bend + Skew * (position - .5f));
+        }
+    }
+
+    /// <summary>
+    /// Matches a reference one-pole response at a physical frequency across sample rates.
+    /// Fits four control points once; processing needs no square roots or coefficient tables.
+    /// The reference rate retains the original linear coefficient curve exactly.
+    /// </summary>
+    public static OnePoleCurve MatchOnePoleResponse(int sampleRate, int referenceRate,
+        float high, float low, float frequencyHz)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(sampleRate);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(referenceRate);
+        if (!float.IsFinite(high) || high <= 0 || high >= 1) throw new ArgumentOutOfRangeException(nameof(high));
+        if (!float.IsFinite(low) || low <= 0 || low > high) throw new ArgumentOutOfRangeException(nameof(low));
+        if (!float.IsFinite(frequencyHz) || frequencyHz <= 0) throw new ArgumentOutOfRangeException(nameof(frequencyHz));
+        if (sampleRate == referenceRate) return new(high, low, 0, 0);
+
+        double frequency = Math.Min(frequencyHz, Math.Min(sampleRate, referenceRate) * .45);
+        double sine = Math.Sin(Math.PI * frequency / sampleRate);
+        double referenceSine = Math.Sin(Math.PI * frequency / referenceRate);
+        double ratio = sine * sine / (referenceSine * referenceSine);
+        double Match(double alpha) => 2 / (1 + Math.Sqrt(1 + 4 * (1 - alpha) / (ratio * alpha * alpha)));
+        double a = Match(high), b = Match(low);
+        double r1 = Match(high + (low - (double)high) / 3) - (a + (b - a) / 3);
+        double r2 = Match(high + 2 * (low - (double)high) / 3) - (a + 2 * (b - a) / 3);
+        return new((float)a, (float)b, (float)(2.25 * (r1 + r2)), (float)(13.5 * (r2 - r1)));
     }
 }
 

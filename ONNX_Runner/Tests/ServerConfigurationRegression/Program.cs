@@ -49,6 +49,7 @@ if (!synthesisOnly)
     CassetteIntensityChecks.Run(Check);
     CassettePlaybackChecks.Run(Check);
     CassetteVoiceLevelChecks.Run(Check);
+    CassetteSampleRateChecks.Run(Check);
     SampleRateChecks.Run(Check, native);
     using var emptyServices = new ServiceCollection().BuildServiceProvider();
     var api = new ApiSettings();

@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../ONNX_Runner.csproj" />
+    <Compile Include="../ServerConfigurationRegression/CassetteIntensityChecks.cs" Link="CassetteIntensityChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/CassettePlaybackChecks.cs" Link="CassettePlaybackChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/CassetteVoiceLevelChecks.cs" Link="CassetteVoiceLevelChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/CassetteSampleRateChecks.cs" Link="CassetteSampleRateChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/AudioEffectSampleRateChecks.cs" Link="AudioEffectSampleRateChecks.cs" />
+  </ItemGroup>
+</Project>
