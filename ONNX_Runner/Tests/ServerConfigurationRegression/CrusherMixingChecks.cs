@@ -26,7 +26,7 @@ internal static class CrusherMixingChecks
         {
             var engine = NewEngine(22050);
             engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Bitcrusher, .5f);
-            Require(State<float>(engine, "Phase") == 1f && State<float>(engine, "Scale") == 64f,
+            Require(State<float>(engine, "Phase") == 1f && State<float>(engine, "Scale") == 512f,
                 "Empty preparation advanced transport or failed to set depth.");
         });
         check("Crusher matching reaches the clean power of the entire supplied fragment", () =>

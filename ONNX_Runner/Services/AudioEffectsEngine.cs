@@ -785,13 +785,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
-    /// <summary>Prepares continuous depth, a logarithmic transition to a fixed update target, and gradual bass filtering.</summary>
+    /// <summary>Prepares linear bit depth, an eased logarithmic update rate, and independent gradual bass filtering.</summary>
     private void PrepareBitcrusher(float amount)
     {
         if (_bc.PreparedAmount == amount) return;
         _bc.PreparedAmount = amount;
         float strength = Dsp.CrushStrength(amount);
-        float bits = Math.Clamp(16f - strength * 12f, 4f, 16f);
+        float bits = Math.Clamp(16f - amount * 12f, 4f, 16f);
         _bc.Scale = MathF.Pow(2f, bits - 1f);
         _bc.InverseScale = 1f / _bc.Scale;
         // Fractional depths retain uniform integer codes within the signed PCM range.

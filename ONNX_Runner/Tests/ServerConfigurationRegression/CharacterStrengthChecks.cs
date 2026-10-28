@@ -35,15 +35,15 @@ internal static class CharacterStrengthChecks
             }
         });
 
-        check("Bitcrusher reaches seven-bit wet quantization at request midpoint", () =>
+        check("Bitcrusher reaches ten-bit wet quantization at request midpoint", () =>
         {
             var engine = NewEngine(22050);
             engine.ApplyEffect(new float[] { .2f }, VoiceEffectType.Bitcrusher, .5f);
             object crusher = Field(engine, "_bc");
             float scale = (float)crusher.GetType().GetField("Scale")!.GetValue(crusher)!;
             float held = (float)crusher.GetType().GetField("Hold")!.GetValue(crusher)!;
-            Require(scale == 64f && held * scale == MathF.Round(held * scale),
-                "Midpoint no longer reaches the declared seven-bit quantization grid.");
+            Require(scale == 512f && held * scale == MathF.Round(held * scale),
+                "Midpoint no longer reaches the declared ten-bit quantization grid.");
         });
 
         foreach (FullReference reference in FullReferences)

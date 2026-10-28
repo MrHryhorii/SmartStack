@@ -15,8 +15,8 @@ internal static class BitcrusherQuantizationChecks
     {
         foreach (var point in new (float Amount, float Bits)[]
         {
-            (.1f, 13.72f), (.25f, 10.75f), (.5f, 7f), (.75f, 4.75f),
-            (.8f, 4.48f), (.9f, 4.12f), (.94f, 4.0432f), (.99f, 4.0012f), (1f, 4f)
+            (.1f, 14.8f), (.25f, 13f), (.5f, 10f), (.75f, 7f),
+            (.8f, 6.4f), (.9f, 5.2f), (.94f, 4.72f), (.99f, 4.12f), (1f, 4f)
         })
         {
             check($"Bitcrusher prepares continuous depth {point.Bits:R} at request {point.Amount:R}", () =>
@@ -26,9 +26,9 @@ internal static class BitcrusherQuantizationChecks
                 Require(Math.Abs(actualBits - point.Bits) < 4e-6, "The continuous depth mapping changed.");
             });
         }
-        check("Bitcrusher preserves signed four-bit and seven-bit rounding over every PCM16 value", () =>
+        check("Bitcrusher preserves signed four-bit, seven-bit and ten-bit rounding over every PCM16 value", () =>
         {
-            foreach (var point in new[] { (Amount: .5f, Scale: 64), (Amount: 1f, Scale: 8) })
+            foreach (var point in new[] { (Amount: .5f, Scale: 512), (Amount: .75f, Scale: 64), (Amount: 1f, Scale: 8) })
             {
                 var engine = PreparedQuantizer(point.Amount);
                 for (int pcm = short.MinValue; pcm <= short.MaxValue; pcm++)
@@ -45,7 +45,7 @@ internal static class BitcrusherQuantizationChecks
         {
             foreach (float bits in new[] { 4.1f, 4.5f, 4.9f, 7.3f, 10.8f, 15.9f })
             {
-                var engine = PreparedQuantizer(1f - MathF.Sqrt((bits - 4f) / 12f));
+                var engine = PreparedQuantizer((16f - bits) / 12f);
                 float scale = Value<float>(engine, "Scale");
                 Require(Quantize(engine, 0f, 1f) == 0f, "A fractional grid introduced a noise floor.");
                 foreach (float input in new[] { -2f, -1f, -.8f, -.2f, -.01f, 0f, .01f, .2f, .8f, 1f, 2f })
@@ -71,9 +71,9 @@ internal static class BitcrusherQuantizationChecks
         });
         foreach (var point in new (int Rate, float Amount, float Fraction)[]
         {
-            (22050, .25f, .669833762f), (22050, .5f, .545253866f), (22050, .75f, .505444643f),
-            (16000, .5f, .721898748f), (16000, 1f, 11025f / 16000), (8000, 1f, 1f),
-            (48000, .5f, .276054729f), (48000, 1f, 11025f / 48000),
+            (22050, .25f, .738413073f), (22050, .5f, .594603558f), (22050, .75f, .522136891f),
+            (16000, .5f, .756299758f), (16000, 1f, 11025f / 16000), (8000, 1f, 1f),
+            (48000, .5f, .331782153f), (48000, 1f, 11025f / 48000),
             (96000, 1f, 11025f / 96000), (192000, 1f, 11025f / 192000)
         })
         {

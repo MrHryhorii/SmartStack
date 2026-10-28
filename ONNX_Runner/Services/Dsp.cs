@@ -57,18 +57,18 @@ public static class Dsp
         return EqualPowerCrossfade(dry, wet, dryGain, wetGain);
     }
 
-    /// <summary>Brings quantization forward while retaining exact clean/full endpoints.</summary>
+    /// <summary>Brings bitcrusher bass and DC filtering forward while retaining exact endpoints.</summary>
     public static float CrushStrength(float t)
     {
         t = Math.Clamp(t, 0f, 1f);
         return t * (2f - t);
     }
 
-    /// <summary>Maps intensity to cubic ease-out sample-holding strength.</summary>
+    /// <summary>Maps intensity to quadratic ease-out sample-holding strength.</summary>
     public static float CrushClock(float t)
     {
         t = Math.Clamp(t, 0f, 1f);
-        return t * (3f - t * (3f - t));
+        return t * (2f - t);
     }
 
     /// <summary>Static Overdrive playback correction, prepared outside the sample loop.</summary>
