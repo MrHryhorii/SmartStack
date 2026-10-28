@@ -13,6 +13,7 @@
     <Compile Include="../ServerConfigurationRegression/ChorusMixingChecks.cs" Link="ChorusMixingChecks.cs" />
     <Compile Include="../ServerConfigurationRegression/FlangerMixingChecks.cs" Link="FlangerMixingChecks.cs" />
     <Compile Include="../ServerConfigurationRegression/ModulationCurveChecks.cs" Link="ModulationCurveChecks.cs" />
+    <Compile Include="../ServerConfigurationRegression/ModulationLevelChecks.cs" Link="ModulationLevelChecks.cs" />
     <EmbeddedResource Include="../ServerConfigurationRegression/ModulationCurveMoments.json" LogicalName="ModulationCurveMoments.json" />
   </ItemGroup>
 </Project>

@@ -11,38 +11,12 @@ internal static class ModulationCurveChecks
     private static readonly FieldInfo ModulationField = typeof(AudioEffectsEngine)
         .GetField("_mod", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
-    /// <summary>Checks only the complete Chorus/Flanger paths and their shared modulation helpers.</summary>
+    /// <summary>Checks intrinsic modulation, raw character and independent streaming power correction.</summary>
     internal static void Run(Action<string, Action> check, VoiceEffectType effect)
     {
         bool chorus = effect == VoiceEffectType.Chorus;
         string name = effect.ToString();
-        VoiceRecord[] voices = Fixtures.Voices.Where(x => x.Effect == name).ToArray();
         SyntheticRecord[] synthetic = Fixtures.Synthetic.Where(x => x.Effect == name).ToArray();
-        check($"{name} retains its measured voice curves and independent full-strength fixtures", () =>
-        {
-            Require(voices.Length == 31 && synthetic.Length == 27, "Incomplete modulation fixtures.");
-            Require(voices.Count(x => x.Group == "dense") == 1, "Missing dense base curve.");
-        });
-        check($"{name} gain preserves unity endpoints and remains modest throughout the active range", () =>
-        {
-            foreach (float amount in new[] { -1f, 0f, .001f, float.NaN, 1f, 2f, float.PositiveInfinity })
-                Require(Gain(chorus, amount) == 1f, "An endpoint or invalid-input gain changed.");
-            for (int i = 0; i <= 10000; i++)
-            {
-                float gain = Gain(chorus, i / 10000f);
-                Require(float.IsFinite(gain) && gain > .9f && gain < 1.1f, "Playback scalar left its calibrated range.");
-            }
-        });
-        check($"{name} scalar curve has continuous midpoint value and slope", () =>
-        {
-            const float h = .001f;
-            double middle = Gain(chorus, .5f);
-            double left = (3 * middle - 4 * Gain(chorus, .5f - h) + Gain(chorus, .5f - 2 * h)) / (2 * h);
-            double right = (-3 * middle + 4 * Gain(chorus, .5f + h) - Gain(chorus, .5f + 2 * h)) / (2 * h);
-            Require(Math.Abs(left - right) < .004, "The scalar curve has a midpoint slope jump.");
-            Require(Math.Abs(Gain(chorus, MathF.BitDecrement(.5f)) - Gain(chorus, MathF.BitIncrement(.5f))) < 3e-6,
-                "The scalar curve has a midpoint value jump.");
-        });
         check($"{name} saturation converges to identity near zero drive and retains full tanh", () =>
         {
             foreach (float sample in new[] { -.9f, -.25f, 0f, .2f, .8f })
@@ -66,17 +40,33 @@ internal static class ModulationCurveChecks
             if (chorus) Require(Value<float>(engine, "Base2") == 24f, "The second chorus base delay changed.");
             else Require(Value<float>(engine, "Feedback") == .5625f, "Flanger feedback does not follow intensity.");
         });
-        check($"{name} gain scales only the output and cannot alter delay or feedback history", () =>
+        check($"{name} power correction cannot add clean audio or change delay history", () =>
         {
             var a = NewEngine(22050); var b = NewEngine(22050);
             a.ApplyEffect(Span<float>.Empty, effect, .5f); b.ApplyEffect(Span<float>.Empty, effect, .5f);
-            object state = ModulationField.GetValue(b)!;
-            state.GetType().GetField("Gain")!.SetValue(state, Value<float>(b, "Gain") * .5f);
-            ModulationField.SetValue(b, state);
-            float[] first = Signal(22050, 22050, 1f), second = (float[])first.Clone();
+            SetLevel(b, new WindowedPowerMatcher(22050, initialGain: 0, windowMs: 60000, warmupMs: 60000));
+            float[] first = Signal(22050, 22050, 1), muted = (float[])first.Clone();
+            a.ApplyEffect(first, effect, .5f); b.ApplyEffect(muted, effect, .5f);
+            Require(muted.All(x => x == 0), "A clean branch bypassed output correction.");
+            FreezeLevel(a, 22050); FreezeLevel(b, 22050);
+            first = Signal(22050, 22050, 1); float[] second = (float[])first.Clone();
             a.ApplyEffect(first, effect, .5f); b.ApplyEffect(second, effect, .5f);
-            for (int i = 0; i < first.Length; i++) Require(second[i] == first[i] * .5f,
-                "The scalar entered the delay or feedback path.");
+            Require(SameBits(first, second), "Output correction entered the delay or feedback path.");
+        });
+        check($"{name} bypass creates no level-analysis state", () =>
+        {
+            var engine = NewEngine(22050); float[] input = Signal(22050, 257, 1);
+            engine.ApplyEffect(input, effect, 0);
+            Require(Value<WindowedPowerMatcher?>(engine, "Level") == null, "Bypass created a level tracker.");
+        });
+        check($"{name} a new tiny intensity cannot inherit earlier makeup gain", () =>
+        {
+            var engine = NewEngine(22050);
+            engine.ApplyEffect(Span<float>.Empty, effect, 1);
+            SetLevel(engine, new WindowedPowerMatcher(22050, initialGain: 4));
+            engine.ApplyEffect(Span<float>.Empty, effect, .0011f);
+            Require(Value<WindowedPowerMatcher>(engine, "Level").Gain == 1,
+                "A prior intensity left a stale output gain.");
         });
         check($"{name} identical intensity is re-prepared after switching the modulation type", () =>
         {
@@ -86,7 +76,7 @@ internal static class ModulationCurveChecks
             engine.ApplyEffect(Span<float>.Empty, effect, .5f);
             Require(Math.Abs(Value<float>(engine, "Base1") - (chorus ? 15f : 1.8f)) < 1e-6,
                 "The shared parameter cache retained the previous effect's delay.");
-            Require(Value<float>(engine, "Gain") == Gain(chorus, .5f), "The previous effect's scalar leaked.");
+            Require(Value<WindowedPowerMatcher>(engine, "Level").Gain == 1, "The previous effect's scalar leaked.");
             float[] switched = Signal(22050, 11025, 1f), fresh = (float[])switched.Clone();
             engine.ApplyEffect(switched, effect, .5f);
             NewEngine(22050).ApplyEffect(fresh, effect, .5f);
@@ -108,42 +98,15 @@ internal static class ModulationCurveChecks
             });
             Require(passed.All(x => x), "Parallel requests shared a delay, phase or preparation cache.");
         });
-        foreach (VoiceRecord voice in voices)
-        {
-            check($"{name} retains offline level bounds for {voice.Name} at scale {voice.Scale:R}", () =>
-            {
-                Require(voice.Points[0].Amount == 0 && voice.Points[^1].Amount == 1f, "Missing level endpoints.");
-                double full = voice.Points[^1].ExpectedDeltaLU, previous = 0;
-                foreach (Point point in voice.Points)
-                {
-                    double level = Level(chorus, voice, point);
-                    Require(Math.Abs(level - point.ExpectedDeltaLU) < .005, "Playback no longer matches recorded wet levels.");
-                    Require(Math.Abs(level - point.Amount * full) <= voice.GuideBudgetLU, "Recorded guide error increased.");
-                    Require(Math.Sign(full) * (previous - level) <= voice.ReverseBudgetLU, "Recorded reverse-step budget increased.");
-                    previous = level;
-                }
-            });
-        }
-        check($"{name} dense base curve retains a useful midpoint and small reverse steps", () =>
-        {
-            VoiceRecord basis = voices.Single(x => x.Group == "dense");
-            double previous = 0;
-            foreach (Point point in basis.Points)
-            {
-                double level = Level(chorus, basis, point);
-                Require(previous - level < .04, "A large base-voice reverse step returned.");
-                previous = level;
-            }
-            double full = basis.Points[^1].ExpectedDeltaLU;
-            double midpoint = Level(chorus, basis, basis.Points.Single(x => x.Amount == .5f));
-            Require(midpoint > .35 * full && midpoint < .65 * full, "Base midpoint left its useful level window.");
-        });
         foreach (SyntheticRecord record in synthetic)
         {
-            check($"{name} preserves accepted full PCM at {record.Rate} Hz and scale {record.Scale:R}", () =>
+            check($"{name} preserves accepted full raw PCM at {record.Rate} Hz and scale {record.Scale:R}", () =>
             {
                 float[] source = Signal(record.Rate, record.Rate * 3, record.Scale);
-                NewEngine(record.Rate).ApplyEffect(source, effect, 1f);
+                var engine = NewEngine(record.Rate);
+                engine.ApplyEffect(Span<float>.Empty, effect, 1f);
+                FreezeLevel(engine, record.Rate);
+                engine.ApplyEffect(source, effect, 1f);
                 Require(source.All(float.IsFinite), "Non-finite full output.");
                 Require(Math.Abs(RmsDb(source) - record.RmsDbfs) < .002, "Full-effect level changed.");
                 Require(record.Indices.Length == 16 && record.Samples.Length == 16, "Missing full waveform checkpoints.");
@@ -220,9 +183,15 @@ internal static class ModulationCurveChecks
         });
     }
 
-    private static double Level(bool chorus, VoiceRecord voice, Point point) => point.Amount <= .001f ? 0
-        : point.UntrimmedLufs - voice.DryLufs + 20 * Math.Log10(Gain(chorus, point.Amount));
-    private static float Gain(bool chorus, float amount) => chorus ? Dsp.ChorusGain(amount) : Dsp.FlangerGain(amount);
+    private static void SetLevel(AudioEffectsEngine engine, WindowedPowerMatcher level)
+    {
+        object state = ModulationField.GetValue(engine)!;
+        state.GetType().GetField("Level")!.SetValue(state, level);
+        ModulationField.SetValue(engine, state);
+    }
+    private static void FreezeLevel(AudioEffectsEngine engine, int rate) =>
+        SetLevel(engine, new WindowedPowerMatcher(rate, windowMs: 60000, warmupMs: 60000));
+
     private static T Value<T>(AudioEffectsEngine engine, string name)
     {
         object state = ModulationField.GetValue(engine)!;
@@ -261,9 +230,6 @@ internal static class ModulationCurveChecks
     {
         if (!condition) throw new InvalidOperationException(message);
     }
-    private sealed record Corpus(VoiceRecord[] Voices, SyntheticRecord[] Synthetic);
-    private sealed record VoiceRecord(string Name, string Effect, string Group, float Scale, double DryLufs,
-        double GuideBudgetLU, double ReverseBudgetLU, Point[] Points);
-    private sealed record Point(float Amount, double UntrimmedLufs, double ExpectedDeltaLU);
+    private sealed record Corpus(SyntheticRecord[] Synthetic);
     private sealed record SyntheticRecord(string Effect, int Rate, float Scale, double RmsDbfs, int[] Indices, float[] Samples);
 }

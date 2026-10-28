@@ -119,7 +119,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         public float PreparedAmount;
         public float Strength;
-        public float Gain;
+        public WindowedPowerMatcher? Level;
         public float SaturationDrive;
         public float InverseDrive;
         public float Base1, Base2, Depth1, Depth2;
@@ -469,11 +469,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         {
             PrepareModulation(type, amount);
             bool chorus = type == VoiceEffectType.Chorus;
+            WindowedPowerMatcher level = _mod.Level!;
             for (int i = 0; i < buffer.Length; i++)
             {
                 _thermal.Update(ref _noise, _thermalDriftCoeff);
                 _thermalValue = _thermal.State * _thermalNoiseGain;
-                buffer[i] = chorus ? Chorus(buffer[i]) : Flanger(buffer[i]);
+                float reference = buffer[i];
+                float processed = chorus ? Chorus(reference) : Flanger(reference);
+                buffer[i] = level.Process(reference, processed);
             }
             return;
         }
@@ -629,11 +632,15 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.Flanger:
                 _mod.PreparedAmount = float.NaN;
+                // Average one LFO cycle without tracking its intended level movement.
+                _mod.Level = new WindowedPowerMatcher(_sampleRate, windowMs: 1000f / .45f);
                 _mod.FlangerPhaseInc = PhaseInc(0.45f);
                 break;
 
             case VoiceEffectType.Chorus:
                 _mod.PreparedAmount = float.NaN;
+                // Two slow-voice cycles also span approximately three faster-voice cycles.
+                _mod.Level = new WindowedPowerMatcher(_sampleRate, windowMs: 2000f / .55f);
                 _mod.ChorusPhaseInc = PhaseInc(0.55f);
                 _mod.ChorusPhaseInc2 = PhaseInc(0.83f);
                 break;
@@ -1120,7 +1127,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _mod.InverseDrive = 1f / strength;
         _mod.FullStrength = amount >= 1f;
         bool chorus = type == VoiceEffectType.Chorus;
-        _mod.Gain = chorus ? Dsp.ChorusGain(amount) : Dsp.FlangerGain(amount);
+        // A new intensity must not inherit the previous intensity's makeup gain.
+        _mod.Level!.Reset();
         // Keep the authored full delay; intensity controls modulation depth and delayed level.
         float baseStrength = amount >= 1f ? strength : 1f;
         _mod.Base1 = .1f + (chorus ? 14.9f : 1.7f) * baseStrength;
@@ -1131,7 +1139,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _mod.Feedback = .75f * strength;
     }
 
-    /// <summary>Runs the complete flanger, including its feedback, DC removal and output scalar.</summary>
+    /// <summary>Runs the complete flanger, including its feedback and DC removal.</summary>
     private float Flanger(float dry)
     {
         _mod.FlangerPhase += _mod.FlangerPhaseInc;
@@ -1159,14 +1167,14 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return FinishModulation(dry, _dcBlocker.Process((s1 + s2) * _mod.WetScale));
     }
 
-    /// <summary>Adds the delayed component and applies gradual saturation followed by static gain.</summary>
+    /// <summary>Adds the delayed component and applies gradual saturation before output power matching.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private float FinishModulation(float dry, float wet)
     {
         float shaped = Dsp.ModulationSaturate(dry + wet * .85f, _mod.SaturationDrive, _mod.InverseDrive);
         // Preserve the accepted full-strength expression's final floating-point rounding.
         if (_mod.FullStrength) shaped = dry + (shaped - dry);
-        return shaped * _mod.Gain;
+        return shaped;
     }
 
     /// <summary>Runs cassette voice correction before independently colored background noise is added.</summary>

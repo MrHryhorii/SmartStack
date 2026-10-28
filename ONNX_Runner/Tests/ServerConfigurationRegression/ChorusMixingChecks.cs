@@ -2,6 +2,10 @@ using ONNX_Runner.Models;
 
 internal static class ChorusMixingChecks
 {
-    /// <summary>Checks the current eased Chorus path and its prepared output correction.</summary>
-    internal static void Run(Action<string, Action> check) => ModulationCurveChecks.Run(check, VoiceEffectType.Chorus);
+    /// <summary>Checks the intrinsic Chorus path and measured output correction.</summary>
+    internal static void Run(Action<string, Action> check)
+    {
+        ModulationCurveChecks.Run(check, VoiceEffectType.Chorus);
+        ModulationLevelChecks.Run(check, VoiceEffectType.Chorus);
+    }
 }

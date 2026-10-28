@@ -83,28 +83,6 @@ public static class Dsp
     public static float ModulationSaturate(float sample, float drive, float inverseDrive) =>
         drive > 0f ? MathF.Tanh(sample * drive) * inverseDrive : sample;
 
-    /// <summary>Static two-part chorus playback correction, prepared outside the sample loop.</summary>
-    public static float ChorusGain(float amount)
-    {
-        if (!(amount > .001f) || amount >= 1f) return 1f;
-        float s = amount <= .5f ? amount * 2f : amount * 2f - 1f;
-        float db = amount <= .5f
-            ? ((-0.148290302f * s + 0.126378862f) * s - 0.076988553f) * s
-            : ((0.231938323f * s + 0.136063404f) * s - 0.269101734f) * s - 0.098899993f;
-        return MathF.Pow(10f, db / 20f);
-    }
-
-    /// <summary>Static two-part flanger playback correction, prepared outside the sample loop.</summary>
-    public static float FlangerGain(float amount)
-    {
-        if (!(amount > .001f) || amount >= 1f) return 1f;
-        float s = amount <= .5f ? amount * 2f : amount * 2f - 1f;
-        float db = amount <= .5f
-            ? ((0.551390440f * s - 1.666701525f) * s + 1.434298655f) * s
-            : ((1.223033317f * s - 1.297087813f) * s - 0.244933075f) * s + 0.318987570f;
-        return MathF.Pow(10f, db / 20f);
-    }
-
     /// <summary>
     /// Prevents CPU spikes caused by denormalized (subnormal) floating-point numbers.
     /// Denormals occur in IIR filter feedback paths when signal decays toward zero,
