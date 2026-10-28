@@ -7,18 +7,20 @@ internal static class CharacterStrengthChecks
     /// <summary>Checks declared internal strength and full-output character independently of historical mixer fits.</summary>
     internal static void Run(Action<string, Action> check)
     {
-        foreach (float amount in new[] { .01f, .05f, .1f, .25f, .5f, .75f, .95f, 1f })
+        check("Overdrive retains full wet state independently of request intensity", () =>
         {
-            check($"Overdrive prepares gradual direct saturation at {amount:R}", () =>
+            foreach (float amount in new[] { .01f, .25f, .5f, .75f })
             {
-                var engine = NewEngine(22050);
-                engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Overdrive, amount);
-                object state = Field(engine, "_drive");
-                float drive = (float)state.GetType().GetField("Drive")!.GetValue(state)!;
-                float expected = 5.808956f*amount*(2f-amount);
-                Require(MathF.Abs(drive-expected) < 1e-6f, "Direct saturation no longer fades with intensity.");
-            });
-        }
+                var engine = NewEngine(22050); var reference = NewEngine(22050);
+                float[] source = Signal(22050, 4096), output = (float[])source.Clone();
+                engine.ApplyEffect(output, VoiceEffectType.Overdrive, amount);
+                reference.ApplyEffect(source, VoiceEffectType.Overdrive, 1);
+                float[] next = Signal(22050, 4096), expected = (float[])next.Clone();
+                engine.ApplyEffect(next, VoiceEffectType.Overdrive, 1);
+                reference.ApplyEffect(expected, VoiceEffectType.Overdrive, 1);
+                Require(next.SequenceEqual(expected), "Intensity changed the fixed wet processor history.");
+            }
+        });
 
         check("Tactical codec keeps full internal adaptation independently of request intensity", () =>
         {

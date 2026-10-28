@@ -71,17 +71,6 @@ public static class Dsp
         return t * (2f - t);
     }
 
-    /// <summary>Static Overdrive playback correction, prepared outside the sample loop.</summary>
-    public static float DriveGain(float amount)
-    {
-        if (!(amount > .001f) || amount >= 1f) return 1f;
-        float s = amount <= .5f ? amount * 2f : amount * 2f - 1f;
-        float db = amount <= .5f
-            ? ((-2.344765913f * s + 8.911313896f) * s - 9.410726014f) * s
-            : ((-.539464856f * s + 2.006038849f) * s + 1.377604038f) * s - 2.844178031f;
-        return MathF.Pow(10f, db / 20f);
-    }
-
     /// <summary>Advances modulation depth and delayed level smoothly from clean to full.</summary>
     public static float ModulationStrength(float amount)
     {

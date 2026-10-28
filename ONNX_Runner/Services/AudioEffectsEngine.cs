@@ -51,6 +51,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // Fixed output trims keep full effects near +1 dB on the reference Piper voice.
     // Apply after character generation; drive, compression and modulation stay intact.
     private const float OverdriveOutputGain = 0.5347782f;
+    private const float OverdriveDrive = 1f + 4.808956f;
+    private static readonly float OverdriveTrim = 1f / MathF.Sqrt(OverdriveDrive);
     private const float TacticalOutputGain = 0.63f;
     private const float FmOutputBoostDb = 1.7f;
     private static readonly float FmOutputGain = .78f * MathF.Pow(10f, FmOutputBoostDb / 20f);
@@ -94,7 +96,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         StrictInsert,
         StrictCrossfade,
         CrusherInsert,
-        DriveInsert,
         RingInsert,
         TapeInsert
     }
@@ -102,17 +103,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // =========================================================================
     // EFFECT STATE STRUCTURES (Zero-Allocation)
     // =========================================================================
-
-    private struct DriveState
-    {
-        public float PreparedAmount;
-        public float Drive;
-        public float Trim;
-        public float BiasScale;
-        public float Gain;
-        public float HighPassBlend;
-        public float LowPassBlend;
-    }
 
     private struct RingState
     {
@@ -313,7 +303,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     private ModulationState _mod;
     private RingState _ring;
-    private DriveState _drive;
     private BitcrusherState _bc;
     private TapeState _tape;
     private AzimuthState _azimuth;
@@ -350,7 +339,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
         _mod = default;
         _ring.PreparedAmount = float.NaN;
-        _drive.PreparedAmount = float.NaN;
 
         _bc.Phase = 1f;
         _bc.Hold = 0f;
@@ -511,26 +499,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
         }
 
-        if (mode == RoutingMode.DriveInsert)
-        {
-            PrepareDrive(amount);
-            BiQuadFilter highPass = _filters[0], lowPass = _filters[1];
-            float hpBlend = _drive.HighPassBlend, lpBlend = _drive.LowPassBlend;
-            bool fullHighPass = hpBlend >= 1f, fullLowPass = lpBlend >= 1f;
-            for (int i = 0; i < buffer.Length; i++)
-            {
-                _thermal.Update(ref _noise, _thermalDriftCoeff);
-                _thermalValue = _thermal.State * _thermalNoiseGain;
-                float input = Dsp.KillDenormal(buffer[i]);
-                float filtered = highPass.Transform(input);
-                if (!fullHighPass) filtered = Dsp.Lerp(input, filtered, hpBlend);
-                float limited = lowPass.Transform(filtered);
-                if (!fullLowPass) limited = Dsp.Lerp(filtered, limited, lpBlend);
-                buffer[i] = _dcBlocker.Process(Overdrive(limited)) * _drive.Gain;
-            }
-            return;
-        }
-
         // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
         // Tape and rolling glitches retain their own authored intensity laws.
         float effectAmount = mode is RoutingMode.StrictInsert
@@ -594,7 +562,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             VoiceEffectType.Telephone => RoutingMode.PowerMatchedCrossfade,
             VoiceEffectType.G711MuLaw => RoutingMode.PowerMatchedCrossfade,
             VoiceEffectType.G711ALaw => RoutingMode.PowerMatchedCrossfade,
-            VoiceEffectType.Overdrive => RoutingMode.DriveInsert,
+            VoiceEffectType.Overdrive => RoutingMode.PowerMatchedCrossfade,
             VoiceEffectType.Bitcrusher => RoutingMode.CrusherInsert,
             VoiceEffectType.RingModulator => RoutingMode.RingInsert,
             VoiceEffectType.Flanger => RoutingMode.ModulationInsert,
@@ -640,7 +608,6 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.Overdrive:
-                _drive.PreparedAmount = float.NaN;
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(180f), 0.8f);
                 // Keep the reference top cut in Hz; low-rate models still obey the Nyquist cap.
                 _filters[_filterCount++] = BiQuadFilter.LowPassFilter(_sampleRate, Safe(ReferenceSampleRate * 0.45f), 0.707f);
@@ -980,6 +947,11 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             ProcessTacticalWet(buffer);
             return;
         }
+        if (type == VoiceEffectType.Overdrive)
+        {
+            ProcessOverdriveWet(buffer);
+            return;
+        }
         ProcessG711Wet(buffer);
     }
 
@@ -1028,49 +1000,20 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return wet / drive;
     }
 
-    /// <summary>
-    /// Simulates the warm harmonic saturation of an analog tube or transistor overdrive stage.
-    /// Thermal bias drift replicates the slow operating-point shift of a warming tube amplifier.
-    /// Returns a pure wet signal.
-    /// </summary>
-    private float Overdrive(float x)
+    /// <summary>Retains the full-strength saturation, filters, thermal bias and output trim.</summary>
+    private void ProcessOverdriveWet(Span<float> buffer)
     {
-        float bias = _thermalValue * _drive.BiasScale;
-        float wet = Dsp.AsymmetricSaturation((x * _drive.Drive) + bias);
-        return wet * _drive.Trim;
-    }
-
-    /// <summary>Prepares gradual saturation and rate-aware filters only when intensity changes.</summary>
-    private void PrepareDrive(float amount)
-    {
-        if (_drive.PreparedAmount == amount) return;
-        _drive.PreparedAmount = amount;
-        float depth = Math.Clamp(amount, 0f, 1f);
-        float strength = depth * (2f - depth);
-        const float fullDrive = 1f + 4.808956f;
-        float fullMakeup = MathF.Sqrt(fullDrive);
-        _drive.Drive = fullDrive * strength;
-        // S(d*x)/d approaches identity. Preserve the original multiplication at full strength.
-        _drive.Trim = depth >= 1f ? 1f / fullMakeup
-            : Dsp.Lerp(1f, fullMakeup, strength) / _drive.Drive;
-        _drive.BiasScale = .06f * strength * strength;
-        float trim = depth >= 1f ? OverdriveOutputGain : Dsp.Lerp(1f, OverdriveOutputGain, depth);
-        _drive.Gain = trim * Dsp.DriveGain(depth);
-
-        float fullHighPass = Math.Min(180f, _sampleRate * .45f);
-        float hpCutoff = fullHighPass * strength;
-        float hpFloor = Math.Min(fullHighPass, _sampleRate * .0001f);
-        _drive.HighPassBlend = Math.Min(1f, hpCutoff / hpFloor);
-        _filters[0].SetHighPassFilter(_sampleRate, Math.Max(hpCutoff, hpFloor), .8f);
-
-        float nyquist = _sampleRate * .5f;
-        float fullLowPass = Math.Min(ReferenceSampleRate * .45f, _sampleRate * .45f);
-        float lpCutoff = depth >= 1f ? fullLowPass : nyquist * MathF.Pow(fullLowPass / nyquist, strength);
-        float lpGapFloor = _sampleRate * .0001f;
-        _drive.LowPassBlend = Math.Min(1f, (nyquist - lpCutoff) / lpGapFloor);
-        // Avoid float feedback instability at DC and Nyquist; introduce the tiny boundary region before saturation.
-        _filters[1].SetLowPassFilter(_sampleRate, Math.Min(lpCutoff, nyquist - lpGapFloor), .707f);
-        _dcBlocker.SetCutoff(35f * strength);
+        BiQuadFilter highPass = _filters[0], lowPass = _filters[1];
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            _thermal.Update(ref _noise, _thermalDriftCoeff);
+            _thermalValue = _thermal.State * _thermalNoiseGain;
+            float input = Dsp.KillDenormal(buffer[i]);
+            float filtered = lowPass.Transform(highPass.Transform(input));
+            float bias = _thermalValue * .06f;
+            float wet = Dsp.AsymmetricSaturation(filtered * OverdriveDrive + bias) * OverdriveTrim;
+            buffer[i] = _dcBlocker.Process(wet) * OverdriveOutputGain;
+        }
     }
 
     /// <summary>Runs intrinsic degradation once, then matches mean-square power over the supplied buffer.</summary>
