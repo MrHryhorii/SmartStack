@@ -57,7 +57,7 @@ internal static class FmVoicePathChecks
                     float[] dry = new float[source.Length];
                     for (int i = point.Delay; i < dry.Length; i++) dry[i] = source[i - point.Delay];
                     float[] expected = (float[])full.Clone();
-                    PowerMatchedMixer.Mix(dry, expected, amount);
+                    new StreamingPowerMatchedMixer(rate).Mix(dry, expected, amount);
                     for (int i = 0; i < actual.Length; i++)
                         Require(BitConverter.SingleToInt32Bits(actual[i]) == BitConverter.SingleToInt32Bits(expected[i]),
                             "The FM clean branch uses a different delay from its complete filtered branch.");

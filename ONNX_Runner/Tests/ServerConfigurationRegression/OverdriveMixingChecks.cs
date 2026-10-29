@@ -39,7 +39,7 @@ internal static class OverdriveMixingChecks
                         float[] dry = Signal(rate, size, .2f+section*.1f);
                         float[] expected = (float[])dry.Clone(), output = (float[])dry.Clone();
                         wet.ApplyEffect(expected, VoiceEffectType.Overdrive, 1f);
-                        PowerMatchedMixer.Mix(dry, expected, amount);
+                        new StreamingPowerMatchedMixer(rate).Mix(dry, expected, amount);
                         actual.ApplyEffect(output, VoiceEffectType.Overdrive, amount);
                         Require(SameBits(output, expected), "Intensity changed the wet kernel or mixer routing.");
                     }
@@ -54,18 +54,16 @@ internal static class OverdriveMixingChecks
                     engine.ApplyEffect(split.AsSpan(i, Math.Min(37, split.Length-i)), VoiceEffectType.Overdrive, 1);
                 Require(SameBits(whole, split), "Full wet state depends on buffer boundaries.");
             });
-            check($"Overdrive follows measured endpoint power at 101 positions at {rate} Hz", () =>
+            check($"Overdrive mixed PCM is invariant across 101 strengths at {rate} Hz", () =>
             {
-                float[] dry = Signal(rate, rate, 1), full = (float[])dry.Clone();
-                NewEngine(rate).ApplyEffect(full, VoiceEffectType.Overdrive, 1);
-                double dp = PowerMatcher.Measure(dry), wp = PowerMatcher.Measure(full);
-                for (int i = 0; i <= 100; i++)
+                float[] source=Signal(rate,rate/2,1);
+                for(int i=0;i<=100;i++)
                 {
-                    float t = i/100f; float[] output = (float[])dry.Clone();
-                    NewEngine(rate).ApplyEffect(output, VoiceEffectType.Overdrive, t);
-                    double target = PowerMatcher.Target(dp, wp, t);
-                    Require(Math.Abs(10*Math.Log10(PowerMatcher.Measure(output)/target)) < .00001,
-                        "The mixed buffer missed its endpoint-power target.");
+                    float amount=i/100f;float[] whole=(float[])source.Clone(),split=(float[])source.Clone();
+                    NewEngine(rate).ApplyEffect(whole,VoiceEffectType.Overdrive,amount);var engine=NewEngine(rate);
+                    for(int start=0;start<split.Length;start+=257)
+                        engine.ApplyEffect(split.AsSpan(start,Math.Min(257,split.Length-start)),VoiceEffectType.Overdrive,amount);
+                    Require(SameBits(whole,split),"A callback boundary changed the Overdrive interpolation.");
                 }
             });
             check($"Overdrive hot processing allocates zero managed bytes at {rate} Hz", () =>

@@ -17,8 +17,9 @@ public sealed class WindowedPowerMatcher
     private readonly double _maximumRiseFactor;
     private readonly double _minimumPower;
     private int _position, _filledFrames, _activeFrames, _pendingSamples, _rampRemaining;
-    private double _referenceSum, _processedSum, _pendingReference, _pendingProcessed, _pendingReferenceMean;
+    private double _referenceSum, _processedSum, _pendingReference, _pendingProcessed, _pendingReferenceMean, _pendingActivityEnergy;
     private double _gain, _targetGain, _gainStep;
+    private bool _pendingRecoverable;
 
     public double Gain => _gain;
     public bool HasSamples => _filledFrames != 0 || _pendingSamples != 0;
@@ -53,16 +54,33 @@ public sealed class WindowedPowerMatcher
         Array.Clear(_frames);
         _position = _filledFrames = _activeFrames = _pendingSamples = _rampRemaining = 0;
         _referenceSum = _processedSum = _pendingReference = _pendingProcessed = _pendingReferenceMean = _gainStep = 0;
+        _pendingActivityEnergy = 0;
+        _pendingRecoverable = false;
         _gain = _targetGain = initialGain;
     }
 
     /// <summary>Processes finite PCM without allocating, delaying samples or clipping floating-point headroom.</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public float Process(float reference, float processed)
+    public float Process(float reference, float processed) =>
+        ProcessPower(reference * (double)reference, reference, processed);
+
+    /// <summary>A nonrecoverable excitation freezes gain updates after the current analysis hop.</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public float Process(float reference, float processed, bool recoverable) =>
+        ProcessPower(reference * (double)reference, reference, processed, recoverable);
+
+    /// <summary>
+    /// Tracks finite nonnegative target power independently from the AC activity reference.
+    /// The caller supplies energy, activity and processed PCM; no reference waveform is synthesized.
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public float ProcessPower(double targetPower, float activityReference, float processed, bool recoverable = true)
     {
-        _pendingReference += reference * (double)reference;
-        _pendingReferenceMean += reference;
+        _pendingReference += targetPower;
+        _pendingReferenceMean += activityReference;
+        _pendingActivityEnergy += activityReference * (double)activityReference;
         _pendingProcessed += processed * (double)processed;
+        _pendingRecoverable |= recoverable;
         if (++_pendingSamples == _hopSamples) AdvanceWindow();
         float output = (float)(processed * _gain);
         if (_rampRemaining > 0)
@@ -80,14 +98,24 @@ public sealed class WindowedPowerMatcher
         _referenceSum = Math.Max(0, _referenceSum - previous.Reference) + _pendingReference;
         _processedSum = Math.Max(0, _processedSum - previous.Processed) + _pendingProcessed;
         // A constant reference offset is not usable signal for makeup-gain adaptation.
-        double varianceEnergy = Math.Max(0, _pendingReference - _pendingReferenceMean * _pendingReferenceMean / _hopSamples);
+        double varianceEnergy = Math.Max(0, _pendingActivityEnergy - _pendingReferenceMean * _pendingReferenceMean / _hopSamples);
         bool active = varianceEnergy > _minimumPower * _hopSamples;
         _activeFrames += (active ? 1 : 0) - (previous.Active ? 1 : 0);
         _frames[_position] = new(_pendingReference, _pendingProcessed, active);
         if (++_position == _frames.Length) _position = 0;
         _filledFrames = Math.Min(_filledFrames + 1, _frames.Length);
-        _pendingReference = _pendingProcessed = _pendingReferenceMean = 0;
+        bool recoverable = _pendingRecoverable;
+        _pendingRecoverable = false;
+        _pendingReference = _pendingProcessed = _pendingReferenceMean = _pendingActivityEnergy = 0;
         _pendingSamples = 0;
+        if (!recoverable)
+        {
+            // A filter decay without recoverable excitation must not become new makeup gain.
+            _targetGain = _gain;
+            _gainStep = 0;
+            _rampRemaining = 0;
+            return;
+        }
         if (_activeFrames < _warmupFrames) return;
         double count = _filledFrames * (double)_hopSamples;
         double referencePower = _referenceSum / count, processedPower = _processedSum / count;

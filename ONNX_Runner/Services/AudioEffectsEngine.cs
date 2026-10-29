@@ -142,8 +142,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         public float Phase;
         public float Hold;
         public float PreparedAmount;
-        public double Gain;
-        public int GainRampSamples;
+        public WindowedPowerMatcher? Level;
         public float ClockStep;
         public float Scale;
         public float InverseScale;
@@ -278,7 +277,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     // CORE DSP PRIMITIVES & BUFFERS
     // =========================================================================
 
-    private readonly DelayBuffer _delay = new(DelayCapacity(sampleRate));
+    private DelayBuffer? _delay;
     private DcBlocker _dcBlocker = new(sampleRate);
     private NoiseGenerator _noise = new();
     private ThermalDrift _thermal = new();
@@ -287,13 +286,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private int _filterCount;
     private FmRadioProcessor? _fmProcessor;
     private float _fmAmount;
+    private StreamingPowerMatchedMixer? _powerMixer;
     private const float CompletionSilenceFloor = 1e-7f;
     private VoiceEffectType _current = VoiceEffectType.None;
 
     private const int GlitchReferenceCaptureSamples = 4096;
-    // Keep the original rolling capture duration without rounding it to a power-of-two size.
-    private readonly float[] _glitchCapture = new float[Math.Max(1, (int)Math.Round(
-        GlitchReferenceCaptureSamples * (double)sampleRate / ReferenceSampleRate))];
+    private float[] _glitchCapture = [];
     private readonly int _glitchWindowSamples = Math.Max(1, sampleRate / 100);
 
 
@@ -322,10 +320,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     public void Reset(uint? fixedSeed = null)
     {
-        _delay.Clear();
+        _delay?.Clear();
         _dcBlocker.Reset();
         _fmProcessor?.Reset();
         _fmAmount = 0f;
+        _powerMixer?.Reset();
+        _bc.Level?.Reset();
 
         Array.Clear(_filters, 0, _filters.Length);
         _filterCount = 0;
@@ -371,20 +371,22 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     /// <summary>Reports retained audio for effects that support finite request completion.</summary>
     internal bool HasPendingOutput => _current == VoiceEffectType.FmRadio && _fmProcessor != null &&
-        (_fmProcessor.PendingSamples > 0 || _dcBlocker.PendingMagnitude * FmOutputGain > CompletionSilenceFloor);
+        (_fmProcessor.PendingSamples > 0 || _dcBlocker.PendingMagnitude * FmOutputGain *
+            (_fmAmount < 1f ? Math.Max(1, _fmAmount * StreamingPowerMatchedMixer.MaximumGain) : 1) > CompletionSilenceFloor);
 
     /// <summary>Writes retained effect audio only; repeated calls stop when its filters are drained.</summary>
     internal int Complete(Span<float> destination)
     {
         if (destination.IsEmpty || !HasPendingOutput) return 0;
         if (_fmAmount >= 1f) return CompleteFmWet(destination, Span<float>.Empty);
+        _powerMixer ??= new StreamingPowerMatchedMixer(_sampleRate);
 
         float[] rented = ArrayPool<float>.Shared.Rent(destination.Length);
         try
         {
             Span<float> dry = rented.AsSpan(0, destination.Length);
             int written = CompleteFmWet(destination, dry);
-            PowerMatchedMixer.Mix(dry[..written], destination[..written], _fmAmount);
+            _powerMixer!.Mix(dry[..written], destination[..written], _fmAmount);
             return written;
         }
         finally
@@ -441,7 +443,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         if (_current != type)
         {
             Setup(type);
-            _delay.Clear();
+            _delay?.Clear();
             _dcBlocker.Reset();
             _current = type;
         }
@@ -586,6 +588,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private void Setup(VoiceEffectType type)
     {
         _filterCount = 0;
+        _powerMixer?.Reset();
         _dcBlocker.SetCutoff(35f);
 
         float nyq = _sampleRate * 0.45f;
@@ -618,8 +621,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             case VoiceEffectType.Bitcrusher:
                 _bc.PreparedAmount = float.NaN;
-                _bc.Gain = 1;
-                _bc.GainRampSamples = Math.Max(2, (int)Math.Round(_sampleRate * .005));
+                _bc.Level ??= new WindowedPowerMatcher(_sampleRate,
+                    maximumGain: CrusherMaximumLevelGain, minimumPower: 1e-8);
                 _filters[_filterCount++] = BiQuadFilter.HighPassFilter(_sampleRate, Safe(130f), 0.707f);
                 break;
 
@@ -631,6 +634,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.Flanger:
+                _delay ??= new DelayBuffer(DelayCapacity(_sampleRate));
                 _mod.PreparedAmount = float.NaN;
                 // Average one LFO cycle without tracking its intended level movement.
                 _mod.Level = new WindowedPowerMatcher(_sampleRate, windowMs: 1000f / .45f);
@@ -638,6 +642,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.Chorus:
+                _delay ??= new DelayBuffer(DelayCapacity(_sampleRate));
                 _mod.PreparedAmount = float.NaN;
                 // Two slow-voice cycles also span approximately three faster-voice cycles.
                 _mod.Level = new WindowedPowerMatcher(_sampleRate, windowMs: 2000f / .55f);
@@ -646,6 +651,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.LoFiTape:
+                _delay ??= new DelayBuffer(DelayCapacity(_sampleRate));
                 _tape.PreHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(80f), 0.707f);
 
                 // Approximate Type-I cassette HF EQ corner derived from the 120 us time constant
@@ -711,6 +717,10 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 break;
 
             case VoiceEffectType.DecoderGlitch:
+                // Preserve the reference capture duration and its original ring arithmetic.
+                if (_glitchCapture.Length == 0)
+                    _glitchCapture = new float[Math.Max(1, (int)Math.Round(
+                        GlitchReferenceCaptureSamples * (double)_sampleRate / ReferenceSampleRate))];
                 _glitch = default;
                 _glitch.TriggerWindowTimer = _glitchWindowSamples; // Approximately 10 ms.
                 break;
@@ -767,6 +777,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     {
         if (_bc.PreparedAmount == amount) return;
         _bc.PreparedAmount = amount;
+        _bc.Level!.Reset();
         float strength = Dsp.CrushStrength(amount);
         float bits = Math.Clamp(16f - amount * 12f, 4f, 16f);
         _bc.Scale = MathF.Pow(2f, bits - 1f);
@@ -915,6 +926,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     private void ApplyPowerMatched(Span<float> buffer, VoiceEffectType type, float amount)
     {
         if (type == VoiceEffectType.FmRadio) _fmAmount = amount;
+        _powerMixer?.Prepare(amount);
         if (buffer.IsEmpty) return;
         if (amount >= 1f)
         {
@@ -922,12 +934,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             return;
         }
 
+        _powerMixer ??= new StreamingPowerMatchedMixer(_sampleRate);
         float[] rented = ArrayPool<float>.Shared.Rent(buffer.Length);
         try
         {
             Span<float> dry = rented.AsSpan(0, buffer.Length);
             ProcessPowerMatchedWet(buffer, type, dry);
-            PowerMatchedMixer.Mix(dry, buffer, amount);
+            _powerMixer.Mix(dry, buffer, amount);
         }
         finally
         {
@@ -1023,14 +1036,12 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         }
     }
 
-    /// <summary>Runs intrinsic degradation once, then matches mean-square power over the supplied buffer.</summary>
+    /// <summary>Runs intrinsic degradation and causal gain correction on one fixed sample clock.</summary>
     private void ApplyBitcrusher(Span<float> buffer, float amount)
     {
         PrepareBitcrusher(amount);
-        if (buffer.IsEmpty) return;
         BiQuadFilter highPass = _filters[0];
-        double referenceEnergy = 0, processedEnergy = 0;
-        bool hasQuantizedSignal = false;
+        WindowedPowerMatcher level = _bc.Level!;
         for (int i = 0; i < buffer.Length; i++)
         {
             float reference = buffer[i];
@@ -1038,21 +1049,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             _thermal.Update(ref _noise, _thermalDriftCoeff);
             _thermalValue = _thermal.State * _thermalNoiseGain;
             float quantized = Bitcrusher(highPass.Transform(filtered), amount);
-            hasQuantizedSignal |= quantized != 0f;
             float processed = _dcBlocker.Process(quantized);
-            referenceEnergy += reference * (double)reference;
-            processedEnergy += processed * (double)processed;
-            buffer[i] = processed;
+            buffer[i] = level.Process(reference, processed, quantized != 0f);
         }
-        // A decaying DC-filter tail is not recoverable voice when the quantizer emitted only zeros.
-        if (!hasQuantizedSignal)
-        {
-            for (int i = 0; i < buffer.Length; i++) buffer[i] = (float)(buffer[i] * _bc.Gain);
-            return;
-        }
-        // The bound prevents rejected bands or rare quantizer codes from becoming excessive makeup gain.
-        _bc.Gain = PowerMatcher.MatchRamped(buffer, referenceEnergy / buffer.Length,
-            processedEnergy / buffer.Length, _bc.Gain, _bc.GainRampSamples, CrusherMaximumLevelGain).Gain;
     }
 
     /// <summary>
@@ -1145,9 +1144,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         _mod.FlangerPhase += _mod.FlangerPhaseInc;
         if (_mod.FlangerPhase >= 2f * MathF.PI) _mod.FlangerPhase -= 2f * MathF.PI;
         float delayMs = _mod.Base1 + Dsp.Sine(_mod.FlangerPhase) * _mod.Depth1;
-        float delayed = _delay.Read(Math.Max(0f, delayMs * _msToSamples + _preWriteReadOffset));
+        float delayed = _delay!.Read(Math.Max(0f, delayMs * _msToSamples + _preWriteReadOffset));
         float feedbackInput = Dsp.KillDenormal(dry) + delayed * _mod.Feedback;
-        _delay.Write(Dsp.ModulationSaturate(feedbackInput, _mod.SaturationDrive, _mod.InverseDrive));
+        _delay!.Write(Dsp.ModulationSaturate(feedbackInput, _mod.SaturationDrive, _mod.InverseDrive));
         return FinishModulation(dry, _dcBlocker.Process(delayed * _mod.WetScale));
     }
 
@@ -1161,9 +1160,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         float wow = _thermalValue * .006f * _mod.Strength;
         float d1 = _mod.Base1 + Dsp.Sine(_mod.ChorusPhase) * _mod.Depth1 + wow;
         float d2 = _mod.Base2 + Dsp.Sine(_mod.ChorusPhase2) * _mod.Depth2 - wow;
-        float s1 = _delay.Read(Math.Max(0f, d1 * _msToSamples + _preWriteReadOffset));
-        float s2 = _delay.Read(Math.Max(0f, d2 * _msToSamples + _preWriteReadOffset));
-        _delay.Write(Dsp.KillDenormal(dry));
+        float s1 = _delay!.Read(Math.Max(0f, d1 * _msToSamples + _preWriteReadOffset));
+        float s2 = _delay!.Read(Math.Max(0f, d2 * _msToSamples + _preWriteReadOffset));
+        _delay!.Write(Dsp.KillDenormal(dry));
         return FinishModulation(dry, _dcBlocker.Process((s1 + s2) * _mod.WetScale));
     }
 
@@ -1215,7 +1214,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         // Mild record-stage trim complements the amplitude compressor.
         float recorded = Dsp.Lerp(saturated, comp * _tape.CompMakeup, _tape.CharacterAmount);
 
-        _delay.Write(recorded);
+        _delay!.Write(recorded);
         _tape.ReferenceDelay!.Write(input);
 
         // Wow and Flutter: pitch instability from motor defect and tape friction.
@@ -1237,7 +1236,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                       + _tape.FlutterNoiseState * _tape.FlutterNoiseScale;
 
         float modulatedDelayMs = MathF.Max(0f, _tape.DelayMs + wow + flutter);
-        float pitchWarped = _delay.Read(modulatedDelayMs * _msToSamples);
+        float pitchWarped = _delay!.Read(modulatedDelayMs * _msToSamples);
 
         // Dropout: stochastic volume dip simulating oxide shedding.
         float dropped = _tape.DropOut.Process(pitchWarped, amount, ref _noise, _sampleRate, _tapeSlew);

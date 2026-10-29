@@ -77,16 +77,12 @@ public class OpenAiSpeechRequest
 /// Normalized OpenAI voice reference. JSON may provide either a plain string or
 /// an object containing an <c>id</c>; both forms resolve to this single ID.
 /// </summary>
+/// <remarks>Stores the OpenAI voice ID without interpreting it as a model or cloning setting.</remarks>
 [JsonConverter(typeof(OpenAiVoiceJsonConverter))]
-public sealed class OpenAiVoice
+public sealed class OpenAiVoice(string id)
 {
-    /// <summary>Stores the OpenAI voice ID without interpreting it as a model or cloning setting.</summary>
-    public OpenAiVoice(string id)
-    {
-        Id = id;
-    }
 
-    public string Id { get; }
+    public string Id { get; } = id;
 }
 /// <summary>
 /// Accepts both OpenAI voice JSON shapes:

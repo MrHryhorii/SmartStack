@@ -29,11 +29,36 @@ internal static class AudioEffectsChecks
                     $"Negative decision boundary differs at {value}.");
         });
 
+        check("Effect histories are allocated on first use and retained across resets", () =>
+        {
+            var delayField = typeof(AudioEffectsEngine).GetField("_delay", BindingFlags.Instance | BindingFlags.NonPublic)!;
+            var engine = NewEngine(22050);
+            Require(delayField.GetValue(engine) is null && ((float[])CaptureField.GetValue(engine)!).Length == 0,
+                "An inactive engine allocated algorithm histories.");
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Chorus, 0);
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Telephone, .5f);
+            Require(delayField.GetValue(engine) is null && ((float[])CaptureField.GetValue(engine)!).Length == 0,
+                "Bypass or a filter effect allocated delay/capture histories.");
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.Chorus, 1);
+            object delay = delayField.GetValue(engine)!;
+            Require(delay is not null && ((float[])CaptureField.GetValue(engine)!).Length == 0,
+                "Modulation needs only its delay history.");
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.DecoderGlitch, 1);
+            float[] capture = (float[])CaptureField.GetValue(engine)!;
+            Require(capture.Length == 4096, "Glitch capture was not prepared.");
+            engine.Reset(123456);
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.LoFiTape, 1);
+            engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.DecoderGlitch, 1);
+            Require(ReferenceEquals(delayField.GetValue(engine), delay) && ReferenceEquals(CaptureField.GetValue(engine), capture),
+                "Reset or effect switching replaced reusable histories.");
+        });
+
         foreach (int rate in Rates)
         {
             check($"Rolling glitch retains the reference capture duration at {rate} Hz", () =>
             {
                 var engine = NewEngine(rate);
+                engine.ApplyEffect(Span<float>.Empty, VoiceEffectType.DecoderGlitch, 1);
                 int length = ((float[])CaptureField.GetValue(engine)!).Length;
                 Require(Math.Abs((double)length / rate - 4096.0 / 22050) <= .5 / rate + 1e-12,
                     "Capture capacity changed the physical replacement interval.");

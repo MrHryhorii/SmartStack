@@ -8,35 +8,17 @@ internal static class TelephoneMixingChecks
     {
         foreach (int rate in new[] { 8000, 11025, 16000, 22050, 24000, 44100, 48000, 96000, 192000 })
         {
-            check($"Telephone mixes fixed endpoints and matches power at {rate} Hz", () =>
+            check($"Telephone streams the fixed endpoint through the common mixer at {rate} Hz", () =>
             {
-                float[] dry = Signal(rate, rate / 2), full = (float[])dry.Clone();
+                float[] dry = Signal(rate, rate/2), full = (float[])dry.Clone();
                 NewEngine(rate).ApplyEffect(full, VoiceEffectType.Telephone, 1);
-                double pd = Power(dry), pw = Power(full);
-                foreach (float amount in new[] { 0f, .001f, .00101f, .01f, .1f, .25f, .5f, .75f, .99f, 1f })
+                foreach (float amount in new[]{0f,.001f,.00101f,.01f,.1f,.25f,.5f,.75f,.99f,1f})
                 {
-                    float[] actual = (float[])dry.Clone();
-                    NewEngine(rate).ApplyEffect(actual, VoiceEffectType.Telephone, amount);
-                    if (amount <= .001f) { Require(Same(dry, actual), "Bypass changed clean PCM."); continue; }
-                    if (amount == 1) { Require(Same(full, actual), "Full Telephone changed."); continue; }
-                    double expected = (1 - (double)amount) * pd + amount * pw;
-                    Require(Math.Abs(10 * Math.Log10(Power(actual) / expected)) < 1e-6,
-                        "Telephone did not match its independently measured endpoint powers.");
-                    double rawPower = 0, cross = 0;
-                    for (int i = 0; i < dry.Length; i++)
-                    {
-                        double raw = (1 - (double)amount) * dry[i] + amount * (double)full[i];
-                        rawPower += raw * raw;
-                        cross += raw * actual[i];
-                    }
-                    double scalar = cross / rawPower, residual = 0;
-                    for (int i = 0; i < dry.Length; i++)
-                    {
-                        double raw = (1 - (double)amount) * dry[i] + amount * (double)full[i];
-                        residual += Math.Pow(actual[i] - scalar * raw, 2);
-                    }
-                    Require(residual / (actual.Length * expected) < 1e-12,
-                        "Intensity changed Telephone processing instead of the endpoint blend.");
+                    float[] actual=(float[])dry.Clone(), expected=(float[])full.Clone();
+                    NewEngine(rate).ApplyEffect(actual,VoiceEffectType.Telephone,amount);
+                    if(amount<=.001f) dry.CopyTo(expected,0);
+                    else new StreamingPowerMatchedMixer(rate).Mix(dry,expected,amount);
+                    Require(Same(actual,expected),"Telephone changed its fixed wet endpoint or mixer wiring.");
                 }
             });
             check($"Telephone retains full wet state while intensity changes at {rate} Hz", () =>
@@ -53,20 +35,13 @@ internal static class TelephoneMixingChecks
                     if (amount == 1) Require(Same(actual, full), "Intensity changed the full wet filter or noise state.");
                 }
             });
-            check($"Telephone matches each analysis buffer while retaining streaming state at {rate} Hz", () =>
+            check($"Telephone mixed processing is independent of analysis partitions at {rate} Hz", () =>
             {
-                float[] input = Signal(rate, rate / 2);
-                var actualEngine = NewEngine(rate); var fullEngine = NewEngine(rate);
-                for (int start = 0; start < input.Length; start += 257)
-                {
-                    float[] dry = input.AsSpan(start, Math.Min(257, input.Length - start)).ToArray();
-                    float[] actual = (float[])dry.Clone(), full = (float[])dry.Clone();
-                    fullEngine.ApplyEffect(full, VoiceEffectType.Telephone, 1);
-                    actualEngine.ApplyEffect(actual, VoiceEffectType.Telephone, .5f);
-                    double expected = .5 * (Power(dry) + Power(full));
-                    Require(Math.Abs(10 * Math.Log10(Power(actual) / expected)) < 1e-6,
-                        "A streamed analysis buffer lost its power target.");
-                }
+                float[] whole=Signal(rate,rate/2),split=(float[])whole.Clone();
+                NewEngine(rate).ApplyEffect(whole,VoiceEffectType.Telephone,.5f);var engine=NewEngine(rate);
+                for(int i=0;i<split.Length;i+=37)
+                    engine.ApplyEffect(split.AsSpan(i,Math.Min(37,split.Length-i)),VoiceEffectType.Telephone,.5f);
+                Require(Same(whole,split),"A callback boundary changed mixed Telephone PCM.");
             });
             check($"Telephone full processing remains independent of partitions at {rate} Hz", () =>
             {

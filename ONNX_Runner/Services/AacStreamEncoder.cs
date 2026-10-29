@@ -1086,21 +1086,16 @@ internal sealed class AacStreamEncoder : IDisposable
     /// <summary>
     /// Minimal MSB-first bit writer for one AAC raw_data_block inside a pooled ADTS buffer.
     /// </summary>
-    private struct AacBitWriter
-    {
-        private readonly byte[] _buffer;
-        private int _byteIndex;
-        private int _bitsUsed;
+    /// <remarks>Starts a bit writer at the payload offset in the supplied encoder buffer.</remarks>
+    private struct AacBitWriter(
+        byte[] buffer,
+        int startIndex)
 
-        /// <summary>Starts a bit writer at the payload offset in the supplied encoder buffer.</summary>
-        public AacBitWriter(
-            byte[] buffer,
-            int startIndex)
-        {
-            _buffer = buffer;
-            _byteIndex = startIndex;
-            _bitsUsed = 0;
-        }
+    {
+        private readonly byte[] _buffer = buffer;
+        private int _byteIndex = startIndex;
+        private int _bitsUsed = 0;
+
 
         /// <summary>Writes the requested low-order bits most significant bit first, rejecting buffer overflow.</summary>
         public void WriteBits(

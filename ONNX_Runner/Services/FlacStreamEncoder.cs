@@ -749,19 +749,13 @@ internal sealed class FlacStreamEncoder : IDisposable
     /// <summary>
     /// Minimal MSB-first bit writer that writes directly into one pooled frame buffer.
     /// </summary>
-    private struct FrameBitWriter
+    /// <remarks>Starts a bit writer at the subframe offset in the supplied output buffer.</remarks>
+    private struct FrameBitWriter(byte[] buffer, int startIndex)
     {
-        private readonly byte[] _buffer;
-        private int _byteIndex;
-        private int _bitsUsed;
+        private readonly byte[] _buffer = buffer;
+        private int _byteIndex = startIndex;
+        private int _bitsUsed = 0;
 
-        /// <summary>Starts a bit writer at the subframe offset in the supplied output buffer.</summary>
-        public FrameBitWriter(byte[] buffer, int startIndex)
-        {
-            _buffer = buffer;
-            _byteIndex = startIndex;
-            _bitsUsed = 0;
-        }
 
         /// <summary>Writes a signed value using the requested two's-complement bit width.</summary>
         public void WriteSigned(int value, int bitCount)

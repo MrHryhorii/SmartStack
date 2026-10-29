@@ -8,26 +8,19 @@ namespace ONNX_Runner.Services;
 /// arrays on every Write call. A single pooled output buffer is reused for the lifetime of
 /// the response and only 0-2 raw carry bytes are retained between calls.
 /// </summary>
-public sealed class Base64EncodingStream : Stream
+/// <remarks>Wraps an output stream with pooled incremental Base64 encoding and configurable inner-stream ownership.</remarks>
+public sealed class Base64EncodingStream(Stream inner, bool leaveInnerOpen = false) : Stream
 {
     private const int EncodedBufferSize = 16 * 1024;
 
-    private readonly Stream _inner;
-    private readonly bool _leaveInnerOpen;
+    private readonly Stream _inner = inner ?? throw new ArgumentNullException(nameof(inner));
+    private readonly bool _leaveInnerOpen = leaveInnerOpen;
     private readonly byte[] _carry = new byte[2];
 
-    private byte[]? _encodedBuffer;
+    private byte[]? _encodedBuffer = ArrayPool<byte>.Shared.Rent(EncodedBufferSize);
     private int _carryCount;
     private bool _finalized;
     private bool _disposed;
-
-    /// <summary>Wraps an output stream with pooled incremental Base64 encoding and configurable inner-stream ownership.</summary>
-    public Base64EncodingStream(Stream inner, bool leaveInnerOpen = false)
-    {
-        _inner = inner ?? throw new ArgumentNullException(nameof(inner));
-        _leaveInnerOpen = leaveInnerOpen;
-        _encodedBuffer = ArrayPool<byte>.Shared.Rent(EncodedBufferSize);
-    }
 
     public override bool CanRead => false;
     public override bool CanSeek => false;

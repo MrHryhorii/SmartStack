@@ -29,12 +29,12 @@ internal static class CrusherMixingChecks
             Require(State<float>(engine, "Phase") == 1f && State<float>(engine, "Scale") == 512f,
                 "Empty preparation advanced transport or failed to set depth.");
         });
-        check("Crusher matching reaches the clean power of the entire supplied fragment", () =>
+        check("Crusher matching tracks a settled constant voice-band tone", () =>
         {
-            const int rate = 22050;
-            float[] source = Signal(rate, rate), output = (float[])source.Clone();
-            NewEngine(rate).ApplyEffect(output, VoiceEffectType.Bitcrusher, 1f);
-            Require(Math.Abs(Level(output) - Level(source)) < 1e-5, "Full-effect mean-square target was missed.");
+            const int rate=22050;
+            float[] source=Enumerable.Range(0,rate*4).Select(i=>.3f*(float)Math.Sin(2*Math.PI*1000*i/rate)).ToArray();
+            float[] output=(float[])source.Clone();NewEngine(rate).ApplyEffect(output,VoiceEffectType.Bitcrusher,1);
+            Require(Math.Abs(Level(output.AsSpan(rate))-Level(source.AsSpan(rate)))<.02,"Settled playback missed the reference power.");
         });
         check("Crusher active matching allocates no managed bytes", () =>
         {
@@ -113,20 +113,15 @@ internal static class CrusherMixingChecks
                 Require(SameBits(a, b), "Crusher's adaptive DC corner leaked into Telephone.");
             });
         }
-        check("Bitcrusher full-strength playback matches the clean synthetic level", () =>
+        check("Bitcrusher full-strength gain is not recomputed for individual samples", () =>
         {
-            const int rate = 22050;
-            var source = new float[rate * 3];
-            for (int i = 0; i < source.Length; i++)
-            {
-                double t = i / (double)rate;
-                source[i] = (float)((.18 * Math.Sin(2 * Math.PI * 110 * t) + .08 * Math.Sin(2 * Math.PI * 330 * t)
-                    + .05 * Math.Sin(2 * Math.PI * 1700 * t) + .03 * Math.Sin(2 * Math.PI * 3200 * t))
-                    * (.7 + .3 * Math.Sin(2 * Math.PI * .73 * t)));
-            }
-            double expected = Level(source);
-            NewEngine(rate).ApplyEffect(source, VoiceEffectType.Bitcrusher, 1f);
-            Require(Math.Abs(Level(source) - expected) < 1e-5, "Full-strength playback missed the clean power target.");
+            const int rate=22050;float[] input=Signal(rate,rate,.6f),output=(float[])input.Clone();
+            var engine=NewEngine(rate);
+            for(int i=0;i<output.Length;i++)engine.ApplyEffect(output.AsSpan(i,1),VoiceEffectType.Bitcrusher,1);
+            int eligible=0,reconstructed=0;
+            for(int i=0;i<output.Length;i++)if(Math.Abs(input[i])>.04f)
+            {eligible++;if(Math.Abs(Math.Abs(input[i])-Math.Abs(output[i]))<1e-6)reconstructed++;}
+            Require(reconstructed<eligible*.01,"Per-sample matching reconstructed the original source amplitudes.");
         });
     }
 

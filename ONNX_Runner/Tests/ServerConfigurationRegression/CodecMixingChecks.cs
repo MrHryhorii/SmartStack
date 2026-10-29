@@ -32,11 +32,8 @@ internal static class CodecMixingChecks
                     Engine(rate).ApplyEffect(actual, effect, amount);
                     if (amount <= .001f) { Require(Same(dry, actual), "Codec bypass changed PCM."); continue; }
                     if (amount == 1) { Require(Same(full, actual), "The full codec endpoint changed."); continue; }
-                    Require(Same(Expected(dry, full, amount), actual),
+                    Require(Same(Expected(dry, full, amount, rate), actual),
                         "Codec intensity changed the fixed wet character or the shared mixing law.");
-                    double target = (1 - (double)amount) * Power(dry) + amount * Power(full);
-                    Require(Math.Abs(10 * Math.Log10(Power(actual) / target)) < 1e-6,
-                        "The codec did not restore the interpolated endpoint power.");
                 }
             });
             check($"{effect} retains fixed wet state while intensity changes at {rate} Hz", () =>
@@ -49,13 +46,14 @@ internal static class CodecMixingChecks
                     float[] input = Signal(rate, 257, step * 257), a = (float[])input.Clone(), b = (float[])input.Clone();
                     if (amount > .001f) full.ApplyEffect(b, effect, 1);
                     actual.ApplyEffect(a, effect, amount);
-                    float[] expected = amount <= .001f ? input : amount == 1 ? b : Expected(input, b, amount);
+                    float[] expected = amount <= .001f ? input : amount == 1 ? b : Expected(input, b, amount, rate);
                     Require(Same(expected, a), "Intensity changed codec/filter/noise state instead of only mixing.");
                 }
             });
-            check($"{effect} restores each analysis buffer while retaining wet stream state at {rate} Hz", () =>
+            check($"{effect} retains one mixer clock and its wet stream state at {rate} Hz", () =>
             {
                 var actual = Engine(rate); var full = Engine(rate);
+                var mixer = new StreamingPowerMatchedMixer(rate);
                 float[] source = Signal(rate, rate / 3);
                 for (int offset = 0; offset < source.Length; offset += 257)
                 {
@@ -63,7 +61,7 @@ internal static class CodecMixingChecks
                     float[] a = (float[])dry.Clone(), b = (float[])dry.Clone();
                     full.ApplyEffect(b, effect, 1);
                     actual.ApplyEffect(a, effect, .5f);
-                    Require(Same(Expected(dry, b, .5f), a), "The analysis buffer used incorrect codec state or power.");
+                    Require(Same(Expected(dry, b, .5f, rate, mixer), a), "The streaming mixer used incorrect codec state or power.");
                 }
             });
             check($"{effect} full processing is independent of partitions at {rate} Hz", () =>
@@ -129,6 +127,7 @@ internal static class CodecMixingChecks
                 float[] full = (float[])source.Clone();
                 Engine(rate).ApplyEffect(full, effect, 1);
                 var engine = Engine(rate);
+                var tailMixer = new StreamingPowerMatchedMixer(rate);
                 for (int offset = 0; offset < source.Length; offset += rate / 2)
                 {
                     int length = Math.Min(rate / 2, source.Length - offset);
@@ -136,7 +135,7 @@ internal static class CodecMixingChecks
                     float[] wet = full.AsSpan(offset, length).ToArray();
                     float[] actual = (float[])dry.Clone();
                     engine.ApplyEffect(actual, effect, .05f);
-                    Require(actual.All(float.IsFinite) && Same(Expected(dry, wet, .05f), actual),
+                    Require(actual.All(float.IsFinite) && Same(Expected(dry, wet, .05f, rate, tailMixer), actual),
                         "A silent-tail buffer changed wet state or created invalid normalization.");
                 }
             });
@@ -161,22 +160,12 @@ internal static class CodecMixingChecks
         }
     }
 
-    private static float[] Expected(float[] dry, float[] full, float amount)
+    private static float[] Expected(float[] dry, float[] full, float amount, int rate,
+        StreamingPowerMatchedMixer? mixer=null)
     {
-        float[] mixed = new float[dry.Length];
-        double sourceEnergy = 0, wetEnergy = 0, mixedEnergy = 0;
-        for (int i = 0; i < mixed.Length; i++)
-        {
-            mixed[i] = (float)((1 - (double)amount) * dry[i] + amount * (double)full[i]);
-            sourceEnergy += dry[i] * (double)dry[i];
-            wetEnergy += full[i] * (double)full[i];
-            mixedEnergy += mixed[i] * (double)mixed[i];
-        }
-        if (mixedEnergy == 0) return mixed;
-        double target = ((1 - (double)amount) * sourceEnergy + amount * wetEnergy) / mixed.Length;
-        double gain = Math.Sqrt(target / (mixedEnergy / mixed.Length));
-        for (int i = 0; i < mixed.Length; i++) mixed[i] = (float)(mixed[i] * gain);
-        return mixed;
+        float[] output=(float[])full.Clone();
+        (mixer??new StreamingPowerMatchedMixer(rate)).Mix(dry,output,amount);
+        return output;
     }
 
     private static AudioEffectsEngine Engine(int rate)

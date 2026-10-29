@@ -28,12 +28,8 @@ internal static class FmMixingChecks
                 {
                     float[] actual = (float[])source.Clone();
                     Engine(rate).ApplyEffect(actual, VoiceEffectType.FmRadio, amount);
-                    float[] expected = amount <= .001f ? source : amount == 1 ? full : Mix(dry, full, amount);
+                    float[] expected = amount <= .001f ? source : amount == 1 ? full : Mix(dry, full, amount, rate);
                     Require(Same(actual, expected), "FM used an unaligned clean signal or changed the fixed wet endpoint.");
-                    if (amount <= .001f) continue;
-                    double target = (1 - (double)amount) * Power(dry) + amount * Power(full);
-                    Require(Math.Abs(10 * Math.Log10(Power(actual) / target)) < 1e-6,
-                        "FM did not restore the selected aligned endpoint power.");
                 }
             });
             check($"FM keeps full wet processing independent of partitions at {rate} Hz", () =>
@@ -61,39 +57,31 @@ internal static class FmMixingChecks
                         dry = Delayed(source, clean);
                     }
                     actual.ApplyEffect(output, VoiceEffectType.FmRadio, amount);
-                    float[] expected = amount <= .001f ? source : amount == 1 ? full : Mix(dry, full, amount);
+                    float[] expected = amount <= .001f ? source : amount == 1 ? full : Mix(dry, full, amount, rate);
                     Require(Same(output, expected), "Intensity or bypass changed retained FM state.");
                 }
             });
-            check($"FM completion restores aligned tail energy and terminates at {rate} Hz", () =>
+            check($"FM completion matches a continuous padded stream at {rate} Hz", () =>
             {
-                foreach (float amount in new[] { .05f, .5f, 1f })
-                foreach (int capacity in new[] { 1, 31, rate / 50 })
+                foreach(float amount in new[]{.05f,.5f,1f})
+                foreach(int capacity in new[]{1,31,rate/50})
                 {
-                    var engine = Engine(rate); var reference = Engine(rate);
-                    var clean = new Queue<float>(Enumerable.Repeat(0f, delay));
-                    float[] source = Signal(rate, rate / 20 + 3), full = (float[])source.Clone(), output = (float[])source.Clone();
-                    source[^1] = full[^1] = output[^1] = .3f;
-                    reference.ApplyEffect(full, VoiceEffectType.FmRadio, 1);
-                    engine.ApplyEffect(output, VoiceEffectType.FmRadio, amount);
-                    Delayed(source, clean);
-                    Completion drain = Complete(engine), referenceDrain = Complete(reference);
-                    Require(drain(Span<float>.Empty) == 0, "Empty completion consumed FM state.");
-                    float[] a = new float[capacity], b = new float[capacity], zeros = new float[capacity];
-                    int written = 0, count;
-                    while ((count = referenceDrain(b)) > 0)
+                    float[] source=Signal(rate,rate/20+3);source[^1]=.3f;
+                    float[] padded=source.Concat(new float[rate/4]).ToArray(),full=(float[])padded.Clone();
+                    Engine(rate).ApplyEffect(full,VoiceEffectType.FmRadio,1);
+                    float[] dry=Delayed(padded,new Queue<float>(Enumerable.Repeat(0f,delay)));
+                    float[] expected=Mix(dry,full,amount,rate);
+                    var engine=Engine(rate);float[] first=(float[])source.Clone();engine.ApplyEffect(first,VoiceEffectType.FmRadio,amount);
+                    Completion drain=Complete(engine);Require(drain(Span<float>.Empty)==0,"Empty completion consumed time.");
+                    var output=new List<float>(first);var block=new float[capacity];int count;
+                    while((count=drain(block))>0)
                     {
-                        int actualCount = drain(a);
-                        Require(actualCount == count, "Partial FM completion truncated the fixed wet response.");
-                        float[] dry = Delayed(zeros.AsSpan(0, count), clean);
-                        float[] expected = amount == 1 ? b.AsSpan(0, count).ToArray() : Mix(dry, b.AsSpan(0, count), amount);
-                        Require(Same(a.AsSpan(0, count), expected), "FM tail used a different mix or an unaligned reference.");
-                        Require(a.AsSpan(0, count).ToArray().All(float.IsFinite), "FM completion created a non-finite sample.");
-                        written += count;
-                        Require(written < rate / 4, "FM completion did not terminate.");
+                        output.AddRange(block.AsSpan(0,count).ToArray());
+                        Require(output.Count-source.Length<rate/4,"Completion did not terminate.");
                     }
-                    Require(written >= 2 * delay && drain(a) == 0 && drain(a) == 0,
-                        "FM completion lost its retained final response or was not idempotent.");
+                    Require(Same(output.ToArray(),expected.AsSpan(0,output.Count)),"Completion changed the continuous mixer clock.");
+                    Require(expected.AsSpan(output.Count).ToArray().All(x=>Math.Abs(x)<1.001e-7f),"Completion omitted an audible residual.");
+                    Require(output.Count-source.Length>=2*delay && drain(block)==0,"Completion lost retained input or was not idempotent.");
                 }
             });
             check($"FM reset and silence preserve finite reproducible PCM at {rate} Hz", () =>
@@ -162,19 +150,9 @@ internal static class FmMixingChecks
             Require(Math.Abs(voice[indices[i]] - expected[i] * gain) < 3e-6, "The full FM fixture waveform changed.");
     }
 
-    private static float[] Mix(ReadOnlySpan<float> dry, ReadOnlySpan<float> full, float amount)
+    private static float[] Mix(ReadOnlySpan<float> dry, ReadOnlySpan<float> full, float amount, int rate)
     {
-        float[] mixed = new float[dry.Length]; double source = 0, wet = 0, actual = 0;
-        for (int i = 0; i < mixed.Length; i++)
-        {
-            mixed[i] = (float)((1 - (double)amount) * dry[i] + amount * (double)full[i]);
-            source += dry[i] * (double)dry[i]; wet += full[i] * (double)full[i]; actual += mixed[i] * (double)mixed[i];
-        }
-        if (actual == 0) return mixed;
-        double targetPower = ((1 - (double)amount) * source + amount * wet) / mixed.Length;
-        double gain = Math.Sqrt(targetPower / (actual / mixed.Length));
-        for (int i = 0; i < mixed.Length; i++) mixed[i] = (float)(mixed[i] * gain);
-        return mixed;
+        float[] output=full.ToArray();new StreamingPowerMatchedMixer(rate).Mix(dry,output,amount);return output;
     }
     private static float[] Delayed(ReadOnlySpan<float> source, Queue<float> history)
     {

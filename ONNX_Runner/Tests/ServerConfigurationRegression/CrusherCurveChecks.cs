@@ -9,16 +9,16 @@ internal static class CrusherCurveChecks
         foreach (int rate in new[] { 8000, 16000, 22050, 48000, 96000 })
         foreach (float amplitude in new[] { .08f, .2f, .6f })
         {
-            check($"Crusher matches clean mean-square power across intensity at {rate} Hz and amplitude {amplitude:R}", () =>
+            check($"Crusher tracks settled clean mean-square power across intensity at {rate} Hz and amplitude {amplitude:R}", () =>
             {
-                float[] source = Signal(rate, rate, amplitude);
-                double target = PowerMatcher.Measure(source);
+                float[] source = Signal(rate, rate*4, amplitude);
+                double target = PowerMatcher.Measure(source.AsSpan(rate));
                 foreach (float amount in new[] { .00101f, .01f, .1f, .25f, .5f, .75f, .95f, 1f })
                 {
                     float[] output = (float[])source.Clone();
                     NewEngine(rate).ApplyEffect(output, VoiceEffectType.Bitcrusher, amount);
-                    double actual = PowerMatcher.Measure(output);
-                    Require(actual > 0 && Math.Abs(10 * Math.Log10(actual / target)) < 1e-5,
+                    double actual = PowerMatcher.Measure(output.AsSpan(rate));
+                    Require(actual > 0 && Math.Abs(10 * Math.Log10(actual / target)) < .05,
                         "Playback no longer matches the measured clean target.");
                 }
             });
@@ -37,23 +37,16 @@ internal static class CrusherCurveChecks
                 NewEngine(rate).ApplyEffect(quiet, VoiceEffectType.Bitcrusher, 1f);
                 Require(quiet.All(x => x == 0f), "Matching restored samples removed by the four-bit dead zone.");
             });
-            check($"Crusher matches voice-sized streaming fragments at {rate} Hz", () =>
+            check($"Crusher output is independent of fragment sizes at {rate} Hz", () =>
             {
-                float[] source = Signal(rate, rate, .2f);
-                foreach (int size in new[] { rate / 8, rate / 2 })
+                float[] source=Signal(rate,rate,.2f),whole=(float[])source.Clone();
+                NewEngine(rate).ApplyEffect(whole,VoiceEffectType.Bitcrusher,.75f);
+                foreach(int size in new[]{1,37,rate/8,rate/2})
                 {
-                    var engine = NewEngine(rate);
-                    for (int offset = 0; offset < source.Length; offset += size)
-                    {
-                        float[] block = source.AsSpan(offset, Math.Min(size, source.Length - offset)).ToArray();
-                        double target = PowerMatcher.Measure(block);
-                        engine.ApplyEffect(block, VoiceEffectType.Bitcrusher, .75f);
-                        double actual = PowerMatcher.Measure(block);
-                        Require(block.All(float.IsFinite), "A short block produced invalid PCM.");
-                        if (actual == 0 || block.Length < rate / 100) continue;
-                        Require(Math.Abs(10 * Math.Log10(actual / target)) < 1e-5,
-                            "A nonzero fragment missed its own power target.");
-                    }
+                    float[] split=(float[])source.Clone();var engine=NewEngine(rate);
+                    for(int start=0;start<split.Length;start+=size)
+                        engine.ApplyEffect(split.AsSpan(start,Math.Min(size,split.Length-start)),VoiceEffectType.Bitcrusher,.75f);
+                    Require(whole.AsSpan().SequenceEqual(split),"A callback boundary changed the quantized output or gain.");
                 }
             });
         }
