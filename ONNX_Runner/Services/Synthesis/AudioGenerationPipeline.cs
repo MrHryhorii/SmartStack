@@ -71,7 +71,7 @@ internal static class AudioGenerationPipeline
             ? AudioEqualizer.Create(request.Equalizer ?? ctx.EffectsConfig.DefaultEqualizer, ctx.ProcessingSampleRate)
             : null;
 
-        AudioEffectsEngine? effectsEngine = useEffect
+        using AudioEffectsEngine? effectsEngine = useEffect
             ? new AudioEffectsEngine(ctx.EffectsConfig, ctx.ProcessingSampleRate)
             : null;
         SpatialEffectsEngine? spatialEngine = useEnvironment
@@ -414,7 +414,8 @@ internal static class AudioGenerationPipeline
                             currentLength = r2.Length;
                         }
                         // Apply character effects before spatial acoustics.
-                        effectsEngine?.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount);
+                        currentLength = effectsEngine?.ApplyEffect(currentBuffer.AsSpan(0, currentLength), effectType, effectAmount)
+                            ?? currentLength;
 
                         // Apply spatial acoustics AFTER character effects.
                         spatialEngine?.ApplyEnvironment(currentBuffer.AsSpan(0, currentLength), envType, envIntensity);
@@ -430,11 +431,12 @@ internal static class AudioGenerationPipeline
                         {
                             Array.Clear(absoluteSilence, 0, absoluteSilence.Length);
                             // Advance the same DSP state during pauses, then filter the resulting tails.
-                            effectsEngine?.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount);
-                            spatialEngine?.ApplyEnvironment(absoluteSilence.AsSpan(), envType, envIntensity);
-                            equalizer?.Apply(absoluteSilence.AsSpan());
+                            int pauseLength = effectsEngine?.ApplyEffect(absoluteSilence.AsSpan(), effectType, effectAmount)
+                                ?? absoluteSilence.Length;
+                            spatialEngine?.ApplyEnvironment(absoluteSilence.AsSpan(0, pauseLength), envType, envIntensity);
+                            equalizer?.Apply(absoluteSilence.AsSpan(0, pauseLength));
 
-                            WriteOutput(absoluteSilence.AsSpan(), streamManager, outputResampler, filter, outputVolume);
+                            WriteOutput(absoluteSilence.AsSpan(0, pauseLength), streamManager, outputResampler, filter, outputVolume);
                         }
                         // Keep flushing every generated chunk so an EarlySplit chunk reaches the client
                         // immediately. The setting name is retained for configuration compatibility.

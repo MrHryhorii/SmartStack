@@ -34,6 +34,17 @@ NAudio.Midi 2.2.1, NAudio.Wasapi 2.2.1, NAudio.WinMM 2.2.1
 NAudio.Lame 2.1.0 - MIT - https://github.com/Corey-M/NAudio.Lame
 SearchPioneer.Lingua 2.0.0 - Apache-2.0 - https://github.com/searchpioneer/lingua-dotnet
 SoundTouch.Net 2.3.2 - LGPL-2.1-or-later - https://github.com/owoudenberg/soundtouch.net
+SignalsmithStretch-CS 1.1.2 - wrapper source MIT-0; package metadata MIT
+  https://github.com/Estrol/signalsmith-stretch-cs
+  Includes the native Signalsmith Stretch DSP core (MIT) and Signalsmith
+  Linear FFT/STFT code (MIT). Preserve all three original license texts in
+  THIRD_PARTY_LICENSES/SignalsmithStretch/ and its PROVENANCE.txt, which records
+  exact source versions, the metadata/source license distinction, and hashes
+  of the unchanged Windows x64 and Linux x64 package binaries.
+  The corresponding-source helper also stages pinned wrapper/core/FFT source
+  snapshots and includes them in the separate matching source download.
+  This dependency was added after the historical restore snapshots described
+  above. Each new publish records its current package graph automatically.
 Swashbuckle.AspNetCore 10.1.7, .Swagger 10.1.7, .SwaggerGen 10.1.7,
 .SwaggerUI 10.1.7 - MIT - https://github.com/domaindrivendev/Swashbuckle.AspNetCore
   SwaggerUI includes embedded swagger-ui assets, licensed Apache-2.0:

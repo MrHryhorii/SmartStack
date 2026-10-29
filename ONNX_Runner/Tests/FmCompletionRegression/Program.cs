@@ -74,7 +74,7 @@ internal static class FmCompletionRegressionProgram
         }
         Check("Other character effects do not generate new request tails", () =>
         {
-            foreach (VoiceEffectType type in Enum.GetValues<VoiceEffectType>().Where(x => x != VoiceEffectType.FmRadio))
+            foreach (VoiceEffectType type in Enum.GetValues<VoiceEffectType>().Where(x => x != VoiceEffectType.FmRadio && x != VoiceEffectType.Harmonizer))
             {
                 var engine = new AudioEffectsEngine(new(), 22050);
                 engine.Reset(123456);

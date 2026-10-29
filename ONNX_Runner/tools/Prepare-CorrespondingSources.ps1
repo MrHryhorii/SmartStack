@@ -57,6 +57,24 @@ function Assert-Revision([string]$Directory, [string]$Expected) {
     }
 }
 
+# Stages the pinned wrapper, DSP core and FFT source without rebuilding package binaries.
+function Get-SignalsmithSources([string]$Destination) {
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    $sources = @(
+        @{ Repository = 'Estrol/signalsmith-stretch-cs'; Revision = 'e5faf63b84e9839743703ded7acc29ebc96ded97'; File = 'signalsmith-stretch-cs-e5faf63b84e9839743703ded7acc29ebc96ded97.tar.gz'; Sha256 = 'e476634b7ba2235d16fa1401f03804186f1dd53a08496378387f25e29519e573' },
+        @{ Repository = 'Signalsmith-Audio/signalsmith-stretch'; Revision = '2133f41a8f2766d2ade2e665fcf04f9ff7fd74a7'; File = 'signalsmith-stretch-2133f41a8f2766d2ade2e665fcf04f9ff7fd74a7.tar.gz'; Sha256 = '24b701df602ed739cca6056089e1855607ac25ec360103da8c014558a10b3984' },
+        @{ Repository = 'Signalsmith-Audio/linear'; Revision = '54faa9e9b2df4af625ce11823bbe641d89febb07'; File = 'signalsmith-linear-54faa9e9b2df4af625ce11823bbe641d89febb07.tar.gz'; Sha256 = '3a4a4364060e913b2469acc99a090aef28feab85d242e7871305ec6ce0ca3442' }
+    )
+    foreach ($source in $sources) {
+        $url = "https://codeload.github.com/$($source.Repository)/tar.gz/$($source.Revision)"
+        $archive = Join-Path $Destination $source.File
+        Save-Download $url $archive
+        Assert-Hash $archive $source.Sha256
+        [pscustomobject]@{ File = $source.File; Sha256 = $source.Sha256;
+            Repository = $source.Repository; Revision = $source.Revision; Url = $url }
+    }
+}
+
 $manifestFile = Join-Path $sourcesRoot 'SOURCE_MANIFEST.json'
 if ((Test-Path -LiteralPath $manifestFile -PathType Leaf) -and -not $Force) {
     $existing = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -74,6 +92,16 @@ if ((Test-Path -LiteralPath $manifestFile -PathType Leaf) -and -not $Force) {
         Assert-Hash (Join-Path $sourcesRoot $entry.File) $entry.Sha256
     }
     Assert-Hash (Join-Path $sourcesRoot 'SOURCE_REVISIONS.txt') $existing.SourceRevisionsSha256
+    $signalsmithSources = @(Get-SignalsmithSources $sourcesRoot)
+    $existing | Add-Member -NotePropertyName SignalsmithSources -NotePropertyValue $signalsmithSources -Force
+    $updatedManifest = "$manifestFile.signalsmith.partial"
+    try {
+        $existing | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $updatedManifest -Encoding UTF8
+        Move-Item -LiteralPath $updatedManifest -Destination $manifestFile -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $updatedManifest -Force -ErrorAction SilentlyContinue
+    }
     Write-Host "Reusing corresponding source at $sourcesRoot"
     return
 }
@@ -189,6 +217,10 @@ try {
         $supplemental.Add($file)
         $revisions.Add("codec-parser $version (npm package; version from decoder package-lock.json)")
     }
+    $signalsmithSources = @(Get-SignalsmithSources $stage)
+    foreach ($source in $signalsmithSources) {
+        $revisions.Add("$($source.Repository) $($source.Revision) (pinned source archive)")
+    }
     $revisions | Set-Content -LiteralPath (Join-Path $stage 'SOURCE_REVISIONS.txt') -Encoding UTF8
     foreach ($name in $sourceNames) {
         $archive = Join-Path $stage "$name.tar.gz"
@@ -200,7 +232,7 @@ try {
     }
 
     $manifest = [ordered]@{
-        Description = 'Source snapshots and matching npm packages for the bundled eSpeak and browser decoder binaries.'
+        Description = 'Source snapshots for eSpeak, browser decoders, and the Signalsmith wrapper, DSP core and FFT dependency.'
         EspeakDllSha256 = '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189'
         Mpg123BundleSha256 = $bundles[0].Hash
         OggOpusBundleSha256 = $bundles[1].Hash
@@ -213,6 +245,7 @@ try {
             $file = "$($_.Package)-$($_.Version).tgz"
             [ordered]@{ File = $file; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $file) -Algorithm SHA256).Hash.ToLowerInvariant() }
         })
+        SignalsmithSources = $signalsmithSources
         SupplementalPackages = @($supplemental | ForEach-Object {
             [ordered]@{ File = $_; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $_) -Algorithm SHA256).Hash.ToLowerInvariant() }
         })

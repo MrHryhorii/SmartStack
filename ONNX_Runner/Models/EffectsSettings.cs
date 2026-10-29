@@ -20,20 +20,23 @@ public enum VoiceEffectType
     /// <summary>Sine-wave amplitude modulation (classic robot / Dalek effect).</summary>
     RingModulator,
 
+    /// <summary>Three fixed harmony voices with preserved formants and measured-power intensity mixing.</summary>
+    Harmonizer,
+
     /// <summary>Short modulated delay with feedback (classic flanger effect).</summary>
     Flanger,
 
     /// <summary>Long modulated delay for a thick multi-voice effect.</summary>
     Chorus,
 
-    /// <summary>Simulates the warmth and coloration of analog cassette tape.</summary>
-    LoFiTape,
-
     /// <summary>Repeats short audio fragments to simulate a digital decoder glitch.</summary>
     DecoderGlitch,
 
     /// <summary>Military-grade CVSD codec simulation with heavy compression and slope-overload distortion.</summary>
     TacticalRadio,
+
+    /// <summary>Simulates the warmth and coloration of analog cassette tape.</summary>
+    LoFiTape,
 
     /// <summary>Analogue voice-radio audio approximation with fixed filtering and shared final peak protection.</summary>
     FmRadio,

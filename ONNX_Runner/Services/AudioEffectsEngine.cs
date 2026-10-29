@@ -39,7 +39,7 @@ namespace ONNX_Runner.Services;
 ///   - LFO phase increments (2pi * f / fs) are pre-computed per effect and stored in state structs.
 ///   - The ms-to-samples conversion factor is stored as a readonly field.
 ///   - G.711 uses integer segmented companding/expanding: no Log/Exp/Pow in the codec hot path.
-public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
+public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDisposable
 {
     // All sample-domain tuning is calibrated to the same voice-model rate.
     private const int ReferenceSampleRate = 22050;
@@ -284,6 +284,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
     private readonly BiQuadFilter[] _filters = new BiQuadFilter[5];
     private int _filterCount;
+    private HarmonizerProcessor? _harmonizer;
+    private bool _disposed;
     private FmRadioProcessor? _fmProcessor;
     private float _fmAmount;
     private StreamingPowerMatchedMixer? _powerMixer;
@@ -320,6 +322,9 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     public void Reset(uint? fixedSeed = null)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _harmonizer?.Dispose();
+        _harmonizer = null;
         _delay?.Clear();
         _dcBlocker.Reset();
         _fmProcessor?.Reset();
@@ -370,13 +375,17 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     }
 
     /// <summary>Reports retained audio for effects that support finite request completion.</summary>
-    internal bool HasPendingOutput => _current == VoiceEffectType.FmRadio && _fmProcessor != null &&
+    internal bool HasPendingOutput => _current == VoiceEffectType.Harmonizer
+        ? _harmonizer?.PendingSamples > 0
+        : _current == VoiceEffectType.FmRadio && _fmProcessor != null &&
         (_fmProcessor.PendingSamples > 0 || _dcBlocker.PendingMagnitude * FmOutputGain *
             (_fmAmount < 1f ? Math.Max(1, _fmAmount * StreamingPowerMatchedMixer.MaximumGain) : 1) > CompletionSilenceFloor);
 
     /// <summary>Writes retained effect audio only; repeated calls stop when its filters are drained.</summary>
     internal int Complete(Span<float> destination)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_current == VoiceEffectType.Harmonizer) return _harmonizer?.Complete(destination) ?? 0;
         if (destination.IsEmpty || !HasPendingOutput) return 0;
         if (_fmAmount >= 1f) return CompleteFmWet(destination, Span<float>.Empty);
         _powerMixer ??= new StreamingPowerMatchedMixer(_sampleRate);
@@ -428,17 +437,19 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// The amount parameter controls the intensity of the effect (0 = no effect, 1 = full effect).
     /// External blends retain the request amount; most wet algorithms receive an eased strength.
     /// FM, Telephone, G.711 and TacticalRadio keep fixed wet settings while intensity controls their blends.
-    /// Optimized for real-time processing with zero allocations in the audio thread.
+    /// Returns the ready prefix length; buffered effects retain priming audio until completion.
+    /// Optimized for real-time processing with zero managed allocations after preparation.
     /// </summary>
-    public void ApplyEffect(Span<float> buffer, VoiceEffectType type, float amount)
+    public int ApplyEffect(Span<float> buffer, VoiceEffectType type, float amount)
     {
+        ObjectDisposedException.ThrowIf(_disposed, this);
         if (!_config.EnableGlobalEffects || type == VoiceEffectType.None)
-            return;
+            return buffer.Length;
 
         // Fast-path bypass for CPU savings in server environments.
         // Keep the guard to skip DSP work and preserve bit-identical bypass, including warm state.
         if (amount <= 0.001f)
-            return;
+            return buffer.Length;
 
         if (_current != type)
         {
@@ -448,23 +459,30 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
             _current = type;
         }
 
+        if (type == VoiceEffectType.Harmonizer)
+        {
+            if (buffer.IsEmpty) return 0;
+            _harmonizer ??= new HarmonizerProcessor(_sampleRate);
+            return _harmonizer.Process(buffer, amount);
+        }
+
         RoutingMode mode = GetRoutingMode(type);
         if (mode == RoutingMode.PowerMatchedCrossfade)
         {
             ApplyPowerMatched(buffer, type, amount);
-            return;
+            return buffer.Length;
         }
 
         if (mode == RoutingMode.TapeInsert)
         {
             ApplyTape(buffer, amount);
-            return;
+            return buffer.Length;
         }
 
         if (mode == RoutingMode.CrusherInsert)
         {
             ApplyBitcrusher(buffer, amount);
-            return;
+            return buffer.Length;
         }
 
         if (mode == RoutingMode.ModulationInsert)
@@ -480,7 +498,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 float processed = chorus ? Chorus(reference) : Flanger(reference);
                 buffer[i] = level.Process(reference, processed);
             }
-            return;
+            return buffer.Length;
         }
 
         if (mode == RoutingMode.RingInsert)
@@ -501,7 +519,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
                 float processed = _dcBlocker.Process(RingMod(filtered));
                 buffer[i] = level.Process(input, processed);
             }
-            return;
+            return buffer.Length;
         }
 
         // Strengthen the wet algorithm before its contribution is reduced by the outer blend.
@@ -552,6 +570,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
 
             }
         }
+        return buffer.Length;
     }
 
     // =========================================================================
@@ -587,6 +606,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
     /// </summary>
     private void Setup(VoiceEffectType type)
     {
+        _harmonizer?.Dispose();
+        _harmonizer = null;
         _filterCount = 0;
         _powerMixer?.Reset();
         _dcBlocker.SetCutoff(35f);
@@ -1690,6 +1711,16 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate)
         return (short)((u & 0x80) != 0
             ? Bias - t
             : t - Bias);
+    }
+
+    /// <summary>Releases request-owned native processing state, including canceled requests.</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _harmonizer?.Dispose();
+        _harmonizer = null;
+        _current = VoiceEffectType.None;
     }
 
 }

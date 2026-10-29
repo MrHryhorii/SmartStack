@@ -19,12 +19,8 @@ internal static class AudioEffectSampleRateChecks
                     float[] source = Signal(rate, rate / 4);
                     foreach (float amount in new[] { 0f, .25f, .5f, 1f })
                     {
-                        float[] whole = (float[])source.Clone();
-                        float[] split = (float[])source.Clone();
-                        NewEngine(rate).ApplyEffect(whole, effect, amount);
-                        var engine = NewEngine(rate);
-                        for (int offset = 0; offset < split.Length; offset += 257)
-                            engine.ApplyEffect(split.AsSpan(offset, Math.Min(257, split.Length - offset)), effect, amount);
+                        float[] whole = Render(source, rate, effect, amount, source.Length);
+                        float[] split = Render(source, rate, effect, amount, 257);
                         Require(whole.AsSpan().SequenceEqual(split), "Callback partitions changed effect PCM.");
                         Require(split.All(value => float.IsFinite(value) && Math.Abs(value) < 2),
                             "Fragmented moderate input produced invalid or excessive output.");
@@ -36,7 +32,7 @@ internal static class AudioEffectSampleRateChecks
                 });
                 check($"{effect} hot processing allocates no managed bytes at {rate} Hz", () =>
                 {
-                    var engine = NewEngine(rate);
+                    using var engine = NewEngine(rate);
                     float[] source = Signal(rate, 257), block = new float[source.Length];
                     // Every block is fresh input; feeding prior output back would measure an artificial feedback loop.
                     for (int i = 0; i < 128; i++)
@@ -125,6 +121,28 @@ internal static class AudioEffectSampleRateChecks
                 Require(rejected, "Invalid rate reached DSP initialization.");
             }
         });
+    }
+
+    private delegate int Completion(Span<float> destination);
+
+    /// <summary>Collects ready prefixes and retained output for both immediate and buffered effects.</summary>
+    private static float[] Render(float[] source, int rate, VoiceEffectType effect, float amount, int block)
+    {
+        using var engine = NewEngine(rate);
+        float[] input = (float[])source.Clone();
+        var output = new List<float>(source.Length);
+        for (int offset = 0; offset < input.Length; offset += block)
+        {
+            Span<float> samples = input.AsSpan(offset, Math.Min(block, input.Length - offset));
+            int ready = engine.ApplyEffect(samples, effect, amount);
+            output.AddRange(samples[..ready]);
+        }
+        var complete = typeof(AudioEffectsEngine).GetMethod("Complete", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .CreateDelegate<Completion>(engine);
+        float[] tail = new float[257];
+        int written;
+        while ((written = complete(tail)) > 0) output.AddRange(tail.AsSpan(0, written));
+        return output.ToArray();
     }
 
     /// <summary>Uses an impulse and a maximum-delay LFO phase to detect a wrapped or truncated chorus tap.</summary>

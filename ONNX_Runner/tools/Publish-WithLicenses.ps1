@@ -10,6 +10,42 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Assert-SignalsmithDistribution {
+    param([string]$PublishDirectory, [string]$RuntimeIdentifier, [string]$PackageDirectory,
+        [string]$PackageVersion = '1.1.2')
+
+    if ($PackageVersion -ne '1.1.2') {
+        throw "Signalsmith version changed; review its pinned sources and notices: $PackageVersion"
+    }
+    $nativeName = switch ($RuntimeIdentifier) {
+        'win-x64' { 'SignalsmithStretch.dll' }
+        'linux-x64' { 'libSignalsmithStretch.so' }
+        default { throw "Signalsmith distribution has not been reviewed for: $RuntimeIdentifier" }
+    }
+    $nativeFile = Join-Path $PublishDirectory $nativeName
+    $originalFile = Join-Path $PackageDirectory "runtimes/$RuntimeIdentifier/native/$nativeName"
+    if (-not (Test-Path -LiteralPath $nativeFile -PathType Leaf)) {
+        throw "Published build is missing Signalsmith native code: $nativeFile"
+    }
+    if (-not (Test-Path -LiteralPath $originalFile -PathType Leaf)) {
+        throw "The restored Signalsmith package is missing its native asset: $originalFile"
+    }
+    $nativeHash = (Get-FileHash -LiteralPath $nativeFile -Algorithm SHA256).Hash
+    if ($nativeHash -ne (Get-FileHash -LiteralPath $originalFile -Algorithm SHA256).Hash) {
+        throw "Published Signalsmith native code differs from the restored package: $nativeFile"
+    }
+    foreach ($name in @('Wrapper-MIT-0.txt', 'Stretch-MIT.txt', 'Linear-MIT.txt', 'PROVENANCE.txt')) {
+        $notice = Join-Path $PublishDirectory "THIRD_PARTY_LICENSES/SignalsmithStretch/$name"
+        if (-not (Test-Path -LiteralPath $notice -PathType Leaf)) {
+            throw "Published build is missing a Signalsmith component notice: $notice"
+        }
+        if ((Get-Item -LiteralPath $notice).Length -eq 0) {
+            throw "Published Signalsmith component notice is empty: $notice"
+        }
+    }
+    return "Signalsmith native asset: $RuntimeIdentifier/$nativeName | SHA256 $nativeHash | wrapper/core/FFT notices included"
+}
 if (-not $ProjectDirectory) { $ProjectDirectory = Join-Path $PSScriptRoot '..' }
 $projectDirectory = (Resolve-Path -LiteralPath $ProjectDirectory).Path
 $projectFile = Join-Path $projectDirectory 'ONNX_Runner.csproj'
@@ -90,6 +126,15 @@ if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf)) {
     }
 }
 $sourceManifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
+# Older caches are extended in place; verified existing source archives are reused.
+if (@($sourceManifest.SignalsmithSources).Count -ne 3) {
+    & (Join-Path $PSScriptRoot 'Prepare-CorrespondingSources.ps1') `
+        -ProjectDirectory $projectDirectory -SourcesRoot $SourcesRoot
+    $sourceManifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (@($sourceManifest.SignalsmithSources).Count -ne 3) {
+        throw 'Corresponding source manifest is missing the three Signalsmith source snapshots.'
+    }
+}
 if ($sourceManifest.EspeakDllSha256 -ne '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189' -or
     $sourceManifest.Mpg123BundleSha256 -ne 'c13a80f0455795eb0c8a1c7844fb5e567cf37acc00fdd3e1f3e6b89f7b4601ce' -or
     $sourceManifest.OggOpusBundleSha256 -ne 'c5055d3410ca02728d10708e154b47219c38ceef52155f18702e34204150651f') {
@@ -109,7 +154,7 @@ $espeakHash = (Get-FileHash -LiteralPath $espeak -Algorithm SHA256).Hash.ToLower
 if ($espeakHash -ne $sourceManifest.EspeakDllSha256) {
     throw 'Bundled eSpeak DLL changed; regenerate and review corresponding source.'
 }
-$sourceFiles = @($sourceManifest.Archives) + @($sourceManifest.NpmPackages) + @($sourceManifest.SupplementalPackages) + @([pscustomobject]@{
+$sourceFiles = @($sourceManifest.Archives) + @($sourceManifest.NpmPackages) + @($sourceManifest.SupplementalPackages) + @($sourceManifest.SignalsmithSources) + @([pscustomobject]@{
     File = 'SOURCE_REVISIONS.txt'; Sha256 = $sourceManifest.SourceRevisionsSha256
 })
 if (@($sourceManifest.Archives).Count -ne 4 -or @($sourceManifest.NpmPackages).Count -ne 2 -or
@@ -271,6 +316,11 @@ foreach ($build in $variants) {
         )
         $packageReport | Set-Content -LiteralPath (Join-Path $destination 'PACKAGE_INFO.txt') -Encoding UTF8
         $report.Add("$id $version | $licenseType $licenseValue | $($files.Count) notice files")
+        if ($id -ieq 'SignalsmithStretch-CS') {
+            $report.Add((Assert-SignalsmithDistribution -PublishDirectory $publishDirectory `
+                -RuntimeIdentifier $build.Rid -PackageDirectory $packageDirectory -PackageVersion $version))
+        }
+
 
         if (-not $licenseNode -and -not $licenseUrlNode) {
             throw "Package has no license metadata: $id $version"
