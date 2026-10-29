@@ -1,0 +1,63 @@
+{
+  "RetrievedUtc": "2026-10-29",
+  "Notices": [
+    {
+      "File": "THIRD_PARTY_LICENSES/AspNetCore-MIT.txt",
+      "Source": "https://raw.githubusercontent.com/dotnet/dotnet/b16286c2284fecf303dbc12a0bb152476d662e44/src/aspnetcore/LICENSE.txt",
+      "Sha256": "cfc21f5e8bd655ae997eec916138b707b1d290b83272c02a95c9f821b8c87310"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/OpenAPI.NET-MIT.txt",
+      "Source": "https://raw.githubusercontent.com/microsoft/OpenAPI.NET/99fc3f830ca7a8e95f9db48babdf06118ecfa50f/LICENSE",
+      "Sha256": "5d177f23ecfeb0ea8e050b6a5a16355e1ae9a0b286436ca8f83ed08b3795be6b"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/Swashbuckle-MIT.txt",
+      "Source": "https://raw.githubusercontent.com/domaindrivendev/Swashbuckle.AspNetCore/71bd58ad6227452a40724bb3fc881acb725b0ac6/LICENSE",
+      "Sha256": "c87a9ab2520595bc7c31343b5250e8f3779a65c6051612118b0accd200f24d07"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/OpenVoice-MIT.txt",
+      "Source": "https://raw.githubusercontent.com/myshell-ai/OpenVoice/8b715b5b967f90913f0adb4e6b778b929da473cc/LICENSE",
+      "Sha256": "bb3541f421e6273d3a3e3dd5bdba2bd3b79a3c2eadca65cde9c62c2467903ac0"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/SwaggerUI-LICENSE.txt",
+      "Source": "https://raw.githubusercontent.com/swagger-api/swagger-ui/v5.32.1/LICENSE",
+      "Sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/SwaggerUI-NOTICE.txt",
+      "Source": "https://raw.githubusercontent.com/swagger-api/swagger-ui/v5.32.1/NOTICE",
+      "Sha256": "0d20d1adef18aee3f40dd258172155521ce702ac445cb5f7b7d60ed32dad2fb2"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/SwaggerUI/swagger-ui-bundle.js.LICENSE.txt",
+      "Source": "https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.32.1.tgz",
+      "ArchiveEntry": "package/swagger-ui-bundle.js.LICENSE.txt",
+      "ArchiveSha256": "bd1aad94af1bd171b77617e0a4e3fee73023b764a14f0a5baa2d3877d805eadc",
+      "Sha256": "37235329d11920c2169b40a70c3c3416486f82ec901e521c1984280b592eb6df"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/SwaggerUI/swagger-ui-standalone-preset.js.LICENSE.txt",
+      "Source": "https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.32.1.tgz",
+      "ArchiveEntry": "package/swagger-ui-standalone-preset.js.LICENSE.txt",
+      "ArchiveSha256": "bd1aad94af1bd171b77617e0a4e3fee73023b764a14f0a5baa2d3877d805eadc",
+      "Sha256": "a45e524865129f32926a0cd15deac63332f4dda3f393dcb80fe14df4f81e69b8"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/LAME-COPYING.txt",
+      "Source": "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz",
+      "ArchiveEntry": "lame-3.100/COPYING",
+      "ArchiveSha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e",
+      "Sha256": "bfe4a52dc4645385f356a8e83cc54216a293e3b6f1cb4f79f5fc0277abf937fd"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/LAME-LICENSE.txt",
+      "Source": "https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz",
+      "ArchiveEntry": "lame-3.100/LICENSE",
+      "ArchiveSha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e",
+      "Sha256": "7a40cbd8818c57e5285e83c772a459a996d1662c824a879836b97b473c07cae4"
+    }
+  ]
+}

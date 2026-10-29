@@ -75,6 +75,22 @@ function Get-SignalsmithSources([string]$Destination) {
     }
 }
 
+# Retains LGPL library source and the upstream wrapper containing the shipped LAME DLLs.
+function Get-AudioLibrarySources([string]$Destination) {
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    $sources = @(
+        @{ Component = 'SoundTouch.Net 2.3.2'; Revision = '98e5b8fd2f8efed0ddf7c8f66b435bfb231659dc'; File = 'soundtouch.net-98e5b8fd2f8efed0ddf7c8f66b435bfb231659dc.tar.gz'; Sha256 = 'e166e77d5fedb4e5b6e785458fe26a0e0e0cb89460d835cbf0304c4f9cb17703'; Url = 'https://codeload.github.com/owoudenberg/soundtouch.net/tar.gz/98e5b8fd2f8efed0ddf7c8f66b435bfb231659dc' },
+        @{ Component = 'NAudio.Lame 2.1.0'; Revision = '5b5bb009d8c63ef8ab95cb36ca9105c8acc1c5fc'; File = 'NAudio.Lame-5b5bb009d8c63ef8ab95cb36ca9105c8acc1c5fc.tar.gz'; Sha256 = '9e34ec2119e90ebaa031830654fd763ed8f529da961ebd5619c7a850327188d1'; Url = 'https://codeload.github.com/Corey-M/NAudio.Lame/tar.gz/5b5bb009d8c63ef8ab95cb36ca9105c8acc1c5fc' },
+        @{ Component = 'LAME 3.100'; Revision = '3.100'; File = 'lame-3.100.tar.gz'; Sha256 = 'ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e'; Url = 'https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz' }
+    )
+    foreach ($source in $sources) {
+        $archive = Join-Path $Destination $source.File
+        Save-Download $source.Url $archive
+        Assert-Hash $archive $source.Sha256
+        [pscustomobject]$source
+    }
+}
+
 $manifestFile = Join-Path $sourcesRoot 'SOURCE_MANIFEST.json'
 if ((Test-Path -LiteralPath $manifestFile -PathType Leaf) -and -not $Force) {
     $existing = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -94,7 +110,9 @@ if ((Test-Path -LiteralPath $manifestFile -PathType Leaf) -and -not $Force) {
     Assert-Hash (Join-Path $sourcesRoot 'SOURCE_REVISIONS.txt') $existing.SourceRevisionsSha256
     $signalsmithSources = @(Get-SignalsmithSources $sourcesRoot)
     $existing | Add-Member -NotePropertyName SignalsmithSources -NotePropertyValue $signalsmithSources -Force
-    $updatedManifest = "$manifestFile.signalsmith.partial"
+    $audioLibrarySources = @(Get-AudioLibrarySources $sourcesRoot)
+    $existing | Add-Member -NotePropertyName AudioLibrarySources -NotePropertyValue $audioLibrarySources -Force
+    $updatedManifest = "$manifestFile.partial"
     try {
         $existing | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $updatedManifest -Encoding UTF8
         Move-Item -LiteralPath $updatedManifest -Destination $manifestFile -Force
@@ -221,6 +239,10 @@ try {
     foreach ($source in $signalsmithSources) {
         $revisions.Add("$($source.Repository) $($source.Revision) (pinned source archive)")
     }
+    $audioLibrarySources = @(Get-AudioLibrarySources $stage)
+    foreach ($source in $audioLibrarySources) {
+        $revisions.Add("$($source.Component) $($source.Revision) (pinned source archive)")
+    }
     $revisions | Set-Content -LiteralPath (Join-Path $stage 'SOURCE_REVISIONS.txt') -Encoding UTF8
     foreach ($name in $sourceNames) {
         $archive = Join-Path $stage "$name.tar.gz"
@@ -232,7 +254,7 @@ try {
     }
 
     $manifest = [ordered]@{
-        Description = 'Source snapshots for eSpeak, browser decoders, and the Signalsmith wrapper, DSP core and FFT dependency.'
+        Description = 'Source snapshots for eSpeak, browser decoders, Signalsmith, SoundTouch.Net and LAME.'
         EspeakDllSha256 = '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189'
         Mpg123BundleSha256 = $bundles[0].Hash
         OggOpusBundleSha256 = $bundles[1].Hash
@@ -246,6 +268,7 @@ try {
             [ordered]@{ File = $file; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $file) -Algorithm SHA256).Hash.ToLowerInvariant() }
         })
         SignalsmithSources = $signalsmithSources
+        AudioLibrarySources = $audioLibrarySources
         SupplementalPackages = @($supplemental | ForEach-Object {
             [ordered]@{ File = $_; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $_) -Algorithm SHA256).Hash.ToLowerInvariant() }
         })

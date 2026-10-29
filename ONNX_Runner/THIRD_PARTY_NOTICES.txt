@@ -1,7 +1,7 @@
 Tsubaki TTS Engine - Third-Party Notices
 ========================================
 
-The project's own source code is GPL-3.0-or-later; see LICENSE and readMe.md.
+The project's own source code is GPL-3.0-or-later; see LICENSE.
 That choice does not replace any license below. Keep this file, the included THIRD_PARTY_LICENSES/ texts, and the
 upstream copyright and license notices with binary distributions. The NuGet
 inventory below covers six net10.0 publish restore snapshots for Windows and
@@ -16,15 +16,18 @@ CUDA. Together they contain 27 unique package/version records. These are
 restore graphs, not lists of files proven to be in the publish outputs. The
 JSON files do not contain package license text. Exact versions, variant
 membership, snapshot hashes and RID-specific native assets are in
-NUGET_RESTORE_INVENTORY.txt. Each published variant also has a generated
-NUGET_PUBLISH_INVENTORY.txt and copied package notice files.
+NUGET_RESTORE_INVENTORY.txt. Each published variant includes package license and notice files. Its exact
+restore graph, package metadata, hashes and NUGET_PUBLISH_INVENTORY.txt are
+in BUILD_REVIEW/ inside the matching separate source archive.
 
 Concentus 2.2.2 - BSD-3-Clause - https://github.com/lostromb/concentus
   Full upstream notice: THIRD_PARTY_LICENSES/Concentus-BSD.txt. Its own
   license notes independently compiled Opus C reference libraries.
 Microsoft.AspNetCore.OpenApi 10.0.7 - MIT - https://github.com/dotnet/aspnetcore
 Microsoft.Extensions.ApiDescription.Server 10.0.0 - MIT (build tools) - https://github.com/dotnet/aspnetcore
+  Upstream notice: THIRD_PARTY_LICENSES/AspNetCore-MIT.txt
 Microsoft.OpenApi 2.7.5 - MIT - https://github.com/microsoft/OpenAPI.NET
+  Upstream notice: THIRD_PARTY_LICENSES/OpenAPI.NET-MIT.txt
 Microsoft.ML.OnnxRuntime.DirectML 1.24.4 and .Managed 1.24.4 - MIT - https://github.com/microsoft/onnxruntime
   Microsoft ONNX Runtime MIT text: THIRD_PARTY_LICENSES/ONNX-Runtime-MIT.txt
 NAudio 2.2.1, NAudio.Asio 2.2.1, NAudio.Core 2.2.1,
@@ -34,21 +37,27 @@ NAudio.Midi 2.2.1, NAudio.Wasapi 2.2.1, NAudio.WinMM 2.2.1
 NAudio.Lame 2.1.0 - MIT - https://github.com/Corey-M/NAudio.Lame
 SearchPioneer.Lingua 2.0.0 - Apache-2.0 - https://github.com/searchpioneer/lingua-dotnet
 SoundTouch.Net 2.3.2 - LGPL-2.1-or-later - https://github.com/owoudenberg/soundtouch.net
+  Copyright (c) Olaf Woudenberg 2011-2019; based on SoundTouch by Olli Parviainen.
+  The matching source archive includes the pinned 2.3.2 library source.
 SignalsmithStretch-CS 1.1.2 - wrapper source MIT-0; package metadata MIT
   https://github.com/Estrol/signalsmith-stretch-cs
   Includes the native Signalsmith Stretch DSP core (MIT) and Signalsmith
   Linear FFT/STFT code (MIT). Preserve all three original license texts in
-  THIRD_PARTY_LICENSES/SignalsmithStretch/ and its PROVENANCE.txt, which records
-  exact source versions, the metadata/source license distinction, and hashes
-  of the unchanged Windows x64 and Linux x64 package binaries.
+  THIRD_PARTY_LICENSES/SignalsmithStretch/. The separate source archive
+  preserves PROVENANCE.txt with exact source versions, the metadata/source
+  license distinction, and hashes of the unchanged native package binaries.
   The corresponding-source helper also stages pinned wrapper/core/FFT source
   snapshots and includes them in the separate matching source download.
   This dependency was added after the historical restore snapshots described
   above. Each new publish records its current package graph automatically.
 Swashbuckle.AspNetCore 10.1.7, .Swagger 10.1.7, .SwaggerGen 10.1.7,
 .SwaggerUI 10.1.7 - MIT - https://github.com/domaindrivendev/Swashbuckle.AspNetCore
-  SwaggerUI includes embedded swagger-ui assets, licensed Apache-2.0:
+  Upstream notice: THIRD_PARTY_LICENSES/Swashbuckle-MIT.txt
+  SwaggerUI includes swagger-ui-dist 5.32.1 assets, licensed Apache-2.0:
   https://github.com/swagger-api/swagger-ui
+  Original license and notice: THIRD_PARTY_LICENSES/SwaggerUI-LICENSE.txt
+  and THIRD_PARTY_LICENSES/SwaggerUI-NOTICE.txt. Embedded JavaScript license
+  notices are preserved in THIRD_PARTY_LICENSES/SwaggerUI/.
 System.Numerics.Tensors 9.0.0 - MIT - https://github.com/dotnet/runtime
 
 Microsoft.AI.DirectML 1.15.4 is used in the Windows DirectML build.
@@ -133,12 +142,18 @@ PiperNative/libtashkeel_model.ort
   Its repository is MIT licensed (copyright 2023 Musharraf); see
   THIRD_PARTY_LICENSES/libtashkeel-MIT.txt. Keep upstream model attribution.
 
-System native dependencies (not bundled in this source archive)
----------------------------------------------------------------
+Native encoders and system dependencies
+--------------------------------------
 On Linux, eSpeak NG is installed by the Dockerfile or by the user; its package
 license and source obligations remain with the distributor of the image.
 LAME MP3 encoder - LGPL-2.0-or-later - https://lame.sourceforge.io/
-  Loaded from the system or supplied separately; not included in this archive.
+  The NAudio.Lame 2.1.0 package bundles Windows libmp3lame.32.dll and
+  libmp3lame.64.dll (LAME 3.100). These retain their own LGPL terms; the
+  managed wrapper MIT license does not replace them. Original texts:
+  THIRD_PARTY_LICENSES/LAME-COPYING.txt and LAME-LICENSE.txt.
+  The separate source archive includes LAME 3.100 source and the pinned
+  NAudio.Lame wrapper snapshot containing byte-identical native DLLs.
+  Linux uses system LAME; system packages retain their own distribution terms.
   AAC-LC output uses this project's managed AacStreamEncoder.cs. It does not
   use LAME, FAAC, FFmpeg, or an external AAC encoder library.
 
@@ -182,10 +197,11 @@ Model/en_US-hfc_female-medium.onnx and its matching .onnx.json in release builds
   en_US-lessac-medium, whose source recordings have separate research terms.
   The repository-wide MIT label is not a blanket license for training data
   or a clear grant for commercial use of these particular model weights.
-  Keep the model attribution and license links in Model/MODEL_PROVENANCE.txt
+  Keep the model attribution and license links in THIRD_PARTY_LICENSES/Piper-Model-NOTICES.txt
   with every release containing these weights. Other Piper voices need their
   own notices instead. The project GPL covers original code, not this model.
 OpenVoice V2 - MIT - https://github.com/myshell-ai/OpenVoice
+  Upstream notice: THIRD_PARTY_LICENSES/OpenVoice-MIT.txt
   ONNX conversions are downloaded at first run from
   https://huggingface.co/Hinotsuba/OpenVoice-ONNX-v2
   No OpenVoice model weights are included in this source archive.
@@ -198,7 +214,8 @@ LibriTTS-R - CC BY 4.0 - https://www.openslr.org/141/
   to this corpus. Source recordings were selected and renamed; embeddings
   were generated from the recordings. Individual speaker IDs and original
   corpus paths are not known. The 15 source WAVs are included in Voices/ and
-  copied to published builds. See VOICE_PROVENANCE.txt for per-file hashes.
+  copied to published builds. Per-file hashes are in VOICE_PROVENANCE.txt
+  inside PROJECT_SOURCE/ONNX_Runner/ in the separate source archive.
   This attribution does not imply endorsement by the dataset creators.
 Two additional bundled embeddings (male.voice and female.voice)
   female.wav: vero.marengere, "French Canadian Woman Giving Instructions 04.wav"
@@ -210,7 +227,8 @@ Two additional bundled embeddings (male.voice and female.voice)
   CC0 does not require attribution; the links document provenance. The author
   identified these recordings and the local WAV formats match page metadata.
   Byte-identical copies of the Freesound downloads were not checked. The WAVs
-  and their SHA-256 checksums are in Voices/ and VOICE_PROVENANCE.txt.
+  are in Voices/; their SHA-256 checksums are in VOICE_PROVENANCE.txt
+  inside PROJECT_SOURCE/ONNX_Runner/ in the separate source archive.
 PHOIBLE 2.0 - CC BY-SA 3.0 - https://phoible.org/
   Steven Moran and Daniel McCloy (eds.), PHOIBLE 2.0, 2019.
   PHOIBLE/phoible.csv is bundled with ready-to-run releases. Preserve this
@@ -226,9 +244,11 @@ packages, including transitive and native dependencies. Preserve required
 copyright and license texts in the published artifact.
 The publishing helper prepares corresponding source once when needed, checks
 the staged hashes, and packages it as a separate release download. The binary
-outputs contain SOURCE_ACCESS.txt and SOURCE_MANIFEST.json rather than large
-copies of the source package. Offer the matching source package with equivalent
-access wherever the binaries are distributed.
+outputs retain licenses and required attributions. The matching source archive
+contains SOURCE_MANIFEST.json, provenance records, project source, and build
+review reports. Its release-specific filename is appended to this notice by
+the publishing helper. Offer it with equivalent access wherever the binaries
+are distributed.
 Linux builds omit the bundled
 Windows DLLs but retain eSpeak data; the Linux system eSpeak and container
 packages must be reviewed against the exact image. The default `All` publish

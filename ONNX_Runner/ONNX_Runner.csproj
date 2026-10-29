@@ -11,6 +11,7 @@
     <Version>1.0.10</Version>
     <ApplicationIcon>tsubaki.ico</ApplicationIcon>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
   </PropertyGroup>
 
   <ItemGroup>
@@ -63,6 +64,7 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
     <None Update="Model\MODEL_PROVENANCE.txt">
+      <TargetPath>THIRD_PARTY_LICENSES\Piper-Model-NOTICES.txt</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
@@ -97,7 +99,7 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
 
-    <None Update="LICENSE;VOICE_PROVENANCE.txt;readMe.md">
+    <None Update="LICENSE">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
@@ -106,6 +108,16 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </None>
+
+    <None Update="Cloner\README.txt;THIRD_PARTY_LICENSES\DirectML\README.txt;THIRD_PARTY_LICENSES\SignalsmithStretch\PROVENANCE.txt">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </None>
+
+    <Content Update="appsettings.Development.json">
+      <CopyToOutputDirectory>Never</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
 
     <Content Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

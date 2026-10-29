@@ -35,7 +35,7 @@ function Assert-SignalsmithDistribution {
     if ($nativeHash -ne (Get-FileHash -LiteralPath $originalFile -Algorithm SHA256).Hash) {
         throw "Published Signalsmith native code differs from the restored package: $nativeFile"
     }
-    foreach ($name in @('Wrapper-MIT-0.txt', 'Stretch-MIT.txt', 'Linear-MIT.txt', 'PROVENANCE.txt')) {
+    foreach ($name in @('Wrapper-MIT-0.txt', 'Stretch-MIT.txt', 'Linear-MIT.txt')) {
         $notice = Join-Path $PublishDirectory "THIRD_PARTY_LICENSES/SignalsmithStretch/$name"
         if (-not (Test-Path -LiteralPath $notice -PathType Leaf)) {
             throw "Published build is missing a Signalsmith component notice: $notice"
@@ -45,6 +45,31 @@ function Assert-SignalsmithDistribution {
         }
     }
     return "Signalsmith native asset: $RuntimeIdentifier/$nativeName | SHA256 $nativeHash | wrapper/core/FFT notices included"
+}
+
+function Copy-ProjectSource {
+    param([string]$ProjectDirectory, [string]$Destination, [string[]]$ExcludedDirectories)
+
+    # Runtime weights and compiled binaries are not corresponding source. Keep data,
+    # build inputs, original samples, notices and provenance with the project source.
+    $root = $ProjectDirectory.TrimEnd([char[]]@('\', '/'))
+    $excluded = @($ExcludedDirectories | ForEach-Object {
+        [System.IO.Path]::GetFullPath($_).TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+    })
+    $hashes = New-Object System.Collections.Generic.List[string]
+    foreach ($file in (Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
+        if ($excluded | Where-Object { $file.FullName.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase) }) { continue }
+        $relative = $file.FullName.Substring($root.Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+        if ($relative -match '(^|/)(bin|obj|\.git|\.vs|\.vscode|Publish-Licensed)(/|$)' -or
+            $relative -match '(^|/)\.env($|\.)' -or
+            $relative -match '\.(onnx|ort|dll|so|dylib|exe|pdb|partial|zip|tar\.gz)$') { continue }
+        $target = Join-Path $Destination $relative
+        New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
+        Copy-Item -LiteralPath $file.FullName -Destination $target -Force
+        $hash = (Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash.ToLowerInvariant()
+        $hashes.Add("$hash  $relative")
+    }
+    $hashes | Sort-Object | Set-Content -LiteralPath (Join-Path $Destination 'FILES_SHA256.txt') -Encoding UTF8
 }
 if (-not $ProjectDirectory) { $ProjectDirectory = Join-Path $PSScriptRoot '..' }
 $projectDirectory = (Resolve-Path -LiteralPath $ProjectDirectory).Path
@@ -57,10 +82,12 @@ if (-not $SourcesRoot) {
         else { Join-Path $HOME '.cache' }
     $SourcesRoot = Join-Path $cacheRoot 'Tsubaki/CorrespondingSources'
 }
-$outputRoot = $OutputRoot
-$reviewRoot = $ReviewRoot
+$outputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
+$reviewRoot = [System.IO.Path]::GetFullPath($ReviewRoot)
+$SourcesRoot = [System.IO.Path]::GetFullPath($SourcesRoot)
 $runId = Get-Date -Format 'yyyyMMdd-HHmmss'
 $runRoot = Join-Path $outputRoot $runId
+$reviewRun = Join-Path $reviewRoot $runId
 $variants = @(
     @{ Name = 'Windows-CPU'; Artifact = 'tsubaki-tts-engine-windows-x64-cpu'; Rid = 'win-x64'; Property = '-p:CpuOnly=true' },
     @{ Name = 'Windows-DML'; Artifact = 'tsubaki-tts-engine-windows-x64-directml'; Rid = 'win-x64'; Property = $null },
@@ -73,6 +100,18 @@ $variants = @(
 if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw 'The .NET SDK is required.'
 }
+
+$noticeSources = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'NOTICE_SOURCES.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+foreach ($notice in $noticeSources.Notices) {
+    $file = Join-Path $projectDirectory $notice.File
+    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant() -ne $notice.Sha256) {
+        throw "Upstream notice changed; review its source record: $($notice.File)"
+    }
+}
+$requiredNotices = @(Get-ChildItem -LiteralPath (Join-Path $projectDirectory 'THIRD_PARTY_LICENSES') -Recurse -File |
+    Where-Object { $_.Name -notin @('README.txt', 'PROVENANCE.txt') } |
+    ForEach-Object { $_.FullName.Substring($projectDirectory.TrimEnd([char[]]@('\', '/')).Length).TrimStart([char[]]@('\', '/')) })
+$requiredNotices += 'LICENSE'
 
 $modelDirectory = Join-Path $projectDirectory 'Model'
 $models = @(Get-ChildItem -LiteralPath $modelDirectory -Filter '*.onnx' -File -ErrorAction SilentlyContinue)
@@ -127,12 +166,12 @@ if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf)) {
 }
 $sourceManifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
 # Older caches are extended in place; verified existing source archives are reused.
-if (@($sourceManifest.SignalsmithSources).Count -ne 3) {
+if (@($sourceManifest.SignalsmithSources).Count -ne 3 -or @($sourceManifest.AudioLibrarySources).Count -ne 3) {
     & (Join-Path $PSScriptRoot 'Prepare-CorrespondingSources.ps1') `
         -ProjectDirectory $projectDirectory -SourcesRoot $SourcesRoot
     $sourceManifest = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
-    if (@($sourceManifest.SignalsmithSources).Count -ne 3) {
-        throw 'Corresponding source manifest is missing the three Signalsmith source snapshots.'
+    if (@($sourceManifest.SignalsmithSources).Count -ne 3 -or @($sourceManifest.AudioLibrarySources).Count -ne 3) {
+        throw 'Corresponding source manifest is missing Signalsmith or audio-library source snapshots.'
     }
 }
 if ($sourceManifest.EspeakDllSha256 -ne '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189' -or
@@ -154,7 +193,7 @@ $espeakHash = (Get-FileHash -LiteralPath $espeak -Algorithm SHA256).Hash.ToLower
 if ($espeakHash -ne $sourceManifest.EspeakDllSha256) {
     throw 'Bundled eSpeak DLL changed; regenerate and review corresponding source.'
 }
-$sourceFiles = @($sourceManifest.Archives) + @($sourceManifest.NpmPackages) + @($sourceManifest.SupplementalPackages) + @($sourceManifest.SignalsmithSources) + @([pscustomobject]@{
+$sourceFiles = @($sourceManifest.Archives) + @($sourceManifest.NpmPackages) + @($sourceManifest.SupplementalPackages) + @($sourceManifest.SignalsmithSources) + @($sourceManifest.AudioLibrarySources) + @([pscustomobject]@{
     File = 'SOURCE_REVISIONS.txt'; Sha256 = $sourceManifest.SourceRevisionsSha256
 })
 if (@($sourceManifest.Archives).Count -ne 4 -or @($sourceManifest.NpmPackages).Count -ne 2 -or
@@ -168,31 +207,23 @@ foreach ($entry in $sourceFiles) {
     if ($actual -ne $entry.Sha256) { throw "Corresponding source hash mismatch: $source" }
 }
 
-$sourcePackageName = 'Tsubaki-Corresponding-Sources-{0}-{1}-{2}.tar.gz' -f `
+$sourcePackageName = 'Tsubaki-Corresponding-Sources-{0}-{1}-{2}-{3}.tar.gz' -f $runId, `
     $sourceManifest.EspeakDllSha256.Substring(0, 12), `
     $sourceManifest.Mpg123BundleSha256.Substring(0, 12), `
     $sourceManifest.OggOpusBundleSha256.Substring(0, 12)
 New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
 $sourcePackagePath = Join-Path $runRoot $sourcePackageName
-if (-not (Test-Path -LiteralPath $sourcePackagePath -PathType Leaf)) {
-    $temporaryPackage = "$sourcePackagePath.partial"
-    try {
-        $sourceNames = @('SOURCE_MANIFEST.json') + @($sourceFiles | ForEach-Object { $_.File })
-        & tar -czf $temporaryPackage -C $SourcesRoot @sourceNames
-        if ($LASTEXITCODE -ne 0) { throw "Failed to package corresponding source: $sourcePackagePath" }
-        Move-Item -LiteralPath $temporaryPackage -Destination $sourcePackagePath
-    }
-    finally {
-        Remove-Item -LiteralPath $temporaryPackage -Force -ErrorAction SilentlyContinue
-    }
-}
-Write-Host "Separate source download for this release: $sourcePackagePath"
+Copy-ProjectSource -ProjectDirectory $projectDirectory `
+    -Destination (Join-Path $reviewRun 'PROJECT_SOURCE/ONNX_Runner') `
+    -ExcludedDirectories @($outputRoot, $reviewRoot, $SourcesRoot)
 
 foreach ($build in $variants) {
     if ($Variant -ne 'All' -and $Variant -ne $build.Name) { continue }
 
     $publishDirectory = Join-Path $runRoot $build.Artifact
     $archivePath = Join-Path $runRoot "$($build.Artifact).zip"
+    $buildReview = Join-Path $reviewRun "BUILD_REVIEW/$($build.Name)"
+    New-Item -ItemType Directory -Path $buildReview -Force | Out-Null
     if ((Test-Path -LiteralPath $publishDirectory) -or (Test-Path -LiteralPath $archivePath)) {
         throw "Release output already exists: $($build.Artifact). Choose another -OutputRoot or start a new run."
     }
@@ -202,6 +233,17 @@ foreach ($build in $variants) {
 
     & dotnet @arguments
     if ($LASTEXITCODE -ne 0) { throw "Publish failed for $($build.Name)." }
+
+    foreach ($relative in $requiredNotices) {
+        $original = Join-Path $projectDirectory $relative
+        $published = Join-Path $publishDirectory $relative
+        if (-not (Test-Path -LiteralPath $published -PathType Leaf) -or
+            (Get-Item -LiteralPath $published).Length -eq 0 -or
+            (Get-FileHash -LiteralPath $published -Algorithm SHA256).Hash -ne
+            (Get-FileHash -LiteralPath $original -Algorithm SHA256).Hash) {
+            throw "Published license or notice is missing, empty or changed: $relative"
+        }
+    }
 
     foreach ($model in $models) {
         $relativeModel = Join-Path 'Model' $model.Name
@@ -235,13 +277,14 @@ foreach ($build in $variants) {
         }
     }
 
-    Copy-Item -LiteralPath $manifestFile -Destination (Join-Path $publishDirectory 'SOURCE_MANIFEST.json') -Force
     @(
-        "Corresponding source for the bundled native and browser binaries is a separate download: $sourcePackageName",
-        'The distributor must provide the matching source package alongside this binary download, free of charge.',
-        'For GitHub releases, attach the package once as a separate asset of the same release.',
-        'See SOURCE_MANIFEST.json for the exact bundled binary hashes and source archive checksums.'
-    ) | Set-Content -LiteralPath (Join-Path $publishDirectory 'SOURCE_ACCESS.txt') -Encoding UTF8
+        '',
+        'Corresponding source for this release',
+        '-------------------------------------',
+        "Matching source archive: $sourcePackageName",
+        'This archive is generated separately by the release packaging script.',
+        'Source distribution requirements are set out in the included GPL/LGPL licenses.'
+    ) | Add-Content -LiteralPath (Join-Path $publishDirectory 'THIRD_PARTY_NOTICES.txt') -Encoding UTF8
     $assetsPath = Join-Path $projectDirectory 'obj/project.assets.json'
     if (-not (Test-Path -LiteralPath $assetsPath)) { throw "Missing $assetsPath" }
 
@@ -249,11 +292,23 @@ foreach ($build in $variants) {
     $packageFolders = @($assets.packageFolders.PSObject.Properties | ForEach-Object { $_.Name })
     $packages = @($assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' })
     $reviewDirectory = Join-Path $publishDirectory 'THIRD_PARTY_LICENSES/NuGet'
-    New-Item -ItemType Directory -Path $reviewDirectory -Force | Out-Null
+    $metadataDirectory = Join-Path $buildReview 'PackageMetadata'
+    $fallbackNotices = @{
+        'Microsoft.AspNetCore.OpenApi' = 'AspNetCore-MIT.txt'
+        'Microsoft.Extensions.ApiDescription.Server' = 'AspNetCore-MIT.txt'
+        'Microsoft.OpenApi' = 'OpenAPI.NET-MIT.txt'
+        'NAudio.Asio' = 'NAudio-MIT.txt'; 'NAudio.Core' = 'NAudio-MIT.txt'
+        'NAudio.Midi' = 'NAudio-MIT.txt'; 'NAudio.Wasapi' = 'NAudio-MIT.txt'; 'NAudio.WinMM' = 'NAudio-MIT.txt'
+        'Swashbuckle.AspNetCore' = 'Swashbuckle-MIT.txt'
+        'Swashbuckle.AspNetCore.Swagger' = 'Swashbuckle-MIT.txt'
+        'Swashbuckle.AspNetCore.SwaggerGen' = 'Swashbuckle-MIT.txt'
+        'Swashbuckle.AspNetCore.SwaggerUI' = 'Swashbuckle-MIT.txt'
+        'SignalsmithStretch-CS' = 'SignalsmithStretch/Wrapper-MIT-0.txt'
+    }
     $report = New-Object System.Collections.Generic.List[string]
     $report.Add("NuGet packages restored for $($build.Name) ($($build.Rid))")
     $report.Add('This report records package metadata and copied notices; inspect native binaries separately.')
-    $report.Add('Runtime-pack notices are copied where found; check missing-pack lines and GPL/LGPL corresponding sources separately.')
+    $report.Add('Missing runtime-pack notices stop packaging. Corresponding sources are in the matching separate archive.')
     $report.Add('')
 
     foreach ($package in $packages) {
@@ -274,10 +329,11 @@ foreach ($build in $variants) {
         if (-not $packageDirectory) { throw "Package files unavailable: $id $version" }
 
         $destination = Join-Path $reviewDirectory (Join-Path $id $version)
-        New-Item -ItemType Directory -Path $destination -Force | Out-Null
+        $packageMetadata = Join-Path $metadataDirectory (Join-Path $id $version)
+        New-Item -ItemType Directory -Path $packageMetadata -Force | Out-Null
         $nuspec = Get-ChildItem -LiteralPath $packageDirectory -Filter '*.nuspec' -File | Select-Object -First 1
         if (-not $nuspec) { throw "Missing package metadata: $id $version" }
-        Copy-Item -LiteralPath $nuspec.FullName -Destination $destination -Force
+        Copy-Item -LiteralPath $nuspec.FullName -Destination $packageMetadata -Force
 
         [xml]$metadata = Get-Content -LiteralPath $nuspec.FullName -Raw -Encoding UTF8
         $licenseNode = $metadata.SelectSingleNode("//*[local-name()='metadata']/*[local-name()='license']")
@@ -295,6 +351,15 @@ foreach ($build in $variants) {
                 throw "Declared package license is missing: $id $version ($licenseValue)"
             }
             $files += Get-Item -LiteralPath $declared
+        }
+        if ($files.Count -eq 0) {
+            $fallback = $fallbackNotices[$id]
+            $notice = if ($fallback) { Join-Path $publishDirectory "THIRD_PARTY_LICENSES/$fallback" } else { $null }
+            if (-not $notice -or -not (Test-Path -LiteralPath $notice -PathType Leaf) -or
+                (Get-Item -LiteralPath $notice).Length -eq 0) {
+                throw "No license text or reviewed upstream notice is available: $id $version"
+            }
+            $report.Add("$id $version | upstream notice: THIRD_PARTY_LICENSES/$fallback")
         }
 
         $rootPath = $packageDirectory.TrimEnd([char[]]@('\', '/'))
@@ -314,11 +379,28 @@ foreach ($build in $variants) {
             "Authors: $(if ($authorsNode) { $authorsNode.InnerText.Trim() } else { '' })",
             "Copied package notice files: $($files.Count)"
         )
-        $packageReport | Set-Content -LiteralPath (Join-Path $destination 'PACKAGE_INFO.txt') -Encoding UTF8
+        $packageReport | Set-Content -LiteralPath (Join-Path $packageMetadata 'PACKAGE_INFO.txt') -Encoding UTF8
         $report.Add("$id $version | $licenseType $licenseValue | $($files.Count) notice files")
         if ($id -ieq 'SignalsmithStretch-CS') {
             $report.Add((Assert-SignalsmithDistribution -PublishDirectory $publishDirectory `
                 -RuntimeIdentifier $build.Rid -PackageDirectory $packageDirectory -PackageVersion $version))
+        }
+        if ($id -ieq 'SoundTouch.Net' -and $version -ne '2.3.2') {
+            throw "SoundTouch version changed; review its corresponding sources: $version"
+        }
+        if ($id -ieq 'NAudio.Lame') {
+            if ($version -ne '2.1.0') { throw "NAudio.Lame version changed; review its native sources: $version" }
+            $lameHashes = @{
+                'libmp3lame.32.dll' = '91d3c0cc833265066c51408d940faaf76c5b8fc5bda854540a9cc6c88b1d1f20'
+                'libmp3lame.64.dll' = '71dba147b6c16d8d0f012b8e657d52e12cb8796a659e1151200d0a6c8b04bce3'
+            }
+            foreach ($name in $lameHashes.Keys) {
+                $native = Join-Path $publishDirectory $name
+                if ((Get-FileHash -LiteralPath $native -Algorithm SHA256).Hash.ToLowerInvariant() -ne $lameHashes[$name]) {
+                    throw "Bundled LAME binary changed; review its corresponding source: $name"
+                }
+                $report.Add("LAME native asset: $name | SHA256 $($lameHashes[$name]) | NAudio.Lame v2.1.0 source snapshot")
+            }
         }
 
 
@@ -347,17 +429,13 @@ foreach ($build in $variants) {
         }
 
         if (-not $runtimeDirectory) {
-            $report.Add("Runtime pack notice source not found: $name $version")
-            Write-Warning "Runtime pack notice source not found: $name $version"
-            continue
+            throw "Runtime pack notice source not found: $name $version"
         }
 
         $noticeFiles = @(Get-ChildItem -LiteralPath $runtimeDirectory -Recurse -File |
             Where-Object { $_.Name -match '^(LICENSES?|LICENCES?|COPYING|COPYRIGHT|NOTICES?|THIRD.?PARTY.?NOTICES?)([._-]|$)' })
         if ($noticeFiles.Count -eq 0) {
-            $report.Add("Runtime pack has no matching notice files: $name $version")
-            Write-Warning "Runtime pack has no matching notice files: $name $version"
-            continue
+            throw "Runtime pack has no matching notice files: $name $version"
         }
 
         $destination = Join-Path $runtimeReviewDirectory (Join-Path $name $version)
@@ -372,14 +450,17 @@ foreach ($build in $variants) {
         $report.Add("Runtime pack $name $version | $($noticeFiles.Count) notice files copied")
     }
 
-    $report | Set-Content -LiteralPath (Join-Path $publishDirectory 'NUGET_PUBLISH_INVENTORY.txt') -Encoding UTF8
-    @(
-        'This folder contains the application, project notices, and NuGet package notices.',
-        "Corresponding source is a separate download named $sourcePackageName; see SOURCE_ACCESS.txt.",
-        'Check NUGET_PUBLISH_INVENTORY.txt for runtime-pack notice warnings and THIRD_PARTY_NOTICES.txt for component-specific terms.'
-    ) | Set-Content -LiteralPath (Join-Path $publishDirectory 'RELEASE_CONTENTS.txt') -Encoding UTF8
-    New-Item -ItemType Directory -Path $reviewRoot -Force | Out-Null
-    Copy-Item -LiteralPath $assetsPath -Destination (Join-Path $reviewRoot "$($build.Name)-$runId.project.assets.json") -Force
+    $report | Set-Content -LiteralPath (Join-Path $buildReview 'NUGET_PUBLISH_INVENTORY.txt') -Encoding UTF8
+    Copy-Item -LiteralPath $assetsPath -Destination (Join-Path $buildReview 'project.assets.json') -Force
+    $symbols = Join-Path $projectDirectory "bin/Release/net10.0/$($build.Rid)/TsubakiTTS.pdb"
+    if (Test-Path -LiteralPath $symbols -PathType Leaf) {
+        Copy-Item -LiteralPath $symbols -Destination $buildReview -Force
+    }
+    $publishedHashes = foreach ($file in (Get-ChildItem -LiteralPath $publishDirectory -Recurse -File)) {
+        $relative = $file.FullName.Substring($publishDirectory.TrimEnd([char[]]@('\', '/')).Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
+        "$( (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() )  $relative"
+    }
+    $publishedHashes | Sort-Object | Set-Content -LiteralPath (Join-Path $buildReview 'PUBLISHED_FILES_SHA256.txt') -Encoding UTF8
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archiveRoot = $build.Artifact
@@ -422,3 +503,16 @@ foreach ($build in $variants) {
     }
     Write-Host "Published $($build.Name) with $($packages.Count) package records: $archivePath"
 }
+
+# Complete the existing separate source archive after all build evidence is available.
+$temporaryPackage = "$sourcePackagePath.partial"
+try {
+    $sourceNames = @('SOURCE_MANIFEST.json') + @($sourceFiles | ForEach-Object { $_.File } | Sort-Object -Unique)
+    & tar -czf $temporaryPackage -C $SourcesRoot @sourceNames -C $reviewRun PROJECT_SOURCE BUILD_REVIEW
+    if ($LASTEXITCODE -ne 0) { throw "Failed to package corresponding source: $sourcePackagePath" }
+    Move-Item -LiteralPath $temporaryPackage -Destination $sourcePackagePath
+}
+finally {
+    Remove-Item -LiteralPath $temporaryPackage -Force -ErrorAction SilentlyContinue
+}
+Write-Host "Separate source and review download for this release: $sourcePackagePath"

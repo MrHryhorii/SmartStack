@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory)][string]$PublishDirectory,
     [Parameter(Mandatory)][ValidateSet('win-x64', 'linux-x64')][string]$RuntimeIdentifier,
     [Parameter(Mandatory)][string]$PackageDirectory,
@@ -21,7 +21,7 @@ Invoke-Expression $definition.Extent.Text
 $result = Assert-SignalsmithDistribution $PublishDirectory $RuntimeIdentifier $PackageDirectory
 $result | Write-Output
 $nativeName = if ($RuntimeIdentifier -eq 'win-x64') { 'SignalsmithStretch.dll' } else { 'libSignalsmithStretch.so' }
-$noticeNames = @('Wrapper-MIT-0.txt', 'Stretch-MIT.txt', 'Linear-MIT.txt', 'PROVENANCE.txt')
+$noticeNames = @('Wrapper-MIT-0.txt', 'Stretch-MIT.txt', 'Linear-MIT.txt')
 $checks = 2
 foreach ($missing in $noticeNames) {
     $trial = Join-Path $WorkDirectory $missing
