@@ -1,0 +1,24 @@
+{
+  "Repository": "https://github.com/ar1st0crat/NWaves",
+  "Revision": "41e9fef88fa58171eeed1e3464832271e7b76ddb",
+  "OriginalNotice": "Copyright (c) 2017 Tim; MIT",
+  "Adaptation": "Services/RobotSpectralCore.cs replaces the real FFT backend with NAudio 3.3.0 FftProcessor and retains only emitted-hop scaling. RobotProcessor supplies streaming alignment, common power matching and intensity mixing.",
+  "BinaryOracle": "NWaves 0.9.6 is used only by Tests/RobotRegression.",
+  "Files": [
+    {
+      "File": "RobotEffect.cs.txt",
+      "Source": "https://raw.githubusercontent.com/ar1st0crat/NWaves/41e9fef88fa58171eeed1e3464832271e7b76ddb/NWaves/Effects/RobotEffect.cs",
+      "Sha256": "2570801af46789f03a602f5884b48434673ae6a0c69aa34eefe680e7948de557"
+    },
+    {
+      "File": "OverlapAddFilter.cs.txt",
+      "Source": "https://raw.githubusercontent.com/ar1st0crat/NWaves/41e9fef88fa58171eeed1e3464832271e7b76ddb/NWaves/Filters/Base/OverlapAddFilter.cs",
+      "Sha256": "0fa1be574f2b708bf594eed316992e13e8b44771fe0347b99670bd4457a1c0ec"
+    },
+    {
+      "File": "LICENSE.txt",
+      "Source": "https://raw.githubusercontent.com/ar1st0crat/NWaves/41e9fef88fa58171eeed1e3464832271e7b76ddb/LICENSE",
+      "Sha256": "a534aefce87142300cc622d9d5677b6666c202f79d6dbf70c198c78f90ded540"
+    }
+  ]
+}

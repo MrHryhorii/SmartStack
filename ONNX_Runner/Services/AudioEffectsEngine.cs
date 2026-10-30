@@ -285,6 +285,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDispo
     private readonly BiQuadFilter[] _filters = new BiQuadFilter[5];
     private int _filterCount;
     private HarmonizerProcessor? _harmonizer;
+    private RobotProcessor? _robot;
     private bool _disposed;
     private FmRadioProcessor? _fmProcessor;
     private float _fmAmount;
@@ -323,6 +324,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDispo
     public void Reset(uint? fixedSeed = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        _robot?.Dispose();
+        _robot = null;
         _harmonizer?.Dispose();
         _harmonizer = null;
         _delay?.Clear();
@@ -377,6 +380,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDispo
     /// <summary>Reports retained audio for effects that support finite request completion.</summary>
     internal bool HasPendingOutput => _current == VoiceEffectType.Harmonizer
         ? _harmonizer?.PendingSamples > 0
+        : _current == VoiceEffectType.Robot ? _robot?.PendingSamples > 0
         : _current == VoiceEffectType.FmRadio && _fmProcessor != null &&
         (_fmProcessor.PendingSamples > 0 || _dcBlocker.PendingMagnitude * FmOutputGain *
             (_fmAmount < 1f ? Math.Max(1, _fmAmount * StreamingPowerMatchedMixer.MaximumGain) : 1) > CompletionSilenceFloor);
@@ -386,6 +390,7 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDispo
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_current == VoiceEffectType.Harmonizer) return _harmonizer?.Complete(destination) ?? 0;
+        if (_current == VoiceEffectType.Robot) return _robot?.Complete(destination) ?? 0;
         if (destination.IsEmpty || !HasPendingOutput) return 0;
         if (_fmAmount >= 1f) return CompleteFmWet(destination, Span<float>.Empty);
         _powerMixer ??= new StreamingPowerMatchedMixer(_sampleRate);
@@ -464,6 +469,13 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDispo
             if (buffer.IsEmpty) return 0;
             _harmonizer ??= new HarmonizerProcessor(_sampleRate);
             return _harmonizer.Process(buffer, amount);
+        }
+
+        if (type == VoiceEffectType.Robot)
+        {
+            if (buffer.IsEmpty) return 0;
+            _robot ??= new RobotProcessor(_sampleRate);
+            return _robot.Process(buffer, amount);
         }
 
         RoutingMode mode = GetRoutingMode(type);
@@ -606,6 +618,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDispo
     /// </summary>
     private void Setup(VoiceEffectType type)
     {
+        _robot?.Dispose();
+        _robot = null;
         _harmonizer?.Dispose();
         _harmonizer = null;
         _filterCount = 0;
@@ -1718,6 +1732,8 @@ public class AudioEffectsEngine(EffectsSettings config, int sampleRate) : IDispo
     {
         if (_disposed) return;
         _disposed = true;
+        _robot?.Dispose();
+        _robot = null;
         _harmonizer?.Dispose();
         _harmonizer = null;
         _current = VoiceEffectType.None;

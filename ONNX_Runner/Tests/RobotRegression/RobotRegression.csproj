@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../ONNX_Runner.csproj" />
+    <!-- Original binary is a test oracle only; the server uses NAudio. -->
+    <PackageReference Include="NWaves" Version="0.9.6" />
+    <Compile Include="../ServerConfigurationRegression/AudioEffectSampleRateChecks.cs" Link="AudioEffectSampleRateChecks.cs" />
+  </ItemGroup>
+</Project>

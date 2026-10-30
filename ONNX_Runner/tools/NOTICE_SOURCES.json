@@ -63,6 +63,11 @@
       "File": "THIRD_PARTY_LICENSES/NAudio-MIT.txt",
       "Source": "https://raw.githubusercontent.com/naudio/NAudio/4f8889e2bd34c3978a25652c6c172fa1502ccba3/LICENSE",
       "Sha256": "e518e168af44d37da3de236e719c986169e47b46b90e37c1355056175744e037"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/NWaves-MIT.txt",
+      "Source": "https://raw.githubusercontent.com/ar1st0crat/NWaves/41e9fef88fa58171eeed1e3464832271e7b76ddb/LICENSE",
+      "Sha256": "a534aefce87142300cc622d9d5677b6666c202f79d6dbf70c198c78f90ded540"
     }
   ]
 }

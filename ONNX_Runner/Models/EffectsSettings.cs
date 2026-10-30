@@ -23,6 +23,9 @@ public enum VoiceEffectType
     /// <summary>Three fixed harmony voices with preserved formants and measured-power intensity mixing.</summary>
     Harmonizer,
 
+    /// <summary>Zero-phase spectral robotization with aligned, measured-power intensity mixing.</summary>
+    Robot,
+
     /// <summary>Short modulated delay with feedback (classic flanger effect).</summary>
     Flanger,
 
