@@ -317,8 +317,10 @@ Recommended server-side streaming configuration in `appsettings.json`:
 
 1. Place a clean voice sample (`.wav`, 5–15 seconds) into the `Voices/` folder.
 2. The filename becomes the voice ID: `John.wav` → `"voice": "John"`.
-3. Start or restart the server. On startup, Tsubaki extracts the voice fingerprint and creates a `.voice` file next to the sample.
+3. Start or restart the server. Tsubaki creates a missing `.voice` fingerprint next to the sample.
 4. The new voice is then automatically available by that name in API requests and appears in the Web Dashboard voice list.
+
+> Existing fingerprints are checked only at server startup. A changed `ClonerSettings.ReferenceAudioTargetLufs` or an outdated fingerprint format triggers regeneration when the matching `.wav` is available; without it, a compatible `.voice` is loaded unchanged.
 
 After the fingerprint is created, the source `.wav` can be removed; the `.voice` file is sufficient for using the cloned voice.
 
