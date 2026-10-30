@@ -32,10 +32,11 @@ internal sealed class AudioOutputResampler : IDisposable
                 samples[i] = filter.Transform(samples[i]);
             }
         }
+        Span<float> output = _output.AsSpan(0, _blockLength);
         while (!samples.IsEmpty)
         {
-            var result = _resampler.Process(samples, _output!, _blockLength);
-            WriteConverted(_output.AsSpan(0, result.Written), manager, volume);
+            var result = _resampler.Process(samples, output);
+            WriteConverted(output[..result.Written], manager, volume);
             samples = samples[result.Consumed..];
         }
     }
@@ -45,12 +46,13 @@ internal sealed class AudioOutputResampler : IDisposable
         CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_output == null, this);
+        Span<float> output = _output.AsSpan(0, _blockLength);
         int written;
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
-            written = _resampler.Complete(_output!, _blockLength);
-            WriteConverted(_output.AsSpan(0, written), manager, volume);
+            written = _resampler.Complete(output);
+            WriteConverted(output[..written], manager, volume);
         } while (written == _blockLength);
     }
 

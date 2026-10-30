@@ -78,25 +78,29 @@ public class AudioProcessor
         int sourceRate = provider.WaveFormat.SampleRate;
         int initialSize = checked(sourceRate * 30);
         float[] sourceBuffer = ArrayPool<float>.Shared.Rent(initialSize);
-        float[] chunk = ArrayPool<float>.Shared.Rent(sourceRate);
         int totalRead = 0;
+        Span<float> nextSample = stackalloc float[1];
 
         try
         {
-            int read;
-            while ((read = provider.Read(chunk.AsSpan())) > 0)
+            while (true)
             {
-                int required = checked(totalRead + read);
-                if (required > sourceBuffer.Length)
+                if (totalRead == sourceBuffer.Length)
                 {
-                    int newSize = Math.Max(required, checked(sourceBuffer.Length * 2));
+                    // Confirm there is another sample before growing an exactly full buffer.
+                    if (provider.Read(nextSample) <= 0) break;
+                    int newSize = checked(sourceBuffer.Length * 2);
                     float[] grown = ArrayPool<float>.Shared.Rent(newSize);
                     sourceBuffer.AsSpan(0, totalRead).CopyTo(grown);
                     ArrayPool<float>.Shared.Return(sourceBuffer);
                     sourceBuffer = grown;
+                    sourceBuffer[totalRead++] = nextSample[0];
                 }
 
-                chunk.AsSpan(0, read).CopyTo(sourceBuffer.AsSpan(totalRead));
+                // Decode directly into the retained PCM buffer, keeping provider reads bounded.
+                int available = Math.Min(sourceRate, sourceBuffer.Length - totalRead);
+                int read = provider.Read(sourceBuffer.AsSpan(totalRead, available));
+                if (read <= 0) break;
                 totalRead += read;
             }
         }
@@ -104,10 +108,6 @@ public class AudioProcessor
         {
             ArrayPool<float>.Shared.Return(sourceBuffer);
             throw;
-        }
-        finally
-        {
-            ArrayPool<float>.Shared.Return(chunk);
         }
 
         if (sourceRate == targetSampleRate)
@@ -119,10 +119,10 @@ public class AudioProcessor
         Console.WriteLine($"      [INFO] Resampling from {sourceRate}Hz to {targetSampleRate}Hz...");
         Console.ResetColor();
 
-        var resampler = new AudioResampler(sourceRate, targetSampleRate);
         try
         {
-            return resampler.Resample(sourceBuffer, totalRead);
+            var resampler = new AudioResampler(sourceRate, targetSampleRate);
+            return resampler.Resample(sourceBuffer.AsSpan(0, totalRead));
         }
         finally
         {

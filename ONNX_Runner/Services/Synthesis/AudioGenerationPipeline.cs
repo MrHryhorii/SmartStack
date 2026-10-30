@@ -368,7 +368,7 @@ internal static class AudioGenerationPipeline
                             int cloneInputLength = currentLength;
                             if (cloneResampler != null)
                             {
-                                var r1 = cloneResampler.Resample(currentBuffer, currentLength);
+                                var r1 = cloneResampler.Resample(currentBuffer.AsSpan(0, currentLength));
                                 rentedBuffer1 = r1.Buffer;
                                 cloneInputBuffer = rentedBuffer1;
                                 cloneInputLength = r1.Length;
@@ -408,7 +408,7 @@ internal static class AudioGenerationPipeline
                         // Preserve the established DSP input rate before applying effects.
                         if (processingResampler != null)
                         {
-                            var r2 = processingResampler.Resample(currentBuffer, currentLength);
+                            var r2 = processingResampler.Resample(currentBuffer.AsSpan(0, currentLength));
                             rentedBuffer2 = r2.Buffer;
                             currentBuffer = rentedBuffer2;
                             currentLength = r2.Length;
