@@ -406,7 +406,7 @@ If the cloned voice is still too quiet, compensate using `DefaultVolume` or `Vol
 }
 ```
 
-The volume adjustment is applied as a final gain stage with soft-knee limiting **after character effects, spatial environments, and device profiles, before encoding**. The cloning model itself always works from the natural, un-boosted waveform.
+Output volume is adjusted after effects and output resampling, with final peak protection before encoding. The cloning model itself always works from the natural, un-boosted waveform.
 
 ---
 
@@ -460,7 +460,7 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | ----------------------- | ------ | ---------------------------------------------------------- |
 | `equalizer`             | string[] | Ordered playback-profile IDs. Only the first 16 entries are processed; unknown names are ignored. |
 | `effect`                | string | DSP character effect to apply. See available values below. |
-| `effect_intensity`      | float  | Effect intensity. `1.0` is full strength.                  |
+| `effect_intensity`      | float  | Effect strength: `0.0` bypasses the character effect; `1.0` applies its full character. |
 | `environment`           | string | Acoustic spatial environment. See available values below.  |
 | `environment_intensity` | float  | Reverb intensity. `0.25` is recommended.                   |
 | `extend_reverb_tail`    | bool   | Lets the active `environment` reverb decay fully at the end of the request instead of being cut off. Overrides the server's `ExtendReverbTailOnFinish` default for this request only. Has no effect on character `effect`s. See *Reverb Tail Extension* in Server-Side DSP Defaults below. |
@@ -486,21 +486,25 @@ HP/LP are high-pass/low-pass cutoff frequencies; the other values are tonal-band
 
 #### Available Effects
 
-| Value           | Description                                                                                  |
-| --------------- | -------------------------------------------------------------------------------------------- |
-| `None`          | Bypass — clean audio                                                                         |
-| `Telephone`     | Vintage telephone filtering, line noise, and asymmetric saturation                           |
-| `Overdrive`     | Warm tube saturation and cubic waveshaping distortion                                        |
-| `Bitcrusher`    | Bit-depth and sample-rate reduction for retro digital distortion                             |
-| `RingModulator` | Classic Robot / Dalek metallic effect                                                        |
-| `Flanger`       | Modulated short delay with heavy feedback                                                    |
-| `Chorus`        | Thick, multi-voice ensemble effect                                                           |
-| `LoFiTape`      | Analog cassette-style saturation, wow/flutter, and tape hiss                                 |
-| `DecoderGlitch` | Repeats short audio fragments to simulate a digital decoder glitch                           |
-| `TacticalRadio` | CVSD codec simulation with heavy compression and slope-overload distortion                   |
-| `FmRadio`       | Handheld FM radio effect with an amplitude limiter and signal-dependent noise floor          |
-| `G711MuLaw`     | G.711 μ-law digital telephony codec simulation                                               |
-| `G711ALaw`      | G.711 A-law digital telephony codec simulation                                               |
+| Value | Description |
+| --- | --- |
+| `None` | No character effect; other enabled processing still applies. |
+| `Telephone` | Narrow, vintage telephone sound with light grit and line noise. |
+| `Overdrive` | Warm saturation that adds a rough, driven edge to the voice. |
+| `Bitcrusher` | Progressively rougher digital sound with reduced detail and metallic artifacts. |
+| `RingModulator` | Pulsing tremolo at moderate strength, becoming a metallic Dalek-style voice. |
+| `Harmonizer` | Three-voice harmony that adds a fuller, chord-like sound. |
+| `Robot` | Synthetic, robotic speech with a regular electronic pulse. |
+| `Flanger` | A sweeping, hollow or jet-like sound from a moving short delay. |
+| `Chorus` | A fuller ensemble sound, as if several voices were speaking together. |
+| `DecoderGlitch` | Intermittent stutters and repeated fragments, like damaged digital playback. |
+| `TacticalRadio` | Rough, compressed two-way radio sound with a sharp, barking character. |
+| `LoFiTape` | Cassette warmth, pitch wobble and hiss; stronger settings suggest a worn tape. |
+| `FmRadio` | Voice-radio coloration with focused mids and a softened high end. |
+| `G711MuLaw` | G.711 mu-law telephone sound with narrow bandwidth and digital coloration. |
+| `G711ALaw` | G.711 A-law telephone sound with a slightly different digital texture. |
+
+Lower intensity brings the voice closer to its original sound; higher intensity makes the chosen character more pronounced. Each effect develops differently: cassette wear grows, while decoder glitches become more frequent and longer.
 
 #### Available Environments
 
@@ -524,7 +528,7 @@ HP/LP are high-pass/low-pass cutoff frequencies; the other values are tonal-band
 | `language`    | string | Forces an eSpeak language/dialect code (e.g. `"uk"`, `"fr-ca"`). Use `"auto"` or omit it for automatic detection and fallback routing. |
 | `early_split` | bool   | Overrides `ChunkerSettings.EarlySplit` for this request. Allows one conservative first-clause split to reduce initial latency; later chunks follow normal sentence boundaries. It can change first-sentence intonation. |
 | `pitch`       | float  | Pitch multiplier. `1.0` is unchanged. |
-| `volume`      | float  | Output volume multiplier with soft-knee limiting. `1.0` is unchanged. |
+| `volume`      | float  | Output volume multiplier. `1.0` leaves the multiplier unchanged; final peak protection applies. |
 | `samplerate`  | int    | Output sample rate in Hz. Omit it or use `null` to inherit `DspSettings.DefaultSampleRate`; `0` keeps the normal model/codec rate. Other values are clamped to `8000`–`48000`. |
 | `noise_scale` | float  | Pronunciation/intonation variance. Default: `0.667`. |
 | `noise_w`     | float  | Phoneme-duration/rhythm variance. Default: `0.8`. |
@@ -628,7 +632,7 @@ Server-wide pitch multiplier: `1.0` leaves pitch unchanged, while `0.5`/`2.0` sh
 
 #### DefaultVolume
 
-Server-wide volume multiplier with soft-knee limiting: `1.0` is unchanged, `0.5` is about −6 dB, `2.0` about +6 dB, and `4.0` is the maximum +12 dB setting. Tsubaki requests can override it with `volume`; `VolumeBoosterDb` is applied underneath this multiplier.
+Server-wide volume multiplier: `0.0` mutes, `1.0` leaves the multiplier unchanged, `0.5` is about −6 dB, `2.0` about +6 dB, and `4.0` is the maximum +12 dB setting. Tsubaki requests can override it with `volume`; `VolumeBoosterDb` adds the fixed server boost. Final peak protection prevents clipping when needed.
 
 #### DefaultSampleRate
 
@@ -640,7 +644,7 @@ Tsubaki requests override it with `samplerate`; an explicit `0` bypasses the ser
 
 Applies a fixed gain correction in decibels underneath `DefaultVolume`/`volume`. It is intended as a baseline calibration for the engine's output rather than a per-request volume preference. A value of `0` disables the correction.
 
-The booster and `volume` are applied together after character effects, spatial environments, and device profiles, before encoding.
+The booster and `volume` are applied together after effects, device profiles, and output resampling, before final peak protection and encoding.
 `VolumeBoosterDb` is server-only; use `volume` for per-request adjustments.
 `GET /tsbk/server/status` reports the boost and combined default gain.
 
@@ -1343,6 +1347,7 @@ Tsubaki TTS Engine stands on the shoulders of giants. A massive thank you to the
 - [**NAudio & NAudio.Lame**](https://github.com/naudio/NAudio) — Audio processing and the .NET LAME integration.
 - [**Concentus**](https://github.com/lostromb/concentus) — Pure C# Opus encoding.
 - [**SoundTouch.Net**](https://github.com/owoudenberg/soundtouch.net) — High-quality pitch and tempo shifting (WSOLA algorithm).
+- [**SignalsmithStretch-CS**](https://github.com/Estrol/signalsmith-stretch-cs) — Pitch-shifted harmony voices for Harmonizer.
 - [**SearchPioneer.Lingua**](https://github.com/searchpioneer/lingua-dotnet) — Fast, offline language detection for foreign word pronunciation.
 
 ### Native Components
