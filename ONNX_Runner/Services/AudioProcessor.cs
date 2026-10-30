@@ -84,7 +84,7 @@ public class AudioProcessor
         try
         {
             int read;
-            while ((read = provider.Read(chunk, 0, chunk.Length)) > 0)
+            while ((read = provider.Read(chunk.AsSpan())) > 0)
             {
                 int required = checked(totalRead + read);
                 if (required > sourceBuffer.Length)

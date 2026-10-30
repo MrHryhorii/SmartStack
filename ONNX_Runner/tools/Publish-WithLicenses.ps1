@@ -297,7 +297,7 @@ foreach ($build in $variants) {
         'Microsoft.AspNetCore.OpenApi' = 'AspNetCore-MIT.txt'
         'Microsoft.Extensions.ApiDescription.Server' = 'AspNetCore-MIT.txt'
         'Microsoft.OpenApi' = 'OpenAPI.NET-MIT.txt'
-        'NAudio.Asio' = 'NAudio-MIT.txt'; 'NAudio.Core' = 'NAudio-MIT.txt'
+        'NAudio' = 'NAudio-MIT.txt'; 'NAudio.Asio' = 'NAudio-MIT.txt'; 'NAudio.Core' = 'NAudio-MIT.txt'
         'NAudio.Midi' = 'NAudio-MIT.txt'; 'NAudio.Wasapi' = 'NAudio-MIT.txt'; 'NAudio.WinMM' = 'NAudio-MIT.txt'
         'Swashbuckle.AspNetCore' = 'Swashbuckle-MIT.txt'
         'Swashbuckle.AspNetCore.Swagger' = 'Swashbuckle-MIT.txt'

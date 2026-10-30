@@ -58,6 +58,11 @@
       "ArchiveEntry": "lame-3.100/LICENSE",
       "ArchiveSha256": "ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e",
       "Sha256": "7a40cbd8818c57e5285e83c772a459a996d1662c824a879836b97b473c07cae4"
+    },
+    {
+      "File": "THIRD_PARTY_LICENSES/NAudio-MIT.txt",
+      "Source": "https://raw.githubusercontent.com/naudio/NAudio/4f8889e2bd34c3978a25652c6c172fa1502ccba3/LICENSE",
+      "Sha256": "e518e168af44d37da3de236e719c986169e47b46b90e37c1355056175744e037"
     }
   ]
 }

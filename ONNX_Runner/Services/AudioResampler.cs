@@ -16,8 +16,6 @@ public sealed class AudioResampler
     private readonly int _sourceRate;
     private readonly int _targetRate;
     private readonly bool _passthrough;
-    private float[]? _streamInput;
-    private int _streamInputOffset;
     private int _streamInputCount;
     private int _streamInputNeeded;
     private int _streamOutputLength;
@@ -108,8 +106,7 @@ public sealed class AudioResampler
                 int inputNeeded = _resampler.ResamplePrepare(
                     outputRequest,
                     1,
-                    out float[] inputBuffer,
-                    out int inputBufferOffset);
+                    out Span<float> inputBuffer);
 
                 if (inputNeeded <= 0)
                 {
@@ -118,11 +115,10 @@ public sealed class AudioResampler
 
                 int inputAvailable = Math.Min(inputNeeded, remainingInput);
                 samples.AsSpan(inputOffset, inputAvailable)
-                    .CopyTo(inputBuffer.AsSpan(inputBufferOffset, inputAvailable));
+                    .CopyTo(inputBuffer[..inputAvailable]);
 
                 int produced = _resampler.ResampleOut(
-                    output,
-                    outputLength,
+                    output.AsSpan(outputLength),
                     inputAvailable,
                     outputRequest,
                     1);
@@ -143,14 +139,12 @@ public sealed class AudioResampler
             int flushRequest = _resampler.ResamplePrepare(
                 OutputSafetyFloor,
                 1,
-                out _,
                 out _);
 
             if (flushRequest > 0)
             {
                 outputLength += _resampler.ResampleOut(
-                    output,
-                    outputLength,
+                    output.AsSpan(outputLength),
                     0,
                     OutputSafetyFloor,
                     1);
@@ -188,16 +182,16 @@ public sealed class AudioResampler
             return (0, 0);
         }
 
-        PrepareStreamingInput(outputLength);
+        Span<float> input = PrepareStreamingInput(outputLength);
         int consumed = Math.Min(samples.Length, _streamInputNeeded - _streamInputCount);
-        samples[..consumed].CopyTo(_streamInput!.AsSpan(_streamInputOffset + _streamInputCount, consumed));
+        samples[..consumed].CopyTo(input.Slice(_streamInputCount, consumed));
         _streamInputCount += consumed;
         if (_streamInputCount < _streamInputNeeded)
         {
             return (consumed, 0);
         }
 
-        int written = _resampler.ResampleOut(output, 0, _streamInputCount, outputLength, 1);
+        int written = _resampler.ResampleOut(output.AsSpan(), _streamInputCount, outputLength, 1);
         _streamInputNeeded = 0;
         _streamInputCount = 0;
         return (consumed, written);
@@ -222,7 +216,7 @@ public sealed class AudioResampler
         }
 
         PrepareStreamingInput(outputLength);
-        int written = _resampler.ResampleOut(output, 0, _streamInputCount, outputLength, 1);
+        int written = _resampler.ResampleOut(output.AsSpan(), _streamInputCount, outputLength, 1);
         _streamInputNeeded = 0;
         _streamInputCount = 0;
         _streamDrained = written < outputLength;
@@ -249,18 +243,18 @@ public sealed class AudioResampler
         }
     }
 
-    /// <summary>Obtains WDL's next input region unless a partially filled region is already pending.</summary>
-    private void PrepareStreamingInput(int outputLength)
+    /// <summary>Reacquires WDL's input span without advancing its state or discarding pending samples.</summary>
+    private Span<float> PrepareStreamingInput(int outputLength)
     {
-        if (_streamInputNeeded != 0)
-        {
-            return;
-        }
-        _streamInputNeeded = _resampler.ResamplePrepare(outputLength, 1, out _streamInput, out _streamInputOffset);
-        if (_streamInputNeeded <= 0)
-        {
+        // WDL permits repeated prepare calls before ResampleOut. Its fixed request retains
+        // the same region, so a class can reacquire the span without keeping a ref struct.
+        int needed = _resampler.ResamplePrepare(outputLength, 1, out Span<float> input);
+        if (needed <= 0)
             throw new InvalidOperationException("WDL resampler did not request input samples.");
-        }
+        if (_streamInputNeeded != 0 && needed != _streamInputNeeded)
+            throw new InvalidOperationException("WDL changed a partially filled input region.");
+        _streamInputNeeded = needed;
+        return input;
     }
 
     /// <summary>Grows a rented output buffer while preserving valid samples and returning the old array to the pool.</summary>

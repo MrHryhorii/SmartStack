@@ -55,7 +55,7 @@ try {
                     throw "Invalid client ZIP path: $($entry.FullName)"
                 }
                 $relative = $entry.FullName.Substring($prefix.Length)
-                if ($relative -match '(^|/)(PROVENANCE\.txt|VOICE_PROVENANCE\.txt|MODEL_PROVENANCE\.txt|PACKAGE_INFO\.txt|SOURCE_MANIFEST\.json|SOURCE_ACCESS\.txt|RELEASE_CONTENTS\.txt|NUGET_PUBLISH_INVENTORY\.txt|appsettings\.Development\.json|readMe\.md|README\.txt)$|\.(nuspec|pdb|cs|csproj|ps1)$') {
+                if ($relative -match '^tools/|(^|/)(PROVENANCE\.txt|VOICE_PROVENANCE\.txt|MODEL_PROVENANCE\.txt|PACKAGE_INFO\.txt|SOURCE_MANIFEST\.json|SOURCE_ACCESS\.txt|RELEASE_CONTENTS\.txt|NUGET_PUBLISH_INVENTORY\.txt|NUGET_RESTORE_INVENTORY\.txt|appsettings\.Development\.json|readMe\.md|README\.txt)$|\.(nuspec|pdb|cs|csproj|ps1)$') {
                     throw "Review/source file leaked into client ZIP: $relative"
                 }
                 if (-not $entry.FullName.EndsWith('/')) { $entries[$relative] = $entry }

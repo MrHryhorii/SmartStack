@@ -321,7 +321,7 @@ public class BaseVoiceGenerator(
 
         while (samplesRead < samples.Length)
         {
-            int read = provider.Read(samples, samplesRead, samples.Length - samplesRead);
+            int read = provider.Read(samples.AsSpan(samplesRead));
             if (read <= 0) break;
 
             samplesRead += read;

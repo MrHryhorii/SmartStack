@@ -218,7 +218,7 @@ internal static class EqualizerSynthesisChecks
                     var reference = new NAudio.Wave.SampleProviders.WdlResamplingSampleProvider(
                         new FloatSource(beforeVolume, config.Audio.SampleRate), rate);
                     float[] expected = new float[actual.Length + 2];
-                    int count = reference.Read(expected, 0, expected.Length);
+                    int count = reference.Read(expected.AsSpan());
                     Require(Math.Abs(count - actual.Length) <= 1, "Reference output has a different sample count.");
                     VolumeShifter.ApplyVolume(expected.AsSpan(0, count), 1f, rate);
                     Near(expected.AsSpan(0, Math.Min(count, actual.Length)), actual.AsSpan(0, Math.Min(count, actual.Length)), .00015f);
@@ -279,10 +279,10 @@ internal static class EqualizerSynthesisChecks
         public NAudio.Wave.WaveFormat WaveFormat { get; } = NAudio.Wave.WaveFormat.CreateIeeeFloatWaveFormat(rate, 1);
 
         /// <summary>Copies the next available samples without padding beyond the logical waveform.</summary>
-        public int Read(float[] buffer, int offset, int count)
+        public int Read(Span<float> buffer)
         {
-            int length = Math.Min(count, samples.Length - _position);
-            samples.AsSpan(_position, length).CopyTo(buffer.AsSpan(offset, length));
+            int length = Math.Min(buffer.Length, samples.Length - _position);
+            samples.AsSpan(_position, length).CopyTo(buffer[..length]);
             _position += length;
             return length;
         }
