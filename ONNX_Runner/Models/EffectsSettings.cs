@@ -117,7 +117,7 @@ public enum SpatialEnvironment
     /// <summary>Reflective rocky cavern with a longer decay.</summary>
     Cave,
 
-    /// <summary>Open outdoor space. Discrete echoes rather than dense reverb tails; simulates natural canyon or forest acoustics.</summary>
+    /// <summary>Scattered forest reflections with delayed returns and strong high-frequency absorption.</summary>
     Forest,
 
     // --- Extreme & Narrative ---

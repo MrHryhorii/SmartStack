@@ -7,7 +7,7 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Server-side spatial acoustics engine.
-/// Room, LivingRoom, Stage, ConcreteHall, Dungeon and Cave use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
+/// Room, LivingRoom, Stage, ConcreteHall, Dungeon, Cave and Forest use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
@@ -19,8 +19,7 @@ namespace ONNX_Runner.Services;
 /// - ConcreteHall: Large concert hall with a long, dense reflected tail.
 /// - Dungeon:      Compact stone chamber with dense, short reflections.
 /// - Cave:         Reflective rocky cavern with a longer decay.
-/// - Forest:       Outdoor, sparse. Two discrete decaying taps, no reverb at all.
-///                 Absence of a tail IS the recognizable trait.
+/// - Forest:       Delayed, scattered outdoor reflections with strong HF absorption.
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
 ///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
 /// - Underwater:   Drowned. Steep 24dB/oct cascaded LP muffling + slapback pressure ring.
@@ -53,6 +52,9 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters CaveParameters = new(
         1, 1, .3162f, 1, 1, 2.91f, 1.3f, 1, .5f, .015f,
         .7063f, .022f, .25f, 0, .9943f, 5000, 250, false);
+    private static readonly SpatialReverbParameters ForestParameters = new(
+        1, .3f, .3162f, .0224f, 1, 1.49f, .54f, 1, .0525f, .162f,
+        .7682f, .088f, .25f, 0, .9943f, 5000, 250, true);
     // Preserve the accepted room balance; other published profiles use doubled return.
     private const float RoomReturnGain = 64f;
     private const float DefaultReverbReturnGain = 2f;
@@ -77,8 +79,6 @@ public class SpatialEffectsEngine
     // DELAY BUFFERS
     // =========================================================================
 
-    private readonly DelayBuffer _forestNearDelay;
-    private readonly DelayBuffer _forestFarDelay;
     private readonly DelayBuffer _underwaterDelay;
     private readonly DelayBuffer _innerVoiceMicroDelay;
 
@@ -88,8 +88,6 @@ public class SpatialEffectsEngine
 
     private BiQuadFilter? _reverbHpFilter;
     private BiQuadFilter? _reverbLpFilter;
-
-    private BiQuadFilter? _forestHfDamp;
 
     // Attenuation/Obstacle filters
     private BiQuadFilter? _environmentEq;
@@ -118,8 +116,6 @@ public class SpatialEffectsEngine
     // PRE-COMPUTED DELAY SIZES
     // =========================================================================
 
-    private float _forestNearSamples;
-    private float _forestFarSamples;
     private float _underwaterDelaySamples;
     private float _innerVoiceMicroDelaySamples;
 
@@ -128,7 +124,6 @@ public class SpatialEffectsEngine
     // =========================================================================
 
     private bool _hasReverbEq;
-    private bool _hasForestEq;
 
     private SpatialEnvironment _current = SpatialEnvironment.None;
 
@@ -164,8 +159,6 @@ public class SpatialEffectsEngine
         _allPasses = [new(allPassA), new(allPassB), new(allPassC), new(allPassD)];
         _reverbSilenceWindowSamples = combSizes[^1] + allPassA + allPassB + allPassC + allPassD;
 
-        _forestNearDelay = new DelayBuffer(SamplesFor(280f));
-        _forestFarDelay = new DelayBuffer(SamplesFor(550f));
         _underwaterDelay = new DelayBuffer(SamplesFor(170f));
         _innerVoiceMicroDelay = new DelayBuffer(SamplesFor(15f));
     }
@@ -212,15 +205,12 @@ public class SpatialEffectsEngine
             if (_profileReverb is not null) return _profileQuietWindowSamples;
             float pathSamples = _current switch
             {
-                SpatialEnvironment.Forest => Math.Max(_forestNearSamples, _forestFarSamples),
                 SpatialEnvironment.Underwater => Math.Max(_underwaterDelaySamples, _reverbSilenceWindowSamples),
                 SpatialEnvironment.InnerVoice => _reverbSilenceWindowSamples + _innerVoiceMicroDelaySamples,
                 _ => _reverbSilenceWindowSamples
             };
             // Dense feedback can rise again after a quiet pass; observe two complete path spans.
-            // Forest needs one complete interval between its discrete echo returns.
-            int passes = _current == SpatialEnvironment.Forest ? 1 : 2;
-            return Math.Max(probeSamples, (int)MathF.Ceiling(pathSamples * passes) + 2);
+            return Math.Max(probeSamples, (int)MathF.Ceiling(pathSamples * 2) + 2);
         }
     }
 
@@ -231,8 +221,6 @@ public class SpatialEffectsEngine
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
 
-        _forestNearDelay.Clear();
-        _forestFarDelay.Clear();
         _underwaterDelay.Clear();
         _innerVoiceMicroDelay.Clear();
 
@@ -241,7 +229,6 @@ public class SpatialEffectsEngine
 
     /// <summary>
     /// Published reverb profiles retain direct sound and use inverse-square intensity for their reflected return.
-    /// Remaining additive/spatial environments retain their quadratic mix (mix²).
     /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff and saturation depth.
     /// InnerVoice uses that intensity for internal coloration; Underwater uses it for blending.
     /// </summary>
@@ -263,36 +250,19 @@ public class SpatialEffectsEngine
             return;
         }
 
-        float curvedMix = mix * mix;
         float inverseSquareMix = 1f - (1f - mix) * (1f - mix);
 
-        // Equal-power gains are constant for the whole buffer. Compute only the pair
-        // used by the selected environment to avoid MathF.Sqrt in the sample loop.
-        float curvedDryGain = 1f;
-        float curvedWetGain = 0f;
+        // The remaining blended environment uses one gain pair per buffer.
         float inverseDryGain = 1f;
         float inverseWetGain = 0f;
 
-        if (env == SpatialEnvironment.Forest)
-        {
-            Dsp.EqualPowerGains(curvedMix, out curvedDryGain, out curvedWetGain);
-        }
-        else if (env == SpatialEnvironment.Underwater)
+        if (env == SpatialEnvironment.Underwater)
         {
             Dsp.EqualPowerGains(inverseSquareMix, out inverseDryGain, out inverseWetGain);
         }
 
         switch (env)
         {
-            case SpatialEnvironment.Forest:
-                bool hasForestEq = _hasForestEq;
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, ForestEcho(dry, hasForestEq), curvedDryGain, curvedWetGain));
-                }
-                break;
-
             case SpatialEnvironment.Muffled:
                 PrepareMuffled(mix);
                 for (int i = 0; i < buffer.Length; i++)
@@ -403,12 +373,10 @@ public class SpatialEffectsEngine
         // Nullify all specific EQ filters to prevent state leakage between environments.
         _reverbHpFilter = null;
         _reverbLpFilter = null;
-        _forestHfDamp = null;
         _environmentEq = null;
         _environmentEq2 = null;
 
         _hasReverbEq = false;
-        _hasForestEq = false;
 
         float nyq = _sampleRate * 0.45f;
         // Caps environment filter frequencies at the configured Nyquist safety limit.
@@ -440,14 +408,8 @@ public class SpatialEffectsEngine
                 PrepareReverb(CaveParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
-            // Outdoor. Two discrete taps at ~250ms and ~500ms with progressive HF loss.
-            // No reverb tail is generated.
             case SpatialEnvironment.Forest:
-                _forestNearSamples = DistanceToRoundTripSamples(43f); // ~250ms
-                _forestFarSamples = DistanceToRoundTripSamples(86f);  // ~500ms
-
-                _forestHfDamp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(2200f), 0.707f);
-                _hasForestEq = true;
+                PrepareReverb(ForestParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).
@@ -526,21 +488,6 @@ public class SpatialEffectsEngine
             reverb = _allPasses[i].Process(reverb);
 
         return reverb;
-    }
-
-    // Forest: two discrete taps, no reverb. Far tap darkened by foliage LP.
-    private float ForestEcho(float x, bool hasForestEq)
-    {
-        float nearEcho = _forestNearDelay.Read(_forestNearSamples);
-        float farEcho = _forestFarDelay.Read(_forestFarSamples);
-
-        _forestNearDelay.Write(x + nearEcho * 0.35f);
-        _forestFarDelay.Write(x + farEcho * 0.20f);
-
-        if (hasForestEq && _forestHfDamp != null)
-            farEcho = _forestHfDamp.Transform(farEcho);
-
-        return nearEcho * 0.55f + farEcho * 0.30f;
     }
 
     // Underwater: damped reverb + 40ms slapback. Post-LP applied in ApplyEnvironment.
