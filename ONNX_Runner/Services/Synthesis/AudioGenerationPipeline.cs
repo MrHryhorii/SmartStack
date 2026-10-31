@@ -556,9 +556,8 @@ internal static class AudioGenerationPipeline
         VolumeShifter outputVolume, float volume, AudioStreamManager manager,
         AudioOutputResampler? outputResampler, NAudio.Dsp.BiQuadFilter? filter, CancellationToken cancellationToken)
     {
-        const int maxTailSeconds = 4;
         int probeSamples = Math.Max(1, sampleRate / 50);
-        int maxSamples = checked(sampleRate * maxTailSeconds);
+        int maxSamples = spatialEngine.MaximumTailSamples;
         int quietWindow = spatialEngine.TailSilenceWindowSamples;
         int quietSamples = 0, processed = 0;
         float[] probe = ArrayPool<float>.Shared.Rent(probeSamples);

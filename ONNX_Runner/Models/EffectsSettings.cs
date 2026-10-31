@@ -103,10 +103,10 @@ public enum SpatialEnvironment
 
     // --- Public Spaces ---
 
-    /// <summary>Performance stage. Distinct pre-delay simulates stage-to-audience projection; clean but spacious.</summary>
+    /// <summary>Wooden performance hall with warm, delayed reflections.</summary>
     Stage,
 
-    /// <summary>Large reflective hall. Long, dense reverb tail with strong early reflections; adds scale.</summary>
+    /// <summary>Large concert hall with a long, dense reflected tail.</summary>
     ConcreteHall,
 
     // --- Adventure & Nature ---

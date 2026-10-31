@@ -7,7 +7,7 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Server-side spatial acoustics engine.
-/// Room and LivingRoom use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
+/// Room, LivingRoom, Stage and ConcreteHall use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
@@ -15,10 +15,8 @@ namespace ONNX_Runner.Services;
 ///
 /// - Room:         Short, clear reflections with moderate HF absorption.
 /// - LivingRoom:   Short, soft, warm. Heavy HF damping. Recognizable at any mix.
-/// - Stage:        Warm, dense, live. Bass shelf + audible lateral reflection
-///                 (band-passed to sound like a side wall) + slow shimmer.
-/// - ConcreteHall: Long, bright, crystalline. Near-infinite RT60, HF shelf boost,
-///                 LFO-modulated flutter that avoids comb-filter resonance.
+/// - Stage:        Wooden performance hall with warm, delayed reflections.
+/// - ConcreteHall: Large concert hall with a long, dense reflected tail.
 /// - Dungeon:      Tight, harsh, resonant. Sharp 190Hz modal honk + saturated
 ///                 flutter. Instantly recognizable on any voiced sound.
 /// - Cave:         Dark, massive, rumbling. 100Hz body boost + cross-feedback
@@ -38,20 +36,30 @@ public class SpatialEffectsEngine
     private readonly int _reverbSilenceWindowSamples;
     private const float SpeedOfSound = 343f;
 
-    // Published EFX Room and LivingRoom profiles; output balance stays caller-owned.
+    // Published EFX profiles; output balance and intensity stay caller-owned.
     private static readonly SpatialReverbParameters RoomParameters = new(
         .4287f, 1, .3162f, .5929f, 1, .4f, .83f, 1, .1503f, .002f,
         1.0629f, .003f, .25f, 0, .9943f, 5000, 250, true);
     private static readonly SpatialReverbParameters LivingRoomParameters = new(
         .9766f, 1, .3162f, .001f, 1, .5f, .1f, 1, .2051f, .003f,
         .2805f, .004f, .25f, 0, .9943f, 5000, 250, true);
-    // Fixed mono-return calibration, then 100% emphasis for an expressive full endpoint.
-    private const float RoomReferenceReturnGain = 32f;
-    private const float RoomFullEmphasis = 2f;
+    private static readonly SpatialReverbParameters StageParameters = new(
+        1, 1, .3162f, .0794f, .2818f, 3.45f, .3f, .82f, .8913f, .088f,
+        .7943f, .063f, .25f, 0, .9943f, 4705, 99.6f, true);
+    private static readonly SpatialReverbParameters ConcreteHallParameters = new(
+        1, 1, .3162f, .5623f, 1, 3.92f, .7f, 1, .2427f, .020f,
+        .9977f, .029f, .25f, 0, .9943f, 5000, 250, true);
+    // Preserve the accepted room balance; halls use a separate return emphasis.
+    private const float RoomReturnGain = 64f;
+    private const float HallReturnGain = 2f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
     private const float RoomQuietWindowSeconds = .45f;
-    private SpatialReverbKernel? _roomReverb;
-    private SpatialReverbKernel? _livingRoomReverb;
+    // The halls include longer input/late delays; retain a full quiet feedback window.
+    private const float HallQuietWindowSeconds = .65f;
+    private SpatialReverbKernel? _profileReverb;
+    private float _profileReturnGain;
+    private int _profileQuietWindowSamples;
+    private int _maximumTailSamples;
 
     // =========================================================================
     // FREEVERB PRIMITIVES
@@ -65,17 +73,15 @@ public class SpatialEffectsEngine
     // DELAY BUFFERS
     // =========================================================================
 
-    private readonly DelayBuffer _stageLateralDelay;
     private readonly DelayBuffer _dungeonFlutter;
     private readonly DelayBuffer _caveNearDelay;
     private readonly DelayBuffer _caveFarDelay;
-    private readonly DelayBuffer _hallFlutter;
     private readonly DelayBuffer _forestNearDelay;
     private readonly DelayBuffer _forestFarDelay;
     private readonly DelayBuffer _underwaterDelay;
     private readonly DelayBuffer _innerVoiceMicroDelay;
 
-    // Shared pre-delay for Stage (ITDG) and Dungeon (wall gap) — mutually exclusive.
+    // Legacy Dungeon wall-gap pre-delay.
     private readonly DelayBuffer _preDelay;
 
     // =========================================================================
@@ -85,17 +91,11 @@ public class SpatialEffectsEngine
     private BiQuadFilter? _reverbHpFilter;
     private BiQuadFilter? _reverbLpFilter;
 
-    private BiQuadFilter? _stageBassShelf;
-    private BiQuadFilter? _stageLateralHp;
-    private BiQuadFilter? _stageLateralLp;
-
     private BiQuadFilter? _dungeonResonator;
     private BiQuadFilter? _dungeonHfDamp;
 
     private BiQuadFilter? _caveSubBoost;
     private BiQuadFilter? _caveHfRolloff;
-
-    private BiQuadFilter? _hallShimmer;
 
     private BiQuadFilter? _forestHfDamp;
 
@@ -106,16 +106,6 @@ public class SpatialEffectsEngine
     // =========================================================================
     // STATE VARIABLES
     // =========================================================================
-
-    // Stage: two detuned LFOs for "live room" amplitude shimmer.
-    private float _modPhaseA;
-    private float _modPhaseB;
-    private float _modPhaseIncA;
-    private float _modPhaseIncB;
-
-    // ConcreteHall: LFO-modulated flutter delay.
-    private float _hallFlutterPhase;
-    private float _hallFlutterPhaseInc;
 
     // InnerVoice: Dynamic 1-pole LP state
     private float _innerVoiceLpState;
@@ -136,14 +126,11 @@ public class SpatialEffectsEngine
     // PRE-COMPUTED DELAY SIZES
     // =========================================================================
 
-    private float _stageLateralSamples;
-    private float _stagePreDelaySamples;
     private float _dungeonPreDelaySamples;
     private float _dungeonFlutterSamples;
     private float _caveNearSamples;
     private float _caveFarSamples;
     private float _caveCrossFeedback;
-    private float _hallFlutterSamples;
     private float _forestNearSamples;
     private float _forestFarSamples;
     private float _underwaterDelaySamples;
@@ -154,12 +141,9 @@ public class SpatialEffectsEngine
     // =========================================================================
 
     private bool _hasReverbEq;
-    private bool _hasStageEq;
     private bool _hasDungeonEq;
     private bool _hasCaveEq;
-    private bool _hasHallEq;
     private bool _hasForestEq;
-    private bool _hasModulation;
 
     private SpatialEnvironment _current = SpatialEnvironment.None;
 
@@ -171,6 +155,7 @@ public class SpatialEffectsEngine
     public SpatialEffectsEngine(int sampleRate)
     {
         _sampleRate = sampleRate;
+        _maximumTailSamples = checked(sampleRate * 4);
 
         float scale = sampleRate / 44100f;
         // Scales a reference delay length and chooses a prime length to reduce coincident reflections.
@@ -194,11 +179,9 @@ public class SpatialEffectsEngine
         _allPasses = [new(allPassA), new(allPassB), new(allPassC), new(allPassD)];
         _reverbSilenceWindowSamples = combSizes[^1] + allPassA + allPassB + allPassC + allPassD;
 
-        _stageLateralDelay = new DelayBuffer(SamplesFor(42f));
         _dungeonFlutter = new DelayBuffer(SamplesFor(10f));
         _caveNearDelay = new DelayBuffer(SamplesFor(85f));
         _caveFarDelay = new DelayBuffer(SamplesFor(85f));
-        _hallFlutter = new DelayBuffer(SamplesFor(15f));
         _forestNearDelay = new DelayBuffer(SamplesFor(280f));
         _forestFarDelay = new DelayBuffer(SamplesFor(550f));
         _underwaterDelay = new DelayBuffer(SamplesFor(170f));
@@ -235,6 +218,9 @@ public class SpatialEffectsEngine
     // PUBLIC API
     // =========================================================================
 
+    /// <summary>Sample-rate-scaled safety budget for the active profile's complete reverb tail.</summary>
+    internal int MaximumTailSamples => _maximumTailSamples;
+
     /// <summary>Quiet observation span covering the active reflection path before a tail can end.</summary>
     internal int TailSilenceWindowSamples
     {
@@ -242,12 +228,10 @@ public class SpatialEffectsEngine
         {
             int probeSamples = Math.Max(1, _sampleRate / 50);
             if (_current is SpatialEnvironment.None or SpatialEnvironment.Muffled) return probeSamples;
-            if (_current is SpatialEnvironment.Room or SpatialEnvironment.LivingRoom)
-                return Math.Max(probeSamples, (int)MathF.Ceiling(_sampleRate * RoomQuietWindowSeconds));
+            if (_profileReverb is not null) return _profileQuietWindowSamples;
             float pathSamples = _current switch
             {
                 SpatialEnvironment.Forest => Math.Max(_forestNearSamples, _forestFarSamples),
-                SpatialEnvironment.Stage => _reverbSilenceWindowSamples + _stagePreDelaySamples,
                 SpatialEnvironment.Dungeon => _reverbSilenceWindowSamples + _dungeonPreDelaySamples,
                 SpatialEnvironment.Cave => Math.Max(_caveFarSamples, _reverbSilenceWindowSamples + _caveNearSamples),
                 SpatialEnvironment.Underwater => Math.Max(_underwaterDelaySamples, _reverbSilenceWindowSamples),
@@ -264,30 +248,24 @@ public class SpatialEffectsEngine
     /// <summary>Clears delay, filter, modulation, and tail state before reusing the environment processor.</summary>
     public void Reset()
     {
-        _roomReverb?.Reset();
-        _livingRoomReverb?.Reset();
+        _profileReverb?.Reset();
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
 
-        _stageLateralDelay.Clear();
         _dungeonFlutter.Clear();
         _caveNearDelay.Clear();
         _caveFarDelay.Clear();
-        _hallFlutter.Clear();
         _forestNearDelay.Clear();
         _forestFarDelay.Clear();
         _underwaterDelay.Clear();
         _preDelay.Clear();
         _innerVoiceMicroDelay.Clear();
 
-        _modPhaseA = 0f;
-        _modPhaseB = 0f;
-        _hallFlutterPhase = 0f;
         _innerVoiceLpState = 0f;
     }
 
     /// <summary>
-    /// Room and LivingRoom retain direct sound and use inverse-square intensity for their reflected return.
+    /// Published reverb profiles retain direct sound and use inverse-square intensity for their reflected return.
     /// Remaining additive/spatial environments retain their quadratic mix (mix²).
     /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff and saturation depth.
     /// InnerVoice uses that intensity for internal coloration; Underwater uses it for blending.
@@ -304,10 +282,9 @@ public class SpatialEffectsEngine
             _current = env;
         }
 
-        if (env is SpatialEnvironment.Room or SpatialEnvironment.LivingRoom)
+        if (_profileReverb is { } profileReverb)
         {
-            var reverb = env == SpatialEnvironment.Room ? _roomReverb! : _livingRoomReverb!;
-            ApplyRoom(buffer, mix, reverb);
+            ApplyReverb(buffer, mix, profileReverb, _profileReturnGain);
             return;
         }
 
@@ -321,9 +298,7 @@ public class SpatialEffectsEngine
         float inverseDryGain = 1f;
         float inverseWetGain = 0f;
 
-        if (env is SpatialEnvironment.Stage
-            or SpatialEnvironment.ConcreteHall
-            or SpatialEnvironment.Dungeon
+        if (env is SpatialEnvironment.Dungeon
             or SpatialEnvironment.Cave
             or SpatialEnvironment.Forest)
         {
@@ -336,25 +311,6 @@ public class SpatialEffectsEngine
 
         switch (env)
         {
-            case SpatialEnvironment.Stage:
-                bool hasStageEq = _hasStageEq;
-                bool hasMod = _hasModulation;
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, StageReverb(dry, hasStageEq, hasMod), curvedDryGain, curvedWetGain));
-                }
-                break;
-
-            case SpatialEnvironment.ConcreteHall:
-                bool hasHallEq = _hasHallEq;
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, ConcreteHallReverb(dry, hasHallEq), curvedDryGain, curvedWetGain));
-                }
-                break;
-
             case SpatialEnvironment.Dungeon:
                 bool hasDungeonEq = _hasDungeonEq;
                 for (int i = 0; i < buffer.Length; i++)
@@ -431,12 +387,12 @@ public class SpatialEffectsEngine
         }
     }
 
-    /// <summary>Preserves direct speech and adds one fixed room response; final gain and limiting remain downstream.</summary>
-    private static void ApplyRoom(Span<float> buffer, float amount, SpatialReverbKernel reverb)
+    /// <summary>Preserves direct speech and adds one fixed profile response; final gain and limiting remain downstream.</summary>
+    private static void ApplyReverb(Span<float> buffer, float amount, SpatialReverbKernel reverb, float fullReturnGain)
     {
         float position = Math.Clamp(amount, 0, 1);
         float strength = position * (2 - position);
-        float returnGain = RoomReferenceReturnGain * RoomFullEmphasis * strength;
+        float returnGain = fullReturnGain * strength;
         for (int i = 0; i < buffer.Length; i++)
         {
             float direct = buffer[i];
@@ -487,28 +443,23 @@ public class SpatialEffectsEngine
     /// <summary>Configures environment-specific filters and reflection parameters without retaining the previous environment's EQ.</summary>
     private void Setup(SpatialEnvironment env)
     {
+        _profileReverb = null;
+        _maximumTailSamples = checked(_sampleRate * 4);
         // Nullify all specific EQ filters to prevent state leakage between environments.
         _reverbHpFilter = null;
         _reverbLpFilter = null;
-        _stageBassShelf = null;
-        _stageLateralHp = null;
-        _stageLateralLp = null;
         _dungeonResonator = null;
         _dungeonHfDamp = null;
         _caveSubBoost = null;
         _caveHfRolloff = null;
-        _hallShimmer = null;
         _forestHfDamp = null;
         _environmentEq = null;
         _environmentEq2 = null;
 
         _hasReverbEq = false;
-        _hasStageEq = false;
         _hasDungeonEq = false;
         _hasCaveEq = false;
-        _hasHallEq = false;
         _hasForestEq = false;
-        _hasModulation = false;
 
         float nyq = _sampleRate * 0.45f;
         // Caps environment filter frequencies at the configured Nyquist safety limit.
@@ -517,54 +468,19 @@ public class SpatialEffectsEngine
         switch (env)
         {
             case SpatialEnvironment.Room:
-                _roomReverb ??= new SpatialReverbKernel(_sampleRate, RoomParameters);
+                PrepareReverb(RoomParameters, RoomQuietWindowSeconds, RoomReturnGain);
                 break;
 
             case SpatialEnvironment.LivingRoom:
-                _livingRoomReverb ??= new SpatialReverbKernel(_sampleRate, LivingRoomParameters);
+                PrepareReverb(LivingRoomParameters, RoomQuietWindowSeconds, RoomReturnGain);
                 break;
 
-            // Concert hall / theater. Defining traits:
-            // 1. Bass shelf +4.5dB at 200Hz (low-end warmth).
-            // 2. Lateral reflection at ~12ms, band-passed (350Hz–5kHz) to sound like a wall bounce.
-            // 3. Dual-LFO amplitude shimmer (±2%) breaks up static Freeverb decay.
             case SpatialEnvironment.Stage:
-                ConfigureCombsByRt60(1.7f, 0.28f);
-                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(90f), 0.707f);
-                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(7500f), 0.707f);
-                _hasReverbEq = true;
-
-                _stageBassShelf = BiQuadFilter.LowShelf(_sampleRate, Safe(200f), 0.707f, 4.5f);
-
-                // Band-pass the lateral reflection: HP strips bass (walls don't reflect sub-bass), 
-                // LP strips air (distance absorbs highs).
-                _stageLateralHp = BiQuadFilter.HighPassFilter(_sampleRate, Safe(350f), 0.9f);
-                _stageLateralLp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(5000f), 0.9f);
-                _hasStageEq = true;
-
-                _stageLateralSamples = DistanceToRoundTripSamples(2.0f); // ~12ms
-                _stagePreDelaySamples = 0.020f * _sampleRate;             // 20ms ITDG
-
-                _modPhaseIncA = 2f * MathF.PI * 0.13f / _sampleRate;
-                _modPhaseIncB = 2f * MathF.PI * 0.19f / _sampleRate;
-                _hasModulation = true;
+                PrepareReverb(StageParameters, HallQuietWindowSeconds, HallReturnGain);
                 break;
 
-            // Bright, crystalline, long. RT60=2.2s with near-zero HF damping.
-            // HighShelf +2.5dB at 7kHz keeps the decay sparkling. 
-            // LFO-modulated flutter (±1.0ms at 2.8Hz) creates a gentle chorus/chirp effect.
             case SpatialEnvironment.ConcreteHall:
-                ConfigureCombsByRt60(2.2f, 0.05f);
-                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(70f), 0.707f);
-                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(11000f), 0.707f);
-                _hasReverbEq = true;
-
-                _hallShimmer = BiQuadFilter.HighShelf(_sampleRate, Safe(7000f), 0.707f, 2.5f);
-                _hasHallEq = true;
-
-                _hallFlutterSamples = 0.004f * _sampleRate;
-                _hallFlutterPhaseInc = 2f * MathF.PI * 2.8f / _sampleRate;
-                _hallFlutterPhase = 0f;
+                PrepareReverb(ConcreteHallParameters, HallQuietWindowSeconds, HallReturnGain);
                 break;
 
             // Tight confinement chamber. Defining traits:
@@ -652,6 +568,19 @@ public class SpatialEffectsEngine
         }
     }
 
+    /// <summary>Prepares one fixed reverb and a bounded tail budget derived from its slowest decay band.</summary>
+    private void PrepareReverb(SpatialReverbParameters parameters, float quietSeconds, float returnGain)
+    {
+        _profileReverb = new SpatialReverbKernel(_sampleRate, parameters);
+        _profileReturnGain = returnGain;
+        _profileQuietWindowSamples = Math.Max(1, (int)MathF.Ceiling(_sampleRate * quietSeconds));
+        double slowestDecay = parameters.DecaySeconds * Math.Max(1d, Math.Max(parameters.DecayHFRatio, parameters.DecayLFRatio));
+        // Allow two RT60 intervals plus the input delays and final quiet observation span.
+        int seconds = Math.Max(4, (int)Math.Ceiling(2 * slowestDecay
+            + parameters.ReflectionsDelaySeconds + parameters.LateReverbDelaySeconds + quietSeconds));
+        _maximumTailSamples = checked(_sampleRate * seconds);
+    }
+
     // =========================================================================
     // ACOUSTIC ALGORITHMS
     // =========================================================================
@@ -676,81 +605,6 @@ public class SpatialEffectsEngine
             reverb = _allPasses[i].Process(reverb);
 
         return reverb;
-    }
-
-    // Stage variant: LFO amplitude wobble on the reverb tail.
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float AlgorithmicReverbModulated(float input)
-    {
-        float filtered = input;
-        if (_hasReverbEq)
-        {
-            filtered = _reverbHpFilter!.Transform(filtered);
-            filtered = _reverbLpFilter!.Transform(filtered);
-        }
-
-        float outCombs = 0f;
-        for (int i = 0; i < _combs.Length; i++)
-            outCombs += _combs[i].Process(filtered);
-
-        float reverb = outCombs * 0.075f;
-
-        _modPhaseA += _modPhaseIncA;
-        if (_modPhaseA >= 2f * MathF.PI) _modPhaseA -= 2f * MathF.PI;
-        _modPhaseB += _modPhaseIncB;
-        if (_modPhaseB >= 2f * MathF.PI) _modPhaseB -= 2f * MathF.PI;
-
-        float wobble = (Dsp.Sine(_modPhaseA) + Dsp.Sine(_modPhaseB)) * 0.5f;
-        float modulated = reverb * (1f + wobble * 0.02f);
-
-        for (int i = 0; i < _allPasses.Length; i++)
-            modulated = _allPasses[i].Process(modulated);
-
-        return modulated;
-    }
-
-    // Stage: bass shelf → reverb with shimmer → mix lateral reflection.
-    private float StageReverb(float x, bool hasStageEq, bool hasModulation)
-    {
-        float warmed = hasStageEq && _stageBassShelf != null ? _stageBassShelf.Transform(x) : x;
-
-        _stageLateralDelay.Write(warmed);
-        float lateral = _stageLateralDelay.Read(_stageLateralSamples);
-
-        if (hasStageEq && _stageLateralHp != null) lateral = _stageLateralHp.Transform(lateral);
-        if (hasStageEq && _stageLateralLp != null) lateral = _stageLateralLp.Transform(lateral);
-
-        _preDelay.Write(warmed);
-        float preDelayed = _preDelay.Read(_stagePreDelaySamples);
-
-        float reverb = hasModulation
-            ? AlgorithmicReverbModulated(preDelayed)
-            : AlgorithmicReverb(preDelayed);
-
-        // Lateral mixed at 0.45: Must be audible above the reverb tail as the main "hall" cue.
-        return reverb + lateral * 0.45f;
-    }
-
-    // ConcreteHall: long bright reverb + LFO-modulated flutter + HF shimmer.
-    private float ConcreteHallReverb(float x, bool hasHallEq)
-    {
-        float reverb = AlgorithmicReverb(x);
-
-        _hallFlutterPhase += _hallFlutterPhaseInc;
-        if (_hallFlutterPhase >= 2f * MathF.PI) _hallFlutterPhase -= 2f * MathF.PI;
-
-        float modDepth = 0.0010f * _sampleRate; // ±1.0ms
-        float modulatedDelay = _hallFlutterSamples + Dsp.Sine(_hallFlutterPhase) * modDepth;
-
-        float flutter = _hallFlutter.Read(modulatedDelay);
-        _hallFlutter.Write(x + flutter * 0.15f);
-
-        float wet = reverb + flutter * 0.20f;
-
-        if (hasHallEq && _hallShimmer != null)
-            wet = _hallShimmer.Transform(wet);
-
-        return wet;
     }
 
     // Dungeon: modal resonance → pre-delay → dense reverb + saturated flutter.

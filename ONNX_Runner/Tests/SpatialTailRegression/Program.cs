@@ -153,7 +153,9 @@ internal static class SpatialTailRegressionProgram
     {
         TailOutput actual=Capture(rate,environment,amount,pause,volume,profiles);
         int prefix=Burst(rate).Length+(int)(rate*pause);
-        float[] reference=new float[prefix+rate*4]; Burst(rate).CopyTo(reference,0);
+        var prepared=new SpatialEffectsEngine(rate); prepared.ApplyEnvironment(Span<float>.Empty,environment,amount);
+        int maximumTail=(int)typeof(SpatialEffectsEngine).GetProperty("MaximumTailSamples",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(prepared)!;
+        float[] reference=new float[prefix+maximumTail+rate*2]; Burst(rate).CopyTo(reference,0);
         new SpatialEffectsEngine(rate).ApplyEnvironment(reference,environment,amount);
         if(profiles) AudioEqualizer.Create(["telephony-class-application"],rate)!.Apply(reference);
         // Include the final cloning-cleanup filter in the same order as WriteOutput.
@@ -163,7 +165,7 @@ internal static class SpatialTailRegressionProgram
             for(int i=0;i<reference.Length;i++)reference[i]=filter.Transform(reference[i]);
         }
         int frames=actual.Bytes.Length/2;
-        Require(actual.GeneratedFrames>0 && actual.GeneratedFrames<=rate*4,"Invalid tail length.");
+        Require(actual.GeneratedFrames>0 && actual.GeneratedFrames<=maximumTail,"Invalid tail length.");
         float[] retained=reference.AsSpan(0,frames).ToArray();
         VolumeShifter.ApplyVolume(retained,volume,rate);
         byte[] expected=Encode(retained,rate);
