@@ -62,7 +62,8 @@ public class SpatialEffectsEngine
     private const float UnderwaterDirectGainHF = .125f;
     private const float UnderwaterReturnGain = 1.5f;
     // Keep the accepted room balance and separate return levels for standard and underwater profiles.
-    private const float RoomReturnGain = 64f;
+    private const float RoomReturnGain = 32f * 1.5f;
+    private const float LivingRoomReturnGain = 32f * 2f;
     private const float DefaultReverbReturnGain = 2f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
     private const float RoomQuietWindowSeconds = .45f;
@@ -380,7 +381,7 @@ public class SpatialEffectsEngine
                 break;
 
             case SpatialEnvironment.LivingRoom:
-                PrepareReverb(LivingRoomParameters, RoomQuietWindowSeconds, RoomReturnGain);
+                PrepareReverb(LivingRoomParameters, RoomQuietWindowSeconds, LivingRoomReturnGain);
                 break;
 
             case SpatialEnvironment.Stage:
