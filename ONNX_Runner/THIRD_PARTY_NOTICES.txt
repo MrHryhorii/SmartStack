@@ -284,3 +284,12 @@ Source: https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt
 License: Unicode License V3
 Local license: THIRD_PARTY_LICENSES/Unicode-LICENSE.txt
 Used by Models/UnicodeEmojiData.cs for emoji classification; spoken names remain provided by eSpeak dictionaries.
+
+OpenAL Soft 1.23.1 - adapted spatial DSP source
+  https://github.com/kcat/openal-soft
+  Original reverb: Copyright (C) 2008-2017 Chris Robinson and Christopher Fitzgerald.
+  Original echo: Copyright (C) 2009 Chris Robinson.
+  The C# adaptations in Services/Spatial use GPL-3.0-or-later under the option
+  in section 3 of the original LGPL version 2; see the included LICENSE.
+  Adapted 2026-10-31. No OpenAL binary is bundled. Original source excerpts
+  and provenance are retained in tools/Upstream/OpenALSoft in the source archive.

@@ -1,4 +1,5 @@
 using ONNX_Runner.Models;
+using ONNX_Runner.Services.Spatial;
 using System.Runtime.CompilerServices;
 using NAudio.Dsp;
 
@@ -6,7 +7,7 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Server-side spatial acoustics engine.
-/// Uses Freeverb/Schroeder algorithms for zero-allocation room simulation.
+/// LivingRoom uses an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
@@ -35,6 +36,17 @@ public class SpatialEffectsEngine
     private readonly int _sampleRate;
     private readonly int _reverbSilenceWindowSamples;
     private const float SpeedOfSound = 343f;
+
+    // EFX LivingRoom: furnished-room absorption, short mid decay and faster HF decay.
+    private static readonly SpatialReverbParameters LivingRoomParameters = new(
+        .9766f, 1, .3162f, .001f, 1, .5f, .1f, 1, .2051f, .003f,
+        .2805f, .004f, .25f, 0, .9943f, 5000, 250, true);
+    // Fixed mono-return calibration, then 100% emphasis for an expressive full endpoint.
+    private const float LivingRoomReferenceReturnGain = 32f;
+    private const float LivingRoomFullEmphasis = 2f;
+    // Covers two passes of this profile's longest feedback path (approximately 209 ms).
+    private const float LivingRoomQuietWindowSeconds = .45f;
+    private SpatialReverbKernel? _livingRoomReverb;
 
     // =========================================================================
     // FREEVERB PRIMITIVES
@@ -225,6 +237,8 @@ public class SpatialEffectsEngine
         {
             int probeSamples = Math.Max(1, _sampleRate / 50);
             if (_current is SpatialEnvironment.None or SpatialEnvironment.Muffled) return probeSamples;
+            if (_current == SpatialEnvironment.LivingRoom)
+                return Math.Max(probeSamples, (int)MathF.Ceiling(_sampleRate * LivingRoomQuietWindowSeconds));
             float pathSamples = _current switch
             {
                 SpatialEnvironment.Forest => Math.Max(_forestNearSamples, _forestFarSamples),
@@ -245,6 +259,7 @@ public class SpatialEffectsEngine
     /// <summary>Clears delay, filter, modulation, and tail state before reusing the environment processor.</summary>
     public void Reset()
     {
+        _livingRoomReverb?.Reset();
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
 
@@ -266,7 +281,8 @@ public class SpatialEffectsEngine
     }
 
     /// <summary>
-    /// Quadratic mix (mix²) for additive/spatial environments gives finer control at low mix levels.
+    /// LivingRoom retains direct sound and uses inverse-square intensity for its reflected return.
+    /// Remaining additive/spatial environments retain their quadratic mix (mix²).
     /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff and saturation depth.
     /// InnerVoice uses that intensity for internal coloration; Underwater uses it for blending.
     /// </summary>
@@ -282,6 +298,12 @@ public class SpatialEffectsEngine
             _current = env;
         }
 
+        if (env == SpatialEnvironment.LivingRoom)
+        {
+            ApplyLivingRoom(buffer, mix);
+            return;
+        }
+
         float curvedMix = mix * mix;
         float inverseSquareMix = 1f - (1f - mix) * (1f - mix);
 
@@ -292,8 +314,7 @@ public class SpatialEffectsEngine
         float inverseDryGain = 1f;
         float inverseWetGain = 0f;
 
-        if (env is SpatialEnvironment.LivingRoom
-            or SpatialEnvironment.Stage
+        if (env is SpatialEnvironment.Stage
             or SpatialEnvironment.ConcreteHall
             or SpatialEnvironment.Dungeon
             or SpatialEnvironment.Cave
@@ -308,14 +329,6 @@ public class SpatialEffectsEngine
 
         switch (env)
         {
-            case SpatialEnvironment.LivingRoom:
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, AlgorithmicReverb(dry), curvedDryGain, curvedWetGain));
-                }
-                break;
-
             case SpatialEnvironment.Stage:
                 bool hasStageEq = _hasStageEq;
                 bool hasMod = _hasModulation;
@@ -411,6 +424,20 @@ public class SpatialEffectsEngine
         }
     }
 
+    /// <summary>Preserves direct speech and adds one fixed furnished-room response; final gain and limiting remain downstream.</summary>
+    private void ApplyLivingRoom(Span<float> buffer, float amount)
+    {
+        float position = Math.Clamp(amount, 0, 1);
+        float strength = position * (2 - position);
+        float returnGain = LivingRoomReferenceReturnGain * LivingRoomFullEmphasis * strength;
+        var reverb = _livingRoomReverb!;
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float direct = buffer[i];
+            buffer[i] = direct + reverb.Process(direct) * returnGain;
+        }
+    }
+
     // =========================================================================
     // SETUP
     // =========================================================================
@@ -483,14 +510,8 @@ public class SpatialEffectsEngine
 
         switch (env)
         {
-            // Short, soft, warm room. RT60=0.35s, heavy HF damping (damp=0.78).
-            // LP at 4200Hz darkens the tail — the fastest and darkest decay.
-            // No early reflections: small rooms fuse them into the reverb onset immediately.
             case SpatialEnvironment.LivingRoom:
-                ConfigureCombsByRt60(0.35f, 0.78f);
-                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(200f), 0.707f);
-                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(4200f), 0.707f);
-                _hasReverbEq = true;
+                _livingRoomReverb ??= new SpatialReverbKernel(_sampleRate, LivingRoomParameters);
                 break;
 
             // Concert hall / theater. Defining traits:

@@ -1,0 +1,19 @@
+OpenAL Soft 1.23.1 spatial DSP adaptation
+
+Source: https://github.com/kcat/openal-soft/tree/1.23.1
+Original reverb copyright (C) 2008-2017 Chris Robinson and Christopher Fitzgerald.
+Original echo copyright (C) 2009 Chris Robinson.
+Original source license: LGPL-2.0-or-later.
+
+The C# adaptations in Services/Spatial are distributed under GPL-3.0-or-later
+using the option in LGPL version 2 section 3, consistently with this project.
+Adaptation date: 2026-10-31. The original author notices are retained.
+The preserved C++ excerpts retain their original license and notices.
+
+Adaptation: mono early/late reverb, two-tap echo, integer delay and biquads.
+Profiles, intensity, return balance and final peak protection are caller-owned.
+Echo damping is bounded below Nyquist; extended delays support sparse echoes.
+No OpenAL binary or new runtime package is used.
+
+These provenance files and original excerpts are source-archive material.
+They are excluded from runtime publication by the existing tools/ rule.

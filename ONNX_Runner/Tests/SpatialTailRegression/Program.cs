@@ -26,7 +26,7 @@ internal static class SpatialTailRegressionProgram
         Corpus corpus=JsonSerializer.Deserialize<Corpus>(fixtureStream)!;
         foreach(Reference reference in corpus.References)
         {
-            Check($"Spatial samples retain the pre-fix {reference.Environment} response at {reference.Rate} Hz, intensity {reference.Amount}",()=>
+                Check($"Spatial samples retain the reference {reference.Environment} response at {reference.Rate} Hz, intensity {reference.Amount}",()=>
             {
                 float[] samples=new float[reference.Rate*5]; Signal(reference.Rate,reference.Rate/10).CopyTo(samples,0);
                 new SpatialEffectsEngine(reference.Rate).ApplyEnvironment(samples,Enum.Parse<SpatialEnvironment>(reference.Environment),reference.Amount);
