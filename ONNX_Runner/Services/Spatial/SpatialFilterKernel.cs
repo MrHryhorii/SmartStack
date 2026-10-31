@@ -3,11 +3,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This adapted copy uses GPL-3.0-or-later under LGPL-2.0 section 3; see LICENSE.
 // Modified 2026-10-31: integrated into the Tsubaki spatial service namespace.
+// Modified 2026-10-31: low-pass cutoff updates retain the existing filter history.
 namespace ONNX_Runner.Services.Spatial;
 
 public enum SpatialFilterType { HighShelf, LowShelf, Peaking, LowPass, HighPass, BandPass }
 
-/// <summary>One fixed second-order filter with independent, request-local state.</summary>
+/// <summary>One second-order filter with independent, request-local state.</summary>
 public sealed class SpatialFilterKernel
 {
     private SpatialBiquad _filter;
@@ -37,11 +38,25 @@ public sealed class SpatialFilterKernel
 
     private static SpatialFilterKernel Create(in SpatialBiquad filter)
     {
+        ValidateCoefficients(filter);
+        return new SpatialFilterKernel(filter);
+    }
+
+    /// <summary>Updates a Butterworth low-pass cutoff without clearing its delay state or allocating.</summary>
+    public void SetLowPass(int sampleRate, float frequencyHz)
+    {
+        Validate(sampleRate, SpatialFilterType.LowPass, frequencyHz, 1);
+        var filter = SpatialBiquad.FromSlope(SpatialFilterType.LowPass, frequencyHz / sampleRate, 1, 1);
+        ValidateCoefficients(filter);
+        _filter.CopyCoefficientsFrom(filter);
+    }
+
+    private static void ValidateCoefficients(in SpatialBiquad filter)
+    {
         var c = filter.Coefficients;
         if (!float.IsFinite(c.B0) || !float.IsFinite(c.B1) || !float.IsFinite(c.B2)
             || !float.IsFinite(c.A1) || !float.IsFinite(c.A2))
             throw new ArgumentException("Filter parameters produce nonfinite coefficients.");
-        return new SpatialFilterKernel(filter);
     }
 
     private static void Validate(int sampleRate, SpatialFilterType type, float frequencyHz, float gain)

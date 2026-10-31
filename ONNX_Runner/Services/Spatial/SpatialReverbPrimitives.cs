@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This adapted copy uses GPL-3.0-or-later under LGPL-2.0 section 3; see LICENSE.
 // Modified 2026-10-31: integrated into the Tsubaki spatial service namespace.
+// Modified 2026-10-31: coefficient copying supports filter updates without clearing delay state.
 using System.Runtime.CompilerServices;
 
 namespace ONNX_Runner.Services.Spatial;
@@ -87,6 +88,12 @@ internal struct SpatialBiquad
         _z1 = input * _b1 - output * _a1 + _z2;
         _z2 = input * _b2 - output * _a2;
         return output;
+    }
+    // Copy only coefficients so a cutoff update preserves causal filter history.
+    internal void CopyCoefficientsFrom(in SpatialBiquad filter)
+    {
+        _b0 = filter._b0; _b1 = filter._b1; _b2 = filter._b2;
+        _a1 = filter._a1; _a2 = filter._a2;
     }
     internal void Reset() => _z1 = _z2 = 0;
     internal (float B0, float B1, float B2, float A1, float A2) Coefficients => (_b0, _b1, _b2, _a1, _a2);

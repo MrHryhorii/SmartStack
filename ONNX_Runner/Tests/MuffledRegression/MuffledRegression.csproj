@@ -9,6 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../ONNX_Runner.csproj" />
-    <EmbeddedResource Include="MuffledFixtures.json" LogicalName="MuffledFixtures.json" />
+    <Compile Include="../LivingRoomRegression/LegacySpatialEffectsEngine.cs" Link="LegacySpatialEffectsEngine.cs" />
   </ItemGroup>
 </Project>

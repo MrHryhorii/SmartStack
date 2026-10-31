@@ -7,7 +7,7 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Server-side spatial acoustics engine.
-/// Published environments, including Underwater, use an OpenAL-derived mono reverb; Muffled and InnerVoice retain their current algorithms.
+/// Published environments use an OpenAL-derived mono reverb; Muffled uses its low-pass primitives.
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
@@ -65,6 +65,7 @@ public class SpatialEffectsEngine
     private const float RoomReturnGain = 32f * 1.5f;
     private const float LivingRoomReturnGain = 32f * 2f;
     private const float DefaultReverbReturnGain = 2f;
+    private const float MuffledMaximumGainDb = 1f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
     private const float RoomQuietWindowSeconds = .45f;
     // Cover the longer input and feedback paths of the other published profiles.
@@ -98,8 +99,8 @@ public class SpatialEffectsEngine
     private BiQuadFilter? _reverbLpFilter;
 
     // Attenuation/Obstacle filters
-    private BiQuadFilter? _environmentEq;
-    private BiQuadFilter? _environmentEq2;
+    private SpatialFilterKernel? _environmentEq;
+    private SpatialFilterKernel? _environmentEq2;
 
     // =========================================================================
     // STATE VARIABLES
@@ -116,9 +117,7 @@ public class SpatialEffectsEngine
     private bool _innerVoiceFullStrength;
 
     private float _muffledPreparedAmount = float.NaN;
-    private float _muffledStrength;
-    private float _muffledInverseStrength;
-    private bool _muffledFullStrength;
+    private float _muffledOutputGain;
 
     // =========================================================================
     // PRE-COMPUTED DELAY SIZES
@@ -217,6 +216,8 @@ public class SpatialEffectsEngine
     {
         _profileReverb?.Reset();
         _profileDirectFilter?.Reset();
+        _environmentEq?.Reset();
+        _environmentEq2?.Reset();
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
 
@@ -227,7 +228,7 @@ public class SpatialEffectsEngine
 
     /// <summary>
     /// Published reverb profiles use inverse-square intensity for reflections and optional direct coloration.
-    /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff and saturation depth.
+    /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff; cubic intensity adds a mild late gain.
     /// InnerVoice uses that intensity for internal coloration.
     /// </summary>
     public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
@@ -255,10 +256,7 @@ public class SpatialEffectsEngine
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float input = Dsp.KillDenormal(buffer[i]);
-                    float filtered = _environmentEq2!.Transform(_environmentEq!.Transform(input));
-                    // Preserve the accepted full-output floating-point expression.
-                    if (_muffledFullStrength) filtered = Dsp.Lerp(input, filtered, 1f);
-                    buffer[i] = Dsp.ModulationSaturate(filtered, _muffledStrength, _muffledInverseStrength);
+                    buffer[i] = _environmentEq2!.Process(_environmentEq!.Process(input)) * _muffledOutputGain;
                 }
                 break;
 
@@ -337,22 +335,21 @@ public class SpatialEffectsEngine
         _innerVoiceLpCoeff = _innerVoiceFullStrength ? fullCoeff : Dsp.Lerp(1f, fullCoeff, strength);
     }
 
-    /// <summary>Moves the complete input band toward the fixed 450 Hz full cutoff without level makeup.</summary>
+    /// <summary>Moves the input band toward 450 Hz; a mild cubic gain rises mainly near full intensity.</summary>
     private void PrepareMuffled(float amount)
     {
         if (_muffledPreparedAmount == amount) return;
         _muffledPreparedAmount = amount;
         float depth = Math.Clamp(amount, 0f, 1f);
-        _muffledStrength = depth * (2f - depth);
-        _muffledInverseStrength = 1f / _muffledStrength;
-        _muffledFullStrength = depth >= 1f;
+        float strength = depth * (2f - depth);
         float nyquist = _sampleRate * .5f;
         float fullCutoff = Math.Min(450f, _sampleRate * .45f);
-        float cutoff = _muffledFullStrength ? fullCutoff
-            : nyquist * MathF.Pow(fullCutoff / nyquist, _muffledStrength);
+        float cutoff = depth >= 1f ? fullCutoff
+            : nyquist * MathF.Pow(fullCutoff / nyquist, strength);
         cutoff = Math.Min(cutoff, _sampleRate * .4999f);
-        _environmentEq!.SetLowPassFilter(_sampleRate, cutoff, .707f);
-        _environmentEq2!.SetLowPassFilter(_sampleRate, cutoff, .707f);
+        _environmentEq!.SetLowPass(_sampleRate, cutoff);
+        _environmentEq2!.SetLowPass(_sampleRate, cutoff);
+        _muffledOutputGain = MathF.Pow(10f, MuffledMaximumGainDb * depth * depth * depth / 20f);
     }
 
     /// <summary>Configures environment-specific filters and reflection parameters without retaining the previous environment's EQ.</summary>
@@ -405,12 +402,11 @@ public class SpatialEffectsEngine
                 break;
 
             // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).
-            // Uses a cascaded 24dB/oct low-pass at 450Hz to aggressively destroy 
-            // speech intelligibility, but keeps Q=0.707 to avoid underwater resonance.
+            // Two Butterworth low-pass stages attenuate at 24 dB/oct without adding reflections or saturation.
             case SpatialEnvironment.Muffled:
                 _muffledPreparedAmount = float.NaN;
-                _environmentEq = BiQuadFilter.LowPassFilter(_sampleRate, Safe(450f), 0.707f);
-                _environmentEq2 = BiQuadFilter.LowPassFilter(_sampleRate, Safe(450f), 0.707f);
+                _environmentEq = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
+                _environmentEq2 = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
                 break;
 
             case SpatialEnvironment.Underwater:
