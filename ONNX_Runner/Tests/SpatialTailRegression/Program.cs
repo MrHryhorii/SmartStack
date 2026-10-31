@@ -29,7 +29,11 @@ internal static class SpatialTailRegressionProgram
                 Check($"Spatial samples retain the reference {reference.Environment} response at {reference.Rate} Hz, intensity {reference.Amount}",()=>
             {
                 float[] samples=new float[reference.Rate*5]; Signal(reference.Rate,reference.Rate/10).CopyTo(samples,0);
-                new SpatialEffectsEngine(reference.Rate).ApplyEnvironment(samples,Enum.Parse<SpatialEnvironment>(reference.Environment),reference.Amount);
+                var engine=new SpatialEffectsEngine(reference.Rate);
+                var environment=Enum.Parse<SpatialEnvironment>(reference.Environment);
+                // Align the LFO clock when the native fixture required silent parameter warmup.
+                if(reference.WarmupFrames>0) engine.ApplyEnvironment(new float[reference.WarmupFrames],environment,reference.Amount);
+                engine.ApplyEnvironment(samples,environment,reference.Amount);
                 Require(Math.Abs(Energy(samples)-reference.Energy)<Math.Max(1e-10,reference.Energy*2e-5),"The environment energy changed.");
                 Require(reference.Indices.Length>=32 && reference.Indices.Length==reference.Samples.Length,"Incomplete PCM reference.");
                 for(int i=0;i<reference.Indices.Length;i++)
@@ -235,7 +239,7 @@ internal static class SpatialTailRegressionProgram
     private static void Require(bool condition,string message){if(!condition)throw new InvalidOperationException(message);}
     private static void Check(string name,Action action){_checks++;try{action();}catch(Exception error){_failures++;Console.Error.WriteLine($"FAIL {name}: {error.Message}");}}
     private sealed record Corpus(Reference[] References);
-    private sealed record Reference(int Rate,string Environment,float Amount,double Energy,int[] Indices,float[] Samples);
+    private sealed record Reference(int Rate,string Environment,float Amount,double Energy,int[] Indices,float[] Samples,int WarmupFrames=0);
     private sealed record TailOutput(byte[] Bytes,int GeneratedFrames);
     private sealed class CancelingStream(CancellationTokenSource cancellation):MemoryStream
     {

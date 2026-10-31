@@ -7,11 +7,11 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Server-side spatial acoustics engine.
-/// Room, LivingRoom, Stage, ConcreteHall, Dungeon, Cave and Forest use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
+/// Published environments, including Underwater, use an OpenAL-derived mono reverb; Muffled and InnerVoice retain their current algorithms.
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
-/// parameter tweaks. Every effect is structurally distinct.
+/// parameter tweaks. Direct coloration and reflected sound are configured separately.
 ///
 /// - Room:         Short, clear reflections with moderate HF absorption.
 /// - LivingRoom:   Short, soft, warm. Heavy HF damping. Recognizable at any mix.
@@ -22,7 +22,7 @@ namespace ONNX_Runner.Services;
 /// - Forest:       Delayed, scattered outdoor reflections with strong HF absorption.
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
 ///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
-/// - Underwater:   Drowned. Steep 24dB/oct cascaded LP muffling + slapback pressure ring.
+/// - Underwater:   Muffled direct speech with the published modulated underwater reverb.
 /// - InnerVoice:   Cinematic telepathy. Uses the Haas effect (micro-delay) and a dynamic
 ///                 low-pass filter to pull the voice inside the listener's head, supported 
 ///                 by a dark, wall-less shadow reverb.
@@ -31,7 +31,6 @@ public class SpatialEffectsEngine
 {
     private readonly int _sampleRate;
     private readonly int _reverbSilenceWindowSamples;
-    private const float SpeedOfSound = 343f;
 
     // Published EFX profiles; output balance and intensity stay caller-owned.
     private static readonly SpatialReverbParameters RoomParameters = new(
@@ -55,7 +54,14 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters ForestParameters = new(
         1, .3f, .3162f, .0224f, 1, 1.49f, .54f, 1, .0525f, .162f,
         .7682f, .088f, .25f, 0, .9943f, 5000, 250, true);
-    // Preserve the accepted room balance; other published profiles use doubled return.
+    private static readonly SpatialReverbParameters UnderwaterParameters = new(
+        .3645f, 1, .3162f, .01f, 1, 1.49f, .1f, 1, .5963f, .007f,
+        7.0795f, .011f, 1.18f, .348f, .9943f, 5000, 250, true);
+    // EFX direct-filter balance used by OpenMW's underwater environment.
+    private const float UnderwaterDirectGain = .9f;
+    private const float UnderwaterDirectGainHF = .125f;
+    private const float UnderwaterReturnGain = 1.5f;
+    // Keep the accepted room balance and separate return levels for standard and underwater profiles.
     private const float RoomReturnGain = 64f;
     private const float DefaultReverbReturnGain = 2f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
@@ -63,6 +69,8 @@ public class SpatialEffectsEngine
     // Cover the longer input and feedback paths of the other published profiles.
     private const float ReverbQuietWindowSeconds = .65f;
     private SpatialReverbKernel? _profileReverb;
+    private SpatialFilterKernel? _profileDirectFilter;
+    private float _profileDirectGain = 1;
     private float _profileReturnGain;
     private int _profileQuietWindowSamples;
     private int _maximumTailSamples;
@@ -79,7 +87,6 @@ public class SpatialEffectsEngine
     // DELAY BUFFERS
     // =========================================================================
 
-    private readonly DelayBuffer _underwaterDelay;
     private readonly DelayBuffer _innerVoiceMicroDelay;
 
     // =========================================================================
@@ -116,7 +123,6 @@ public class SpatialEffectsEngine
     // PRE-COMPUTED DELAY SIZES
     // =========================================================================
 
-    private float _underwaterDelaySamples;
     private float _innerVoiceMicroDelaySamples;
 
     // =========================================================================
@@ -159,7 +165,6 @@ public class SpatialEffectsEngine
         _allPasses = [new(allPassA), new(allPassB), new(allPassC), new(allPassD)];
         _reverbSilenceWindowSamples = combSizes[^1] + allPassA + allPassB + allPassC + allPassD;
 
-        _underwaterDelay = new DelayBuffer(SamplesFor(170f));
         _innerVoiceMicroDelay = new DelayBuffer(SamplesFor(15f));
     }
 
@@ -172,13 +177,6 @@ public class SpatialEffectsEngine
     private static float Rt60ToFeedback(float rt60Seconds, float delaySeconds)
     {
         return MathF.Pow(10f, -3f * delaySeconds / rt60Seconds);
-    }
-
-    /// <summary>Converts an acoustic round-trip distance in meters to a delay in samples.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private float DistanceToRoundTripSamples(float distanceMeters)
-    {
-        return 2f * distanceMeters / SpeedOfSound * _sampleRate;
     }
 
     /// <summary>Calculates delay capacity for a target duration, including headroom and power-of-two rounding.</summary>
@@ -205,7 +203,6 @@ public class SpatialEffectsEngine
             if (_profileReverb is not null) return _profileQuietWindowSamples;
             float pathSamples = _current switch
             {
-                SpatialEnvironment.Underwater => Math.Max(_underwaterDelaySamples, _reverbSilenceWindowSamples),
                 SpatialEnvironment.InnerVoice => _reverbSilenceWindowSamples + _innerVoiceMicroDelaySamples,
                 _ => _reverbSilenceWindowSamples
             };
@@ -218,19 +215,19 @@ public class SpatialEffectsEngine
     public void Reset()
     {
         _profileReverb?.Reset();
+        _profileDirectFilter?.Reset();
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
 
-        _underwaterDelay.Clear();
         _innerVoiceMicroDelay.Clear();
 
         _innerVoiceLpState = 0f;
     }
 
     /// <summary>
-    /// Published reverb profiles retain direct sound and use inverse-square intensity for their reflected return.
+    /// Published reverb profiles use inverse-square intensity for reflections and optional direct coloration.
     /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff and saturation depth.
-    /// InnerVoice uses that intensity for internal coloration; Underwater uses it for blending.
+    /// InnerVoice uses that intensity for internal coloration.
     /// </summary>
     public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
     {
@@ -246,19 +243,8 @@ public class SpatialEffectsEngine
 
         if (_profileReverb is { } profileReverb)
         {
-            ApplyReverb(buffer, mix, profileReverb, _profileReturnGain);
+            ApplyReverb(buffer, mix, profileReverb, _profileReturnGain, _profileDirectFilter, _profileDirectGain);
             return;
-        }
-
-        float inverseSquareMix = 1f - (1f - mix) * (1f - mix);
-
-        // The remaining blended environment uses one gain pair per buffer.
-        float inverseDryGain = 1f;
-        float inverseWetGain = 0f;
-
-        if (env == SpatialEnvironment.Underwater)
-        {
-            Dsp.EqualPowerGains(inverseSquareMix, out inverseDryGain, out inverseWetGain);
         }
 
         switch (env)
@@ -272,23 +258,6 @@ public class SpatialEffectsEngine
                     // Preserve the accepted full-output floating-point expression.
                     if (_muffledFullStrength) filtered = Dsp.Lerp(input, filtered, 1f);
                     buffer[i] = Dsp.ModulationSaturate(filtered, _muffledStrength, _muffledInverseStrength);
-                }
-                break;
-
-            case SpatialEnvironment.Underwater:
-                bool hasUwEq = _environmentEq != null;
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-                    float wet = Underwater(dry);
-
-                    if (hasUwEq)
-                    {
-                        // Cascade two filters for a steeper 24dB/oct slope
-                        wet = _environmentEq!.Transform(wet);
-                        wet = _environmentEq2!.Transform(wet);
-                    }
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, wet, inverseDryGain, inverseWetGain));
                 }
                 break;
 
@@ -312,16 +281,36 @@ public class SpatialEffectsEngine
         }
     }
 
-    /// <summary>Preserves direct speech and adds one fixed profile response; final gain and limiting remain downstream.</summary>
-    private static void ApplyReverb(Span<float> buffer, float amount, SpatialReverbKernel reverb, float fullReturnGain)
+    /// <summary>Blends optional direct coloration and a fixed reflected response; final gain and limiting remain downstream.</summary>
+    private static void ApplyReverb(Span<float> buffer, float amount, SpatialReverbKernel reverb, float fullReturnGain,
+        SpatialFilterKernel? directFilter, float directGain)
     {
         float position = Math.Clamp(amount, 0, 1);
         float strength = position * (2 - position);
         float returnGain = fullReturnGain * strength;
+        if (directFilter is null)
+        {
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                float direct = buffer[i];
+                buffer[i] = direct + reverb.Process(direct) * returnGain;
+            }
+            return;
+        }
+        if (position == 1)
+        {
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                float direct = buffer[i];
+                buffer[i] = directFilter.Process(direct) * directGain + reverb.Process(direct) * returnGain;
+            }
+            return;
+        }
         for (int i = 0; i < buffer.Length; i++)
         {
             float direct = buffer[i];
-            buffer[i] = direct + reverb.Process(direct) * returnGain;
+            float colored = directFilter.Process(direct) * directGain;
+            buffer[i] = Dsp.Lerp(direct, colored, strength) + reverb.Process(direct) * returnGain;
         }
     }
 
@@ -369,6 +358,8 @@ public class SpatialEffectsEngine
     private void Setup(SpatialEnvironment env)
     {
         _profileReverb = null;
+        _profileDirectFilter = null;
+        _profileDirectGain = 1;
         _maximumTailSamples = checked(_sampleRate * 4);
         // Nullify all specific EQ filters to prevent state leakage between environments.
         _reverbHpFilter = null;
@@ -421,18 +412,11 @@ public class SpatialEffectsEngine
                 _environmentEq2 = BiQuadFilter.LowPassFilter(_sampleRate, Safe(450f), 0.707f);
                 break;
 
-            // Dense medium. Uses two cascaded LPs at 420Hz for a sharp 24dB/oct cutoff, 
-            // plus a 40ms slapback delay for pressure emulation.
             case SpatialEnvironment.Underwater:
-                ConfigureCombsByRt60(1.2f, 0.92f);
-                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(120f), 0.707f);
-                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(1800f), 0.707f);
-                _hasReverbEq = true;
-
-                // Cascade achieves steep physical muffling; Q=0.9 on the second stage adds resonant pressure.
-                _environmentEq = BiQuadFilter.LowPassFilter(_sampleRate, Safe(420f), 0.707f);
-                _environmentEq2 = BiQuadFilter.LowPassFilter(_sampleRate, Safe(420f), 0.9f);
-                _underwaterDelaySamples = DistanceToRoundTripSamples(7.0f); // ~40ms
+                PrepareReverb(UnderwaterParameters, ReverbQuietWindowSeconds, UnderwaterReturnGain);
+                _profileDirectFilter = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.HighShelf,
+                    Math.Min(5000f, _sampleRate * .49f), UnderwaterDirectGainHF);
+                _profileDirectGain = UnderwaterDirectGain;
                 break;
 
             // Cinematic Telepathy. 
@@ -488,15 +472,6 @@ public class SpatialEffectsEngine
             reverb = _allPasses[i].Process(reverb);
 
         return reverb;
-    }
-
-    // Underwater: damped reverb + 40ms slapback. Post-LP applied in ApplyEnvironment.
-    private float Underwater(float x)
-    {
-        float reverb = AlgorithmicReverb(x);
-        float delayed = _underwaterDelay.Read(_underwaterDelaySamples);
-        _underwaterDelay.Write(x + delayed * 0.5f);
-        return Dsp.Lerp(reverb, delayed, 0.4f);
     }
 
     // =========================================================================
