@@ -111,10 +111,10 @@ public enum SpatialEnvironment
 
     // --- Adventure & Nature ---
 
-    /// <summary>Tight stone space. Short, dark reverb characterized by distinct flutter echoes between parallel walls.</summary>
+    /// <summary>Compact stone chamber with dense, short reflections.</summary>
     Dungeon,
 
-    /// <summary>Large enclosed stone space. High reflectivity with very long, dark decay; emphasizes deep resonance.</summary>
+    /// <summary>Reflective rocky cavern with a longer decay.</summary>
     Cave,
 
     /// <summary>Open outdoor space. Discrete echoes rather than dense reverb tails; simulates natural canyon or forest acoustics.</summary>

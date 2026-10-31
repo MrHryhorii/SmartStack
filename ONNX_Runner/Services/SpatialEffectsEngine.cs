@@ -7,7 +7,7 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Server-side spatial acoustics engine.
-/// Room, LivingRoom, Stage and ConcreteHall use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
+/// Room, LivingRoom, Stage, ConcreteHall, Dungeon and Cave use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
@@ -17,10 +17,8 @@ namespace ONNX_Runner.Services;
 /// - LivingRoom:   Short, soft, warm. Heavy HF damping. Recognizable at any mix.
 /// - Stage:        Wooden performance hall with warm, delayed reflections.
 /// - ConcreteHall: Large concert hall with a long, dense reflected tail.
-/// - Dungeon:      Tight, harsh, resonant. Sharp 190Hz modal honk + saturated
-///                 flutter. Instantly recognizable on any voiced sound.
-/// - Cave:         Dark, massive, rumbling. 100Hz body boost + cross-feedback
-///                 echo pair + the longest, darkest tail of any environment.
+/// - Dungeon:      Compact stone chamber with dense, short reflections.
+/// - Cave:         Reflective rocky cavern with a longer decay.
 /// - Forest:       Outdoor, sparse. Two discrete decaying taps, no reverb at all.
 ///                 Absence of a tail IS the recognizable trait.
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
@@ -49,13 +47,19 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters ConcreteHallParameters = new(
         1, 1, .3162f, .5623f, 1, 3.92f, .7f, 1, .2427f, .020f,
         .9977f, .029f, .25f, 0, .9943f, 5000, 250, true);
-    // Preserve the accepted room balance; halls use a separate return emphasis.
+    private static readonly SpatialReverbParameters DungeonParameters = new(
+        1, .89f, .3162f, .3981f, .1f, 1.22f, .83f, .31f, .8913f, .022f,
+        1.9953f, .011f, .25f, 0, .9943f, 5168.6001f, 139.5f, true);
+    private static readonly SpatialReverbParameters CaveParameters = new(
+        1, 1, .3162f, 1, 1, 2.91f, 1.3f, 1, .5f, .015f,
+        .7063f, .022f, .25f, 0, .9943f, 5000, 250, false);
+    // Preserve the accepted room balance; other published profiles use doubled return.
     private const float RoomReturnGain = 64f;
-    private const float HallReturnGain = 2f;
+    private const float DefaultReverbReturnGain = 2f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
     private const float RoomQuietWindowSeconds = .45f;
-    // The halls include longer input/late delays; retain a full quiet feedback window.
-    private const float HallQuietWindowSeconds = .65f;
+    // Cover the longer input and feedback paths of the other published profiles.
+    private const float ReverbQuietWindowSeconds = .65f;
     private SpatialReverbKernel? _profileReverb;
     private float _profileReturnGain;
     private int _profileQuietWindowSamples;
@@ -73,16 +77,10 @@ public class SpatialEffectsEngine
     // DELAY BUFFERS
     // =========================================================================
 
-    private readonly DelayBuffer _dungeonFlutter;
-    private readonly DelayBuffer _caveNearDelay;
-    private readonly DelayBuffer _caveFarDelay;
     private readonly DelayBuffer _forestNearDelay;
     private readonly DelayBuffer _forestFarDelay;
     private readonly DelayBuffer _underwaterDelay;
     private readonly DelayBuffer _innerVoiceMicroDelay;
-
-    // Legacy Dungeon wall-gap pre-delay.
-    private readonly DelayBuffer _preDelay;
 
     // =========================================================================
     // EQ FILTERS
@@ -90,12 +88,6 @@ public class SpatialEffectsEngine
 
     private BiQuadFilter? _reverbHpFilter;
     private BiQuadFilter? _reverbLpFilter;
-
-    private BiQuadFilter? _dungeonResonator;
-    private BiQuadFilter? _dungeonHfDamp;
-
-    private BiQuadFilter? _caveSubBoost;
-    private BiQuadFilter? _caveHfRolloff;
 
     private BiQuadFilter? _forestHfDamp;
 
@@ -126,11 +118,6 @@ public class SpatialEffectsEngine
     // PRE-COMPUTED DELAY SIZES
     // =========================================================================
 
-    private float _dungeonPreDelaySamples;
-    private float _dungeonFlutterSamples;
-    private float _caveNearSamples;
-    private float _caveFarSamples;
-    private float _caveCrossFeedback;
     private float _forestNearSamples;
     private float _forestFarSamples;
     private float _underwaterDelaySamples;
@@ -141,8 +128,6 @@ public class SpatialEffectsEngine
     // =========================================================================
 
     private bool _hasReverbEq;
-    private bool _hasDungeonEq;
-    private bool _hasCaveEq;
     private bool _hasForestEq;
 
     private SpatialEnvironment _current = SpatialEnvironment.None;
@@ -179,13 +164,9 @@ public class SpatialEffectsEngine
         _allPasses = [new(allPassA), new(allPassB), new(allPassC), new(allPassD)];
         _reverbSilenceWindowSamples = combSizes[^1] + allPassA + allPassB + allPassC + allPassD;
 
-        _dungeonFlutter = new DelayBuffer(SamplesFor(10f));
-        _caveNearDelay = new DelayBuffer(SamplesFor(85f));
-        _caveFarDelay = new DelayBuffer(SamplesFor(85f));
         _forestNearDelay = new DelayBuffer(SamplesFor(280f));
         _forestFarDelay = new DelayBuffer(SamplesFor(550f));
         _underwaterDelay = new DelayBuffer(SamplesFor(170f));
-        _preDelay = new DelayBuffer(SamplesFor(42f));
         _innerVoiceMicroDelay = new DelayBuffer(SamplesFor(15f));
     }
 
@@ -232,8 +213,6 @@ public class SpatialEffectsEngine
             float pathSamples = _current switch
             {
                 SpatialEnvironment.Forest => Math.Max(_forestNearSamples, _forestFarSamples),
-                SpatialEnvironment.Dungeon => _reverbSilenceWindowSamples + _dungeonPreDelaySamples,
-                SpatialEnvironment.Cave => Math.Max(_caveFarSamples, _reverbSilenceWindowSamples + _caveNearSamples),
                 SpatialEnvironment.Underwater => Math.Max(_underwaterDelaySamples, _reverbSilenceWindowSamples),
                 SpatialEnvironment.InnerVoice => _reverbSilenceWindowSamples + _innerVoiceMicroDelaySamples,
                 _ => _reverbSilenceWindowSamples
@@ -252,13 +231,9 @@ public class SpatialEffectsEngine
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
 
-        _dungeonFlutter.Clear();
-        _caveNearDelay.Clear();
-        _caveFarDelay.Clear();
         _forestNearDelay.Clear();
         _forestFarDelay.Clear();
         _underwaterDelay.Clear();
-        _preDelay.Clear();
         _innerVoiceMicroDelay.Clear();
 
         _innerVoiceLpState = 0f;
@@ -298,9 +273,7 @@ public class SpatialEffectsEngine
         float inverseDryGain = 1f;
         float inverseWetGain = 0f;
 
-        if (env is SpatialEnvironment.Dungeon
-            or SpatialEnvironment.Cave
-            or SpatialEnvironment.Forest)
+        if (env == SpatialEnvironment.Forest)
         {
             Dsp.EqualPowerGains(curvedMix, out curvedDryGain, out curvedWetGain);
         }
@@ -311,24 +284,6 @@ public class SpatialEffectsEngine
 
         switch (env)
         {
-            case SpatialEnvironment.Dungeon:
-                bool hasDungeonEq = _hasDungeonEq;
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, DungeonReverb(dry, hasDungeonEq), curvedDryGain, curvedWetGain));
-                }
-                break;
-
-            case SpatialEnvironment.Cave:
-                bool hasCaveEq = _hasCaveEq;
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float dry = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = Dsp.SoftClip(Dsp.EqualPowerCrossfade(dry, CaveReverb(dry, hasCaveEq), curvedDryGain, curvedWetGain));
-                }
-                break;
-
             case SpatialEnvironment.Forest:
                 bool hasForestEq = _hasForestEq;
                 for (int i = 0; i < buffer.Length; i++)
@@ -448,17 +403,11 @@ public class SpatialEffectsEngine
         // Nullify all specific EQ filters to prevent state leakage between environments.
         _reverbHpFilter = null;
         _reverbLpFilter = null;
-        _dungeonResonator = null;
-        _dungeonHfDamp = null;
-        _caveSubBoost = null;
-        _caveHfRolloff = null;
         _forestHfDamp = null;
         _environmentEq = null;
         _environmentEq2 = null;
 
         _hasReverbEq = false;
-        _hasDungeonEq = false;
-        _hasCaveEq = false;
         _hasForestEq = false;
 
         float nyq = _sampleRate * 0.45f;
@@ -476,47 +425,19 @@ public class SpatialEffectsEngine
                 break;
 
             case SpatialEnvironment.Stage:
-                PrepareReverb(StageParameters, HallQuietWindowSeconds, HallReturnGain);
+                PrepareReverb(StageParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             case SpatialEnvironment.ConcreteHall:
-                PrepareReverb(ConcreteHallParameters, HallQuietWindowSeconds, HallReturnGain);
+                PrepareReverb(ConcreteHallParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
-            // Tight confinement chamber. Defining traits:
-            // 1. Sharp modal resonance: 190Hz / Q=5.5 / +9dB.
-            // 2. Saturated flutter: AsymmetricSaturation on the 7ms feedback loop gives a gritty character.
             case SpatialEnvironment.Dungeon:
-                ConfigureCombs(Rt60ToFeedback(0.40f, 0.007f), Dsp.ScaleCoeff(0.40f, _sampleRate));
-                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(140f), 0.707f);
-                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(5000f), 0.707f);
-                _hasReverbEq = true;
-
-                _dungeonResonator = BiQuadFilter.PeakingEQ(_sampleRate, Safe(190f), 5.5f, 9.0f);
-                _dungeonHfDamp = BiQuadFilter.LowPassFilter(_sampleRate, Safe(3000f), 0.707f);
-                _hasDungeonEq = true;
-
-                _dungeonPreDelaySamples = DistanceToRoundTripSamples(1.0f); // ~6ms
-                _dungeonFlutterSamples = 0.007f * _sampleRate;              // 7ms
+                PrepareReverb(DungeonParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
-            // Dark massive cavern. Defining traits:
-            // 1. 100Hz body boost (+5dB, Q=0.6) sits in the fundamental frequency of TTS voices.
-            // 2. Cross-feedback echo pair (15ms/38ms, feedback=0.30) scatters energy irregularly.
-            // 3. Longest RT60 (3.5s) + steepest HF rolloff (2600Hz) ensures the tail is massive and dark.
             case SpatialEnvironment.Cave:
-                ConfigureCombsByRt60(3.5f, 0.03f);
-                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(40f), 0.707f);
-                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(6000f), 0.707f);
-                _hasReverbEq = true;
-
-                _caveSubBoost = BiQuadFilter.PeakingEQ(_sampleRate, Safe(100f), 0.6f, 5.0f);
-                _caveHfRolloff = BiQuadFilter.LowPassFilter(_sampleRate, Safe(2600f), 0.707f);
-                _hasCaveEq = true;
-
-                _caveNearSamples = DistanceToRoundTripSamples(2.5f); // ~15ms
-                _caveFarSamples = DistanceToRoundTripSamples(6.5f);  // ~38ms
-                _caveCrossFeedback = 0.30f;
+                PrepareReverb(CaveParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             // Outdoor. Two discrete taps at ~250ms and ~500ms with progressive HF loss.
@@ -607,53 +528,6 @@ public class SpatialEffectsEngine
         return reverb;
     }
 
-    // Dungeon: modal resonance → pre-delay → dense reverb + saturated flutter.
-    private float DungeonReverb(float x, bool hasDungeonEq)
-    {
-        float resonated = hasDungeonEq && _dungeonResonator != null
-            ? _dungeonResonator.Transform(x)
-            : x;
-
-        _preDelay.Write(resonated);
-        float preDelayed = _preDelay.Read(_dungeonPreDelaySamples);
-
-        float reverb = AlgorithmicReverb(preDelayed);
-
-        float flutterDelayed = _dungeonFlutter.Read(_dungeonFlutterSamples);
-        float flutterFeedback = Dsp.AsymmetricSaturation(flutterDelayed * 0.6f);
-
-        // SoftClip before Write: resonator adds +9dB so sum can exceed 1.0.
-        _dungeonFlutter.Write(Dsp.SoftClip(resonated + flutterFeedback));
-
-        float wet = reverb + flutterDelayed * 0.50f;
-
-        if (hasDungeonEq && _dungeonHfDamp != null)
-            wet = _dungeonHfDamp.Transform(wet);
-
-        return wet;
-    }
-
-    // Cave: sub-boost → cross-feedback echoes → long dark reverb.
-    private float CaveReverb(float x, bool hasCaveEq)
-    {
-        float boosted = hasCaveEq && _caveSubBoost != null ? _caveSubBoost.Transform(x) : x;
-
-        float prevNear = _caveNearDelay.Read(_caveNearSamples);
-        float prevFar = _caveFarDelay.Read(_caveFarSamples);
-
-        // SoftClip before both delay writes: stabilizes the cross-feedback loop.
-        _caveNearDelay.Write(Dsp.SoftClip(boosted + prevFar * _caveCrossFeedback));
-        _caveFarDelay.Write(Dsp.SoftClip(boosted + prevNear * _caveCrossFeedback));
-
-        float reverb = AlgorithmicReverb(prevNear);
-        float wet = reverb + prevNear * 0.55f + prevFar * 0.35f;
-
-        if (hasCaveEq && _caveHfRolloff != null)
-            wet = _caveHfRolloff.Transform(wet);
-
-        return wet;
-    }
-
     // Forest: two discrete taps, no reverb. Far tap darkened by foliage LP.
     private float ForestEcho(float x, bool hasForestEq)
     {
@@ -681,16 +555,6 @@ public class SpatialEffectsEngine
     // =========================================================================
     // HELPERS
     // =========================================================================
-
-    /// <summary>Sets uniform feedback and sample-rate-adjusted damping across the comb bank.</summary>
-    private void ConfigureCombs(float feedback, float scaledDamp)
-    {
-        foreach (var c in _combs)
-        {
-            c.Feedback = feedback;
-            c.Damp = scaledDamp;
-        }
-    }
 
     /// <summary>Sets comb feedback from the target RT60 and scales damping for the current sample rate.</summary>
     private void ConfigureCombsByRt60(float rt60Seconds, float damp)
