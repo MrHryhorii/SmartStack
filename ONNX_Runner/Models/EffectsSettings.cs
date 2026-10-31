@@ -95,7 +95,10 @@ public enum SpatialEnvironment
     /// <summary>No reverb; dry signal only. Highest performance mode.</summary>
     None,
 
-    /// <summary>Small, intimate room. Short decay and balanced frequency response; natural for dialogue.</summary>
+    /// <summary>Small room with short, clear reflections and less high-frequency absorption.</summary>
+    Room,
+
+    /// <summary>Furnished room with short, soft reflections and strong high-frequency absorption.</summary>
     LivingRoom,
 
     // --- Public Spaces ---

@@ -50,7 +50,7 @@ public static class LivingRoomChecks
                 CheckTail(rate, amount, volume);
         }
         foreach (int rate in new[] { 8000, 22050, 48000 })
-        foreach (SpatialEnvironment environment in Enum.GetValues<SpatialEnvironment>().Where(x => x != SpatialEnvironment.LivingRoom))
+        foreach (SpatialEnvironment environment in Enum.GetValues<SpatialEnvironment>().Where(x => x is not SpatialEnvironment.Room and not SpatialEnvironment.LivingRoom))
         foreach (float amount in new[] { .25f, .5f, 1f })
         {
             float[] input = Signal(rate, .15), old = new float[rate], updated = new float[rate];

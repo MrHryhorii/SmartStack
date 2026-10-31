@@ -7,12 +7,13 @@ namespace ONNX_Runner.Services;
 
 /// <summary>
 /// Server-side spatial acoustics engine.
-/// LivingRoom uses an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
+/// Room and LivingRoom use an OpenAL-derived mono reverb; remaining profiles retain their current algorithms.
 ///
 /// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
 /// dominant, instantly identifiable trait rather than a cluster of small
 /// parameter tweaks. Every effect is structurally distinct.
 ///
+/// - Room:         Short, clear reflections with moderate HF absorption.
 /// - LivingRoom:   Short, soft, warm. Heavy HF damping. Recognizable at any mix.
 /// - Stage:        Warm, dense, live. Bass shelf + audible lateral reflection
 ///                 (band-passed to sound like a side wall) + slow shimmer.
@@ -37,15 +38,19 @@ public class SpatialEffectsEngine
     private readonly int _reverbSilenceWindowSamples;
     private const float SpeedOfSound = 343f;
 
-    // EFX LivingRoom: furnished-room absorption, short mid decay and faster HF decay.
+    // Published EFX Room and LivingRoom profiles; output balance stays caller-owned.
+    private static readonly SpatialReverbParameters RoomParameters = new(
+        .4287f, 1, .3162f, .5929f, 1, .4f, .83f, 1, .1503f, .002f,
+        1.0629f, .003f, .25f, 0, .9943f, 5000, 250, true);
     private static readonly SpatialReverbParameters LivingRoomParameters = new(
         .9766f, 1, .3162f, .001f, 1, .5f, .1f, 1, .2051f, .003f,
         .2805f, .004f, .25f, 0, .9943f, 5000, 250, true);
     // Fixed mono-return calibration, then 100% emphasis for an expressive full endpoint.
-    private const float LivingRoomReferenceReturnGain = 32f;
-    private const float LivingRoomFullEmphasis = 2f;
+    private const float RoomReferenceReturnGain = 32f;
+    private const float RoomFullEmphasis = 2f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
-    private const float LivingRoomQuietWindowSeconds = .45f;
+    private const float RoomQuietWindowSeconds = .45f;
+    private SpatialReverbKernel? _roomReverb;
     private SpatialReverbKernel? _livingRoomReverb;
 
     // =========================================================================
@@ -237,8 +242,8 @@ public class SpatialEffectsEngine
         {
             int probeSamples = Math.Max(1, _sampleRate / 50);
             if (_current is SpatialEnvironment.None or SpatialEnvironment.Muffled) return probeSamples;
-            if (_current == SpatialEnvironment.LivingRoom)
-                return Math.Max(probeSamples, (int)MathF.Ceiling(_sampleRate * LivingRoomQuietWindowSeconds));
+            if (_current is SpatialEnvironment.Room or SpatialEnvironment.LivingRoom)
+                return Math.Max(probeSamples, (int)MathF.Ceiling(_sampleRate * RoomQuietWindowSeconds));
             float pathSamples = _current switch
             {
                 SpatialEnvironment.Forest => Math.Max(_forestNearSamples, _forestFarSamples),
@@ -259,6 +264,7 @@ public class SpatialEffectsEngine
     /// <summary>Clears delay, filter, modulation, and tail state before reusing the environment processor.</summary>
     public void Reset()
     {
+        _roomReverb?.Reset();
         _livingRoomReverb?.Reset();
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
@@ -281,7 +287,7 @@ public class SpatialEffectsEngine
     }
 
     /// <summary>
-    /// LivingRoom retains direct sound and uses inverse-square intensity for its reflected return.
+    /// Room and LivingRoom retain direct sound and use inverse-square intensity for their reflected return.
     /// Remaining additive/spatial environments retain their quadratic mix (mix²).
     /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff and saturation depth.
     /// InnerVoice uses that intensity for internal coloration; Underwater uses it for blending.
@@ -298,9 +304,10 @@ public class SpatialEffectsEngine
             _current = env;
         }
 
-        if (env == SpatialEnvironment.LivingRoom)
+        if (env is SpatialEnvironment.Room or SpatialEnvironment.LivingRoom)
         {
-            ApplyLivingRoom(buffer, mix);
+            var reverb = env == SpatialEnvironment.Room ? _roomReverb! : _livingRoomReverb!;
+            ApplyRoom(buffer, mix, reverb);
             return;
         }
 
@@ -424,13 +431,12 @@ public class SpatialEffectsEngine
         }
     }
 
-    /// <summary>Preserves direct speech and adds one fixed furnished-room response; final gain and limiting remain downstream.</summary>
-    private void ApplyLivingRoom(Span<float> buffer, float amount)
+    /// <summary>Preserves direct speech and adds one fixed room response; final gain and limiting remain downstream.</summary>
+    private static void ApplyRoom(Span<float> buffer, float amount, SpatialReverbKernel reverb)
     {
         float position = Math.Clamp(amount, 0, 1);
         float strength = position * (2 - position);
-        float returnGain = LivingRoomReferenceReturnGain * LivingRoomFullEmphasis * strength;
-        var reverb = _livingRoomReverb!;
+        float returnGain = RoomReferenceReturnGain * RoomFullEmphasis * strength;
         for (int i = 0; i < buffer.Length; i++)
         {
             float direct = buffer[i];
@@ -510,6 +516,10 @@ public class SpatialEffectsEngine
 
         switch (env)
         {
+            case SpatialEnvironment.Room:
+                _roomReverb ??= new SpatialReverbKernel(_sampleRate, RoomParameters);
+                break;
+
             case SpatialEnvironment.LivingRoom:
                 _livingRoomReverb ??= new SpatialReverbKernel(_sampleRate, LivingRoomParameters);
                 break;
