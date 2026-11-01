@@ -112,6 +112,12 @@ public enum SpatialEnvironment
     /// <summary>Large concert hall with a long, dense reflected tail.</summary>
     ConcreteHall,
 
+    /// <summary>Vast empty enclosure with dense reflections and a long, dark decay.</summary>
+    Hangar,
+
+    /// <summary>Vast domed interior with delayed reflections and a long reverberant tail.</summary>
+    Cathedral,
+
     // --- Adventure & Nature ---
 
     /// <summary>Compact stone chamber with dense, short reflections.</summary>

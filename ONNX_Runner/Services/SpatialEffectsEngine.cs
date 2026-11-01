@@ -18,6 +18,8 @@ namespace ONNX_Runner.Services;
 /// - Bathroom:     Small tiled space with strong, close reflections.
 /// - Stage:        Wooden performance hall with warm, delayed reflections.
 /// - ConcreteHall: Large concert hall with a long, dense reflected tail.
+/// - Hangar:       Vast empty enclosure with a dense, long, dark decay.
+/// - Cathedral:    Vast domed interior with delayed reflections and a long tail.
 /// - Dungeon:      Compact stone chamber with dense, short reflections.
 /// - Cave:         Reflective rocky cavern with a longer decay.
 /// - Forest:       Delayed, scattered outdoor reflections with strong HF absorption.
@@ -48,6 +50,12 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters ConcreteHallParameters = new(
         1, 1, .3162f, .5623f, 1, 3.92f, .7f, 1, .2427f, .020f,
         .9977f, .029f, .25f, 0, .9943f, 5000, 250, true);
+    private static readonly SpatialReverbParameters HangarParameters = new(
+        1, 1, .3162f, .3162f, 1, 10.05f, .23f, 1, .5f, .020f,
+        1.256f, .030f, .25f, 0, .9943f, 5000, 250, true);
+    private static readonly SpatialReverbParameters CathedralParameters = new(
+        1, .87f, .3162f, .3548f, .2239f, 10.48f, .19f, .1f, .1778f, .090f,
+        1.2589f, .042f, .25f, 0, .9943f, 2854.3999f, 20, true);
     private static readonly SpatialReverbParameters DungeonParameters = new(
         1, .89f, .3162f, .3981f, .1f, 1.22f, .83f, .31f, .8913f, .022f,
         1.9953f, .011f, .25f, 0, .9943f, 5168.6001f, 139.5f, true);
@@ -401,6 +409,14 @@ public class SpatialEffectsEngine
 
             case SpatialEnvironment.ConcreteHall:
                 PrepareReverb(ConcreteHallParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
+                break;
+
+            case SpatialEnvironment.Hangar:
+                PrepareReverb(HangarParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
+                break;
+
+            case SpatialEnvironment.Cathedral:
+                PrepareReverb(CathedralParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             case SpatialEnvironment.Dungeon:
