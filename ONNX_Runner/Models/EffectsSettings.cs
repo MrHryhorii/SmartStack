@@ -141,13 +141,18 @@ public enum SpatialEnvironment
     /// <summary>Delayed canyon reflections with a longer, fuller reverberant decay.</summary>
     Canyon,
 
-    // --- Extreme & Narrative ---
+    // --- Water ---
 
-    /// <summary>Occlusion effect. Pure low-pass filter with no spatial reflections. Simulates hearing sound through walls, earplugs, or UI pause menus.</summary>
-    Muffled,
+    /// <summary>Indoor swimming pool with bright, lightly modulated reflections above the water.</summary>
+    SwimmingPool,
 
     /// <summary>Muffled direct speech with modulated underwater reflections.</summary>
     Underwater,
+
+    // --- Special & Narrative ---
+
+    /// <summary>Occlusion effect. Pure low-pass filter with no spatial reflections. Simulates hearing sound through walls, earplugs, or UI pause menus.</summary>
+    Muffled,
 
     /// <summary>Cinematic inner monologue with close, dark voice coloration and a restrained diffuse tail.</summary>
     InnerVoice

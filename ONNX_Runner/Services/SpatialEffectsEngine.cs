@@ -27,9 +27,10 @@ namespace ONNX_Runner.Services;
 /// - Alley:        Narrow outdoor passage with scattered, relatively bright reflections.
 /// - Forest:       Delayed, scattered outdoor reflections with strong HF absorption.
 /// - Canyon:       Delayed outdoor reflections with a longer, fuller decay.
+/// - SwimmingPool: Indoor pool with bright, lightly modulated reflections above the water.
+/// - Underwater:   Muffled direct speech with the published modulated underwater reverb.
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
 ///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
-/// - Underwater:   Muffled direct speech with the published modulated underwater reverb.
 /// - InnerVoice:   Cinematic inner monologue. A short presence tap and gradual
 ///                 low-pass coloration are supported by a restrained, dark diffuse tail.
 /// </summary>
@@ -81,6 +82,9 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters CanyonParameters = new(
         1, .74f, .3162f, .1778f, .631f, 3.89f, .21f, .46f, .3162f, .223f,
         .3548f, .019f, .25f, 0, .9943f, 4399.1001f, 242.9f, false);
+    private static readonly SpatialReverbParameters SwimmingPoolParameters = new(
+        1, .7f, .3162f, .7943f, .8913f, 2.76f, 1.25f, 1.14f, .631f, .020f,
+        .7943f, .030f, .895f, .19f, .9943f, 5000, 250, false);
     private static readonly SpatialReverbParameters UnderwaterParameters = new(
         .3645f, 1, .3162f, .01f, 1, 1.49f, .1f, 1, .5963f, .007f,
         7.0795f, .011f, 1.18f, .348f, .9943f, 5000, 250, true);
@@ -463,12 +467,8 @@ public class SpatialEffectsEngine
                 PrepareReverb(CanyonParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
-            // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).
-            // Two Butterworth low-pass stages attenuate at 24 dB/oct without adding reflections or saturation.
-            case SpatialEnvironment.Muffled:
-                _muffledPreparedAmount = float.NaN;
-                _environmentEq = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
-                _environmentEq2 = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
+            case SpatialEnvironment.SwimmingPool:
+                PrepareReverb(SwimmingPoolParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             case SpatialEnvironment.Underwater:
@@ -476,6 +476,14 @@ public class SpatialEffectsEngine
                 _profileDirectFilter = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.HighShelf,
                     Math.Min(5000f, _sampleRate * .49f), UnderwaterDirectGainHF);
                 _profileDirectGain = UnderwaterDirectGain;
+                break;
+
+            // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).
+            // Two Butterworth low-pass stages attenuate at 24 dB/oct without adding reflections or saturation.
+            case SpatialEnvironment.Muffled:
+                _muffledPreparedAmount = float.NaN;
+                _environmentEq = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
+                _environmentEq2 = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
                 break;
 
             // A quiet, dark diffuse tail supports the authored inner-monologue coloration.
