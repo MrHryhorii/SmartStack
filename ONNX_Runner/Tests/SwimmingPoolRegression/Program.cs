@@ -12,7 +12,7 @@ var checks = new List<object>();
 var timings = new List<object>();
 int failures = 0;
 string[] names = Enum.GetNames<SpatialEnvironment>();
-Check("Requested water and special environment order", names.TakeLast(5).SequenceEqual(new[] { "SwimmingPool", "Underwater", "DeepWater", "Muffled", "InnerVoice" }));
+Check("Requested water and special environment order", names.Skip(Array.IndexOf(names, "SwimmingPool")).Take(5).SequenceEqual(new[] { "SwimmingPool", "Underwater", "DeepWater", "Muffled", "InnerVoice" }));
 var endpoint = (IValueHttpResult)InfoEndpoints.GetEnvironments();
 string[] advertised = JsonSerializer.SerializeToElement(endpoint.Value).GetProperty("environments").EnumerateArray().Select(x => x.GetString()!).ToArray();
 Check("The environment endpoint preserves enumeration order", names.SequenceEqual(advertised));

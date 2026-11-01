@@ -13,7 +13,7 @@ int failures = 0;
 int[] rates = [8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 96000, 192000];
 float[] amounts = [0, .001f, .0011f, .01f, .25f, .5f, .75f, 1];
 string[] names = Enum.GetNames<SpatialEnvironment>();
-Check("DeepWater follows Underwater and precedes Muffled", names.TakeLast(5).SequenceEqual(
+Check("DeepWater follows Underwater and precedes Muffled", names.Skip(Array.IndexOf(names, "SwimmingPool")).Take(5).SequenceEqual(
     new[] { "SwimmingPool", "Underwater", "DeepWater", "Muffled", "InnerVoice" }));
 var endpoint = (IValueHttpResult)InfoEndpoints.GetEnvironments();
 string[] advertised = JsonSerializer.SerializeToElement(endpoint.Value).GetProperty("environments")

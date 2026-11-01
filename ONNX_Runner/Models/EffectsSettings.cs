@@ -161,5 +161,16 @@ public enum SpatialEnvironment
     Muffled,
 
     /// <summary>Cinematic inner monologue with close, dark voice coloration and a restrained diffuse tail.</summary>
-    InnerVoice
+    InnerVoice,
+
+    // --- Classic Effects ---
+
+    /// <summary>Balanced, dense reverberation without a specific room character.</summary>
+    Reverb,
+
+    /// <summary>One fixed delay with progressively quieter and darker repeats.</summary>
+    Echo,
+
+    /// <summary>Two fixed delay taps with a repeating, damped echo pattern.</summary>
+    DualEcho
 }

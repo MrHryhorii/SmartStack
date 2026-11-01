@@ -60,21 +60,21 @@ internal static class SpatialTailRegressionProgram
             });
         }
         foreach(int rate in Rates)
-        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon})
+        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon,SpatialEnvironment.Echo,SpatialEnvironment.DualEcho})
         foreach(float pause in new[]{0f,.15f,.3f})
         foreach(float amount in new[]{.25f,1f})
         {
             Check($"{environment} drains delayed echoes at {rate} Hz, pause {pause}, intensity {amount}",()=>VerifyTail(rate,environment,amount,pause));
         }
         foreach(int rate in new[]{8000,22050,48000})
-        foreach(SpatialEnvironment environment in Environments.Where(x=>x is not SpatialEnvironment.Forest and not SpatialEnvironment.Canyon))
+        foreach(SpatialEnvironment environment in Environments.Where(x=>x is not SpatialEnvironment.Forest and not SpatialEnvironment.Canyon and not SpatialEnvironment.Echo and not SpatialEnvironment.DualEcho))
         foreach(float pause in new[]{0f,.3f})
         foreach(float amount in new[]{.25f,1f})
         {
             Check($"The actual drain retains {environment} tail at {rate} Hz, pause {pause}, intensity {amount}",()=>VerifyTail(rate,environment,amount,pause));
         }
         foreach(int rate in new[]{8000,22050,48000})
-        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon,SpatialEnvironment.ConcreteHall,SpatialEnvironment.Cave,SpatialEnvironment.InnerVoice,SpatialEnvironment.Hangar,SpatialEnvironment.Cathedral,SpatialEnvironment.Stadium,SpatialEnvironment.Tunnel,SpatialEnvironment.SewerPipe,SpatialEnvironment.Alley,SpatialEnvironment.SwimmingPool,SpatialEnvironment.DeepWater})
+        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon,SpatialEnvironment.ConcreteHall,SpatialEnvironment.Cave,SpatialEnvironment.InnerVoice,SpatialEnvironment.Hangar,SpatialEnvironment.Cathedral,SpatialEnvironment.Stadium,SpatialEnvironment.Tunnel,SpatialEnvironment.SewerPipe,SpatialEnvironment.Alley,SpatialEnvironment.SwimmingPool,SpatialEnvironment.DeepWater,SpatialEnvironment.Reverb,SpatialEnvironment.Echo,SpatialEnvironment.DualEcho})
         foreach(float volume in new[]{.1f,2.5118864f})
         foreach(bool profiles in new[]{false,true})
         {

@@ -35,6 +35,9 @@ namespace ONNX_Runner.Services;
 ///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
 /// - InnerVoice:   Cinematic inner monologue. A short presence tap and gradual
 ///                 low-pass coloration are supported by a restrained, dark diffuse tail.
+/// - Reverb:       Balanced, dense reverberation on the published generic profile.
+/// - Echo:         One fixed delay with progressively quieter and darker repeats.
+/// - DualEcho:     Two fixed taps with damped feedback from the second return.
 /// </summary>
 public class SpatialEffectsEngine
 {
@@ -93,6 +96,15 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters UnderwaterParameters = new(
         .3645f, 1, .3162f, .01f, 1, 1.49f, .1f, 1, .5963f, .007f,
         7.0795f, .011f, 1.18f, .348f, .9943f, 5000, 250, true);
+    private static readonly SpatialReverbParameters GenericReverbParameters = new(
+        1, 1, .3162f, .8913f, 1, 1.49f, .83f, 1, .05f, .007f,
+        1.2589f, .011f, .25f, 0, .9943f, 5000, 250, true);
+    private static readonly SpatialEchoParameters DualEchoParameters = new(.18f, .25f, .5f, .4f);
+    private const float EchoDelaySeconds = .3f;
+    private const float EchoFeedback = .4f;
+    private const float EchoDampingReferenceGain = .5f;
+    private const float EchoReturnGain = .4f;
+    private const float DualEchoReturnGain = .3f;
     // EFX direct-filter balance used by OpenMW's underwater environment.
     private const float UnderwaterDirectGain = .9f;
     private const float UnderwaterDirectGainHF = .125f;
@@ -102,6 +114,7 @@ public class SpatialEffectsEngine
     private const float LivingRoomReturnGain = 32f * 2f;
     private const float BathroomReturnGain = 1.5f;
     private const float DefaultReverbReturnGain = 2f;
+    private const float GenericReverbReturnGain = 4f;
     private const float MuffledMaximumGainDb = 1f;
     private const float InnerVoiceReturnGain = .15f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
@@ -109,6 +122,9 @@ public class SpatialEffectsEngine
     // Cover the longer input and feedback paths of the other published profiles.
     private const float ReverbQuietWindowSeconds = .65f;
     private SpatialReverbKernel? _profileReverb;
+    private SpatialEchoKernel? _profileEcho;
+    private SpatialTapDelay? _profileDelay;
+    private SpatialFilterKernel? _echoDamping;
     private SpatialFilterKernel? _profileDirectFilter;
     private float _profileDirectGain = 1;
     private float _profileReturnGain;
@@ -229,7 +245,7 @@ public class SpatialEffectsEngine
     // PUBLIC API
     // =========================================================================
 
-    /// <summary>Sample-rate-scaled safety budget for the active profile's complete reverb tail.</summary>
+    /// <summary>Sample-rate-scaled safety budget for the active profile's complete effect tail.</summary>
     internal int MaximumTailSamples => _maximumTailSamples;
 
     /// <summary>Quiet observation span covering the active reflection path before a tail can end.</summary>
@@ -239,7 +255,8 @@ public class SpatialEffectsEngine
         {
             int probeSamples = Math.Max(1, _sampleRate / 50);
             if (_current is SpatialEnvironment.None or SpatialEnvironment.Muffled) return probeSamples;
-            if (_profileReverb is not null) return _profileQuietWindowSamples;
+            if (_profileReverb is not null || _profileEcho is not null || _profileDelay is not null)
+                return _profileQuietWindowSamples;
             float pathSamples = _current switch
             {
                 SpatialEnvironment.InnerVoice => _reverbSilenceWindowSamples + _innerVoiceMicroDelaySamples,
@@ -254,6 +271,9 @@ public class SpatialEffectsEngine
     public void Reset()
     {
         _profileReverb?.Reset();
+        _profileEcho?.Reset();
+        _profileDelay?.Reset();
+        _echoDamping?.Reset();
         _profileDirectFilter?.Reset();
         _environmentEq?.Reset();
         _environmentEq2?.Reset();
@@ -292,6 +312,17 @@ public class SpatialEffectsEngine
         {
             ApplyReverb(buffer, mix, profileReverb, _profileReturnGain, _profileDirectFilter, _profileDirectGain);
             if (_hasMuffledOutput) ApplyMuffled(buffer, mix);
+            return;
+        }
+
+        if (_profileDelay is { } delay)
+        {
+            ApplySingleEcho(buffer, mix, delay, _echoDamping!);
+            return;
+        }
+        if (_profileEcho is { } echo)
+        {
+            ApplyDualEcho(buffer, mix, echo);
             return;
         }
 
@@ -351,6 +382,31 @@ public class SpatialEffectsEngine
             float direct = buffer[i];
             float colored = directFilter.Process(direct) * directGain;
             buffer[i] = Dsp.Lerp(direct, colored, strength) + reverb.Process(direct) * returnGain;
+        }
+    }
+
+    /// <summary>Mixes one feed-forward return; only the stored repeat receives damped feedback.</summary>
+    private static void ApplySingleEcho(Span<float> buffer, float amount, SpatialTapDelay delay, SpatialFilterKernel damping)
+    {
+        float position = Math.Clamp(amount, 0, 1);
+        float gain = EchoReturnGain * (position * (2 - position));
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float input = buffer[i], returned = delay.Read();
+            delay.Write(input + damping.Process(returned) * EchoFeedback);
+            buffer[i] = input + returned * gain;
+        }
+    }
+
+    /// <summary>Mixes the original mono two-tap echo without changing its feedback or delay timing.</summary>
+    private static void ApplyDualEcho(Span<float> buffer, float amount, SpatialEchoKernel echo)
+    {
+        float position = Math.Clamp(amount, 0, 1);
+        float gain = DualEchoReturnGain * (position * (2 - position));
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float input = buffer[i];
+            buffer[i] = input + echo.Process(input) * gain;
         }
     }
 
@@ -417,6 +473,10 @@ public class SpatialEffectsEngine
     private void Setup(SpatialEnvironment env)
     {
         _profileReverb = null;
+        _profileEcho = null;
+        _profileDelay = null;
+        _echoDamping = null;
+        _profileQuietWindowSamples = 0;
         _profileDirectFilter = null;
         _profileDirectGain = 1;
         _maximumTailSamples = checked(_sampleRate * 4);
@@ -529,6 +589,23 @@ public class SpatialEffectsEngine
                 // This 8 ms mono tap is intentional timbral coloration, not a binaural model.
                 _innerVoiceMicroDelaySamples = 0.008f * _sampleRate;
                 break;
+
+            case SpatialEnvironment.Reverb:
+                PrepareReverb(GenericReverbParameters, ReverbQuietWindowSeconds, GenericReverbReturnGain);
+                break;
+
+            case SpatialEnvironment.Echo:
+                int delay = Math.Max((int)(EchoDelaySeconds * _sampleRate + .5f), 1);
+                _profileDelay = new SpatialTapDelay(delay);
+                _echoDamping = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.HighShelf,
+                    Math.Min(5000f, _sampleRate * .49f), EchoDampingReferenceGain);
+                PrepareEchoTail(delay, EchoFeedback);
+                break;
+
+            case SpatialEnvironment.DualEcho:
+                _profileEcho = new SpatialEchoKernel(_sampleRate, DualEchoParameters);
+                PrepareEchoTail(_profileEcho.SecondTapDelaySamples, DualEchoParameters.Feedback);
+                break;
         }
     }
 
@@ -543,6 +620,15 @@ public class SpatialEffectsEngine
         int seconds = Math.Max(4, (int)Math.Ceiling(2 * slowestDecay
             + parameters.ReflectionsDelaySeconds + parameters.LateReverbDelaySeconds + quietSeconds));
         _maximumTailSamples = checked(_sampleRate * seconds);
+    }
+
+    /// <summary>Covers the last initial tap, 120 dB of feedback decay, and two complete quiet feedback cycles.</summary>
+    private void PrepareEchoTail(int longestDelaySamples, float feedback)
+    {
+        _profileQuietWindowSamples = Math.Max(_sampleRate / 50, checked(longestDelaySamples * 2 + 1));
+        int decays = feedback > 0 ? (int)Math.Ceiling(Math.Log(1e-6) / Math.Log(feedback)) : 0;
+        double seconds = ((decays + 1d) * longestDelaySamples + _profileQuietWindowSamples) / _sampleRate;
+        _maximumTailSamples = checked(_sampleRate * Math.Max(4, (int)Math.Ceiling(seconds)));
     }
 
     // =========================================================================
