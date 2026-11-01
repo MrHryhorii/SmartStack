@@ -128,6 +128,6 @@ public enum SpatialEnvironment
     /// <summary>Muffled direct speech with modulated underwater reflections.</summary>
     Underwater,
 
-    /// <summary>Intracranial acoustic space. Short tap delays simulate bone-conducted sound; used for internal thoughts.</summary>
+    /// <summary>Cinematic inner monologue with close, dark voice coloration and a restrained diffuse tail.</summary>
     InnerVoice
 }

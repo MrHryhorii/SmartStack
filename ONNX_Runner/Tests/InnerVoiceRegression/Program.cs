@@ -60,9 +60,36 @@ internal static class InnerVoiceRegressionProgram
                 for (int i = 0; i < 256; i++) engine.ApplyEnvironment(block, SpatialEnvironment.InnerVoice, .01f+i%99/100f);
                 Require(GC.GetAllocatedBytesForCurrentThread() == before, "Hot preparation or processing allocated memory.");
             });
+            Check($"InnerVoice reset reproduces a fresh stream at {rate} Hz", () =>
+            {
+                float[] input = Signal(rate, rate / 3), first = (float[])input.Clone();
+                var engine = new SpatialEffectsEngine(rate);
+                engine.ApplyEnvironment(first, SpatialEnvironment.InnerVoice, 1);
+                engine.Reset(); float[] repeated = (float[])input.Clone();
+                engine.ApplyEnvironment(repeated, SpatialEnvironment.InnerVoice, 1);
+                Require(SameBits(first, repeated), "Reset retained filter or delay history.");
+            });
+            Check($"InnerVoice reset leaves no residual output at {rate} Hz", () =>
+            {
+                var engine = new SpatialEffectsEngine(rate); float[] impulse = [.5f];
+                engine.ApplyEnvironment(impulse, SpatialEnvironment.InnerVoice, 1);
+                engine.Reset(); float[] silence = new float[rate];
+                engine.ApplyEnvironment(silence, SpatialEnvironment.InnerVoice, 1);
+                Require(silence.All(x => x == 0), "Reset left an audible reverb-input filter residual.");
+            });
+            Check($"InnerVoice damping remains in its reference frequency band at {rate} Hz", () =>
+            {
+                var engine = new SpatialEffectsEngine(rate);
+                engine.ApplyEnvironment(Span<float>.Empty, SpatialEnvironment.InnerVoice, 1);
+                var combs = (CombFilter[])typeof(SpatialEffectsEngine).GetField("_combs", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(engine)!;
+                double pole = combs[0].Damp;
+                // Independent -3 dB response of the implemented unity-DC one-pole filter.
+                double cornerHz = rate / (2 * Math.PI) * Math.Acos(1 - Math.Pow(1 - pole, 2) / (2 * pole));
+                Require(cornerHz > 1100 && cornerHz < 1500, "Sample-rate adaptation changed the damping bandwidth.");
+            });
         }
         foreach (Reference reference in Data.Full)
-            Check($"InnerVoice keeps captured legacy full speech and tail at {reference.Rate} Hz, scale {reference.Scale:R}", () => Match(reference));
+            Check($"InnerVoice keeps approved D full speech and tail at {reference.Rate} Hz, scale {reference.Scale:R}", () => Match(reference));
         foreach (Reference reference in Data.Routing)
             Check($"InnerVoice keeps approved intermediate speech and tail at {reference.Rate} Hz, intensity {reference.Amount:R}", () => Match(reference));
         foreach (int rate in new[] { 8000, 48000 })
@@ -88,11 +115,11 @@ internal static class InnerVoiceRegressionProgram
         {
             const int rate = 22050;
             float[] input = Enumerable.Range(0, rate).Select(i => .18f*(float)Math.Sin(2*Math.PI*250*i/rate)).ToArray();
-            foreach ((float amount, double expected) in new[] { (.25f, -38.763301), (.5f, -33.795087) })
+            foreach (TailProbe probe in Data.TailProbes)
             {
-                float[] output = Process(input, rate, amount, tailSeconds: 4);
+                float[] output = Process(input, rate, probe.Amount, tailSeconds: 4);
                 double level = 10*Math.Log10(Energy(output.AsSpan(input.Length+rate/50))/Energy(input));
-                Require(Math.Abs(level-expected) < .03, "The early room-tail contribution changed.");
+                Require(Math.Abs(level-probe.RelativeDb) < .03, "The approved diffuse-tail contribution changed.");
             }
         });
         Check("InnerVoice has no outer clean branch after its internal output controls", () =>
@@ -121,12 +148,14 @@ internal static class InnerVoiceRegressionProgram
         {
             for (int i = 0; i <= 20; i++) Require(Process(new float[22050], 22050, i/20f).All(x => x == 0), "Generated audio from silence.");
         });
-        Check("InnerVoice fixtures retain every verified rate and legacy level", () =>
+        Check("InnerVoice fixtures retain every verified rate and approved level", () =>
         {
             Require(Data.Full.Length == 27 && Data.Routing.Length == 63, "Incomplete fixture corpus.");
+            Require(Data.TailProbes.Length == 2 && Data.TailProbes[0].Amount == .25f && Data.TailProbes[1].Amount == .5f,
+                "Missing intermediate tail probes.");
             foreach (int rate in Rates)
             {
-                Require(Data.Full.Count(x => x.Rate == rate) == 3, "Missing legacy level probes.");
+                Require(Data.Full.Count(x => x.Rate == rate) == 3, "Missing approved level probes.");
                 Require(Data.Routing.Count(x => x.Rate == rate) == 7, "Missing intermediate intensity probes.");
             }
         });
@@ -178,6 +207,7 @@ internal static class InnerVoiceRegressionProgram
             ?? throw new InvalidDataException("Missing InnerVoice fixtures.");
         return JsonSerializer.Deserialize<Corpus>(stream) ?? throw new InvalidDataException("Invalid InnerVoice fixtures.");
     }
-    private sealed record Corpus(Reference[] Full, Reference[] Routing);
+    private sealed record Corpus(Reference[] Full, Reference[] Routing, TailProbe[] TailProbes);
+    private sealed record TailProbe(float Amount, double RelativeDb);
     private sealed record Reference(int Rate, float Scale, float Amount, double SpeechRmsDbfs, double TailEnergyRelativeDb, int[] Indices, float[] Samples);
 }

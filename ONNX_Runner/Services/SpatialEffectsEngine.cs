@@ -23,9 +23,8 @@ namespace ONNX_Runner.Services;
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
 ///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
 /// - Underwater:   Muffled direct speech with the published modulated underwater reverb.
-/// - InnerVoice:   Cinematic telepathy. Uses the Haas effect (micro-delay) and a dynamic
-///                 low-pass filter to pull the voice inside the listener's head, supported 
-///                 by a dark, wall-less shadow reverb.
+/// - InnerVoice:   Cinematic inner monologue. A short presence tap and gradual
+///                 low-pass coloration are supported by a restrained, dark diffuse tail.
 /// </summary>
 public class SpatialEffectsEngine
 {
@@ -66,6 +65,7 @@ public class SpatialEffectsEngine
     private const float LivingRoomReturnGain = 32f * 2f;
     private const float DefaultReverbReturnGain = 2f;
     private const float MuffledMaximumGainDb = 1f;
+    private const float InnerVoiceReturnGain = .15f;
     // Covers two passes of this profile's longest feedback path (approximately 209 ms).
     private const float RoomQuietWindowSeconds = .45f;
     // Cover the longer input and feedback paths of the other published profiles.
@@ -224,6 +224,11 @@ public class SpatialEffectsEngine
         _innerVoiceMicroDelay.Clear();
 
         _innerVoiceLpState = 0f;
+        if (_current == SpatialEnvironment.InnerVoice && _hasReverbEq)
+        {
+            _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Math.Min(150f, _sampleRate * .45f), .707f);
+            _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Math.Min(1800f, _sampleRate * .45f), .707f);
+        }
     }
 
     /// <summary>
@@ -328,7 +333,7 @@ public class SpatialEffectsEngine
         _innerVoiceInverseStrength = 1f / strength;
         _innerVoiceFullStrength = depth >= 1f;
         _innerVoicePresenceGain = .15f * strength;
-        _innerVoiceReverbGain = .45f * strength;
+        _innerVoiceReverbGain = InnerVoiceReturnGain * strength;
         float cutoff = Math.Min(1800f, _sampleRate * .45f);
         float fullCoeff = 1f - MathF.Exp(-2f * MathF.PI * cutoff / _sampleRate);
         // Unity coefficient is exact digital bypass; move the pole gradually to its full position.
@@ -416,9 +421,7 @@ public class SpatialEffectsEngine
                 _profileDirectGain = UnderwaterDirectGain;
                 break;
 
-            // Cinematic Telepathy. 
-            // Massive (3.5s RT60) but extremely dark reverb to imply boundless mental space 
-            // without reflecting real physical walls (150Hz HP / 1800Hz LP).
+            // A quiet, dark diffuse tail supports the authored inner-monologue coloration.
             case SpatialEnvironment.InnerVoice:
                 _innerVoicePreparedAmount = float.NaN;
                 ConfigureCombsByRt60(3.5f, 0.85f);
@@ -426,7 +429,7 @@ public class SpatialEffectsEngine
                 _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(1800f), 0.707f);
                 _hasReverbEq = true;
 
-                // 8ms is the optimal Haas effect delay to bring the source "inside" the head.
+                // This 8 ms mono tap is intentional timbral coloration, not a binaural model.
                 _innerVoiceMicroDelaySamples = 0.008f * _sampleRate;
                 break;
         }
@@ -478,7 +481,8 @@ public class SpatialEffectsEngine
     /// <summary>Sets comb feedback from the target RT60 and scales damping for the current sample rate.</summary>
     private void ConfigureCombsByRt60(float rt60Seconds, float damp)
     {
-        float scaledDamp = Dsp.ScaleCoeff(damp, _sampleRate);
+        // Damp multiplies the stored state, so scale the pole rather than the feedforward coefficient.
+        float scaledDamp = MathF.Pow(damp, 48000f / _sampleRate);
         for (int i = 0; i < _combs.Length; i++)
         {
             float delaySeconds = _combDelaySamples[i] / (float)_sampleRate;
