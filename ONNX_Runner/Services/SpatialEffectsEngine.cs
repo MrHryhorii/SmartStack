@@ -23,6 +23,7 @@ namespace ONNX_Runner.Services;
 /// - Dungeon:      Compact stone chamber with dense, short reflections.
 /// - Cave:         Reflective rocky cavern with a longer decay.
 /// - Forest:       Delayed, scattered outdoor reflections with strong HF absorption.
+/// - Canyon:       Delayed outdoor reflections with a longer, fuller decay.
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
 ///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
 /// - Underwater:   Muffled direct speech with the published modulated underwater reverb.
@@ -65,6 +66,9 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters ForestParameters = new(
         1, .3f, .3162f, .0224f, 1, 1.49f, .54f, 1, .0525f, .162f,
         .7682f, .088f, .25f, 0, .9943f, 5000, 250, true);
+    private static readonly SpatialReverbParameters CanyonParameters = new(
+        1, .74f, .3162f, .1778f, .631f, 3.89f, .21f, .46f, .3162f, .223f,
+        .3548f, .019f, .25f, 0, .9943f, 4399.1001f, 242.9f, false);
     private static readonly SpatialReverbParameters UnderwaterParameters = new(
         .3645f, 1, .3162f, .01f, 1, 1.49f, .1f, 1, .5963f, .007f,
         7.0795f, .011f, 1.18f, .348f, .9943f, 5000, 250, true);
@@ -429,6 +433,10 @@ public class SpatialEffectsEngine
 
             case SpatialEnvironment.Forest:
                 PrepareReverb(ForestParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
+                break;
+
+            case SpatialEnvironment.Canyon:
+                PrepareReverb(CanyonParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).

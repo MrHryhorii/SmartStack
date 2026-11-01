@@ -60,20 +60,21 @@ internal static class SpatialTailRegressionProgram
             });
         }
         foreach(int rate in Rates)
+        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon})
         foreach(float pause in new[]{0f,.15f,.3f})
         foreach(float amount in new[]{.25f,1f})
         {
-            Check($"Forest drains delayed echoes at {rate} Hz, pause {pause}, intensity {amount}",()=>VerifyTail(rate,SpatialEnvironment.Forest,amount,pause));
+            Check($"{environment} drains delayed echoes at {rate} Hz, pause {pause}, intensity {amount}",()=>VerifyTail(rate,environment,amount,pause));
         }
         foreach(int rate in new[]{8000,22050,48000})
-        foreach(SpatialEnvironment environment in Environments.Where(x=>x!=SpatialEnvironment.Forest))
+        foreach(SpatialEnvironment environment in Environments.Where(x=>x is not SpatialEnvironment.Forest and not SpatialEnvironment.Canyon))
         foreach(float pause in new[]{0f,.3f})
         foreach(float amount in new[]{.25f,1f})
         {
             Check($"The actual drain retains {environment} tail at {rate} Hz, pause {pause}, intensity {amount}",()=>VerifyTail(rate,environment,amount,pause));
         }
         foreach(int rate in new[]{8000,22050,48000})
-        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.ConcreteHall,SpatialEnvironment.Cave,SpatialEnvironment.InnerVoice,SpatialEnvironment.Hangar,SpatialEnvironment.Cathedral})
+        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon,SpatialEnvironment.ConcreteHall,SpatialEnvironment.Cave,SpatialEnvironment.InnerVoice,SpatialEnvironment.Hangar,SpatialEnvironment.Cathedral})
         foreach(float volume in new[]{.1f,2.5118864f})
         foreach(bool profiles in new[]{false,true})
         {

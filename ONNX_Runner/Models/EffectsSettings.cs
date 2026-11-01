@@ -129,6 +129,9 @@ public enum SpatialEnvironment
     /// <summary>Scattered forest reflections with delayed returns and strong high-frequency absorption.</summary>
     Forest,
 
+    /// <summary>Delayed canyon reflections with a longer, fuller reverberant decay.</summary>
+    Canyon,
+
     // --- Extreme & Narrative ---
 
     /// <summary>Occlusion effect. Pure low-pass filter with no spatial reflections. Simulates hearing sound through walls, earplugs, or UI pause menus.</summary>
