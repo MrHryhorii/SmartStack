@@ -199,6 +199,21 @@ body {
     height: 28px;
 }
 
+/* Keep output controls adjacent and give the format twice the available width. */
+.output-options {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    column-gap: var(--space-1);
+    align-items: start;
+}
+
+.output-options .field {
+    display: grid;
+    grid-template-rows: subgrid;
+    grid-row: span 3;
+    min-width: 0;
+}
+
 .panel-side .divider {
     height: 1px;
     background: var(--border);

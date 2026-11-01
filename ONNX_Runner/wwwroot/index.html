@@ -9,7 +9,7 @@
     <title>Tsubaki TTS Engine</title>
     <!-- Favicon for the application -->
     <link rel="icon" type="image/svg+xml" href="tsubaki.svg">
-    <link rel="stylesheet" href="css/styles.css?v=eq-output1">
+    <link rel="stylesheet" href="css/styles.css?v=samplerate1">
     <!-- Theme initialization script to handle light/dark mode toggling -->
     <script src="js/theme-init.js"></script>
 </head>
@@ -78,19 +78,41 @@
                         <span class="help-mark" aria-hidden="true">ⓘ</span></label>
                     <select id="voiceSelect"></select>
                 </div>
-                <div class="field">
-                    <label for="formatSelect" class="label help-tooltip"
-                        data-tooltip="Choose the returned audio format. API field: response_format (this dashboard always sends it). MP3 is the general-purpose choice, Opus is compact and stream-friendly, AAC is a compact lossy format with good speech quality and streaming support, FLAC is lossless, WAV is uncompressed and cannot start early, PCM is raw audio, and b64_json wraps MP3 in JSON.">Format
-                        <span class="help-mark" aria-hidden="true">ⓘ</span></label>
-                    <select id="formatSelect">
-                        <option value="mp3">MP3</option>
-                        <option value="opus">Opus (Ogg)</option>
-                        <option value="aac">AAC</option>
-                        <option value="flac">FLAC</option>
-                        <option value="wav">WAV</option>
-                        <option value="pcm">Raw PCM</option>
-                        <option value="b64_json">Base64 JSON (MP3)</option>
-                    </select>
+                <div class="output-options">
+                    <div class="field">
+                        <label for="formatSelect" class="label help-tooltip"
+                            data-tooltip="Choose the returned audio format. API field: response_format (this dashboard always sends it). MP3 is the general-purpose choice, Opus is compact and stream-friendly, AAC is a compact lossy format with good speech quality and streaming support, FLAC is lossless, WAV is uncompressed and cannot start early, PCM is raw audio, and b64_json wraps MP3 in JSON.">Format
+                            <span class="help-mark" aria-hidden="true">ⓘ</span></label>
+                        <select id="formatSelect">
+                            <option value="mp3">MP3</option>
+                            <option value="opus">Opus (Ogg)</option>
+                            <option value="aac">AAC</option>
+                            <option value="flac">FLAC</option>
+                            <option value="wav">WAV</option>
+                            <option value="pcm">Raw PCM</option>
+                            <option value="b64_json">Base64 JSON (MP3)</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label for="sampleRateNum" class="label help-tooltip tooltip-right"
+                            data-tooltip="Output sample rate in Hz. API field: samplerate. Empty uses the server default; 0 keeps the model/codec rate. Nonzero rates are clamped to 8000–48000 Hz; lower rates reduce high-frequency detail. MP3/AAC use the nearest supported rate; Opus decodes at 48000 Hz.">Rate (Hz)
+                            <span class="help-mark" aria-hidden="true">ⓘ</span></label>
+                        <input type="number" id="sampleRateNum" aria-describedby="sampleRateError" min="0" max="48000" step="1" placeholder="0"
+                            list="sampleRateOptions" aria-label="Output sample rate in Hz">
+                        <p id="sampleRateError" class="field-error" role="alert" hidden></p>
+                        <datalist id="sampleRateOptions">
+                            <option value="0" label="Model/codec rate"></option>
+                            <option value="8000"></option>
+                            <option value="11025"></option>
+                            <option value="12000"></option>
+                            <option value="16000"></option>
+                            <option value="22050"></option>
+                            <option value="24000"></option>
+                            <option value="32000"></option>
+                            <option value="44100"></option>
+                            <option value="48000"></option>
+                        </datalist>
+                    </div>
                 </div>
                 <!-- Slider and number input for adjusting the speed of the synthesized speech -->
                 <div class="field">
@@ -195,9 +217,9 @@
                         </div>
                     </div>
                 </details>
-                <!-- Collapsible controls for character effects, acoustic spaces, and output sample rate -->
+                <!-- Collapsible controls for character effects and acoustic spaces -->
                 <details class="advanced-group">
-                    <summary title="Character DSP effects, simulated acoustic spaces, and output sample rate.">Audio Effects</summary>
+                    <summary title="Character DSP effects and simulated acoustic spaces.">Audio Effects</summary>
                     <div class="group-content">
                         <div class="field">
                             <div class="toggle">
@@ -251,31 +273,6 @@
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
                             </div>
-                        </div>
-                        <div class="field">
-                            <div class="toggle">
-                                <input type="checkbox" id="useSampleRate">
-                                <span class="toggle-label-help help-tooltip tooltip-up"
-                                    data-tooltip="Output sample rate in Hz. API field: samplerate. Off or empty uses the server default; 0 keeps the model/codec rate. Nonzero rates are clamped to 8000–48000 Hz; lower rates reduce high-frequency detail. MP3/AAC use the nearest supported rate; Opus decodes at 48000 Hz.">
-                                    <label for="useSampleRate">Sample Rate (Hz)</label>
-                                    <span class="help-mark" aria-hidden="true">ⓘ</span>
-                                </span>
-                            </div>
-                            <input type="number" id="sampleRateNum" aria-describedby="sampleRateError" min="0" max="48000" step="1" value="0"
-                                list="sampleRateOptions" disabled aria-label="Output sample rate in Hz">
-                            <p id="sampleRateError" class="field-error" role="alert" hidden></p>
-                            <datalist id="sampleRateOptions">
-                                <option value="0" label="Model/codec rate"></option>
-                                <option value="8000"></option>
-                                <option value="11025"></option>
-                                <option value="12000"></option>
-                                <option value="16000"></option>
-                                <option value="22050"></option>
-                                <option value="24000"></option>
-                                <option value="32000"></option>
-                                <option value="44100"></option>
-                                <option value="48000"></option>
-                            </datalist>
                         </div>
                     </div>
                 </details>
@@ -362,7 +359,7 @@
     </div>
     <!-- Main application script that handles UI interactions, API communication, and audio processing -->
     <script src="js/accordion.js"></script>
-    <script type="module" src="js/app.js?v=eq-output1"></script>
+    <script type="module" src="js/app.js?v=samplerate1"></script>
 
 </body>
 

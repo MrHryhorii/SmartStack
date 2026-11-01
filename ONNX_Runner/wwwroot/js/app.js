@@ -239,15 +239,13 @@ async function bootEngine() {
     // Disable dependent controls when an override is off.
     bindToggle('useEffect', ['effectSelect', 'effectIntSlider', 'effectIntNum']);
     bindToggle('useEnvironment', ['environmentSelect', 'envIntSlider', 'envIntNum', 'extendTailToggle']);
-    bindToggle('useSampleRate', ['sampleRateNum']);
     const sampleRateError = document.getElementById('sampleRateError');
-    // Clear the themed validation message when the value or override changes.
+    // Clear the themed validation message when the value changes.
     const clearSampleRateError = () => {
         sampleRateError.hidden = true;
         document.getElementById('sampleRateNum').removeAttribute('aria-invalid');
     };
     document.getElementById('sampleRateNum').addEventListener('input', clearSampleRateError);
-    document.getElementById('useSampleRate').addEventListener('change', clearSampleRateError);
     bindToggle('useNoiseScale', ['nsSlider', 'nsNum']);
     bindToggle('useNoiseW', ['nwSlider', 'nwNum']);
     bindToggle('usePitch', ['pitchSlider', 'pitchNum']);
@@ -315,9 +313,8 @@ async function bootEngine() {
         const text = document.getElementById('textInput').value.trim();
         if (!text) return alert("Please enter text!");
 
-        const useSampleRate = document.getElementById('useSampleRate').checked;
         const sampleRateInput = document.getElementById('sampleRateNum');
-        const hasSampleRate = useSampleRate && (sampleRateInput.value.trim() !== '' || sampleRateInput.validity.badInput);
+        const hasSampleRate = sampleRateInput.value.trim() !== '' || sampleRateInput.validity.badInput;
         if (hasSampleRate && !sampleRateInput.checkValidity()) {
             sampleRateError.textContent = 'Enter a whole number from 0 to 48000.';
             sampleRateError.hidden = false;
@@ -361,7 +358,7 @@ async function bootEngine() {
         // An empty selection explicitly bypasses server playback-profile defaults.
         payload.equalizer = equalizers;
 
-        // Omit the override when off; an explicit zero bypasses the server default.
+        // Omit an empty override; an explicit zero bypasses the server default.
         if (hasSampleRate) {
             payload.samplerate = sampleRateInput.valueAsNumber;
         }
