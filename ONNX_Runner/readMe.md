@@ -464,8 +464,8 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 | `effect`                | string | DSP character effect to apply. See available values below. |
 | `effect_intensity`      | float  | Effect strength: `0.0` bypasses the character effect; `1.0` applies its full character. |
 | `environment`           | string | Acoustic spatial environment. See available values below.  |
-| `environment_intensity` | float  | Reverb intensity. `0.25` is recommended.                   |
-| `extend_reverb_tail`    | bool   | Lets the active `environment` reverb decay fully at the end of the request instead of being cut off. Overrides the server's `ExtendReverbTailOnFinish` default for this request only. Has no effect on character `effect`s. See *Reverb Tail Extension* in Server-Side DSP Defaults below. |
+| `environment_intensity` | float  | Spatial effect strength. Default: `0.25`. |
+| `extend_reverb_tail`    | bool   | Lets the active `environment` reverb or echoes decay naturally at the end of the request instead of being cut off. Overrides the server's `ExtendReverbTailOnFinish` default for this request only. Has no effect on character `effect`s. See *Reverb Tail Extension* in Server-Side DSP Defaults below. |
 
 #### Available Equalizer Profiles
 
@@ -510,18 +510,32 @@ Lower intensity brings the voice closer to its original sound; higher intensity 
 
 #### Available Environments
 
-| Value          | Description                                                                   |
-| -------------- | ------------------------------------------------------------------------------ |
-| `None`         | Dry signal only                                                               |
-| `LivingRoom`   | Small room with short decay and balanced frequency response                   |
-| `Stage`        | Performance stage with distinct pre-delay and slow shimmer                    |
-| `ConcreteHall` | Large hall with long, dense reverb and strong early reflections               |
-| `Dungeon`      | Tight stone space with short, dark, resonant flutter echoes                   |
-| `Cave`         | Large enclosed space with deep resonance and very long, dark decay            |
-| `Forest`       | Open outdoor space with discrete echoes rather than dense reverb tails        |
-| `Muffled`      | Pure low-pass filter occlusion (simulates hearing through walls/earplugs)     |
-| `Underwater`   | Muffled acoustics with high-frequency roll-off and slapback echo              |
-| `InnerVoice`   | Micro-delay and dynamic low-pass to pull the voice inside the listener's head |
+| Value | Description |
+| --- | --- |
+| `None` | No spatial effect. |
+| `Room` | Small room with short, clear reflections. |
+| `LivingRoom` | Furnished room with short, soft reflections and a warm, muted sound. |
+| `Bathroom` | Small tiled room with bright, close reflections. |
+| `Stage` | Wooden performance hall with warm, delayed reflections. |
+| `ConcreteHall` | Large hall with long, dense reverberation. |
+| `Hangar` | Vast empty enclosure with a long, dark, booming tail. |
+| `Cathedral` | Vast domed interior with distant reflections and lingering reverberation. |
+| `Stadium` | Large empty stadium with distant reflections and a sustained low-end tail. |
+| `Dungeon` | Compact stone chamber with close, dense reflections. |
+| `Tunnel` | Enclosed tunnel with delayed, hollow reflections. |
+| `Cave` | Rocky cavern with broad reflections and a long, resonant tail. |
+| `SewerPipe` | Hollow sewer pipe with strong, close reflections and a dark tail. |
+| `Alley` | Narrow outdoor passage with scattered, clear reflections. |
+| `Forest` | Scattered, softened outdoor echoes with distinct delayed returns. |
+| `Canyon` | Distant canyon echoes with a broader, lingering decay. |
+| `SwimmingPool` | Indoor pool with bright, ringing reflections above the water. |
+| `Underwater` | Muffled voice with wavering, watery reflections. |
+| `DeepWater` | Deeply muffled underwater sound with darkened reflections. |
+| `Muffled` | Muted voice as if heard through a wall or earplugs, without echoes. |
+| `InnerVoice` | Close, dark inner monologue with a soft, subtle tail. |
+| `Reverb` | Dense, neutral reverberation without a specific location. |
+| `Echo` | Regularly spaced repeats that become quieter and darker. |
+| `DualEcho` | Two distinct echoes followed by a fading, repeating pattern. |
 
 ### Synthesis Parameters
 
@@ -587,18 +601,18 @@ An omitted `DefaultEnvironmentIntensity` uses `0.25`, matching the shipped confi
 
 #### Reverb Tail Extension
 
-The pause between sentences is designed for natural speech pacing, not for reverb decay. With long environments at high intensity, the reverb may still be audible when the generated speech reaches the end of the request. `ExtendReverbTailOnFinish` allows the active `environment` reverb to decay naturally after the generated voice ends, until the measured output level falls below the configured threshold.
+The pause between sentences is designed for natural speech pacing, not for effect tails. `ExtendReverbTailOnFinish` lets the active `environment` reverb or echoes decay naturally after the generated voice ends, until the measured output level falls below the configured threshold.
 
-`ReverbTailSilenceFloor` controls that threshold using linear amplitude. The default `0.005` is roughly −46 dBFS. Lower values allow the reverb to decay further; higher values end playback sooner. Tail extension stops after at most 4 seconds, even if the environment has not reached that floor.
+`ReverbTailSilenceFloor` controls that threshold using linear amplitude. The default `0.005` is roughly −46 dBFS. Lower values allow the tail to decay further; higher values end playback sooner. The maximum extension time depends on the selected environment.
 
-The extension applies only to spatial `environment` reverb. Character `effect`s such as `LoFiTape` or `Telephone` are not extended.
+The extension applies only to spatial `environment` reverb and echoes. Character `effect`s such as `LoFiTape` or `Telephone` are not extended.
 
-**Effect on audio length:** Long-tail environments such as `Cave` and `ConcreteHall` can noticeably increase the final duration at high `environment_intensity`. Lower intensity can shorten the tail; its length also depends on the environment, final signal, and silence floor. The shipped intensity is `0.25`.
+**Effect on audio length:** Long-tail environments such as `Hangar` and `Cathedral` can noticeably increase the final duration at high `environment_intensity`. Lower intensity can shorten the tail; its length also depends on the environment, final signal, and silence floor. The shipped intensity is `0.25`.
 
-> **Chunked requests:** Tsubaki can split a single large request into internal chunks for more predictable model load while carrying the reverb state between them. However, if an agent splits one logical turn into multiple separate `/tsbk/audio/speech` requests, each request has its own completion point and will wait for its own reverb tail to decay, creating unnatural gaps (dead air) between fragments. **To avoid this:**
+> **Chunked requests:** Tsubaki can split a single large request into internal chunks for more predictable model load while carrying the spatial effect state between them. However, if an agent splits one logical turn into multiple separate `/tsbk/audio/speech` requests, each request has its own completion point and will wait for its own effect tail to decay, creating unnatural gaps (dead air) between fragments. **To avoid this:**
 >
 > - **Recommended:** Send the complete turn as a single request and let Tsubaki handle the chunking internally.
-> - **Request-by-request streaming:** Send `"extend_reverb_tail": false` on intermediate requests and enable it only on the final request. Alternatively, avoid strong reverb environments for this type of streaming.
+> - **Request-by-request streaming:** Send `"extend_reverb_tail": false` on intermediate requests and enable it only on the final request. Alternatively, avoid strong reverb or echo for this type of streaming.
 
 **Per-request override:** `"extend_reverb_tail": true` or `false` overrides `ExtendReverbTailOnFinish` for that request only. `ReverbTailSilenceFloor` is server-only.
 
