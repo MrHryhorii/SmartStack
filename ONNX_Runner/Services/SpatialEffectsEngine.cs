@@ -20,6 +20,7 @@ namespace ONNX_Runner.Services;
 /// - ConcreteHall: Large concert hall with a long, dense reflected tail.
 /// - Hangar:       Vast empty enclosure with a dense, long, dark decay.
 /// - Cathedral:    Vast domed interior with delayed reflections and a long tail.
+/// - Stadium:      Large empty stadium with distant reflections and a sustained low decay.
 /// - Dungeon:      Compact stone chamber with dense, short reflections.
 /// - Tunnel:       Enclosed passage with delayed reflections and a sustained low decay.
 /// - Cave:         Reflective rocky cavern with a longer decay.
@@ -62,6 +63,9 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters CathedralParameters = new(
         1, .87f, .3162f, .3548f, .2239f, 10.48f, .19f, .1f, .1778f, .090f,
         1.2589f, .042f, .25f, 0, .9943f, 2854.3999f, 20, true);
+    private static readonly SpatialReverbParameters StadiumParameters = new(
+        1, 1, .3162f, .4467f, .7943f, 6.26f, .51f, 1.1f, .0631f, .183f,
+        .3981f, .038f, .25f, 0, .9943f, 5000, 250, true);
     private static readonly SpatialReverbParameters DungeonParameters = new(
         1, .89f, .3162f, .3981f, .1f, 1.22f, .83f, .31f, .8913f, .022f,
         1.9953f, .011f, .25f, 0, .9943f, 5168.6001f, 139.5f, true);
@@ -457,6 +461,10 @@ public class SpatialEffectsEngine
 
             case SpatialEnvironment.Cathedral:
                 PrepareReverb(CathedralParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
+                break;
+
+            case SpatialEnvironment.Stadium:
+                PrepareReverb(StadiumParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             case SpatialEnvironment.Dungeon:

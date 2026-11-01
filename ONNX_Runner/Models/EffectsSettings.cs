@@ -118,6 +118,9 @@ public enum SpatialEnvironment
     /// <summary>Vast domed interior with delayed reflections and a long reverberant tail.</summary>
     Cathedral,
 
+    /// <summary>Large empty stadium with distant reflections and a sustained low-frequency decay.</summary>
+    Stadium,
+
     // --- Adventure & Nature ---
 
     /// <summary>Compact stone chamber with dense, short reflections.</summary>

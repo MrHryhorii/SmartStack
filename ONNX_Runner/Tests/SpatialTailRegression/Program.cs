@@ -74,7 +74,7 @@ internal static class SpatialTailRegressionProgram
             Check($"The actual drain retains {environment} tail at {rate} Hz, pause {pause}, intensity {amount}",()=>VerifyTail(rate,environment,amount,pause));
         }
         foreach(int rate in new[]{8000,22050,48000})
-        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon,SpatialEnvironment.ConcreteHall,SpatialEnvironment.Cave,SpatialEnvironment.InnerVoice,SpatialEnvironment.Hangar,SpatialEnvironment.Cathedral,SpatialEnvironment.Tunnel,SpatialEnvironment.SewerPipe,SpatialEnvironment.Alley,SpatialEnvironment.SwimmingPool,SpatialEnvironment.DeepWater})
+        foreach(SpatialEnvironment environment in new[]{SpatialEnvironment.Forest,SpatialEnvironment.Canyon,SpatialEnvironment.ConcreteHall,SpatialEnvironment.Cave,SpatialEnvironment.InnerVoice,SpatialEnvironment.Hangar,SpatialEnvironment.Cathedral,SpatialEnvironment.Stadium,SpatialEnvironment.Tunnel,SpatialEnvironment.SewerPipe,SpatialEnvironment.Alley,SpatialEnvironment.SwimmingPool,SpatialEnvironment.DeepWater})
         foreach(float volume in new[]{.1f,2.5118864f})
         foreach(bool profiles in new[]{false,true})
         {
