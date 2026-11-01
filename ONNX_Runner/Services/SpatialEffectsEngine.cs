@@ -21,7 +21,10 @@ namespace ONNX_Runner.Services;
 /// - Hangar:       Vast empty enclosure with a dense, long, dark decay.
 /// - Cathedral:    Vast domed interior with delayed reflections and a long tail.
 /// - Dungeon:      Compact stone chamber with dense, short reflections.
+/// - Tunnel:       Enclosed passage with delayed reflections and a sustained low decay.
 /// - Cave:         Reflective rocky cavern with a longer decay.
+/// - SewerPipe:    Hollow pipe with strong close reflections and a dark decay.
+/// - Alley:        Narrow outdoor passage with scattered, relatively bright reflections.
 /// - Forest:       Delayed, scattered outdoor reflections with strong HF absorption.
 /// - Canyon:       Delayed outdoor reflections with a longer, fuller decay.
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
@@ -60,9 +63,18 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters DungeonParameters = new(
         1, .89f, .3162f, .3981f, .1f, 1.22f, .83f, .31f, .8913f, .022f,
         1.9953f, .011f, .25f, 0, .9943f, 5168.6001f, 139.5f, true);
+    private static readonly SpatialReverbParameters TunnelParameters = new(
+        1, .81f, .3162f, .3981f, .8913f, 3.42f, .94f, 1.31f, .7079f, .051f,
+        .7079f, .047f, .25f, 0, .9943f, 5000, 155.3f, true);
     private static readonly SpatialReverbParameters CaveParameters = new(
         1, 1, .3162f, 1, 1, 2.91f, 1.3f, 1, .5f, .015f,
         .7063f, .022f, .25f, 0, .9943f, 5000, 250, false);
+    private static readonly SpatialReverbParameters SewerPipeParameters = new(
+        .3071f, .8f, .3162f, .3162f, 1, 2.81f, .14f, 1, 1.6387f, .014f,
+        3.2471f, .021f, .25f, 0, .9943f, 5000, 250, true);
+    private static readonly SpatialReverbParameters AlleyParameters = new(
+        1, .3f, .3162f, .7328f, 1, 1.49f, .86f, 1, .25f, .007f,
+        .9954f, .011f, .25f, 0, .9943f, 5000, 250, true);
     private static readonly SpatialReverbParameters ForestParameters = new(
         1, .3f, .3162f, .0224f, 1, 1.49f, .54f, 1, .0525f, .162f,
         .7682f, .088f, .25f, 0, .9943f, 5000, 250, true);
@@ -427,8 +439,20 @@ public class SpatialEffectsEngine
                 PrepareReverb(DungeonParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
+            case SpatialEnvironment.Tunnel:
+                PrepareReverb(TunnelParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
+                break;
+
             case SpatialEnvironment.Cave:
                 PrepareReverb(CaveParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
+                break;
+
+            case SpatialEnvironment.SewerPipe:
+                PrepareReverb(SewerPipeParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
+                break;
+
+            case SpatialEnvironment.Alley:
+                PrepareReverb(AlleyParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
                 break;
 
             case SpatialEnvironment.Forest:

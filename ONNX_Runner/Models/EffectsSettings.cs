@@ -123,8 +123,17 @@ public enum SpatialEnvironment
     /// <summary>Compact stone chamber with dense, short reflections.</summary>
     Dungeon,
 
+    /// <summary>Enclosed tunnel with delayed reflections and a sustained low-frequency decay.</summary>
+    Tunnel,
+
     /// <summary>Reflective rocky cavern with a longer decay.</summary>
     Cave,
+
+    /// <summary>Hollow sewer pipe with strong close reflections and rapid high-frequency decay.</summary>
+    SewerPipe,
+
+    /// <summary>Narrow outdoor passage with scattered, relatively bright reflections.</summary>
+    Alley,
 
     /// <summary>Scattered forest reflections with delayed returns and strong high-frequency absorption.</summary>
     Forest,
