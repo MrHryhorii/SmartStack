@@ -29,6 +29,7 @@ namespace ONNX_Runner.Services;
 /// - Canyon:       Delayed outdoor reflections with a longer, fuller decay.
 /// - SwimmingPool: Indoor pool with bright, lightly modulated reflections above the water.
 /// - Underwater:   Muffled direct speech with the published modulated underwater reverb.
+/// - DeepWater:    Underwater output followed by the gradual Muffled filter.
 /// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
 ///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
 /// - InnerVoice:   Cinematic inner monologue. A short presence tap and gradual
@@ -163,6 +164,7 @@ public class SpatialEffectsEngine
     // =========================================================================
 
     private bool _hasReverbEq;
+    private bool _hasMuffledOutput;
 
     private SpatialEnvironment _current = SpatialEnvironment.None;
 
@@ -267,6 +269,7 @@ public class SpatialEffectsEngine
     /// <summary>
     /// Published reverb profiles use inverse-square intensity for reflections and optional direct coloration.
     /// Inverse-square intensity (1-(1-mix)²) moves the Muffled cutoff; cubic intensity adds a mild late gain.
+    /// DeepWater passes the original intensity to Underwater and Muffled in sequence.
     /// InnerVoice uses that intensity for internal coloration.
     /// </summary>
     public void ApplyEnvironment(Span<float> buffer, SpatialEnvironment env, float mix)
@@ -284,18 +287,14 @@ public class SpatialEffectsEngine
         if (_profileReverb is { } profileReverb)
         {
             ApplyReverb(buffer, mix, profileReverb, _profileReturnGain, _profileDirectFilter, _profileDirectGain);
+            if (_hasMuffledOutput) ApplyMuffled(buffer, mix);
             return;
         }
 
         switch (env)
         {
             case SpatialEnvironment.Muffled:
-                PrepareMuffled(mix);
-                for (int i = 0; i < buffer.Length; i++)
-                {
-                    float input = Dsp.KillDenormal(buffer[i]);
-                    buffer[i] = _environmentEq2!.Process(_environmentEq!.Process(input)) * _muffledOutputGain;
-                }
+                ApplyMuffled(buffer, mix);
                 break;
 
             case SpatialEnvironment.InnerVoice:
@@ -373,6 +372,26 @@ public class SpatialEffectsEngine
         _innerVoiceLpCoeff = _innerVoiceFullStrength ? fullCoeff : Dsp.Lerp(1f, fullCoeff, strength);
     }
 
+    /// <summary>Applies the existing occlusion path to the complete incoming signal, including any reflections.</summary>
+    private void ApplyMuffled(Span<float> buffer, float amount)
+    {
+        PrepareMuffled(amount);
+        for (int i = 0; i < buffer.Length; i++)
+        {
+            float input = Dsp.KillDenormal(buffer[i]);
+            buffer[i] = _environmentEq2!.Process(_environmentEq!.Process(input)) * _muffledOutputGain;
+        }
+    }
+
+    /// <summary>Allocates independent post-filter state for the Muffled path.</summary>
+    private void SetupMuffled()
+    {
+        _muffledPreparedAmount = float.NaN;
+        float cutoff = Math.Min(450f, _sampleRate * .45f);
+        _environmentEq = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, cutoff);
+        _environmentEq2 = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, cutoff);
+    }
+
     /// <summary>Moves the input band toward 450 Hz; a mild cubic gain rises mainly near full intensity.</summary>
     private void PrepareMuffled(float amount)
     {
@@ -404,6 +423,7 @@ public class SpatialEffectsEngine
         _environmentEq2 = null;
 
         _hasReverbEq = false;
+        _hasMuffledOutput = false;
 
         float nyq = _sampleRate * 0.45f;
         // Caps environment filter frequencies at the configured Nyquist safety limit.
@@ -472,18 +492,22 @@ public class SpatialEffectsEngine
                 break;
 
             case SpatialEnvironment.Underwater:
+            case SpatialEnvironment.DeepWater:
                 PrepareReverb(UnderwaterParameters, ReverbQuietWindowSeconds, UnderwaterReturnGain);
                 _profileDirectFilter = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.HighShelf,
                     Math.Min(5000f, _sampleRate * .49f), UnderwaterDirectGainHF);
                 _profileDirectGain = UnderwaterDirectGain;
+                if (env == SpatialEnvironment.DeepWater)
+                {
+                    SetupMuffled();
+                    _hasMuffledOutput = true;
+                }
                 break;
 
             // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).
             // Two Butterworth low-pass stages attenuate at 24 dB/oct without adding reflections or saturation.
             case SpatialEnvironment.Muffled:
-                _muffledPreparedAmount = float.NaN;
-                _environmentEq = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
-                _environmentEq2 = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, Safe(450f));
+                SetupMuffled();
                 break;
 
             // A quiet, dark diffuse tail supports the authored inner-monologue coloration.

@@ -149,6 +149,9 @@ public enum SpatialEnvironment
     /// <summary>Muffled direct speech with modulated underwater reflections.</summary>
     Underwater,
 
+    /// <summary>Underwater coloration followed by gradual low-pass filtering of the voice and reflections.</summary>
+    DeepWater,
+
     // --- Special & Narrative ---
 
     /// <summary>Occlusion effect. Pure low-pass filter with no spatial reflections. Simulates hearing sound through walls, earplugs, or UI pause menus.</summary>
