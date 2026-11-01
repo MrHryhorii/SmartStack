@@ -15,6 +15,7 @@ namespace ONNX_Runner.Services;
 ///
 /// - Room:         Short, clear reflections with moderate HF absorption.
 /// - LivingRoom:   Short, soft, warm. Heavy HF damping. Recognizable at any mix.
+/// - Bathroom:     Small tiled space with strong, close reflections.
 /// - Stage:        Wooden performance hall with warm, delayed reflections.
 /// - ConcreteHall: Large concert hall with a long, dense reflected tail.
 /// - Dungeon:      Compact stone chamber with dense, short reflections.
@@ -38,6 +39,9 @@ public class SpatialEffectsEngine
     private static readonly SpatialReverbParameters LivingRoomParameters = new(
         .9766f, 1, .3162f, .001f, 1, .5f, .1f, 1, .2051f, .003f,
         .2805f, .004f, .25f, 0, .9943f, 5000, 250, true);
+    private static readonly SpatialReverbParameters BathroomParameters = new(
+        .1715f, 1, .3162f, .2512f, 1, 1.49f, .54f, 1, .6531f, .007f,
+        3.2734f, .011f, .25f, 0, .9943f, 5000, 250, true);
     private static readonly SpatialReverbParameters StageParameters = new(
         1, 1, .3162f, .0794f, .2818f, 3.45f, .3f, .82f, .8913f, .088f,
         .7943f, .063f, .25f, 0, .9943f, 4705, 99.6f, true);
@@ -63,6 +67,7 @@ public class SpatialEffectsEngine
     // Keep the accepted room balance and separate return levels for standard and underwater profiles.
     private const float RoomReturnGain = 32f * 1.5f;
     private const float LivingRoomReturnGain = 32f * 2f;
+    private const float BathroomReturnGain = 1.5f;
     private const float DefaultReverbReturnGain = 2f;
     private const float MuffledMaximumGainDb = 1f;
     private const float InnerVoiceReturnGain = .15f;
@@ -384,6 +389,10 @@ public class SpatialEffectsEngine
 
             case SpatialEnvironment.LivingRoom:
                 PrepareReverb(LivingRoomParameters, RoomQuietWindowSeconds, LivingRoomReturnGain);
+                break;
+
+            case SpatialEnvironment.Bathroom:
+                PrepareReverb(BathroomParameters, ReverbQuietWindowSeconds, BathroomReturnGain);
                 break;
 
             case SpatialEnvironment.Stage:

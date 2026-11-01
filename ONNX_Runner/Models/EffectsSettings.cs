@@ -101,6 +101,9 @@ public enum SpatialEnvironment
     /// <summary>Furnished room with short, soft reflections and strong high-frequency absorption.</summary>
     LivingRoom,
 
+    /// <summary>Small tiled room with strong, close reflections.</summary>
+    Bathroom,
+
     // --- Public Spaces ---
 
     /// <summary>Wooden performance hall with warm, delayed reflections.</summary>
