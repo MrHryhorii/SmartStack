@@ -8,7 +8,7 @@ using System.Buffers;
 using System.Numerics; // REQUIRED FOR SIMD (Hardware Acceleration)
 using System.Runtime.InteropServices; // REQUIRED FOR MemoryMarshal (fast flat access to rectangular arrays)
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Cloning;
 
 /// <summary>
 /// High-performance audio processing engine.

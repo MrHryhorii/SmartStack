@@ -11,7 +11,7 @@ using ONNX_Runner.Models.Inference;
 using Microsoft.ML.OnnxRuntime.EP.WebGpu;
 #endif
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Cloning;
 
 /// <summary>
 /// Handles the execution of OpenVoice AI models for Voice Cloning.

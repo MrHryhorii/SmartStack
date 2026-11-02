@@ -5,7 +5,7 @@ using NAudio.Wave;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Cloning;
 
 /// <summary>
 /// Automatically generates a baseline voice fingerprint for the currently loaded Piper TTS model.
