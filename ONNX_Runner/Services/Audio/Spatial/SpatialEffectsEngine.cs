@@ -6,121 +6,14 @@ using NAudio.Dsp;
 namespace ONNX_Runner.Services.Audio.Spatial;
 
 /// <summary>
-/// Server-side spatial acoustics engine.
-/// Published environments use an OpenAL-derived mono reverb; Muffled uses its low-pass primitives.
-///
-/// Design priority: PERCEPTUAL RECOGNIZABILITY. Each environment has one
-/// dominant, instantly identifiable trait rather than a cluster of small
-/// parameter tweaks. Direct coloration and reflected sound are configured separately.
-///
-/// - Room:         Short, clear reflections with moderate HF absorption.
-/// - LivingRoom:   Short, soft, warm. Heavy HF damping. Recognizable at any mix.
-/// - Bathroom:     Small tiled space with strong, close reflections.
-/// - Stage:        Wooden performance hall with warm, delayed reflections.
-/// - ConcreteHall: Large concert hall with a long, dense reflected tail.
-/// - Hangar:       Vast empty enclosure with a dense, long, dark decay.
-/// - Cathedral:    Vast domed interior with delayed reflections and a long tail.
-/// - Stadium:      Large empty stadium with distant reflections and a sustained low decay.
-/// - Dungeon:      Compact stone chamber with dense, short reflections.
-/// - Tunnel:       Enclosed passage with delayed reflections and a sustained low decay.
-/// - Cave:         Reflective rocky cavern with a longer decay.
-/// - SewerPipe:    Hollow pipe with strong close reflections and a dark decay.
-/// - Alley:        Narrow outdoor passage with scattered, relatively bright reflections.
-/// - Forest:       Delayed, scattered outdoor reflections with strong HF absorption.
-/// - Canyon:       Delayed outdoor reflections with a longer, fuller decay.
-/// - SwimmingPool: Indoor pool with bright, lightly modulated reflections above the water.
-/// - Underwater:   Muffled direct speech with the published modulated underwater reverb.
-/// - DeepWater:    Underwater output followed by the gradual Muffled filter.
-/// - Muffled:      Occlusion. Gradual low-pass filtering down to 450Hz with no reflections.
-///                 Simulates hearing sound through walls, earplugs, or UI pause menus.
-/// - InnerVoice:   Cinematic inner monologue. A short presence tap and gradual
-///                 low-pass coloration are supported by a restrained, dark diffuse tail.
-/// - Reverb:       Balanced, dense reverberation on the published generic profile.
-/// - Echo:         One fixed delay with progressively quieter and darker repeats.
-/// - DualEcho:     Two fixed taps with damped feedback from the second return.
+/// Request-local spatial processing, including filter and delay state, intensity and tail handling.
+/// Fixed environment settings are defined in <see cref="SpatialProfiles"/>.
 /// </summary>
 public class SpatialEffectsEngine
 {
     private readonly int _sampleRate;
     private readonly int _reverbSilenceWindowSamples;
 
-    // Published EFX profiles; output balance and intensity stay caller-owned.
-    private static readonly SpatialReverbParameters RoomParameters = new(
-        .4287f, 1, .3162f, .5929f, 1, .4f, .83f, 1, .1503f, .002f,
-        1.0629f, .003f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters LivingRoomParameters = new(
-        .9766f, 1, .3162f, .001f, 1, .5f, .1f, 1, .2051f, .003f,
-        .2805f, .004f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters BathroomParameters = new(
-        .1715f, 1, .3162f, .2512f, 1, 1.49f, .54f, 1, .6531f, .007f,
-        3.2734f, .011f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters StageParameters = new(
-        1, 1, .3162f, .0794f, .2818f, 3.45f, .3f, .82f, .8913f, .088f,
-        .7943f, .063f, .25f, 0, .9943f, 4705, 99.6f, true);
-    private static readonly SpatialReverbParameters ConcreteHallParameters = new(
-        1, 1, .3162f, .5623f, 1, 3.92f, .7f, 1, .2427f, .020f,
-        .9977f, .029f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters HangarParameters = new(
-        1, 1, .3162f, .3162f, 1, 10.05f, .23f, 1, .5f, .020f,
-        1.256f, .030f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters CathedralParameters = new(
-        1, .87f, .3162f, .3548f, .2239f, 10.48f, .19f, .1f, .1778f, .090f,
-        1.2589f, .042f, .25f, 0, .9943f, 2854.3999f, 20, true);
-    private static readonly SpatialReverbParameters StadiumParameters = new(
-        1, 1, .3162f, .4467f, .7943f, 6.26f, .51f, 1.1f, .0631f, .183f,
-        .3981f, .038f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters DungeonParameters = new(
-        1, .89f, .3162f, .3981f, .1f, 1.22f, .83f, .31f, .8913f, .022f,
-        1.9953f, .011f, .25f, 0, .9943f, 5168.6001f, 139.5f, true);
-    private static readonly SpatialReverbParameters TunnelParameters = new(
-        1, .81f, .3162f, .3981f, .8913f, 3.42f, .94f, 1.31f, .7079f, .051f,
-        .7079f, .047f, .25f, 0, .9943f, 5000, 155.3f, true);
-    private static readonly SpatialReverbParameters CaveParameters = new(
-        1, 1, .3162f, 1, 1, 2.91f, 1.3f, 1, .5f, .015f,
-        .7063f, .022f, .25f, 0, .9943f, 5000, 250, false);
-    private static readonly SpatialReverbParameters SewerPipeParameters = new(
-        .3071f, .8f, .3162f, .3162f, 1, 2.81f, .14f, 1, 1.6387f, .014f,
-        3.2471f, .021f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters AlleyParameters = new(
-        1, .3f, .3162f, .7328f, 1, 1.49f, .86f, 1, .25f, .007f,
-        .9954f, .011f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters ForestParameters = new(
-        1, .3f, .3162f, .0224f, 1, 1.49f, .54f, 1, .0525f, .162f,
-        .7682f, .088f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters CanyonParameters = new(
-        1, .74f, .3162f, .1778f, .631f, 3.89f, .21f, .46f, .3162f, .223f,
-        .3548f, .019f, .25f, 0, .9943f, 4399.1001f, 242.9f, false);
-    private static readonly SpatialReverbParameters SwimmingPoolParameters = new(
-        1, .7f, .3162f, .7943f, .8913f, 2.76f, 1.25f, 1.14f, .631f, .020f,
-        .7943f, .030f, .895f, .19f, .9943f, 5000, 250, false);
-    private static readonly SpatialReverbParameters UnderwaterParameters = new(
-        .3645f, 1, .3162f, .01f, 1, 1.49f, .1f, 1, .5963f, .007f,
-        7.0795f, .011f, 1.18f, .348f, .9943f, 5000, 250, true);
-    private static readonly SpatialReverbParameters GenericReverbParameters = new(
-        1, 1, .3162f, .8913f, 1, 1.49f, .83f, 1, .05f, .007f,
-        1.2589f, .011f, .25f, 0, .9943f, 5000, 250, true);
-    private static readonly SpatialEchoParameters DualEchoParameters = new(.18f, .25f, .5f, .4f);
-    private const float EchoDelaySeconds = .3f;
-    private const float EchoFeedback = .4f;
-    private const float EchoDampingReferenceGain = .5f;
-    private const float EchoReturnGain = .4f;
-    private const float DualEchoReturnGain = .3f;
-    // EFX direct-filter balance used by OpenMW's underwater environment.
-    private const float UnderwaterDirectGain = .9f;
-    private const float UnderwaterDirectGainHF = .125f;
-    private const float UnderwaterReturnGain = 1.5f;
-    // Keep the accepted room balance and separate return levels for standard and underwater profiles.
-    private const float RoomReturnGain = 32f * 1.5f;
-    private const float LivingRoomReturnGain = 32f * 2f;
-    private const float BathroomReturnGain = 1.5f;
-    private const float DefaultReverbReturnGain = 2f;
-    private const float GenericReverbReturnGain = 4f;
-    private const float MuffledMaximumGainDb = 1f;
-    private const float InnerVoiceReturnGain = .15f;
-    // Covers two passes of this profile's longest feedback path (approximately 209 ms).
-    private const float RoomQuietWindowSeconds = .45f;
-    // Cover the longer input and feedback paths of the other published profiles.
-    private const float ReverbQuietWindowSeconds = .65f;
     private SpatialReverbKernel? _profileReverb;
     private SpatialEchoKernel? _profileEcho;
     private SpatialTapDelay? _profileDelay;
@@ -220,7 +113,7 @@ public class SpatialEffectsEngine
         _allPasses = [new(allPassA), new(allPassB), new(allPassC), new(allPassD)];
         _reverbSilenceWindowSamples = combSizes[^1] + allPassA + allPassB + allPassC + allPassD;
 
-        _innerVoiceMicroDelay = new DelayBuffer(SamplesFor(15f));
+        _innerVoiceMicroDelay = new DelayBuffer(SamplesFor(SpatialProfiles.InnerVoice.DelayCapacityMs));
     }
 
     // =========================================================================
@@ -285,8 +178,8 @@ public class SpatialEffectsEngine
         _innerVoiceLpState = 0f;
         if (_current == SpatialEnvironment.InnerVoice && _hasReverbEq)
         {
-            _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Math.Min(150f, _sampleRate * .45f), .707f);
-            _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Math.Min(1800f, _sampleRate * .45f), .707f);
+            _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Math.Min(SpatialProfiles.InnerVoice.ReverbLowCutHz, _sampleRate * .45f), SpatialProfiles.InnerVoice.FilterQ);
+            _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Math.Min(SpatialProfiles.InnerVoice.LowPassHz, _sampleRate * .45f), SpatialProfiles.InnerVoice.FilterQ);
         }
     }
 
@@ -389,11 +282,11 @@ public class SpatialEffectsEngine
     private static void ApplySingleEcho(Span<float> buffer, float amount, SpatialTapDelay delay, SpatialFilterKernel damping)
     {
         float position = Math.Clamp(amount, 0, 1);
-        float gain = EchoReturnGain * (position * (2 - position));
+        float gain = SpatialProfiles.Echo.ReturnGain * (position * (2 - position));
         for (int i = 0; i < buffer.Length; i++)
         {
             float input = buffer[i], returned = delay.Read();
-            delay.Write(input + damping.Process(returned) * EchoFeedback);
+            delay.Write(input + damping.Process(returned) * SpatialProfiles.Echo.Feedback);
             buffer[i] = input + returned * gain;
         }
     }
@@ -402,7 +295,7 @@ public class SpatialEffectsEngine
     private static void ApplyDualEcho(Span<float> buffer, float amount, SpatialEchoKernel echo)
     {
         float position = Math.Clamp(amount, 0, 1);
-        float gain = DualEchoReturnGain * (position * (2 - position));
+        float gain = SpatialProfiles.DualEcho.ReturnGain * (position * (2 - position));
         for (int i = 0; i < buffer.Length; i++)
         {
             float input = buffer[i];
@@ -424,9 +317,9 @@ public class SpatialEffectsEngine
         _innerVoiceStrength = strength;
         _innerVoiceInverseStrength = 1f / strength;
         _innerVoiceFullStrength = depth >= 1f;
-        _innerVoicePresenceGain = .15f * strength;
-        _innerVoiceReverbGain = InnerVoiceReturnGain * strength;
-        float cutoff = Math.Min(1800f, _sampleRate * .45f);
+        _innerVoicePresenceGain = SpatialProfiles.InnerVoice.PresenceGain * strength;
+        _innerVoiceReverbGain = SpatialProfiles.InnerVoice.ReturnGain * strength;
+        float cutoff = Math.Min(SpatialProfiles.InnerVoice.LowPassHz, _sampleRate * .45f);
         float fullCoeff = 1f - MathF.Exp(-2f * MathF.PI * cutoff / _sampleRate);
         // Unity coefficient is exact digital bypass; move the pole gradually to its full position.
         _innerVoiceLpCoeff = _innerVoiceFullStrength ? fullCoeff : Dsp.Lerp(1f, fullCoeff, strength);
@@ -447,7 +340,7 @@ public class SpatialEffectsEngine
     private void SetupMuffled()
     {
         _muffledPreparedAmount = float.NaN;
-        float cutoff = Math.Min(450f, _sampleRate * .45f);
+        float cutoff = Math.Min(SpatialProfiles.Muffled.CutoffHz, _sampleRate * .45f);
         _environmentEq = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, cutoff);
         _environmentEq2 = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.LowPass, cutoff);
     }
@@ -460,13 +353,13 @@ public class SpatialEffectsEngine
         float depth = Math.Clamp(amount, 0f, 1f);
         float strength = depth * (2f - depth);
         float nyquist = _sampleRate * .5f;
-        float fullCutoff = Math.Min(450f, _sampleRate * .45f);
+        float fullCutoff = Math.Min(SpatialProfiles.Muffled.CutoffHz, _sampleRate * .45f);
         float cutoff = depth >= 1f ? fullCutoff
             : nyquist * MathF.Pow(fullCutoff / nyquist, strength);
         cutoff = Math.Min(cutoff, _sampleRate * .4999f);
         _environmentEq!.SetLowPass(_sampleRate, cutoff);
         _environmentEq2!.SetLowPass(_sampleRate, cutoff);
-        _muffledOutputGain = MathF.Pow(10f, MuffledMaximumGainDb * depth * depth * depth / 20f);
+        _muffledOutputGain = MathF.Pow(10f, SpatialProfiles.Muffled.MaximumGainDb * depth * depth * depth / 20f);
     }
 
     /// <summary>Configures environment-specific filters and reflection parameters without retaining the previous environment's EQ.</summary>
@@ -493,85 +386,25 @@ public class SpatialEffectsEngine
         // Caps environment filter frequencies at the configured Nyquist safety limit.
         float Safe(float f) => Math.Min(f, nyq);
 
-        switch (env)
+        if (SpatialProfiles.GetReverb(env) is { } profile)
         {
-            case SpatialEnvironment.Room:
-                PrepareReverb(RoomParameters, RoomQuietWindowSeconds, RoomReturnGain);
-                break;
-
-            case SpatialEnvironment.LivingRoom:
-                PrepareReverb(LivingRoomParameters, RoomQuietWindowSeconds, LivingRoomReturnGain);
-                break;
-
-            case SpatialEnvironment.Bathroom:
-                PrepareReverb(BathroomParameters, ReverbQuietWindowSeconds, BathroomReturnGain);
-                break;
-
-            case SpatialEnvironment.Stage:
-                PrepareReverb(StageParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.ConcreteHall:
-                PrepareReverb(ConcreteHallParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Hangar:
-                PrepareReverb(HangarParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Cathedral:
-                PrepareReverb(CathedralParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Stadium:
-                PrepareReverb(StadiumParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Dungeon:
-                PrepareReverb(DungeonParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Tunnel:
-                PrepareReverb(TunnelParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Cave:
-                PrepareReverb(CaveParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.SewerPipe:
-                PrepareReverb(SewerPipeParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Alley:
-                PrepareReverb(AlleyParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Forest:
-                PrepareReverb(ForestParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Canyon:
-                PrepareReverb(CanyonParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.SwimmingPool:
-                PrepareReverb(SwimmingPoolParameters, ReverbQuietWindowSeconds, DefaultReverbReturnGain);
-                break;
-
-            case SpatialEnvironment.Underwater:
-            case SpatialEnvironment.DeepWater:
-                PrepareReverb(UnderwaterParameters, ReverbQuietWindowSeconds, UnderwaterReturnGain);
+            PrepareReverb(profile.Parameters, profile.QuietWindowSeconds, profile.ReturnGain);
+            if (env is SpatialEnvironment.Underwater or SpatialEnvironment.DeepWater)
+            {
                 _profileDirectFilter = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.HighShelf,
-                    Math.Min(5000f, _sampleRate * .49f), UnderwaterDirectGainHF);
-                _profileDirectGain = UnderwaterDirectGain;
+                    Math.Min(SpatialProfiles.Underwater.DirectFilterReferenceHz, _sampleRate * .49f), SpatialProfiles.Underwater.DirectGainHF);
+                _profileDirectGain = SpatialProfiles.Underwater.DirectGain;
                 if (env == SpatialEnvironment.DeepWater)
                 {
                     SetupMuffled();
                     _hasMuffledOutput = true;
                 }
-                break;
+            }
+            return;
+        }
 
+        switch (env)
+        {
             // Occlusion / Muffled effect (Hearing through thick walls or heavy earplugs).
             // Two Butterworth low-pass stages attenuate at 24 dB/oct without adding reflections or saturation.
             case SpatialEnvironment.Muffled:
@@ -581,30 +414,26 @@ public class SpatialEffectsEngine
             // A quiet, dark diffuse tail supports the authored inner-monologue coloration.
             case SpatialEnvironment.InnerVoice:
                 _innerVoicePreparedAmount = float.NaN;
-                ConfigureCombsByRt60(3.5f, 0.85f);
-                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(150f), 0.707f);
-                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(1800f), 0.707f);
+                ConfigureCombsByRt60(SpatialProfiles.InnerVoice.DecaySeconds, SpatialProfiles.InnerVoice.Damping);
+                _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(SpatialProfiles.InnerVoice.ReverbLowCutHz), SpatialProfiles.InnerVoice.FilterQ);
+                _reverbLpFilter = BiQuadFilter.LowPassFilter(_sampleRate, Safe(SpatialProfiles.InnerVoice.LowPassHz), SpatialProfiles.InnerVoice.FilterQ);
                 _hasReverbEq = true;
 
                 // This 8 ms mono tap is intentional timbral coloration, not a binaural model.
-                _innerVoiceMicroDelaySamples = 0.008f * _sampleRate;
-                break;
-
-            case SpatialEnvironment.Reverb:
-                PrepareReverb(GenericReverbParameters, ReverbQuietWindowSeconds, GenericReverbReturnGain);
+                _innerVoiceMicroDelaySamples = SpatialProfiles.InnerVoice.MicroDelaySeconds * _sampleRate;
                 break;
 
             case SpatialEnvironment.Echo:
-                int delay = Math.Max((int)(EchoDelaySeconds * _sampleRate + .5f), 1);
+                int delay = Math.Max((int)(SpatialProfiles.Echo.DelaySeconds * _sampleRate + .5f), 1);
                 _profileDelay = new SpatialTapDelay(delay);
                 _echoDamping = SpatialFilterKernel.FromSlope(_sampleRate, SpatialFilterType.HighShelf,
-                    Math.Min(5000f, _sampleRate * .49f), EchoDampingReferenceGain);
-                PrepareEchoTail(delay, EchoFeedback);
+                    Math.Min(SpatialProfiles.Echo.DampingReferenceHz, _sampleRate * .49f), SpatialProfiles.Echo.DampingReferenceGain);
+                PrepareEchoTail(delay, SpatialProfiles.Echo.Feedback);
                 break;
 
             case SpatialEnvironment.DualEcho:
-                _profileEcho = new SpatialEchoKernel(_sampleRate, DualEchoParameters);
-                PrepareEchoTail(_profileEcho.SecondTapDelaySamples, DualEchoParameters.Feedback);
+                _profileEcho = new SpatialEchoKernel(_sampleRate, SpatialProfiles.DualEcho.Parameters);
+                PrepareEchoTail(_profileEcho.SecondTapDelaySamples, SpatialProfiles.DualEcho.Parameters.Feedback);
                 break;
         }
     }
