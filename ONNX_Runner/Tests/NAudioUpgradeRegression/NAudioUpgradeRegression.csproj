@@ -9,6 +9,6 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="../ServerConfigurationRegression/SampleRateChecks.cs" Link="SampleRateChecks.cs" />
     <Compile Include="../../Services/Synthesis/AudioOutputResampler.cs" Link="AudioOutputResampler.cs" />
-    <Compile Include="../../Models/AudioSampleRate.cs" Link="AudioSampleRate.cs" />
+    <Compile Include="../../Models/Audio/AudioSampleRate.cs" Link="AudioSampleRate.cs" />
   </ItemGroup>
 </Project>

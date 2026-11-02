@@ -1,7 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging.Abstractions;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
 
 internal static class SymbolPronunciationChecks

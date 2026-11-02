@@ -2,7 +2,7 @@ using System.Text;
 using Lingua;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Services;
 
 internal static class LanguageDetectionSettingsChecks

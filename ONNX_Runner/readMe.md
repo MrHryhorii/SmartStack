@@ -1128,7 +1128,7 @@ Whole-input sentence chunks reuse the input string; slices still own their resul
 
 #### Custom rules
 
-`Models/TextChunkerRules.cs` is the shared, immutable catalog for abbreviation categories,
+`Models/Text/TextChunkerRules.cs` is the shared, immutable catalog for abbreviation categories,
 punctuation roles, and model-normalization semantics. The chunker, language tokenizer,
 punctuation mapper, and technical recognizer use the same catalog. All additions are resolved once at startup.
 

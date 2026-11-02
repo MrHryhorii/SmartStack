@@ -1,4 +1,5 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Requests;
 
 namespace ONNX_Runner.Endpoints;
 /// <summary>

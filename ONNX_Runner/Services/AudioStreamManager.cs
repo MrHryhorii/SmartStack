@@ -1,5 +1,5 @@
 using NAudio.Wave;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
 using System.Buffers;
 using System.Buffers.Binary;
 using Concentus;

@@ -2,7 +2,8 @@ using System.Buffers;
 using System.Text.Json;
 using NAudio.Dsp;
 using NAudio.Wave;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
 
 int passed = 0, failed = 0;

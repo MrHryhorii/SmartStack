@@ -3,7 +3,9 @@ global using Microsoft.Extensions.Logging;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging.Abstractions;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services;
 
 // Measure synchronous managed allocations after initialization and JIT warmup.

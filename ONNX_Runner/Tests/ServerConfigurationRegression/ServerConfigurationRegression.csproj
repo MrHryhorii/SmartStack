@@ -16,7 +16,7 @@
     <EmbeddedResource Include="FmCurveMoments.json" LogicalName="FmCurveMoments.json" />
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../../ONNX_Runner.csproj" />
-    <Compile Include="../../Models/AudioSampleRate.cs" Link="Production/AudioSampleRate.cs" />
+    <Compile Include="../../Models/Audio/AudioSampleRate.cs" Link="Production/AudioSampleRate.cs" />
     <Compile Include="../../Services/Synthesis/AudioOutputResampler.cs" Link="Production/AudioOutputResampler.cs" />
   </ItemGroup>
 </Project>

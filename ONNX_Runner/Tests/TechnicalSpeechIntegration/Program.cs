@@ -3,7 +3,9 @@ global using Microsoft.Extensions.Logging;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services;
 
 if (args.Length is < 1 or > 3 || !File.Exists(args[0]))

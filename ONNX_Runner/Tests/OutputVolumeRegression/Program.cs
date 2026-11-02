@@ -1,3 +1,4 @@
+using ONNX_Runner.Models.Audio;
 using System.Numerics;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -6,8 +7,8 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using NAudio.Dsp;
 using NewEngine = ONNX_Runner.Services.AudioEffectsEngine;
-using NewEffect = ONNX_Runner.Models.VoiceEffectType;
-using NewEnvironment = ONNX_Runner.Models.SpatialEnvironment;
+using NewEffect = ONNX_Runner.Models.Audio.VoiceEffectType;
+using NewEnvironment = ONNX_Runner.Models.Audio.SpatialEnvironment;
 using Volume = ONNX_Runner.Services.VolumeShifter;
 using NewManager = ONNX_Runner.Services.AudioStreamManager;
 using NewResampler = ONNX_Runner.Services.AudioResampler;
@@ -132,7 +133,7 @@ internal static class OutputVolumeRegressionProgram
         NewEffect type = NewEffect.None, float amount = 0)
     {
         using var stream = new MemoryStream();
-        using var manager = new NewManager(ONNX_Runner.Models.AudioFormat.Pcm, target, stream);
+        using var manager = new NewManager(ONNX_Runner.Models.Audio.AudioFormat.Pcm, target, stream);
         object? resampler = rate == target ? null : NewResampler(rate, target);
         var volume = new Volume(target, gain);
         BiQuadFilter? filter = Filter(rate, cleanup);
@@ -202,7 +203,7 @@ internal static class OutputVolumeRegressionProgram
         var volume = new Volume(22050, 1);
         volume.Process([.1f]);
         using var stream = new MemoryStream();
-        using var manager = new NewManager(ONNX_Runner.Models.AudioFormat.Pcm, 22050, stream);
+        using var manager = new NewManager(ONNX_Runner.Models.Audio.AudioFormat.Pcm, 22050, stream);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         bool rejected = false;

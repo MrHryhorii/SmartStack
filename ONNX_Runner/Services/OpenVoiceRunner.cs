@@ -3,7 +3,8 @@ using System.Collections.Concurrent;
 using System.Runtime.InteropServices; // REQUIRED FOR MemoryMarshal (fast flat access to rectangular arrays)
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
 
 #if USE_WEBGPU
 using Microsoft.ML.OnnxRuntime.EP.WebGpu;

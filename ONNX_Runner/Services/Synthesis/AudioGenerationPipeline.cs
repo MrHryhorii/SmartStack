@@ -1,5 +1,6 @@
 using System.Buffers;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Inference;
 
 namespace ONNX_Runner.Services.Synthesis;
 /// <summary>

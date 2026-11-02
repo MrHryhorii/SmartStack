@@ -1,4 +1,6 @@
-namespace ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+
+namespace ONNX_Runner.Models.Requests;
 /// <summary>
 /// Wire-format-agnostic representation of a text-to-speech request. Every external API
 /// shape (OpenAI, Tsubaki's own extended endpoint, and any future ones) maps its own DTO

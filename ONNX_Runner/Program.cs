@@ -1,4 +1,6 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services;
 using ONNX_Runner.Endpoints;
 using System.Threading.RateLimiting;

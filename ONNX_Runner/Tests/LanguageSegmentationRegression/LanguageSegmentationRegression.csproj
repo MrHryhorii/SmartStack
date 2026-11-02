@@ -8,9 +8,9 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <PackageReference Include="SearchPioneer.Lingua" Version="2.0.0" />
-    <Compile Include="../../Models/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
-    <Compile Include="../../Models/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
-    <Compile Include="../../Models/PhonemizerSettings.cs" Link="PhonemizerSettings.cs" />
+    <Compile Include="../../Models/Configuration/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
+    <Compile Include="../../Models/Text/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
+    <Compile Include="../../Models/Configuration/PhonemizerSettings.cs" Link="PhonemizerSettings.cs" />
     <Compile Include="../../Services/TextChunker.cs" Link="TextChunker.cs" />
     <Compile Include="../../Services/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Services/EspeakLinguaMapper.cs" Link="EspeakLinguaMapper.cs" />
@@ -20,8 +20,8 @@
     <Compile Include="../../Services/EspeakPhonemePartJoiner.cs" Link="EspeakPhonemePartJoiner.cs" />
     <Compile Include="../../Services/PiperPhonemizer.cs" Link="PiperPhonemizer.cs" />
     <Compile Include="../../Services/PhonemeFallbackMapper.cs" Link="PhonemeFallbackMapper.cs" />
-    <Compile Include="../../Models/PiperConfig.cs" Link="PiperConfig.cs" />
-    <Compile Include="../../Models/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
+    <Compile Include="../../Models/Inference/PiperConfig.cs" Link="PiperConfig.cs" />
+    <Compile Include="../../Models/Text/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
     <Compile Include="../../Services/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
     <Compile Include="../../Services/UnifiedPhonemizer.Emojis.cs" Link="UnifiedPhonemizer.Emojis.cs" />
   </ItemGroup>

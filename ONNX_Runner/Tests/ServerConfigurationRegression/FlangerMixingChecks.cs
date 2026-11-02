@@ -1,4 +1,4 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
 
 internal static class FlangerMixingChecks
 {

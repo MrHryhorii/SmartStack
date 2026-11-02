@@ -4,7 +4,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using NAudio.Wave;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
 
 int passed = 0, failed = 0, comparisons = 0, lengthDifferences = 0;

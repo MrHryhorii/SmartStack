@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Configuration;
 
 public class RateLimitSettings
 {

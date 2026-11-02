@@ -3,7 +3,9 @@ using System.Buffers.Text;
 using System.IO.Pipelines;
 using System.Text;
 using System.Threading.Channels;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Requests;
 
 namespace ONNX_Runner.Services.Synthesis;
 /// <summary>

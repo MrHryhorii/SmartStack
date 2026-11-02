@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Inference;
 
 /// <summary>
 /// Represents the configuration schema for OpenVoice/ToneColor models (tone_config.json).

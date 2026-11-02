@@ -1,4 +1,4 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
 using System.Reflection;
 using System.Runtime.InteropServices;
 

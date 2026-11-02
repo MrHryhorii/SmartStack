@@ -1,4 +1,5 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services;
 
 var config = new PiperConfig

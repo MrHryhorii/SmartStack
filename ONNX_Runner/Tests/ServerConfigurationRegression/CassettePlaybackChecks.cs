@@ -1,6 +1,7 @@
 using System.Reflection;
 using NAudio.Dsp;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Services;
 
 internal static class CassettePlaybackChecks

@@ -1,4 +1,4 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Inference;
 using System.Globalization;
 
 namespace ONNX_Runner.Services;

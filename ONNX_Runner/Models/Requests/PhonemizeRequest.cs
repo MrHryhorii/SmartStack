@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Requests;
 
 /// <summary>
 /// Data Transfer Object (DTO) for isolated text-to-phoneme conversion requests.

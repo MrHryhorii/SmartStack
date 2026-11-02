@@ -2,7 +2,10 @@ using System.Buffers.Binary;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.DependencyInjection;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Requests;
 using ONNX_Runner.Services;
 
 internal static class EqualizerSynthesisChecks

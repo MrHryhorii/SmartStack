@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Requests;
 
 /// <summary>
 /// Normalizes supported JSON voice selectors to a string ID.

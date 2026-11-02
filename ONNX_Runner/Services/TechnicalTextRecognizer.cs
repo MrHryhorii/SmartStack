@@ -1,6 +1,6 @@
 using System.Buffers;
 using System.Globalization;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Text;
 
 namespace ONNX_Runner.Services;
 

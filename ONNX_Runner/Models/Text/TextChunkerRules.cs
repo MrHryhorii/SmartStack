@@ -5,7 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Text;
 
 /// <summary>
 /// Immutable shared catalog for sentence boundaries, abbreviations, and punctuation semantics.

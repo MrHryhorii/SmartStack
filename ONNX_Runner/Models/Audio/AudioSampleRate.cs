@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Audio;
 
 /// <summary>Request limits and encoder input rates for optional output resampling.</summary>
 internal static class AudioSampleRate

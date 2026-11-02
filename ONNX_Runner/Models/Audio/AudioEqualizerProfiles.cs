@@ -1,7 +1,7 @@
 using System.Collections.Frozen;
 using System.Collections.ObjectModel;
 
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Audio;
 
 /// <summary>A broad parametric band; Q controls width and gain describes the center in decibels.</summary>
 public sealed record AudioEqualizerBand(float FrequencyHz, float QFactor, float GainDb);

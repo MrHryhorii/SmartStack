@@ -1,7 +1,9 @@
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services;
 
 internal static class EmojiChecks

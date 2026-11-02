@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 using System.Reflection;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
 using ONNX_Runner.Services;
 
 internal static class CrusherMixingChecks

@@ -3,7 +3,9 @@ using System.Text.Json;
 using NAudio.Wave;
 using Microsoft.Extensions.Configuration;
 using ONNX_Runner.Endpoints;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Requests;
 using ONNX_Runner.Services;
 using ONNX_Runner.Services.Synthesis;
 

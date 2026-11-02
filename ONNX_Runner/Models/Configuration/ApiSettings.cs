@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Configuration;
 
 /// <summary>
 /// General configuration settings for the API endpoints.

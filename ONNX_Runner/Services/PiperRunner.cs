@@ -1,7 +1,8 @@
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using NAudio.Wave;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
 using System.Buffers;
 using System.Numerics;
 using System.Collections.Concurrent;

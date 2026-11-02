@@ -2,7 +2,8 @@ using System.Buffers;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services;
 
 internal static class AdditionalChecks

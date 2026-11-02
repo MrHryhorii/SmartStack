@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Audio;
 
 /// <summary>
 /// Defines the supported audio output formats for the TTS engine.

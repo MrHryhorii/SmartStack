@@ -1,7 +1,7 @@
 using NAudio.Wave;
 using NAudio.Wave.SampleProviders;
 using NAudio.Dsp;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Inference;
 using System.Buffers;
 using System.Numerics; // REQUIRED FOR SIMD (Hardware Acceleration)
 using System.Runtime.InteropServices; // REQUIRED FOR MemoryMarshal (fast flat access to rectangular arrays)

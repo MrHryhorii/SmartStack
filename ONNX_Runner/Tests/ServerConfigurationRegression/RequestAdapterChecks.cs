@@ -1,6 +1,8 @@
 using System.Text.Json;
 using ONNX_Runner.Endpoints;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Requests;
 
 internal static class RequestAdapterChecks
 {

@@ -1,4 +1,5 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
 using System.Runtime.CompilerServices;
 using System.Numerics;
 using System.Buffers;

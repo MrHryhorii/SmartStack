@@ -1,4 +1,6 @@
-namespace ONNX_Runner.Models;
+using ONNX_Runner.Models.Requests;
+
+namespace ONNX_Runner.Models.Audio;
 /// <summary>
 /// Controls how a synthesized response is framed on the wire.
 /// This is independent from <see cref="SynthesisRequest.Stream"/>, which controls

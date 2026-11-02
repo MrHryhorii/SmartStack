@@ -2,8 +2,9 @@ using System.Buffers;
 using System.Collections.Frozen;
 using System.Globalization;
 using System.Text;
-using ONNX_Runner.Models;
-using PunctuationKind = ONNX_Runner.Models.TextChunkerRules.PunctuationKind;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Text;
+using PunctuationKind = ONNX_Runner.Models.Text.TextChunkerRules.PunctuationKind;
 
 namespace ONNX_Runner.Services;
 

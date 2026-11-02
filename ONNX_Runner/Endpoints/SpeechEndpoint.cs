@@ -1,5 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Requests;
 using ONNX_Runner.Services;
 
 namespace ONNX_Runner.Endpoints;

@@ -1,4 +1,6 @@
-namespace ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+
+namespace ONNX_Runner.Models.Configuration;
 
 /// <summary>
 /// Configuration for post-processing Digital Signal Processing (DSP) algorithms.

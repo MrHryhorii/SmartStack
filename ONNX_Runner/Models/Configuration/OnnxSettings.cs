@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Configuration;
 
 /// <summary>
 /// Execution profile containing thread and memory settings for a specific hardware target (CPU or GPU).

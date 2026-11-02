@@ -1,5 +1,5 @@
 using NAudio.Dsp;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
 
 namespace ONNX_Runner.Services;
 

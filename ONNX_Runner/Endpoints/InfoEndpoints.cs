@@ -1,6 +1,8 @@
 using System.Net;
 using System.Reflection;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
 
 namespace ONNX_Runner.Endpoints;

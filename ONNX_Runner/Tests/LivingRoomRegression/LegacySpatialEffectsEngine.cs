@@ -1,4 +1,4 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
 using System.Runtime.CompilerServices;
 using NAudio.Dsp;
 

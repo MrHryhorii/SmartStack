@@ -2,7 +2,8 @@ using System.Buffers;
 using System.Globalization;
 using System.Text;
 using Lingua;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Text;
 
 namespace ONNX_Runner.Services;
 

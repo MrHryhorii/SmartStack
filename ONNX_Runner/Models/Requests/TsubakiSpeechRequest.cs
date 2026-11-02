@@ -1,6 +1,7 @@
+using ONNX_Runner.Models.Audio;
 using System.Text.Json.Serialization;
 
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Requests;
 /// <summary>
 /// Represents an incoming text-to-speech request to Tsubaki's own extended endpoint.
 /// Carries every parameter the engine actually supports — the full set that used to live

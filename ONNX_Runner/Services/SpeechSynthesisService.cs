@@ -1,5 +1,8 @@
 using System.Diagnostics;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
+using ONNX_Runner.Models.Requests;
 using ONNX_Runner.Services.Synthesis;
 
 namespace ONNX_Runner.Services;

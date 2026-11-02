@@ -1,4 +1,5 @@
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services;
 
 // Regression corpus: explicit expected boundaries, never calculated from TextChunker itself.

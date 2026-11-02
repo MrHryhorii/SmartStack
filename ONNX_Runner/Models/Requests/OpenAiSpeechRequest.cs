@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Requests;
 /// <summary>
 /// Represents an incoming OpenAI-compatible text-to-speech request.
 /// Tsubaki accepts the standard OpenAI TTS fields it can meaningfully support, plus the

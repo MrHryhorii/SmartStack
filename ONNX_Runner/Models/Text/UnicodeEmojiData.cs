@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Text;
 
 // Unicode 17.0 Emoji property, merged into disjoint scalar ranges.
 // Source: https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt

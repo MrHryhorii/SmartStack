@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Models;
+namespace ONNX_Runner.Models.Configuration;
 
 /// <summary>
 /// Configuration for the text chunking and sentence boundary detection module.

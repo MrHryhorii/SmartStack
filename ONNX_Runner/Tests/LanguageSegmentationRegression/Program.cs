@@ -1,7 +1,7 @@
 global using Microsoft.Extensions.Logging;
 
 using Microsoft.Extensions.Logging.Abstractions;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Services;
 
 // Test structural speech parts independently of model inference and audio synthesis.

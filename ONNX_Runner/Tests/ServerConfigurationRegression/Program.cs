@@ -4,7 +4,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using ONNX_Runner.Endpoints;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
 
 bool failuresOnly = args.Contains("--failures-only", StringComparer.OrdinalIgnoreCase);

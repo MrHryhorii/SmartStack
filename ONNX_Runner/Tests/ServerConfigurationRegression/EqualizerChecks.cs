@@ -2,7 +2,8 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ONNX_Runner.Endpoints;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
+using ONNX_Runner.Models.Requests;
 using ONNX_Runner.Services;
 
 internal static class EqualizerChecks

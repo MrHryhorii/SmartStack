@@ -1,5 +1,6 @@
 using System.Globalization;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Configuration;
+using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
 
 internal static class EmojiPronunciationChecks

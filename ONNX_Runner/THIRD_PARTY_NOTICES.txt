@@ -283,7 +283,7 @@ Unicode Emoji Property Data (Unicode 17.0)
 Source: https://www.unicode.org/Public/17.0.0/ucd/emoji/emoji-data.txt
 License: Unicode License V3
 Local license: THIRD_PARTY_LICENSES/Unicode-LICENSE.txt
-Used by Models/UnicodeEmojiData.cs for emoji classification; spoken names remain provided by eSpeak dictionaries.
+Used by Models/Text/UnicodeEmojiData.cs for emoji classification; spoken names remain provided by eSpeak dictionaries.
 
 OpenAL Soft 1.23.1 - adapted spatial DSP source
   https://github.com/kcat/openal-soft

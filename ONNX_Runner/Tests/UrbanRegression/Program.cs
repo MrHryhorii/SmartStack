@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using ONNX_Runner.Endpoints;
-using ONNX_Runner.Models;
+using ONNX_Runner.Models.Audio;
 using ONNX_Runner.Services;
 using ONNX_Runner.Tests;
 
