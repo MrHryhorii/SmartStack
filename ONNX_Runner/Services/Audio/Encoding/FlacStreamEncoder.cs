@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Encoding;
 
 /// <summary>
 /// Lightweight managed FLAC encoder for Tsubaki's mono 16-bit PCM output.

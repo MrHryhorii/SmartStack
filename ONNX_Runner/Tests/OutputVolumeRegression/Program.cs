@@ -1,3 +1,4 @@
+using ONNX_Runner.Services.Audio.Encoding;
 using ONNX_Runner.Services.Audio;
 using ONNX_Runner.Services.Audio.Levels;
 using ONNX_Runner.Models.Audio;
@@ -12,7 +13,7 @@ using NewEngine = ONNX_Runner.Services.AudioEffectsEngine;
 using NewEffect = ONNX_Runner.Models.Audio.VoiceEffectType;
 using NewEnvironment = ONNX_Runner.Models.Audio.SpatialEnvironment;
 using Volume = ONNX_Runner.Services.Audio.Levels.VolumeShifter;
-using NewManager = ONNX_Runner.Services.AudioStreamManager;
+using NewManager = ONNX_Runner.Services.Audio.Encoding.AudioStreamManager;
 using NewResampler = ONNX_Runner.Services.Audio.AudioResampler;
 
 internal static class OutputVolumeRegressionProgram

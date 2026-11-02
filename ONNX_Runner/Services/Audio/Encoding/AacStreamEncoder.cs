@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Numerics;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Encoding;
 
 /// <summary>
 /// Lightweight managed AAC-LC encoder specialized for Tsubaki's mono speech output.

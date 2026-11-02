@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Buffers.Text;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Streaming;
 
 /// <summary>
 /// Forward-only stream that Base64-encodes written audio bytes without allocating temporary

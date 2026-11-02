@@ -1,7 +1,7 @@
 using System.Buffers;
 using System.Threading.Channels;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Streaming;
 
 /// <summary>
 /// A universal buffered gateway stream.

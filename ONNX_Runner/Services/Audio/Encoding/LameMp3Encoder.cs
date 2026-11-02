@@ -1,7 +1,7 @@
 using ONNX_Runner.Services.Infrastructure;
 using System.Buffers;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Encoding;
 
 /// <summary>
 /// Thin managed wrapper around the native LAME encoder.

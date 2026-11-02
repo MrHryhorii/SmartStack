@@ -6,7 +6,7 @@ using System.Buffers.Binary;
 using Concentus;
 using Concentus.Enums;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Encoding;
 
 /// <summary>
 /// Manages the encoding, formatting, and routing of generated audio streams.
