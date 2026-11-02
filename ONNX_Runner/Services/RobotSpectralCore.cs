@@ -1,5 +1,6 @@
 // Adapted from NWaves RobotEffect / OverlapAddFilter, Copyright (c) 2017 Tim.
 // Original MIT notice: THIRD_PARTY_LICENSES/NWaves-MIT.txt.
+using ONNX_Runner.Services.Audio;
 using NAudio.Dsp;
 
 namespace ONNX_Runner.Services;

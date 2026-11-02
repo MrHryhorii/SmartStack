@@ -1,7 +1,7 @@
 using System.Buffers;
 using NAudio.Dsp;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio;
 
 /// <summary>
 /// Request-local mono WDL resampling with caller-owned spans or pooled output.

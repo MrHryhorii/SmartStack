@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>Uniform PCM gain; does not compress, clip, normalize, or inspect effects.</summary>
 public static class LinearGain

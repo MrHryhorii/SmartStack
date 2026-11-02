@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>
 /// Request-local sample-peak limiter with delayed audio and a smoothed envelope.

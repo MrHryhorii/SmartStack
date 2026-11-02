@@ -1,3 +1,4 @@
+using ONNX_Runner.Services.Audio;
 using NAudio.Dsp;
 
 namespace ONNX_Runner.Tests;

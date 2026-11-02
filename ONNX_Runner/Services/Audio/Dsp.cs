@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio;
 
 /// <summary>
 /// Stateless Digital Signal Processing (DSP) kernel.

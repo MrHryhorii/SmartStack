@@ -1,7 +1,7 @@
 using NAudio.Dsp;
 using ONNX_Runner.Models.Audio;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio;
 
 /// <summary>
 /// Applies an ordered cascade of dry device profiles in place. Filter state belongs to one

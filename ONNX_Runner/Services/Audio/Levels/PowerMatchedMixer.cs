@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>Interpolates aligned PCM and matches its mean-square power over the supplied buffer.</summary>
 public static class PowerMatchedMixer

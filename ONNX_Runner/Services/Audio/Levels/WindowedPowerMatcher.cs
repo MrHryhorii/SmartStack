@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>
 /// Causal power matching over a fixed audio-time window. Buffer boundaries do not reset analysis

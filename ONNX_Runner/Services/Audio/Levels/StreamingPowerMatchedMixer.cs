@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>
 /// Request-local linear interpolation with causal power matching on a fixed audio-time clock.

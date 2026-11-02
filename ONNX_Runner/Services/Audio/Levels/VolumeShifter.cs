@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>Request-local output adapter composing independent linear gain and lookahead peak protection.</summary>
 public sealed class VolumeShifter

@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>Linear interpolation of aligned PCM signals; contains no level or peak policy.</summary>
 public static class SignalInterpolator

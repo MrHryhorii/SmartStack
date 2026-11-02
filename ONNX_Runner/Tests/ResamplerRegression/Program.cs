@@ -1,3 +1,4 @@
+using ONNX_Runner.Services.Audio;
 using System.Buffers;
 using System.Diagnostics;
 using System.Reflection;
@@ -221,7 +222,7 @@ if (args.Contains("--benchmark") && baselineType != null && failed == 0)
         Benchmark($"complete-{from}-{to}", input.Length / (double)from,
             () => Return(old(input, input.Length)), () => Return(current.Resample(input)));
         var oldState = Activator.CreateInstance(baselineType, from, to)!;
-        var oldProcess = baselineType.GetMethod("Process")!.CreateDelegate<ProcessArray>(oldState);
+        var oldProcess = baselineType.GetMethod("Process", [typeof(ReadOnlySpan<float>), typeof(float[]), typeof(int)])!.CreateDelegate<ProcessArray>(oldState);
         var newState = new AudioResampler(from, to);
         var output = new float[Math.Max(1, to / 100)];
         void FeedPrevious()
@@ -262,7 +263,7 @@ void Expect<T>(Action action) where T : Exception
 Func<float[], int, (float[] Buffer, int Length)> PreviousComplete(int from, int to)
 {
     object state = Activator.CreateInstance(baselineType!, from, to)!;
-    return baselineType!.GetMethod("Resample")!.CreateDelegate<Func<float[], int, (float[] Buffer, int Length)>>(state);
+    return baselineType!.GetMethod("Resample", [typeof(float[]), typeof(int)])!.CreateDelegate<Func<float[], int, (float[] Buffer, int Length)>>(state);
 }
 void ComparePrevious(float[] source, int from, int to, ReadOnlySpan<float> actual)
 {
@@ -294,8 +295,8 @@ float[] Stream(float[] input, int from, int to, int[] partitions, bool previous 
     if (previous)
     {
         object state = Activator.CreateInstance(baselineType!, from, to)!;
-        ProcessArray oldProcess = baselineType!.GetMethod("Process")!.CreateDelegate<ProcessArray>(state);
-        Func<float[], int, int> oldComplete = baselineType.GetMethod("Complete")!.CreateDelegate<Func<float[], int, int>>(state);
+        ProcessArray oldProcess = baselineType!.GetMethod("Process", [typeof(ReadOnlySpan<float>), typeof(float[]), typeof(int)])!.CreateDelegate<ProcessArray>(state);
+        Func<float[], int, int> oldComplete = baselineType.GetMethod("Complete", [typeof(float[]), typeof(int)])!.CreateDelegate<Func<float[], int, int>>(state);
         float[] oldOutput = new float[Math.Max(1, to / 100)];
         process = (source, output) => { var result = oldProcess(source, oldOutput, oldOutput.Length); oldOutput.AsSpan(0, result.Written).CopyTo(output); return result; };
         complete = output => { int count = oldComplete(oldOutput, oldOutput.Length); oldOutput.AsSpan(0, count).CopyTo(output); return count; };

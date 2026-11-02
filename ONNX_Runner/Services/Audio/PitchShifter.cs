@@ -1,6 +1,6 @@
 using SoundTouch;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio;
 
 /// <summary>
 /// Stateful DSP module for real-time pitch shifting without changing playback tempo.

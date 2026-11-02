@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Levels;
 
 /// <summary>Finite-buffer mean-square matching, independent of interpolation and peak protection.</summary>
 public static class PowerMatcher
