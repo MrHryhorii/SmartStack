@@ -2,7 +2,7 @@ using System.Text.Json;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Inference;
 
 /// <summary>
 /// Utility class responsible for safely loading the TTS model and its configuration from a directory.

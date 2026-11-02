@@ -1,3 +1,4 @@
+using ONNX_Runner.Services.Inference;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices; // REQUIRED FOR MemoryMarshal (fast flat access to rectangular arrays)

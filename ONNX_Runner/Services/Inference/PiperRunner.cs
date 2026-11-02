@@ -12,7 +12,7 @@ using System.Collections.Concurrent;
 using Microsoft.ML.OnnxRuntime.EP.WebGpu;
 #endif
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Inference;
 
 /// <summary>
 /// The core engine responsible for executing the Piper ONNX model.

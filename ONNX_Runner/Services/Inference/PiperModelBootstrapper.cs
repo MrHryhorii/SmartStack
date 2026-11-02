@@ -2,7 +2,7 @@ using ONNX_Runner.Services.Infrastructure;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Inference;
 
 /// <summary>
 /// Loads or downloads the reserved Piper fallback model after normal model loading fails.

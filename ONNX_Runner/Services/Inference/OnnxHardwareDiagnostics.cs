@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Runtime.InteropServices;
 using Microsoft.ML.OnnxRuntime;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Inference;
 
 /// <summary>
 /// Centralized startup diagnostics for ONNX Runtime execution devices.
