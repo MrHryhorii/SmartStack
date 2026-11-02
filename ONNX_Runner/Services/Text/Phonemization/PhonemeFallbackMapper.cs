@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Text;
 using ONNX_Runner.Models.Inference;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 /// <summary>
 /// Intelligent model-specific phonetic fallback system.

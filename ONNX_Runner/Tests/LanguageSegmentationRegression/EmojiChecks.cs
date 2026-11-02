@@ -1,3 +1,5 @@
+using ONNX_Runner.Services.Text;
+using ONNX_Runner.Services.Text.Phonemization;
 using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;

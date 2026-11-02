@@ -4,7 +4,7 @@ using System.Text;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Text;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text;
 
 /// <summary>
 /// Multilingual sentence chunker using one immutable shared punctuation and abbreviation catalog.

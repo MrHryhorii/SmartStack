@@ -1,5 +1,7 @@
 global using Microsoft.Extensions.Logging;
 
+using ONNX_Runner.Services.Text;
+using ONNX_Runner.Services.Text.Phonemization;
 using ONNX_Runner.Services.Infrastructure;
 using System.Globalization;
 using System.Text.Json;

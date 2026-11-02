@@ -1,7 +1,7 @@
 using System.Text;
 using ONNX_Runner.Models.Text;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 public partial class EspeakWrapper
 {

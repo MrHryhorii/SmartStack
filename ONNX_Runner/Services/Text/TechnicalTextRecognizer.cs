@@ -2,7 +2,7 @@ using System.Buffers;
 using System.Globalization;
 using ONNX_Runner.Models.Text;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text;
 
 /// <summary>
 /// Recognizes technical syntax independently of statistical language detection.

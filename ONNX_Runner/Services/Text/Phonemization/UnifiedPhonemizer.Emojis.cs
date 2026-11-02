@@ -1,7 +1,9 @@
+using ONNX_Runner.Models.Text;
+using ONNX_Runner.Services.Text;
 using System.Collections.Concurrent;
 using System.Text;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 public partial class UnifiedPhonemizer
 {

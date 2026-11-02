@@ -1,3 +1,5 @@
+using ONNX_Runner.Services.Text;
+using ONNX_Runner.Services.Text.Phonemization;
 using ONNX_Runner.Models.Audio;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;

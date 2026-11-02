@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Text;
 using ONNX_Runner.Models.Text;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text;
 
 internal static class EmojiTextRecognizer
 {

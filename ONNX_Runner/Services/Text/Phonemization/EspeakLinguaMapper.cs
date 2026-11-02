@@ -1,6 +1,6 @@
 using Lingua;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 /// <summary>
 /// Acts as a translation layer between eSpeak-ng language codes and the Lingua language detection library.

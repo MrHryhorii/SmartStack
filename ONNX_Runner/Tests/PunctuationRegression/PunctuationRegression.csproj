@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../Services/DynamicPunctuationMapper.cs" Link="DynamicPunctuationMapper.cs" />
+    <Compile Include="../../Services/Text/Phonemization/DynamicPunctuationMapper.cs" Link="DynamicPunctuationMapper.cs" />
     <Compile Include="../../Models/Inference/PiperConfig.cs" Link="PiperConfig.cs" />
     <Compile Include="../../Models/Text/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
   </ItemGroup>

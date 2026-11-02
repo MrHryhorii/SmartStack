@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 public partial class EspeakWrapper
 {

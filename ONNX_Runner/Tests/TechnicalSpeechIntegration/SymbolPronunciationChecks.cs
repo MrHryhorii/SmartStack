@@ -1,3 +1,4 @@
+using ONNX_Runner.Services.Text.Phonemization;
 using System.Text;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -228,7 +229,7 @@ internal static class SymbolPronunciationChecks
     }
 }
 
-namespace ONNX_Runner.Services
+namespace ONNX_Runner.Services.Text.Phonemization
 {
     public partial class EspeakWrapper
     {

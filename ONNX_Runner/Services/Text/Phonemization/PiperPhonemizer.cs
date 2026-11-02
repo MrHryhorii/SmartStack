@@ -1,7 +1,7 @@
 using ONNX_Runner.Models.Inference;
 using System.Globalization;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 public interface IPhonemizer
 {

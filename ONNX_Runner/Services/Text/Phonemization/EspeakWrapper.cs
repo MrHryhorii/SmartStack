@@ -1,7 +1,7 @@
 using ONNX_Runner.Services.Infrastructure;
 using System.Runtime.InteropServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 /// <summary>
 /// A lightweight C# wrapper for the native C/C++ espeak-ng library.

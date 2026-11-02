@@ -1,5 +1,7 @@
 global using Microsoft.Extensions.Logging;
 
+using ONNX_Runner.Services.Text;
+using ONNX_Runner.Services.Text.Phonemization;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging.Abstractions;

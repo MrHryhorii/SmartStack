@@ -1,7 +1,7 @@
 using System.Globalization;
 using System.Text;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 /// <summary>
 /// Preserves word boundaries when eSpeak returns separate native phoneme fragments.

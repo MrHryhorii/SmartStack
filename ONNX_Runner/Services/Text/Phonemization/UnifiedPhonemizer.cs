@@ -1,3 +1,5 @@
+using ONNX_Runner.Models.Text;
+using ONNX_Runner.Services.Text;
 using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
@@ -6,7 +8,7 @@ using System.Text.RegularExpressions;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 /// <summary>
 /// Central orchestrator for phonetic transcription. Integrates language detection,

@@ -6,7 +6,7 @@ using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Models.Text;
 using PunctuationKind = ONNX_Runner.Models.Text.TextChunkerRules.PunctuationKind;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 /// <summary>
 /// Normalizes orthographic punctuation against the exact punctuation inventory exposed by

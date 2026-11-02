@@ -117,7 +117,7 @@ internal static class RequestAdapterChecks
             check($"Positive emergency chunk limit {limit} is honored", () =>
             {
                 const string text = "A long ordinary sentence contains words and continues through the final clause.";
-                var chunks = new ONNX_Runner.Services.TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(text);
+                var chunks = new ONNX_Runner.Services.Text.TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(text);
                 Require(chunks.Count > 1 && chunks.All(chunk => chunk.Text.TrimEnd('-').Length <= limit), "Positive limit was silently replaced.");
                 Require(chunks.Count(chunk => chunk.IsSentenceFinished) == 1 && chunks[^1].IsSentenceFinished, "Emergency cuts became sentence boundaries.");
             });
@@ -127,8 +127,8 @@ internal static class RequestAdapterChecks
             check($"Invalid chunk limit {limit} falls back to the declared default", () =>
             {
                 string text = string.Join(' ', Enumerable.Repeat("An ordinary word", 18)) + ".";
-                var fallback = new ONNX_Runner.Services.TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(text);
-                var declared = new ONNX_Runner.Services.TextChunker(new ChunkerSettings()).Split(text);
+                var fallback = new ONNX_Runner.Services.Text.TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(text);
+                var declared = new ONNX_Runner.Services.Text.TextChunker(new ChunkerSettings()).Split(text);
                 Require(fallback.SequenceEqual(declared), "Invalid limit used a different undocumented default.");
             });
         }

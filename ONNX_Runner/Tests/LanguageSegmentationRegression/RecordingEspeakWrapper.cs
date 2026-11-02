@@ -1,4 +1,4 @@
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Text.Phonemization;
 
 // Test-only boundary spy. The real text pipeline calls this in place of the native
 // eSpeak bridge; returning the core unchanged exposes punctuation and spacing decisions.

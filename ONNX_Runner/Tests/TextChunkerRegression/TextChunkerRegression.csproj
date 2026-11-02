@@ -6,11 +6,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../Services/TextChunker.cs" Link="TextChunker.cs" />
-    <Compile Include="../../Services/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
+    <Compile Include="../../Services/Text/TextChunker.cs" Link="TextChunker.cs" />
+    <Compile Include="../../Services/Text/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Models/Configuration/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
     <Compile Include="../../Models/Text/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
     <Compile Include="../../Models/Text/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
-    <Compile Include="../../Services/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
+    <Compile Include="../../Services/Text/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
   </ItemGroup>
 </Project>
