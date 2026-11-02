@@ -1,3 +1,4 @@
+using ONNX_Runner.Services.Audio.Spatial;
 using ONNX_Runner.Services.Audio.Effects;
 using ONNX_Runner.Services.Text;
 using ONNX_Runner.Services.Audio.Encoding;

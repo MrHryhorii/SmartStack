@@ -7,7 +7,7 @@
 // Modified 2026-10-31: coefficient copying supports filter updates without clearing delay state.
 using System.Runtime.CompilerServices;
 
-namespace ONNX_Runner.Services.Spatial;
+namespace ONNX_Runner.Services.Audio.Spatial;
 
 /// <summary>EFX shelf gain is the response at the reference frequency, not the asymptotic shelf gain.</summary>
 internal struct SpatialBiquad

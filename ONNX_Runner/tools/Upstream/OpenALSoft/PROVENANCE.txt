@@ -5,7 +5,7 @@ Original reverb copyright (C) 2008-2017 Chris Robinson and Christopher Fitzgeral
 Original echo copyright (C) 2009 Chris Robinson.
 Original source license: LGPL-2.0-or-later.
 
-The C# adaptations in Services/Spatial are distributed under GPL-3.0-or-later
+The C# adaptations in Services/Audio/Spatial are distributed under GPL-3.0-or-later
 using the option in LGPL version 2 section 3, consistently with this project.
 Adaptation date: 2026-10-31. The original author notices are retained.
 The preserved C++ excerpts retain their original license and notices.

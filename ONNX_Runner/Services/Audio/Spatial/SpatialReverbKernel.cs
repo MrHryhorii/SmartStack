@@ -6,7 +6,7 @@
 // Modified 2026-10-31: integrated into the Tsubaki spatial service namespace.
 using System.Runtime.CompilerServices;
 
-namespace ONNX_Runner.Services.Spatial;
+namespace ONNX_Runner.Services.Audio.Spatial;
 
 /// <summary>
 /// Request-local mono reverb primitives: early reflections and a four-line modulated FDN.

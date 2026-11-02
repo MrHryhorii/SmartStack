@@ -5,7 +5,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using ONNX_Runner.Models.Audio;
 using ONNX_Runner.Services;
-using ONNX_Runner.Services.Spatial;
+using ONNX_Runner.Services.Audio.Spatial;
 
 var checks = new List<object>();
 var measurements = new List<object>();

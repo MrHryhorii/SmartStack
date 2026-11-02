@@ -1,10 +1,9 @@
 using ONNX_Runner.Services.Audio;
 using ONNX_Runner.Models.Audio;
-using ONNX_Runner.Services.Spatial;
 using System.Runtime.CompilerServices;
 using NAudio.Dsp;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Spatial;
 
 /// <summary>
 /// Server-side spatial acoustics engine.

@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // This adapted copy uses GPL-3.0-or-later under LGPL-2.0 section 3; see LICENSE.
 // Modified 2026-10-31: integrated into the Tsubaki spatial service namespace.
-namespace ONNX_Runner.Services.Spatial;
+namespace ONNX_Runner.Services.Audio.Spatial;
 
 /// <summary>Two sequential echo taps; feedback is taken from the second tap and damped.</summary>
 public readonly record struct SpatialEchoParameters(float DelaySeconds, float AdditionalDelaySeconds, float Damping, float Feedback);

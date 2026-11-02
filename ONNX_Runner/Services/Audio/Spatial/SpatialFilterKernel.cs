@@ -4,7 +4,7 @@
 // This adapted copy uses GPL-3.0-or-later under LGPL-2.0 section 3; see LICENSE.
 // Modified 2026-10-31: integrated into the Tsubaki spatial service namespace.
 // Modified 2026-10-31: low-pass cutoff updates retain the existing filter history.
-namespace ONNX_Runner.Services.Spatial;
+namespace ONNX_Runner.Services.Audio.Spatial;
 
 public enum SpatialFilterType { HighShelf, LowShelf, Peaking, LowPass, HighPass, BandPass }
 
