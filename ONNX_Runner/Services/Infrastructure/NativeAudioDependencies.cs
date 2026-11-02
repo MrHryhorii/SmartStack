@@ -2,7 +2,7 @@ using ONNX_Runner.Models.Audio;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Infrastructure;
 
 /// <summary>
 /// Process-wide native audio capability snapshot.

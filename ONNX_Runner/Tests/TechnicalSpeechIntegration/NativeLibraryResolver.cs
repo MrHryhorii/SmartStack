@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Infrastructure;
 
 // Test-only resolver that loads the exact native DLL from this repository.
 internal static class NativeLibraryResolver

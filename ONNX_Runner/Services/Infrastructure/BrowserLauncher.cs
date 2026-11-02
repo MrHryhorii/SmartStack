@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Infrastructure;
 
 public static class BrowserLauncher
 {

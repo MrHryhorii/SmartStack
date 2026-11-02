@@ -2,7 +2,7 @@ using System.Globalization;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Logging.Console;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Infrastructure;
 
 /// <summary>
 /// Carries the current synthesis request identifier across async continuations and Task.Run.

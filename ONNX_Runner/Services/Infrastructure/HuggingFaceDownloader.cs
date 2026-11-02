@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Infrastructure;
 
 /// <summary>
 /// A universal utility for automatically downloading AI models from Hugging Face.

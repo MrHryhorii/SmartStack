@@ -1,5 +1,6 @@
 global using Microsoft.Extensions.Logging;
 
+using ONNX_Runner.Services.Infrastructure;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
