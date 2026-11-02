@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Effects;
 
 /// <summary>
 /// Fixed voice-radio filtering for strong, clean reception.

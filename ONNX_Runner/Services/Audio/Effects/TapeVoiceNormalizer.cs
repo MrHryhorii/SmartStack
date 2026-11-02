@@ -1,7 +1,7 @@
 using ONNX_Runner.Services.Audio.Levels;
 using System.Runtime.CompilerServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Effects;
 
 /// <summary>Slow cassette voice-level correction; additive hiss never enters its detector.</summary>
 internal struct TapeVoiceNormalizer

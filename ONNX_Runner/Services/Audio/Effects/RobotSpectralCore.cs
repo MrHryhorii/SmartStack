@@ -3,7 +3,7 @@
 using ONNX_Runner.Services.Audio;
 using NAudio.Dsp;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Effects;
 
 /// <summary>Full-wet zero-phase overlap-add robotization using NAudio's reusable real FFT.</summary>
 internal sealed class RobotSpectralCore

@@ -7,7 +7,7 @@ using System.Numerics;
 using System.Buffers;
 using NAudio.Dsp;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Effects;
 
 /// <summary>
 /// Server-side audio effects engine for TTS post-processing.

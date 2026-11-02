@@ -1,6 +1,6 @@
 using System.Runtime.CompilerServices;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Effects;
 
 /// <summary>Single-precision RBJ biquad for the low-level cassette noise path only.</summary>
 internal struct TapeNoiseFilter

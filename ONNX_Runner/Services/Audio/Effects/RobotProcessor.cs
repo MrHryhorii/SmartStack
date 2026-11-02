@@ -1,6 +1,6 @@
 using ONNX_Runner.Services.Audio.Levels;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Effects;
 
 /// <summary>Request-local robotization with aligned dry PCM, shared level matching and exact completion.</summary>
 internal sealed class RobotProcessor : IDisposable

@@ -1,7 +1,7 @@
 using ONNX_Runner.Services.Audio.Levels;
 using Signalsmith;
 
-namespace ONNX_Runner.Services;
+namespace ONNX_Runner.Services.Audio.Effects;
 
 /// <summary>Request-local fixed-interval harmony with aligned dry audio and preserved formants.</summary>
 internal sealed class HarmonizerProcessor : IDisposable

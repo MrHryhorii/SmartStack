@@ -9,7 +9,7 @@ using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using NAudio.Dsp;
-using NewEngine = ONNX_Runner.Services.AudioEffectsEngine;
+using NewEngine = ONNX_Runner.Services.Audio.Effects.AudioEffectsEngine;
 using NewEffect = ONNX_Runner.Models.Audio.VoiceEffectType;
 using NewEnvironment = ONNX_Runner.Models.Audio.SpatialEnvironment;
 using Volume = ONNX_Runner.Services.Audio.Levels.VolumeShifter;
