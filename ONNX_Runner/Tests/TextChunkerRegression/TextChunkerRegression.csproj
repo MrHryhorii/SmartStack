@@ -10,6 +10,7 @@
     <Compile Include="../../Services/Text/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Models/Configuration/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
     <Compile Include="../../Models/Text/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
+    <Compile Include="../../Models/Text/TextChunkerDefaults.cs" Link="TextChunkerDefaults.cs" />
     <Compile Include="../../Models/Text/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
     <Compile Include="../../Services/Text/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
   </ItemGroup>

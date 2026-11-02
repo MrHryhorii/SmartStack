@@ -9,5 +9,6 @@
     <Compile Include="../../Services/Text/Phonemization/DynamicPunctuationMapper.cs" Link="DynamicPunctuationMapper.cs" />
     <Compile Include="../../Models/Inference/PiperConfig.cs" Link="PiperConfig.cs" />
     <Compile Include="../../Models/Text/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
+    <Compile Include="../../Models/Text/TextChunkerDefaults.cs" Link="TextChunkerDefaults.cs" />
   </ItemGroup>
 </Project>

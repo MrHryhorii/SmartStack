@@ -10,6 +10,7 @@
     <PackageReference Include="SearchPioneer.Lingua" Version="2.0.0" />
     <Compile Include="../../Models/Configuration/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
     <Compile Include="../../Models/Text/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
+    <Compile Include="../../Models/Text/TextChunkerDefaults.cs" Link="TextChunkerDefaults.cs" />
     <Compile Include="../../Models/Configuration/PhonemizerSettings.cs" Link="PhonemizerSettings.cs" />
     <Compile Include="../../Services/Text/TextChunker.cs" Link="TextChunker.cs" />
     <Compile Include="../../Services/Text/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
