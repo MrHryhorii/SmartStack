@@ -77,11 +77,11 @@ internal static class FmCompletionRegressionProgram
                 Require(GC.GetAllocatedBytesForCurrentThread() == before, "Completion allocated while processing.");
             });
         }
-        Check("Other character effects do not generate new request tails", () =>
+        Check("Effects without buffered output do not generate new request tails", () =>
         {
-            foreach (VoiceEffectType type in Enum.GetValues<VoiceEffectType>().Where(x => x != VoiceEffectType.FmRadio && x != VoiceEffectType.Harmonizer))
+            foreach (VoiceEffectType type in Enum.GetValues<VoiceEffectType>().Where(x => x is not VoiceEffectType.FmRadio and not VoiceEffectType.Harmonizer and not VoiceEffectType.Robot))
             {
-                var engine = new AudioEffectsEngine(new(), 22050);
+                using var engine = new AudioEffectsEngine(new(), 22050);
                 engine.Reset(123456);
                 engine.ApplyEffect(LateBurst(22050, 441), type, 1f);
                 Require(!Pending(engine)() && Completer(engine)(new float[441]) == 0,

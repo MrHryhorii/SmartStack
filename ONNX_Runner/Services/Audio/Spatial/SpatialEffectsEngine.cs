@@ -28,15 +28,15 @@ public class SpatialEffectsEngine
     // FREEVERB PRIMITIVES
     // =========================================================================
 
-    private readonly CombFilter[] _combs;
-    private readonly AllPassFilter[] _allPasses;
-    private readonly int[] _combDelaySamples;
+    private CombFilter[] _combs = [];
+    private AllPassFilter[] _allPasses = [];
+    private int[] _combDelaySamples = [];
 
     // =========================================================================
     // DELAY BUFFERS
     // =========================================================================
 
-    private readonly DelayBuffer _innerVoiceMicroDelay;
+    private DelayBuffer? _innerVoiceMicroDelay;
 
     // =========================================================================
     // EQ FILTERS
@@ -85,36 +85,45 @@ public class SpatialEffectsEngine
     // CONSTRUCTOR
     // =========================================================================
 
-    /// <summary>Allocates sample-rate-scaled reflection, comb, and all-pass state for one synthesis request.</summary>
+    /// <summary>Stores the rate and tail metadata; effect-specific delay storage is created on demand.</summary>
     public SpatialEffectsEngine(int sampleRate)
     {
         _sampleRate = sampleRate;
         _maximumTailSamples = checked(sampleRate * 4);
+        _reverbSilenceWindowSamples = InnerVoiceDelaySamples(1617) + InnerVoiceDelaySamples(225)
+            + InnerVoiceDelaySamples(341) + InnerVoiceDelaySamples(441) + InnerVoiceDelaySamples(556);
+    }
 
-        float scale = sampleRate / 44100f;
-        // Scales a reference delay length and chooses a prime length to reduce coincident reflections.
-        int ScaleToPrime(int baseSize) => GetNextPrime((int)(baseSize * scale));
+    // Only InnerVoice uses this legacy comb bank; all other reverbs own their profile kernels.
+    private void EnsureInnerVoiceState()
+    {
+        if (_innerVoiceMicroDelay != null) return;
 
         int[] combSizes =
         [
-            ScaleToPrime(1116), ScaleToPrime(1188),
-            ScaleToPrime(1277), ScaleToPrime(1356),
-            ScaleToPrime(1422), ScaleToPrime(1491),
-            ScaleToPrime(1557), ScaleToPrime(1617)
+            InnerVoiceDelaySamples(1116), InnerVoiceDelaySamples(1188),
+            InnerVoiceDelaySamples(1277), InnerVoiceDelaySamples(1356),
+            InnerVoiceDelaySamples(1422), InnerVoiceDelaySamples(1491),
+            InnerVoiceDelaySamples(1557), InnerVoiceDelaySamples(1617)
         ];
+        var combs = new CombFilter[combSizes.Length];
+        for (int i = 0; i < combSizes.Length; i++) combs[i] = new CombFilter(combSizes[i]);
+        AllPassFilter[] allPasses =
+        [
+            new(InnerVoiceDelaySamples(225)), new(InnerVoiceDelaySamples(341)),
+            new(InnerVoiceDelaySamples(441)), new(InnerVoiceDelaySamples(556))
+        ];
+        var microDelay = new DelayBuffer(SamplesFor(SpatialProfiles.InnerVoice.DelayCapacityMs));
 
+        // Publish complete managed state only after every allocation succeeds.
         _combDelaySamples = combSizes;
-        _combs = new CombFilter[combSizes.Length];
-        for (int i = 0; i < combSizes.Length; i++)
-            _combs[i] = new CombFilter(combSizes[i]);
-
-        int allPassA = ScaleToPrime(225), allPassB = ScaleToPrime(341);
-        int allPassC = ScaleToPrime(441), allPassD = ScaleToPrime(556);
-        _allPasses = [new(allPassA), new(allPassB), new(allPassC), new(allPassD)];
-        _reverbSilenceWindowSamples = combSizes[^1] + allPassA + allPassB + allPassC + allPassD;
-
-        _innerVoiceMicroDelay = new DelayBuffer(SamplesFor(SpatialProfiles.InnerVoice.DelayCapacityMs));
+        _combs = combs;
+        _allPasses = allPasses;
+        _innerVoiceMicroDelay = microDelay;
     }
+
+    private int InnerVoiceDelaySamples(int referenceSamples)
+        => GetNextPrime((int)(referenceSamples * (_sampleRate / 44100f)));
 
     // =========================================================================
     // HELPERS
@@ -173,7 +182,7 @@ public class SpatialEffectsEngine
         foreach (var c in _combs) c.Clear();
         foreach (var a in _allPasses) a.Clear();
 
-        _innerVoiceMicroDelay.Clear();
+        _innerVoiceMicroDelay?.Clear();
 
         _innerVoiceLpState = 0f;
         if (_current == SpatialEnvironment.InnerVoice && _hasReverbEq)
@@ -230,7 +239,7 @@ public class SpatialEffectsEngine
                 for (int i = 0; i < buffer.Length; i++)
                 {
                     float input = Dsp.KillDenormal(buffer[i]);
-                    _innerVoiceMicroDelay.Write(input);
+                    _innerVoiceMicroDelay!.Write(input);
                     float delayed = _innerVoiceMicroDelay.Read(_innerVoiceMicroDelaySamples);
                     float presence = input + delayed * _innerVoicePresenceGain;
                     _innerVoiceLpState += _innerVoiceLpCoeff * (presence - _innerVoiceLpState);
@@ -413,6 +422,7 @@ public class SpatialEffectsEngine
 
             // A quiet, dark diffuse tail supports the authored inner-monologue coloration.
             case SpatialEnvironment.InnerVoice:
+                EnsureInnerVoiceState();
                 _innerVoicePreparedAmount = float.NaN;
                 ConfigureCombsByRt60(SpatialProfiles.InnerVoice.DecaySeconds, SpatialProfiles.InnerVoice.Damping);
                 _reverbHpFilter = BiQuadFilter.HighPassFilter(_sampleRate, Safe(SpatialProfiles.InnerVoice.ReverbLowCutHz), SpatialProfiles.InnerVoice.FilterQ);
