@@ -412,12 +412,17 @@ builder.Services.AddCors(options =>
         }
     });
 });
+var startupWarmup = new StartupWarmupState();
+builder.Services.AddSingleton(startupWarmup);
 // Protect the API from spam and DDoS attacks using IP-based limits
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy("ip_limit", httpContext =>
-        RateLimitPartition.GetFixedWindowLimiter(
+    {
+        if (startupWarmup.IsStartupRequest(httpContext.Request))
+            return RateLimitPartition.GetNoLimiter("startup-warmup");
+        return RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             factory: partition => new FixedWindowRateLimiterOptions
             {
@@ -426,7 +431,8 @@ builder.Services.AddRateLimiter(options =>
                 PermitLimit = rateLimitConfig.PermitLimit,
                 Window = TimeSpan.FromSeconds(rateLimitConfig.WindowSeconds),
                 QueueLimit = rateLimitConfig.QueueLimit
-            }));
+            });
+    });
 });
 // =================================================================
 // DYNAMIC REQUEST QUEUE (REQUEST CONCURRENCY GATE)
@@ -600,61 +606,12 @@ if (!string.IsNullOrEmpty(url))
         .Replace("0.0.0.0", "localhost")
         .Replace("+", "localhost");
 
-    // Silent warm-up request to pre-compile JIT, ONNX shaders, serializers, and DSP
-    try
+    await StartupWarmup.RunAsync(baseUrl, app.Services, nativeAudioDependencies.Mp3Available,
+        startupWarmup, app.Lifetime.ApplicationStopping);
+    if (app.Lifetime.ApplicationStopping.IsCancellationRequested)
     {
-        Console.ForegroundColor = ConsoleColor.DarkGray;
-        Console.WriteLine("\n[SYSTEM] Initiating pipeline warm-up sequence...");
-        Console.ResetColor();
-        using var client = new HttpClient();
-        // Hit the Tsubaki endpoint with a maximized parameter payload to trigger
-        // the full middleware, JSON deserializers, DSP effects, and routing pipeline.
-        var warmupRequest = new
-        {
-            model = "tts-1",
-            input = "System warm-up sequence complete.",
-            voice = "female", // Triggers OpenVoice if present, falls back safely if not
-            response_format =
-                nativeAudioDependencies.Mp3Available
-                    ? "mp3"
-                    : "pcm",
-            speed = 1.0f,
-            stream = false,
-            noise_scale = 0.667f,
-            noise_w = 0.8f,
-            effect = "None",
-            effect_intensity = 1.0f,
-            environment = "None",
-            environment_intensity = 1.0f,
-            pitch = 1.0f,
-            volume = 1.0f,
-            language = "en", // Forces the language router to initialize
-            clone_intensity = 1.0f,
-            tone_temperature = 0.7f
-        };
-        using var content = new StringContent(
-            System.Text.Json.JsonSerializer.Serialize(warmupRequest),
-            System.Text.Encoding.UTF8,
-            "application/json"
-        );
-
-        // Dispatch the request to the local instance
-        using var response = await client.PostAsync($"{baseUrl}/tsbk/audio/speech", content);
-        if (response.IsSuccessStatusCode)
-        {
-            // Read the byte array to ensure the server streams the response, then immediately discard it for GC
-            _ = await response.Content.ReadAsByteArrayAsync();
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("[SYSTEM] Pipeline is fully operational. JIT and Shaders cached.");
-            Console.ResetColor();
-        }
-    }
-    catch (Exception ex)
-    {
-        // The warm-up sequence should never crash the server if network loopback fails
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine($"[WARNING] Warm-up sequence skipped: {ex.Message}");
-        Console.ResetColor();
+        await app.WaitForShutdownAsync();
+        return;
     }
     // Draw the ready banner and open the browser only after the pipeline is primed
     Console.WriteLine();
@@ -676,5 +633,6 @@ if (!string.IsNullOrEmpty(url))
         Console.ResetColor();
     }
 }
+startupWarmup.Complete();
 // Block the main thread so the server continues running until interrupted
 await app.WaitForShutdownAsync();

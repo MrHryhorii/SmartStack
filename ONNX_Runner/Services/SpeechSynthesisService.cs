@@ -21,7 +21,8 @@ public partial class SpeechSynthesisService(
     NativeAudioDependencies nativeAudioDependencies,
     ILogger<SpeechSynthesisService> logger)
 {
-    private static long s_requestSequence = -1;
+    private static long s_requestSequence;
+    private readonly StartupWarmupState? _startupWarmup = services.GetService<StartupWarmupState>();
     /// <summary>
     /// Executes one validated synthesis request under the shared concurrency limit.
     /// Assigns a lightweight process-local request ID and records queue/generation timing.
@@ -31,7 +32,8 @@ public partial class SpeechSynthesisService(
         HttpContext httpContext,
         CancellationToken cancellationToken)
     {
-        long requestId = Interlocked.Increment(ref s_requestSequence);
+        long requestId = _startupWarmup?.TryClaim(httpContext.Request, out long startupId) == true
+            ? startupId : Interlocked.Increment(ref s_requestSequence);
         long requestStartedTimestamp = Stopwatch.GetTimestamp();
         using var requestLogContext = RequestLogContext.Push(requestId);
 
