@@ -1207,7 +1207,7 @@ supplementary symbols and whitespace-separated code constructs are outside this 
 | `OpenVoiceGpuDeviceId`     | Hardware index (starting at `0`) of the GPU used for OpenVoice. See the WebGPU note below. |
 | `ForcePiperToCpu`          | Forces base Piper synthesis onto the CPU, including in GPU builds. Default: `false`. |
 
-> **WebGPU note:** Models running on WebGPU must use the same GPU within one server process. WebGPU's adapter order may differ from DirectML.
+> **WebGPU note:** Models running on WebGPU share one GPU within a server process. If cloning is enabled and their configured GPU IDs differ, Piper runs on CPU with a startup warning; OpenVoice keeps its configured GPU selection. WebGPU's adapter order may differ from DirectML.
 
 - **`RateLimitSettings`** — Provides basic per-IP request throttling by limiting how many requests are accepted within a fixed time window and how many excess requests may queue. It helps control accidental or abusive request bursts, but it is not a substitute for a reverse proxy, firewall, or network-level DDoS protection on a public deployment.
 

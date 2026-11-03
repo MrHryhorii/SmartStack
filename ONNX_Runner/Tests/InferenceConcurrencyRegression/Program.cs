@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.ML.OnnxRuntime;
 using ONNX_Runner.Models.Configuration;
@@ -73,8 +74,48 @@ try
             "Pool capacity changed after stress."));
 
     Type? provider = typeof(PiperRunner).Assembly.GetType("ONNX_Runner.Services.Inference.WebGpuExecutionProvider");
+    MethodInfo routing = typeof(PiperRunner).GetMethod("ShouldRunOnCpu", BindingFlags.NonPublic | BindingFlags.Static)!;
+    foreach (var (piperId, voiceId, cloning, forceCpu) in new[]
+    {
+        (0, 0, true, false), (2, 2, true, false),
+        (0, 1, true, false), (1, 0, true, false),
+        (0, 1, false, false), (1, 0, false, false),
+        (-1, 0, true, false), (0, -1, true, false), (-1, 2, true, false),
+        (0, 0, true, true), (0, 1, true, true), (0, 1, false, true)
+    })
+    {
+        Check($"Startup routing: Piper={piperId}, OpenVoice={voiceId}, cloning={cloning}, forced CPU={forceCpu}", () =>
+        {
+            var hardware = new HardwareSettings { PiperGpuDeviceId = piperId, OpenVoiceGpuDeviceId = voiceId, ForcePiperToCpu = forceCpu };
+            string original = JsonSerializer.Serialize(hardware);
+            var logger = new WarningLogger();
+            bool expected = forceCpu || provider is not null && cloning && Math.Max(0, piperId) != Math.Max(0, voiceId);
+            bool actual = (bool)routing.Invoke(null, [hardware, cloning, logger])!;
+            Require(actual == expected, "Startup routing selected the wrong backend.");
+            Require(logger.Warnings.Count == (expected ? 1 : 0), "Expected exactly one warning for a CPU override.");
+            Require(JsonSerializer.Serialize(hardware) == original, "Startup routing mutated shared hardware settings.");
+            if (forceCpu) Require(logger.Warnings[0].Contains("ForcePiperToCpu", StringComparison.Ordinal), "Manual CPU override lost priority.");
+        });
+    }
     if (provider is not null)
     {
+        Check("Mismatched WebGPU adapters initialize Piper directly on CPU", () =>
+        {
+            var hardware = new HardwareSettings { PiperGpuDeviceId = 0, OpenVoiceGpuDeviceId = 1 };
+            var logger = new WarningLogger();
+            using var guarded = new PiperRunner(piperPath, new PiperConfig(), new FixturePhonemizer(),
+                new OnnxSettings { Cpu = { IntraOpNumThreads = 1 } }, hardware, new ModelSettings(), logger,
+                openVoiceEnabled: true);
+            Require(!guarded.IsUsingGPU && guarded.ConcurrencyCapacity == int.MaxValue && !Get<bool>(guarded, "_isUsingPool"),
+                "Piper did not use the normal shared CPU path.");
+            Require(logger.Warnings.Count == 1 && logger.Warnings[0].Contains("GPU indexes differ", StringComparison.Ordinal),
+                "GPU initialization was attempted or the mismatch warning is missing.");
+            Require(!hardware.ForcePiperToCpu && hardware.PiperGpuDeviceId == 0 && hardware.OpenVoiceGpuDeviceId == 1,
+                "The OpenVoice GPU selection or CPU setting was changed.");
+            var result = guarded.SynthesizeAudioRaw("13");
+            try { Require(result.Length == 3 && result.Buffer.AsSpan(0, 3).SequenceEqual(new float[] { 13, 14, 15 }), "Guarded CPU inference failed."); }
+            finally { ArrayPool<float>.Shared.Return(result.Buffer); }
+        });
         MethodInfo validate = provider.GetMethod("ValidateConcurrency", BindingFlags.NonPublic | BindingFlags.Static)!;
         foreach (string version in new[] { "1.31.0", "1.31.1", "1.32.0-dev", "2.0.0" })
             Check($"WebGPU accepts core {version}", () => validate.Invoke(null, [version, null]));
@@ -82,8 +123,14 @@ try
             Check($"WebGPU rejects core {version}", () => Reject(() => validate.Invoke(null, [version, null])));
         Check("Legacy override cannot overlap the two runners", () => Reject(() => validate.Invoke(null, ["1.31.1", "1"])));
     }
-    Console.WriteLine(JsonSerializer.Serialize(new { Checks = checks, Failures = failures,
-        ConcurrentRequestsPerRunner = 200, PoolSize = 3, GpuPerformanceTested = false }));
+    Console.WriteLine(JsonSerializer.Serialize(new
+    {
+        Checks = checks,
+        Failures = failures,
+        ConcurrentRequestsPerRunner = 200,
+        PoolSize = 3,
+        GpuPerformanceTested = false
+    }));
     return failures == 0 ? 0 : 1;
 
     void RunPiper(int value)
@@ -164,5 +211,17 @@ sealed class FixturePhonemizer : IPhonemizer
     {
         long value = long.Parse(phonemes, System.Globalization.CultureInfo.InvariantCulture);
         return [value, value + 1, value + 2];
+    }
+}
+
+sealed class WarningLogger : ILogger<PiperRunner>
+{
+    public List<string> Warnings { get; } = [];
+    public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+    public bool IsEnabled(LogLevel logLevel) => true;
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+        Func<TState, Exception?, string> formatter)
+    {
+        if (logLevel >= LogLevel.Warning) Warnings.Add(formatter(state, exception));
     }
 }

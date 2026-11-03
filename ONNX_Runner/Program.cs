@@ -207,7 +207,8 @@ if (piperConfig != null && piperModelPath != null)
      onnxConfig,
      hardwareConfig,
      modelConfig,
-     bootstrapLoggerFactory.CreateLogger<PiperRunner>());
+     bootstrapLoggerFactory.CreateLogger<PiperRunner>(),
+     openVoiceEnabled: clonerConfig.EnableCloning);
     builder.Services.AddSingleton(runner);
 
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig, chunkerRules);

@@ -47,6 +47,20 @@ public partial class PiperRunner : IDisposable
         HardwareSettings hwSettings,
         ModelSettings modelSettings,
         ILogger<PiperRunner>? logger)
+        : this(modelPath, config, phonemizer, onnxSettings, hwSettings, modelSettings, logger, openVoiceEnabled: false)
+    {
+    }
+
+    /// <summary>Reserves the shared WebGPU adapter for enabled OpenVoice when the configured GPU indexes differ.</summary>
+    public PiperRunner(
+        string modelPath,
+        PiperConfig config,
+        IPhonemizer phonemizer,
+        OnnxSettings onnxSettings,
+        HardwareSettings hwSettings,
+        ModelSettings modelSettings,
+        ILogger<PiperRunner>? logger,
+        bool openVoiceEnabled)
     {
         ArgumentNullException.ThrowIfNull(logger);
 
@@ -54,7 +68,7 @@ public partial class PiperRunner : IDisposable
         _config = config;
         _speakerId = ResolveSpeakerId(config, modelSettings, logger);
 
-        var initResult = InitializeSession(modelPath, onnxSettings, hwSettings, logger);
+        var initResult = InitializeSession(modelPath, onnxSettings, hwSettings, logger, openVoiceEnabled);
 
         _sharedSession = initResult.SharedSession;
         _isolatedSessionPool = initResult.SessionPool;
@@ -108,17 +122,13 @@ public partial class PiperRunner : IDisposable
     /// Dynamically selects the best available hardware based on compile-time flags.
     /// Returns a routing configuration determining if the engine should use a Shared Session or an Object Pool.
     /// </summary>
-    private static (InferenceSession? SharedSession, ConcurrentQueue<InferenceSession>? SessionPool, bool IsUsingGPU, bool IsUsingPool, int Capacity) InitializeSession(string modelPath, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<PiperRunner> logger)
+    private static (InferenceSession? SharedSession, ConcurrentQueue<InferenceSession>? SessionPool, bool IsUsingGPU, bool IsUsingPool, int Capacity) InitializeSession(string modelPath, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<PiperRunner> logger, bool openVoiceEnabled)
     {
         // ====================================================================
         // GPU ACCELERATION BLOCK (Compiled when USE_CUDA, USE_DML, or USE_WEBGPU is set)
         // ====================================================================
 #if USE_CUDA || USE_DML || USE_WEBGPU
-        if (hwSettings.ForcePiperToCpu)
-        {
-            logger.LogWarning("[HARDWARE] Config override: ForcePiperToCpu is TRUE. Piper model execution is forcefully redirected to the CPU.");
-        }
-        else
+        if (!ShouldRunOnCpu(hwSettings, openVoiceEnabled, logger))
         {
             // Protection against negative numbers in config
             int startingDeviceId = Math.Max(0, hwSettings.PiperGpuDeviceId);
@@ -218,6 +228,29 @@ public partial class PiperRunner : IDisposable
 
         // CPU supports concurrent execution on a single session.
         return (fallbackSession, null, false, false, int.MaxValue);
+    }
+
+    /// <summary>Resolves Piper's startup CPU override without changing the shared hardware configuration.</summary>
+    private static bool ShouldRunOnCpu(HardwareSettings settings, bool openVoiceEnabled, ILogger<PiperRunner> logger)
+    {
+        if (settings.ForcePiperToCpu)
+        {
+            logger.LogWarning("[HARDWARE] Config override: ForcePiperToCpu is TRUE. Piper model execution is forcefully redirected to the CPU.");
+            return true;
+        }
+
+#if USE_WEBGPU
+        if (!openVoiceEnabled) return false;
+
+        int piperDeviceId = Math.Max(0, settings.PiperGpuDeviceId);
+        int openVoiceDeviceId = Math.Max(0, settings.OpenVoiceGpuDeviceId);
+        if (piperDeviceId == openVoiceDeviceId) return false;
+
+        LogWebGpuDeviceMismatch(logger, piperDeviceId, openVoiceDeviceId);
+        return true;
+#else
+        return false;
+#endif
     }
 
     /// <summary>
@@ -441,4 +474,8 @@ public partial class PiperRunner : IDisposable
     /// <summary>Logs successful Piper loading on the selected WebGPU device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded on GPU (WebGPU, Dawn adapter index: {AdapterIndex}, Sessions: {PoolSize})")]
     private static partial void LogWebGpuLoaded(ILogger logger, int adapterIndex, int poolSize);
+
+    /// <summary>Reports the automatic CPU routing used to preserve OpenVoice's configured WebGPU adapter.</summary>
+    [LoggerMessage(Level = LogLevel.Warning, Message = "[HARDWARE] WebGPU GPU indexes differ (Piper: {PiperDeviceId}, OpenVoice: {OpenVoiceDeviceId}); Piper will run on CPU.")]
+    private static partial void LogWebGpuDeviceMismatch(ILogger logger, int piperDeviceId, int openVoiceDeviceId);
 }

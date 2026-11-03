@@ -27,6 +27,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "RobotRegression", "Tests\Ro
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SpatialTailRegression", "Tests\SpatialTailRegression\SpatialTailRegression.csproj", "{109BB6EF-8AF7-4BB0-9207-1126ABD3C55F}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "InferenceConcurrencyRegression", "Tests\InferenceConcurrencyRegression\InferenceConcurrencyRegression.csproj", "{0926D46A-C22F-4EC4-8F48-0B8C07341D31}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -169,6 +171,18 @@ Global
 		{109BB6EF-8AF7-4BB0-9207-1126ABD3C55F}.Release|x64.Build.0 = Release|Any CPU
 		{109BB6EF-8AF7-4BB0-9207-1126ABD3C55F}.Release|x86.ActiveCfg = Release|Any CPU
 		{109BB6EF-8AF7-4BB0-9207-1126ABD3C55F}.Release|x86.Build.0 = Release|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Debug|x64.Build.0 = Debug|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Debug|x86.Build.0 = Debug|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Release|x64.ActiveCfg = Release|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Release|x64.Build.0 = Release|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Release|x86.ActiveCfg = Release|Any CPU
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -184,6 +198,7 @@ Global
 		{21FDB1BC-3A1C-4118-BA06-B914571F9954} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{7F96AF96-5FAA-4015-93E6-075387DA549B} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{109BB6EF-8AF7-4BB0-9207-1126ABD3C55F} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+		{0926D46A-C22F-4EC4-8F48-0B8C07341D31} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {EBC3DFD5-4F7A-4871-BB61-992145E4237A}
