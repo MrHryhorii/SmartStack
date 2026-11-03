@@ -24,6 +24,7 @@
     <Compile Include="../../Services/Text/Phonemization/EspeakPhonemePartJoiner.cs" Link="EspeakPhonemePartJoiner.cs" />
     <Compile Include="../../Services/Text/Phonemization/PiperPhonemizer.cs" Link="PiperPhonemizer.cs" />
     <Compile Include="../../Services/Text/Phonemization/PhonemeFallbackMapper.cs" Link="PhonemeFallbackMapper.cs" />
+    <Compile Include="../../Services/Text/Phonemization/PhonemeDecompositionCatalog.cs" Link="PhonemeDecompositionCatalog.cs" />
     <Compile Include="../../Models/Inference/PiperConfig.cs" Link="PiperConfig.cs" />
     <Compile Include="../../Services/Text/Phonemization/EspeakWrapper.cs" Link="EspeakWrapper.cs" />
     <Compile Include="../../Services/Text/Phonemization/EspeakWrapper.Characters.cs" Link="EspeakWrapper.Characters.cs" />
