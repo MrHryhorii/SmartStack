@@ -77,7 +77,8 @@ var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
     ("tokenizer/forced-single", () => detector.ProcessTextToLanguageTokens(plain, "en").Count, null),
     ("tokenizer/forced-technical", () => detector.ProcessTextToLanguageTokens(technical, "en").Count, null),
     ("tokenizer/forced-technical-sequence", () => detector.ProcessTextToLanguageTokens(technicalSequence, "en").Count, null),
-    ("tokenizer/automatic-single", () => detector.ProcessTextToLanguageTokens(plain).Count, null),
+    // One confident local verdict must not pay for a second whole-sentence detector pass.
+    ("tokenizer/automatic-single", () => detector.ProcessTextToLanguageTokens(plain).Count, 40_000),
     ("tokenizer/automatic-technical-sequence", () => detector.ProcessTextToLanguageTokens(technicalSequence).Count, null),
     ("tokenizer/script-only-single", () => scriptOnly.ProcessTextToLanguageTokens(plain).Count, null),
     ("tokenizer/script-only-technical-sequence", () => scriptOnly.ProcessTextToLanguageTokens(technicalSequence).Count, null)

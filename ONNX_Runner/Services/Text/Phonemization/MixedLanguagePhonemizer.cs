@@ -89,6 +89,13 @@ public partial class MixedLanguagePhonemizer
         string EspeakCode,
         double Confidence);
 
+    // Request-local state: consume PendingText once and retain even an unavailable verdict.
+    private struct SentenceAnalysis
+    {
+        public string? PendingText;
+        public SentenceLanguageContext Context;
+    }
+
     private readonly LanguageDetector? _detector;
     private readonly EspeakLinguaMapper _mapper;
     private readonly string _modelEspeakCode;
@@ -843,50 +850,16 @@ public partial class MixedLanguagePhonemizer
                 _modelEspeakParts);
         }
 
-        // SENTENCE-LEVEL CONTEXT DETECTOR
-        // One heavy Lingua pass determines the strongest language of the complete semantic sentence.
-        // A confident verdict stabilizes ambiguous same-script phrases after their local evidence
-        // has been checked; weak sentences fall through to phrase-level analysis.
-        SentenceLanguageContext? sentenceContext = null;
-        string sentenceAnalysis = resolvedForcedCode == null && _detector != null
-            ? GetSentenceAnalysisText(text)
-            : text;
-        if (resolvedForcedCode == null && _detector != null &&
-            CountLetters(sentenceAnalysis.AsSpan()) >= _minSentenceLength)
+        // A convincing local verdict does not use sentence context. Analyze the complete
+        // sentence only when ambiguous speech or an isolated technical token needs it.
+        var sentenceAnalysis = new SentenceAnalysis
         {
-            var sentenceConfidences = _detector.ComputeLanguageConfidenceValues(sentenceAnalysis);
-            Language bestSentenceLanguage = Language.Unknown;
-            double bestSentenceConfidence = -1;
+            PendingText = resolvedForcedCode == null && _detector != null ? text : null,
+            Context = new SentenceLanguageContext(Language.Unknown, string.Empty, 0)
+        };
 
-            foreach (var confidence in sentenceConfidences)
-            {
-                if (confidence.Value <= bestSentenceConfidence)
-                {
-                    continue;
-                }
-
-                bestSentenceLanguage = confidence.Key;
-                bestSentenceConfidence = confidence.Value;
-            }
-
-            if (bestSentenceLanguage != Language.Unknown && bestSentenceConfidence >= 0)
-            {
-                sentenceContext = new SentenceLanguageContext(
-                    bestSentenceLanguage,
-                    _mapper.MapBackToEspeak(bestSentenceLanguage, _modelEspeakCode),
-                    bestSentenceConfidence);
-
-                if (_logger.IsEnabled(LogLevel.Debug) &&
-                    bestSentenceConfidence < _overrideThreshold)
-                {
-                    _logger.LogDebug(
-                        "[LANG-DEBUG] Sentence context → {Code} | conf={Conf:0.0000} < threshold={Threshold:0.0000}; using chunk detection",
-                        sentenceContext.Value.EspeakCode,
-                        bestSentenceConfidence,
-                        _overrideThreshold);
-                }
-            }
-        }
+        // Debug retains the original eager diagnostic order and confidence provenance.
+        if (_logger.IsEnabled(LogLevel.Debug)) GetSentenceContext(ref sentenceAnalysis);
 
         // TEXT TOKENIZATION
         // A single span scan replaces Regex.Matches() here. It preserves the original logical
@@ -935,7 +908,8 @@ public partial class MixedLanguagePhonemizer
                     decision = ProcessSubPhrase(
                         phrase,
                         currentScript,
-                        insideQuote ? null : sentenceContext);
+                        ref sentenceAnalysis,
+                        allowSentenceContext: !insideQuote);
                 }
             }
             else if (technicalParts is { Count: > 0 })
@@ -1194,7 +1168,7 @@ public partial class MixedLanguagePhonemizer
                     reliable = true;
                 }
                 else if (!insideQuote &&
-                         sentenceContext is { } context &&
+                         GetSentenceContext(ref sentenceAnalysis) is { } context &&
                          context.Confidence >= _overrideThreshold &&
                          IsLanguageScriptCompatible(context.Language, runScript))
                 {
@@ -1582,6 +1556,48 @@ public partial class MixedLanguagePhonemizer
         return analysis.ToString();
     }
 
+    // Computes the original sentence verdict once, without retaining text across requests.
+    private SentenceLanguageContext? GetSentenceContext(ref SentenceAnalysis state)
+    {
+        if (state.PendingText is not { } text)
+            return state.Context.Language == Language.Unknown ? null : state.Context;
+
+        state.PendingText = null;
+        if (_detector == null) return null;
+
+        string analysis = GetSentenceAnalysisText(text);
+        if (CountLetters(analysis.AsSpan()) < _minSentenceLength) return null;
+
+        var confidences = _detector.ComputeLanguageConfidenceValues(analysis);
+        Language bestLanguage = Language.Unknown;
+        double bestConfidence = -1;
+        foreach (var confidence in confidences)
+        {
+            if (confidence.Value <= bestConfidence) continue;
+
+            bestLanguage = confidence.Key;
+            bestConfidence = confidence.Value;
+        }
+
+        if (bestLanguage == Language.Unknown || !(bestConfidence >= 0)) return null;
+
+        state.Context = new SentenceLanguageContext(
+            bestLanguage,
+            _mapper.MapBackToEspeak(bestLanguage, _modelEspeakCode),
+            bestConfidence);
+
+        if (_logger.IsEnabled(LogLevel.Debug) && bestConfidence < _overrideThreshold)
+        {
+            _logger.LogDebug(
+                "[LANG-DEBUG] Sentence context → {Code} | conf={Conf:0.0000} < threshold={Threshold:0.0000}; using chunk detection",
+                state.Context.EspeakCode,
+                bestConfidence,
+                _overrideThreshold);
+        }
+
+        return state.Context;
+    }
+
     /// <summary>
     /// Analyzes a chunk of text with local detector evidence first. Sentence context and the
     /// loaded-model bias are used only to stabilize short fragments whose local verdict is ambiguous.
@@ -1589,7 +1605,8 @@ public partial class MixedLanguagePhonemizer
     private TextChunk ProcessSubPhrase(
         string text,
         ScriptType script,
-        SentenceLanguageContext? sentenceContext)
+        ref SentenceAnalysis sentenceAnalysis,
+        bool allowSentenceContext)
     {
         string cleanText = text.Trim();
         int letterCount = CountLetters(cleanText.AsSpan());
@@ -1757,8 +1774,9 @@ public partial class MixedLanguagePhonemizer
         // Short-fragment inheritance still works, but only after local evidence has been inspected
         // and found ambiguous. This keeps the original stabilization behaviour without suppressing
         // a convincing foreign insert in an otherwise dominant sentence.
-        if (sentenceContext is { } context &&
+        if (allowSentenceContext &&
             letterCount < _maxLimit &&
+            GetSentenceContext(ref sentenceAnalysis) is { } context &&
             context.Confidence >= _overrideThreshold &&
             IsLanguageScriptCompatible(context.Language, script))
         {
