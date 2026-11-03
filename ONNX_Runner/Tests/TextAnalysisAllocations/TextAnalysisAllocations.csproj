@@ -16,6 +16,7 @@
     <Compile Include="../../Services/Text/TextChunker.cs" Link="TextChunker.cs" />
     <Compile Include="../../Services/Text/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Services/Text/Phonemization/EspeakLinguaMapper.cs" Link="EspeakLinguaMapper.cs" />
+    <Compile Include="../../Services/Text/Phonemization/EspeakLanguageCatalog.cs" Link="EspeakLanguageCatalog.cs" />
     <Compile Include="../../Services/Text/Phonemization/MixedLanguagePhonemizer.cs" Link="MixedLanguagePhonemizer.cs" />
     <Compile Include="../../Services/Text/Phonemization/DynamicPunctuationMapper.cs" Link="DynamicPunctuationMapper.cs" />
     <Compile Include="../../Models/Text/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
