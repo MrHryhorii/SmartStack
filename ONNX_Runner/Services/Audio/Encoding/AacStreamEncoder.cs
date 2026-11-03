@@ -29,111 +29,6 @@ internal sealed class AacStreamEncoder : IDisposable
     private const double QuantizerOffset = 0.4054;
     private const double PcmScale = 32768.0;
 
-    private static readonly int[] SampleRates =
-    [
-        96000, 88200, 64000, 48000, 44100, 32000,
-        24000, 22050, 16000, 12000, 11025, 8000
-    ];
-
-    private static readonly int[] Swb96000 =
-    [
-        0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64,
-        72, 80, 88, 96, 108, 120, 132, 144, 156, 172, 188, 212, 240, 276,
-        320, 384, 448, 512, 576, 640, 704, 768, 832, 896, 960, 1024
-    ];
-
-    private static readonly int[] Swb64000 =
-    [
-        0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 64,
-        72, 80, 88, 100, 112, 124, 140, 156, 172, 192, 216, 240, 268, 304,
-        344, 384, 424, 464, 504, 544, 584, 624, 664, 704, 744, 784, 824, 864,
-        904, 944, 984, 1024
-    ];
-
-    private static readonly int[] Swb48000 =
-    [
-        0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80,
-        88, 96, 108, 120, 132, 144, 160, 176, 196, 216, 240, 264, 292, 320,
-        352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704, 736, 768,
-        800, 832, 864, 896, 928, 1024
-    ];
-
-    private static readonly int[] Swb32000 =
-    [
-        0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 48, 56, 64, 72, 80,
-        88, 96, 108, 120, 132, 144, 160, 176, 196, 216, 240, 264, 292, 320,
-        352, 384, 416, 448, 480, 512, 544, 576, 608, 640, 672, 704, 736, 768,
-        800, 832, 864, 896, 928, 960, 992, 1024
-    ];
-
-    private static readonly int[] Swb24000 =
-    [
-        0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 40, 44, 52, 60, 68, 76,
-        84, 92, 100, 108, 116, 124, 136, 148, 160, 172, 188, 204, 220, 240,
-        260, 284, 308, 336, 364, 396, 432, 468, 508, 552, 600, 652, 704, 768,
-        832, 896, 960, 1024
-    ];
-
-    private static readonly int[] Swb16000 =
-    [
-        0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 100, 112, 124, 136,
-        148, 160, 172, 184, 196, 212, 228, 244, 260, 280, 300, 320, 344, 368,
-        396, 424, 456, 492, 532, 572, 616, 664, 716, 772, 832, 896, 960, 1024
-    ];
-
-    private static readonly int[] Swb8000 =
-    [
-        0, 12, 24, 36, 48, 60, 72, 84, 96, 108, 120, 132, 144, 156, 172, 188,
-        204, 220, 236, 252, 268, 288, 308, 328, 348, 372, 396, 420, 448, 476,
-        508, 544, 580, 620, 664, 712, 764, 820, 880, 944, 1024
-    ];
-
-    private static readonly byte[] SpectralBits11 =
-    [
-        4, 5, 6, 7, 8, 8, 9, 10, 10, 10, 11, 11, 12, 11, 12, 12,
-        10, 5, 4, 5, 6, 7, 7, 8, 8, 9, 9, 9, 10, 10, 10, 10,
-        11, 8, 6, 5, 5, 6, 7, 7, 8, 8, 8, 9, 9, 9, 10, 10,
-        10, 10, 8, 7, 6, 6, 6, 7, 7, 8, 8, 8, 9, 9, 9, 10,
-        10, 10, 10, 8, 8, 7, 7, 7, 7, 8, 8, 8, 8, 9, 9, 9,
-        10, 10, 10, 10, 8, 8, 7, 7, 7, 7, 8, 8, 8, 9, 9, 9,
-        9, 10, 10, 10, 10, 8, 9, 8, 8, 8, 8, 8, 8, 8, 9, 9,
-        9, 10, 10, 10, 10, 10, 8, 9, 8, 8, 8, 8, 8, 8, 9, 9,
-        9, 10, 10, 10, 10, 10, 10, 8, 10, 9, 8, 8, 9, 9, 9, 9,
-        9, 10, 10, 10, 10, 10, 10, 11, 8, 10, 9, 9, 9, 9, 9, 9,
-        9, 10, 10, 10, 10, 10, 10, 11, 11, 8, 11, 9, 9, 9, 9, 9,
-        9, 10, 10, 10, 10, 10, 11, 10, 11, 11, 8, 11, 10, 9, 9, 10,
-        9, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 8, 11, 10, 10, 10,
-        10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 9, 11, 10, 9,
-        9, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 9, 11, 10,
-        10, 10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 9, 12,
-        10, 10, 10, 10, 10, 10, 10, 11, 11, 11, 11, 11, 11, 12, 12, 9,
-        9, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 9,
-        5,
-    ];
-
-    private static readonly ushort[] SpectralCodes11 =
-    [
-        0x0, 0x6, 0x19, 0x3D, 0x9C, 0xC6, 0x1A7, 0x390, 0x3C2, 0x3DF, 0x7E6, 0x7F3, 0xFFB, 0x7EC, 0xFFA, 0xFFE,
-        0x38E, 0x5, 0x1, 0x8, 0x14, 0x37, 0x42, 0x92, 0xAF, 0x191, 0x1A5, 0x1B5, 0x39E, 0x3C0, 0x3A2, 0x3CD,
-        0x7D6, 0xAE, 0x17, 0x7, 0x9, 0x18, 0x39, 0x40, 0x8E, 0xA3, 0xB8, 0x199, 0x1AC, 0x1C1, 0x3B1, 0x396,
-        0x3BE, 0x3CA, 0x9D, 0x3C, 0x15, 0x16, 0x1A, 0x3B, 0x44, 0x91, 0xA5, 0xBE, 0x196, 0x1AE, 0x1B9, 0x3A1,
-        0x391, 0x3A5, 0x3D5, 0x94, 0x9A, 0x36, 0x38, 0x3A, 0x41, 0x8C, 0x9B, 0xB0, 0xC3, 0x19E, 0x1AB, 0x1BC,
-        0x39F, 0x38F, 0x3A9, 0x3CF, 0x93, 0xBF, 0x3E, 0x3F, 0x43, 0x45, 0x9E, 0xA7, 0xB9, 0x194, 0x1A2, 0x1BA,
-        0x1C3, 0x3A6, 0x3A7, 0x3BB, 0x3D4, 0x9F, 0x1A0, 0x8F, 0x8D, 0x90, 0x98, 0xA6, 0xB6, 0xC4, 0x19F, 0x1AF,
-        0x1BF, 0x399, 0x3BF, 0x3B4, 0x3C9, 0x3E7, 0xA8, 0x1B6, 0xAB, 0xA4, 0xAA, 0xB2, 0xC2, 0xC5, 0x198, 0x1A4,
-        0x1B8, 0x38C, 0x3A4, 0x3C4, 0x3C6, 0x3DD, 0x3E8, 0xAD, 0x3AF, 0x192, 0xBD, 0xBC, 0x18E, 0x197, 0x19A, 0x1A3,
-        0x1B1, 0x38D, 0x398, 0x3B7, 0x3D3, 0x3D1, 0x3DB, 0x7DD, 0xB4, 0x3DE, 0x1A9, 0x19B, 0x19C, 0x1A1, 0x1AA, 0x1AD,
-        0x1B3, 0x38B, 0x3B2, 0x3B8, 0x3CE, 0x3E1, 0x3E0, 0x7D2, 0x7E5, 0xB7, 0x7E3, 0x1BB, 0x1A8, 0x1A6, 0x1B0, 0x1B2,
-        0x1B7, 0x39B, 0x39A, 0x3BA, 0x3B5, 0x3D6, 0x7D7, 0x3E4, 0x7D8, 0x7EA, 0xBA, 0x7E8, 0x3A0, 0x1BD, 0x1B4, 0x38A,
-        0x1C4, 0x392, 0x3AA, 0x3B0, 0x3BC, 0x3D7, 0x7D4, 0x7DC, 0x7DB, 0x7D5, 0x7F0, 0xC1, 0x7FB, 0x3C8, 0x3A3, 0x395,
-        0x39D, 0x3AC, 0x3AE, 0x3C5, 0x3D8, 0x3E2, 0x3E6, 0x7E4, 0x7E7, 0x7E0, 0x7E9, 0x7F7, 0x190, 0x7F2, 0x393, 0x1BE,
-        0x1C0, 0x394, 0x397, 0x3AD, 0x3C3, 0x3C1, 0x3D2, 0x7DA, 0x7D9, 0x7DF, 0x7EB, 0x7F4, 0x7FA, 0x195, 0x7F8, 0x3BD,
-        0x39C, 0x3AB, 0x3A8, 0x3B3, 0x3B9, 0x3D0, 0x3E3, 0x3E5, 0x7E2, 0x7DE, 0x7ED, 0x7F1, 0x7F9, 0x7FC, 0x193, 0xFFD,
-        0x3DC, 0x3B6, 0x3C7, 0x3CC, 0x3CB, 0x3D9, 0x3DA, 0x7D3, 0x7E1, 0x7EE, 0x7EF, 0x7F5, 0x7F6, 0xFFC, 0xFFF, 0x19D,
-        0x1C2, 0xB5, 0xA1, 0x96, 0x97, 0x95, 0x99, 0xA0, 0xA2, 0xAC, 0xA9, 0xB1, 0xB3, 0xBB, 0xC0, 0x18F,
-        0x4,
-    ];
-
     private static readonly double[] SineWindow = BuildSineWindow();
     private static readonly double[] MdctTwiddleReal = BuildMdctTwiddleReal();
     private static readonly double[] MdctTwiddleImag = BuildMdctTwiddleImag();
@@ -178,7 +73,7 @@ internal sealed class AacStreamEncoder : IDisposable
                 nameof(stream));
         }
 
-        _sampleRateIndex = Array.IndexOf(SampleRates, sampleRate);
+        _sampleRateIndex = Array.IndexOf(AacEncodingTables.SampleRates, sampleRate);
 
         if (_sampleRateIndex < 0)
         {
@@ -199,7 +94,7 @@ internal sealed class AacStreamEncoder : IDisposable
         _stream = stream;
         _sampleRate = sampleRate;
         _bitRate = checked(bitRateKbps * 1000);
-        _scalefactorBands = GetScalefactorBands(sampleRate);
+        _scalefactorBands = AacEncodingTables.GetScalefactorBands(sampleRate);
 
         _previousSamples = ArrayPool<float>.Shared.Rent(FrameSamples);
         _currentSamples = ArrayPool<float>.Shared.Rent(FrameSamples);
@@ -522,7 +417,7 @@ internal sealed class AacStreamEncoder : IDisposable
             Math.Min(firstMagnitude, 16) * 17 +
             Math.Min(secondMagnitude, 16);
 
-        int bits = SpectralBits11[index];
+        int bits = AacEncodingTables.SpectralBits11[index];
 
         if (first != 0)
         {
@@ -674,8 +569,8 @@ internal sealed class AacStreamEncoder : IDisposable
             Math.Min(secondMagnitude, 16);
 
         writer.WriteBits(
-            SpectralCodes11[index],
-            SpectralBits11[index]);
+            AacEncodingTables.SpectralCodes11[index],
+            AacEncodingTables.SpectralBits11[index]);
 
         if (first != 0)
         {
@@ -972,22 +867,6 @@ internal sealed class AacStreamEncoder : IDisposable
     {
         EnsureFinalized();
         GC.SuppressFinalize(this);
-    }
-
-    /// <summary>Selects the AAC long-window scalefactor band boundaries for the configured sample rate.</summary>
-    private static int[] GetScalefactorBands(int sampleRate)
-    {
-        return sampleRate switch
-        {
-            96000 or 88200 => Swb96000,
-            64000 => Swb64000,
-            48000 or 44100 => Swb48000,
-            32000 => Swb32000,
-            24000 or 22050 => Swb24000,
-            16000 or 12000 or 11025 => Swb16000,
-            8000 => Swb8000,
-            _ => throw new ArgumentOutOfRangeException(nameof(sampleRate))
-        };
     }
 
     /// <summary>Precomputes the sine window used by overlapping AAC frames.</summary>
