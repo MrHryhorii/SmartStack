@@ -1,10 +1,10 @@
 using ONNX_Runner.Services.Text;
-using System.Buffers;
 using System.Globalization;
 using System.Text;
 using Lingua;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Text;
+using TextBoundaries = ONNX_Runner.Services.Text.Phonemization.PhonemizerTextBoundaries;
 
 namespace ONNX_Runner.Services.Text.Phonemization;
 
@@ -229,7 +229,7 @@ public partial class MixedLanguagePhonemizer
     {
         foreach (Rune rune in word.EnumerateRunes())
         {
-            if (!IsLetterRune(rune))
+            if (!TextBoundaries.IsLetterRune(rune))
             {
                 continue;
             }
@@ -443,7 +443,7 @@ public partial class MixedLanguagePhonemizer
         {
             int segmentStart = segmentEnd - 1;
 
-            while (segmentStart >= 0 && !IsLexicalHyphen(word[segmentStart]))
+            while (segmentStart >= 0 && !TextBoundaries.IsLexicalHyphen(word[segmentStart], _rules))
             {
                 segmentStart--;
             }
@@ -469,7 +469,7 @@ public partial class MixedLanguagePhonemizer
         {
             int segmentEnd = segmentStart;
 
-            while (segmentEnd < word.Length && !IsLexicalHyphen(word[segmentEnd]))
+            while (segmentEnd < word.Length && !TextBoundaries.IsLexicalHyphen(word[segmentEnd], _rules))
             {
                 segmentEnd++;
             }
@@ -585,19 +585,13 @@ public partial class MixedLanguagePhonemizer
     {
         foreach (Rune rune in value.EnumerateRunes())
         {
-            if (IsLetterRune(rune))
+            if (TextBoundaries.IsLetterRune(rune))
             {
                 return true;
             }
         }
 
         return false;
-    }
-
-    // Uses the shared catalog for hyphens that may participate in a word token.
-    private bool IsLexicalHyphen(char value)
-    {
-        return _rules.LexicalHyphens.Contains(value);
     }
 
     // Extracts the base language family from an eSpeak language code.
@@ -651,7 +645,7 @@ public partial class MixedLanguagePhonemizer
 
         foreach (Rune rune in value.EnumerateRunes())
         {
-            if (IsLetterRune(rune))
+            if (TextBoundaries.IsLetterRune(rune))
             {
                 count++;
             }
@@ -671,7 +665,7 @@ public partial class MixedLanguagePhonemizer
 
         foreach (Rune rune in value.EnumerateRunes())
         {
-            if (IsLetterRune(rune))
+            if (TextBoundaries.IsLetterRune(rune))
             {
                 hasLetters = true;
 
@@ -695,86 +689,11 @@ public partial class MixedLanguagePhonemizer
         }
     }
 
-    // Returns true when the rune is a Unicode letter.
-    private static bool IsLetterRune(Rune rune)
-    {
-        UnicodeCategory category = Rune.GetUnicodeCategory(rune);
-
-        return category is UnicodeCategory.UppercaseLetter
-            or UnicodeCategory.LowercaseLetter
-            or UnicodeCategory.TitlecaseLetter
-            or UnicodeCategory.ModifierLetter
-            or UnicodeCategory.OtherLetter;
-    }
-
-    // Returns true when the rune can participate in the core of a word token.
-    private static bool IsWordCoreRune(Rune rune)
-    {
-        int value = rune.Value;
-
-        // ASCII dominates many API payloads. Keep the common path branch-only.
-        if ((value >= 'A' && value <= 'Z') ||
-            (value >= 'a' && value <= 'z') ||
-            (value >= '0' && value <= '9'))
-        {
-            return true;
-        }
-
-        if (value <= 0x7F)
-        {
-            return false;
-        }
-
-        UnicodeCategory category = Rune.GetUnicodeCategory(rune);
-
-        return category is UnicodeCategory.UppercaseLetter
-            or UnicodeCategory.LowercaseLetter
-            or UnicodeCategory.TitlecaseLetter
-            or UnicodeCategory.ModifierLetter
-            or UnicodeCategory.OtherLetter
-            or UnicodeCategory.DecimalDigitNumber
-            or UnicodeCategory.NonSpacingMark
-            or UnicodeCategory.SpacingCombiningMark
-            or UnicodeCategory.EnclosingMark;
-    }
-
-    // Decodes the first Unicode scalar and returns its UTF-16 width.
-    private static int DecodeRune(ReadOnlySpan<char> value, out Rune rune)
-    {
-        OperationStatus status = Rune.DecodeFromUtf16(
-            value,
-            out rune,
-            out int consumed);
-
-        if (status == OperationStatus.Done)
-        {
-            return consumed;
-        }
-
-        // Invalid UTF-16 must never stall the tokenizer. Preserve one code unit as garbage
-        // and continue; valid text remains entirely on the normal Rune path.
-        rune = Rune.ReplacementChar;
-        return 1;
-    }
-
-    // Returns true for period-like forms that may terminate a written abbreviation.
-    private bool IsPeriodLike(char value)
-    {
-        return _rules.PeriodLikeMarks.Contains(value);
-    }
-
     // Protects titles, initials, and dotted abbreviations from becoming independent language chunks.
     // Delegate period ambiguity to the same classifier used for audio sentence boundaries.
     private bool ShouldKeepAbbreviationPeriod(ReadOnlySpan<char> text, int periodIndex)
     {
         return _textChunker.IsIntraSentencePeriod(text, periodIndex);
-    }
-
-    // Quotes are analysis boundaries but never output punctuation.
-    private bool IsVisualQuote(Rune rune)
-    {
-        return rune.Value <= char.MaxValue &&
-               _rules.VisualQuotes.Contains((char)rune.Value);
     }
 
     // Checks whether a sentence-wide language verdict can safely apply to this script.
@@ -803,33 +722,6 @@ public partial class MixedLanguagePhonemizer
 
         return languageScript == chunkScript ||
                (IsJapaneseKanaScript(languageScript) && IsJapaneseKanaScript(chunkScript));
-    }
-
-    // Checks whether a character is an apostrophe, period, or lexical hyphen allowed inside a word.
-    private bool IsWordConnector(char value)
-    {
-        return _rules.LexicalApostrophes.Contains(value) ||
-            _rules.PeriodLikeMarks.Contains(value) || IsLexicalHyphen(value);
-    }
-
-    // Returns true for punctuation that may form a soft language-detection boundary.
-    private bool IsBoundaryPunctuation(Rune rune)
-    {
-        // Quotes are handled separately as silent hard analysis boundaries. All remaining
-        // punctuation stays audible/structural and becomes a soft language-detection boundary.
-        if (IsVisualQuote(rune))
-        {
-            return false;
-        }
-
-        UnicodeCategory category = Rune.GetUnicodeCategory(rune);
-
-        return category is UnicodeCategory.DashPunctuation
-            or UnicodeCategory.OpenPunctuation
-            or UnicodeCategory.ClosePunctuation
-            or UnicodeCategory.InitialQuotePunctuation
-            or UnicodeCategory.FinalQuotePunctuation
-            or UnicodeCategory.OtherPunctuation;
     }
 
     // Estimates the initial token-list capacity for an input length.
@@ -1191,9 +1083,9 @@ public partial class MixedLanguagePhonemizer
 
             while (scanIndex < word.Length)
             {
-                int runeLength = DecodeRune(word[scanIndex..], out Rune rune);
+                int runeLength = TextBoundaries.DecodeRune(word[scanIndex..], out Rune rune);
 
-                if (IsLetterRune(rune))
+                if (TextBoundaries.IsLetterRune(rune))
                 {
                     ScriptType script = DetectScript(rune);
 
@@ -1405,9 +1297,9 @@ public partial class MixedLanguagePhonemizer
 
             while (scanIndex < span.Length)
             {
-                int runeLength = DecodeRune(span[scanIndex..], out Rune rune);
+                int runeLength = TextBoundaries.DecodeRune(span[scanIndex..], out Rune rune);
 
-                if (IsLetterRune(rune))
+                if (TextBoundaries.IsLetterRune(rune))
                 {
                     ScriptType script = DetectScript(rune);
 
@@ -1441,23 +1333,7 @@ public partial class MixedLanguagePhonemizer
         {
             FlushPhrase();
 
-            bool needsSeparator = false;
-            int nextIndex = quoteIndex + quoteLength;
-
-            if (quoteIndex > 0 && nextIndex < fullText.Length)
-            {
-                OperationStatus leftStatus = Rune.DecodeLastFromUtf16(
-                    fullText[..quoteIndex],
-                    out Rune leftRune,
-                    out _);
-
-                int rightLength = DecodeRune(fullText[nextIndex..], out Rune rightRune);
-                _ = rightLength;
-
-                needsSeparator = leftStatus == OperationStatus.Done &&
-                                 IsWordCoreRune(leftRune) &&
-                                 IsWordCoreRune(rightRune);
-            }
+            bool needsSeparator = TextBoundaries.NeedsQuoteSeparator(fullText, quoteIndex, quoteLength);
 
             if (needsSeparator)
             {
@@ -1535,7 +1411,7 @@ public partial class MixedLanguagePhonemizer
 
         while (index < input.Length)
         {
-            int currentLength = DecodeRune(input[index..], out Rune currentRune);
+            int currentLength = TextBoundaries.DecodeRune(input[index..], out Rune currentRune);
 
             // Emoji are neutral source text, including presentation selectors on punctuation.
             // Preserve their full text element without creating a new language-analysis phrase.
@@ -1556,7 +1432,7 @@ public partial class MixedLanguagePhonemizer
             }
 
             // Visual quotes split language-analysis context but are not phonetic punctuation.
-            if (IsVisualQuote(currentRune))
+            if (TextBoundaries.IsVisualQuote(currentRune, _rules))
             {
                 AppendSilentQuoteBoundary(input, index, currentLength);
                 index += currentLength;
@@ -1566,7 +1442,7 @@ public partial class MixedLanguagePhonemizer
             // A period after a recognized abbreviation/initial belongs to the surrounding language
             // phrase instead of creating a tiny independent chunk such as "Dr" + "." + "Smith".
             if (currentRune.Value <= char.MaxValue &&
-                IsPeriodLike((char)currentRune.Value) &&
+                TextBoundaries.IsPeriodLike((char)currentRune.Value, _rules) &&
                 ShouldKeepAbbreviationPeriod(input, index))
             {
                 currentSubPhrase.Append(input.Slice(index, currentLength));
@@ -1575,19 +1451,19 @@ public partial class MixedLanguagePhonemizer
             }
 
             // GROUP 1: punctuation/dashes are soft language-boundary candidates.
-            if (IsBoundaryPunctuation(currentRune))
+            if (TextBoundaries.IsBoundaryPunctuation(currentRune, _rules))
             {
                 int start = index;
                 index += currentLength;
 
                 while (index < input.Length)
                 {
-                    int punctuationLength = DecodeRune(
+                    int punctuationLength = TextBoundaries.DecodeRune(
                         input[index..],
                         out Rune punctuationRune);
 
                     if (EmojiTextRecognizer.TryGetSpanLength(input[index..], _rules, out _) ||
-                        !IsBoundaryPunctuation(punctuationRune))
+                        !TextBoundaries.IsBoundaryPunctuation(punctuationRune, _rules))
                     {
                         break;
                     }
@@ -1600,35 +1476,35 @@ public partial class MixedLanguagePhonemizer
             }
 
             // GROUP 2: Words with optional internal connectors.
-            if (IsWordCoreRune(currentRune))
+            if (TextBoundaries.IsWordCoreRune(currentRune))
             {
                 int start = index;
                 index += currentLength;
 
                 while (index < input.Length)
                 {
-                    int nextLength = DecodeRune(
+                    int nextLength = TextBoundaries.DecodeRune(
                         input[index..],
                         out Rune nextRune);
 
-                    if (IsWordCoreRune(nextRune))
+                    if (TextBoundaries.IsWordCoreRune(nextRune))
                     {
                         index += nextLength;
                         continue;
                     }
 
                     if (nextRune.Value <= char.MaxValue &&
-                        IsWordConnector((char)nextRune.Value))
+                        TextBoundaries.IsWordConnector((char)nextRune.Value, _rules))
                     {
                         int afterConnector = index + nextLength;
 
                         if (afterConnector < input.Length)
                         {
-                            int followingLength = DecodeRune(
+                            int followingLength = TextBoundaries.DecodeRune(
                                 input[afterConnector..],
                                 out Rune followingRune);
 
-                            if (IsWordCoreRune(followingRune))
+                            if (TextBoundaries.IsWordCoreRune(followingRune))
                             {
                                 index = afterConnector + followingLength;
                                 continue;
@@ -1650,13 +1526,13 @@ public partial class MixedLanguagePhonemizer
 
             while (index < input.Length)
             {
-                int nextLength = DecodeRune(
+                int nextLength = TextBoundaries.DecodeRune(
                     input[index..],
                     out Rune nextRune);
 
-                bool isBoundaryPunctuation = IsBoundaryPunctuation(nextRune);
+                bool isBoundaryPunctuation = TextBoundaries.IsBoundaryPunctuation(nextRune, _rules);
 
-                if (isBoundaryPunctuation || IsVisualQuote(nextRune) || IsWordCoreRune(nextRune) ||
+                if (isBoundaryPunctuation || TextBoundaries.IsVisualQuote(nextRune, _rules) || TextBoundaries.IsWordCoreRune(nextRune) ||
                     TechnicalTextRecognizer.TryGetSpanLength(input, index, _rules, out _))
                 {
                     break;
@@ -1686,7 +1562,7 @@ public partial class MixedLanguagePhonemizer
         {
             if (!TechnicalTextRecognizer.TryGetSpanLength(text.AsSpan(), index, _rules, out int length))
             {
-                index += DecodeRune(text.AsSpan(index), out _);
+                index += TextBoundaries.DecodeRune(text.AsSpan(index), out _);
                 continue;
             }
 
