@@ -7,10 +7,6 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
 
-#if USE_WEBGPU
-using Microsoft.ML.OnnxRuntime.EP.WebGpu;
-#endif
-
 namespace ONNX_Runner.Services.Cloning;
 
 /// <summary>
@@ -20,7 +16,7 @@ namespace ONNX_Runner.Services.Cloning;
 ///    Used sequentially at startup only, so it stays a single shared session.
 /// 2. Tone Color Converter: Applies a source tone color to a target voice using Latent Space Blending.
 ///    Called concurrently for every cloning request, so it follows the same
-///    Shared Session (CPU/CUDA) vs Object Pool (DirectML) routing as PiperRunner.
+///    Shared Session (CPU/CUDA) vs Object Pool (DirectML/WebGPU) routing as PiperRunner.
 /// </summary>
 public partial class OpenVoiceRunner : IDisposable
 {
@@ -35,7 +31,7 @@ public partial class OpenVoiceRunner : IDisposable
     // Used for thread-safe execution providers (CPU, CUDA)
     private readonly InferenceSession? _sharedColorSession;
 
-    // Used for execution providers that do not support concurrent execution (DirectML)
+    // Used for execution providers that require exclusive use of each session (DirectML/WebGPU)
     private readonly ConcurrentQueue<InferenceSession>? _colorSessionPool;
 
     // Fast path routing flag for the hot loop
@@ -63,7 +59,7 @@ public partial class OpenVoiceRunner : IDisposable
         return _config.Data.SamplingRate;
     }
 
-    // Represents the Color Converter's technical concurrency limit (pool size for DML,
+    // Represents the Color Converter's technical concurrency limit (pool size for DirectML/WebGPU,
     // int.MaxValue for CUDA/CPU). Single source of truth, mirroring PiperRunner.ConcurrencyCapacity.
 
     public int ColorConcurrencyCapacity { get; private set; }
@@ -94,7 +90,7 @@ public partial class OpenVoiceRunner : IDisposable
     /// Dynamically selects the best available hardware based on compile-time flags.
     /// The Extractor always gets a single session (sequential startup use only).
     /// The Color Converter gets a Shared Session on CPU/CUDA, or an Object Pool on
-    /// DirectML, since DirectML crashes on concurrent execution of a single session.
+    /// DirectML/WebGPU, where each session is checked out by only one request.
     /// </summary>
     private static (InferenceSession? ExtractSession, InferenceSession? SharedColorSession, ConcurrentQueue<InferenceSession>? ColorSessionPool, bool IsUsingColorPool, int Capacity) InitializeSessions(string extractPath, string colorPath, OnnxSettings onnxSettings, HardwareSettings hwSettings, ILogger<OpenVoiceRunner> logger)
     {
@@ -144,9 +140,15 @@ public partial class OpenVoiceRunner : IDisposable
                     extract?.Dispose();
                     throw;
                 }
-#elif USE_DML
-                // DirectML crashes on concurrent execution.
+#elif USE_DML || USE_WEBGPU
+#if USE_DML
+                // DirectML requires sequential graph execution and no memory patterns.
+                gpuOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
+                gpuOptions.EnableMemoryPattern = false;
                 gpuOptions.AppendExecutionProvider_DML(deviceId);
+#else
+                WebGpuExecutionProvider.AppendTo(gpuOptions, deviceId);
+#endif
 
                 // Extractor: always called sequentially at startup, before the server
                 // accepts requests. No pooling needed — a single session is sufficient.
@@ -176,153 +178,12 @@ public partial class OpenVoiceRunner : IDisposable
                     throw;
                 }
 
+#if USE_DML
                 OnnxHardwareDiagnostics.LogDirectMlDevice(logger, "OpenVoice Models", deviceId);
+#else
+                LogWebGpuLoaded(logger, deviceId, poolSize);
+#endif
                 return (extract, null, colorPool, true, poolSize);
-#elif USE_WEBGPU
-                // WebGPU is provided as a plugin Execution Provider.
-                var env = OrtEnv.Instance();
-                const string registrationName = "webgpu_ep";
-                string webGpuEpName = WebGpuEp.GetEpName();
-
-                // OrtEnv is process-wide. Register the WebGPU plugin only once.
-                bool isRegistered = false;
-
-                foreach (var device in env.GetEpDevices())
-                {
-                    if (string.Equals(
-                        device.EpName,
-                        webGpuEpName,
-                        StringComparison.OrdinalIgnoreCase))
-                    {
-                        isRegistered = true;
-                        break;
-                    }
-                }
-
-                if (!isRegistered)
-                {
-                    try
-                    {
-                        env.RegisterExecutionProviderLibrary(
-                            registrationName,
-                            WebGpuEp.GetLibraryPath());
-                    }
-                    catch (Exception ex) when (
-                        ex.Message.Contains(
-                            "already registered",
-                            StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Another initialization path registered the process-wide plugin.
-                    }
-                }
-
-                OrtEpDevice? webGpuDevice = null;
-                int webGpuDeviceIndex = 0;
-
-                foreach (var device in env.GetEpDevices())
-                {
-                    if (!string.Equals(
-                        device.EpName,
-                        webGpuEpName,
-                        StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-
-                    if (device.HardwareDevice.Type != OrtHardwareDeviceType.GPU)
-                    {
-                        continue;
-                    }
-
-                    if (!OperatingSystem.IsWindows())
-                    {
-                        if (webGpuDeviceIndex++ != deviceId) { continue; }
-
-                        webGpuDevice = device;
-                        break;
-                    }
-
-                    // DXGI adapter numbers are available only on Windows.
-                    if (!device.HardwareDevice.Metadata.Entries.TryGetValue(
-                        "DxgiAdapterNumber",
-                        out string? adapterNumberText))
-                    {
-                        continue;
-                    }
-
-                    if (!int.TryParse(
-                        adapterNumberText,
-                        System.Globalization.NumberStyles.Integer,
-                        System.Globalization.CultureInfo.InvariantCulture,
-                        out int adapterNumber))
-                    {
-                        continue;
-                    }
-
-                    if (adapterNumber != deviceId)
-                    {
-                        continue;
-                    }
-
-                    webGpuDevice = device;
-                    break;
-                }
-
-                if (webGpuDevice == null)
-                {
-                    throw new InvalidOperationException(
-                        $"No WebGPU-compatible GPU was found for device index {deviceId}.");
-                }
-
-                // The OrtEpDevice already identifies the physical GPU.
-                // Do not use the WebGPU "deviceId" option here:
-                // that value is a WebGPU context ID, not a GPU adapter index.
-                gpuOptions.AppendExecutionProvider(
-                    env,
-                    new[] { webGpuDevice },
-                    new Dictionary<string, string>());
-
-                // Extractor runs sequentially during startup.
-                var extract = new InferenceSession(
-                    extractPath,
-                    gpuOptions);
-
-                // Current WebGPU implementation must execute Color Converter inference
-                // strictly one request at a time.
-                int poolSize = 1;
-                var colorPool = new ConcurrentQueue<InferenceSession>();
-
-                try
-                {
-                    colorPool.Enqueue(
-                        new InferenceSession(
-                            colorPath,
-                            gpuOptions));
-                }
-                catch
-                {
-                    extract.Dispose();
-
-                    while (colorPool.TryDequeue(out var leakedSession))
-                    {
-                        leakedSession.Dispose();
-                    }
-
-                    throw;
-                }
-
-                OnnxHardwareDiagnostics.LogWebGpuDevice(
-                    logger,
-                    "OpenVoice Models",
-                    deviceId,
-                    webGpuDevice);
-
-                return (
-                    extract,
-                    null,
-                    colorPool,
-                    true,
-                    poolSize);
 #endif
             }
             catch (Exception ex)
@@ -758,8 +619,8 @@ public partial class OpenVoiceRunner : IDisposable
     private static partial void LogDmlLoaded(ILogger logger, int deviceId);
 
     /// <summary>Logs successful OpenVoice loading on the selected WebGPU device.</summary>
-    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (WebGPU, Device ID: {DeviceId})")]
-    private static partial void LogWebGpuLoaded(ILogger logger, int deviceId);
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] OpenVoice Models loaded on GPU (WebGPU, Dawn adapter index: {AdapterIndex}, Sessions: {PoolSize})")]
+    private static partial void LogWebGpuLoaded(ILogger logger, int adapterIndex, int poolSize);
 
     /// <summary>Logs GPU initialization failure with the device ID and original exception.</summary>
     [LoggerMessage(Level = LogLevel.Debug, Message = "[DEBUG] OpenVoice failed on GPU {DeviceId}")]

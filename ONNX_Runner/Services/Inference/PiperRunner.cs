@@ -8,17 +8,13 @@ using System.Buffers;
 using System.Numerics;
 using System.Collections.Concurrent;
 
-#if USE_WEBGPU
-using Microsoft.ML.OnnxRuntime.EP.WebGpu;
-#endif
-
 namespace ONNX_Runner.Services.Inference;
 
 /// <summary>
 /// The core engine responsible for executing the Piper ONNX model.
 /// It handles hardware acceleration, tensor preparation, and the high-performance 
 /// conversion of raw neural network output into playable audio formats.
-/// Supports both monolithic execution (CPU/CUDA) and Object Pooling (DirectML).
+/// Supports both monolithic execution (CPU/CUDA) and Object Pooling (DirectML/WebGPU).
 /// </summary>
 public partial class PiperRunner : IDisposable
 {
@@ -26,8 +22,9 @@ public partial class PiperRunner : IDisposable
     // Used for thread-safe execution providers (CPU, CUDA)
     private readonly InferenceSession? _sharedSession;
 
-    // Used for execution providers that do not support concurrent execution (DirectML)
+    // Used for execution providers that require exclusive use of each session (DirectML/WebGPU)
     private readonly ConcurrentQueue<InferenceSession>? _isolatedSessionPool;
+    private readonly SemaphoreSlim? _sessionGate;
 
     // Fast path routing flag for the hot loop
     private readonly bool _isUsingPool;
@@ -38,7 +35,7 @@ public partial class PiperRunner : IDisposable
 
     public bool IsUsingGPU { get; private set; }
 
-    // Represents the engine's technical concurrency limit (pool size for DML, int.MaxValue for CUDA/CPU)
+    // Represents the engine's technical concurrency limit (pool size for DirectML/WebGPU, int.MaxValue for CUDA/CPU)
     public int ConcurrencyCapacity { get; private set; }
 
     /// <summary>Selects the model speaker and creates inference sessions and concurrency controls for the chosen hardware.</summary>
@@ -64,6 +61,8 @@ public partial class PiperRunner : IDisposable
         IsUsingGPU = initResult.IsUsingGPU;
         _isUsingPool = initResult.IsUsingPool;
         ConcurrencyCapacity = initResult.Capacity;
+        if (_isUsingPool)
+            _sessionGate = new SemaphoreSlim(ConcurrencyCapacity, ConcurrencyCapacity);
     }
 
 
@@ -150,9 +149,15 @@ public partial class PiperRunner : IDisposable
                     OnnxHardwareDiagnostics.LogCudaDevice(logger, "Piper Model", deviceId);
 
                     return (session, null, true, false, int.MaxValue);
-#elif USE_DML
-                    // DirectML crashes on concurrent execution. We create a fixed-size Object Pool.
+#elif USE_DML || USE_WEBGPU
+#if USE_DML
+                    // DirectML requires sequential graph execution and no memory patterns.
+                    gpuOptions.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
+                    gpuOptions.EnableMemoryPattern = false;
                     gpuOptions.AppendExecutionProvider_DML(deviceId);
+#else
+                    WebGpuExecutionProvider.AppendTo(gpuOptions, deviceId);
+#endif
 
                     int poolSize = Math.Max(1, hwSettings.MaxConcurrentGpuRequests);
                     var pool = new ConcurrentQueue<InferenceSession>();
@@ -174,34 +179,12 @@ public partial class PiperRunner : IDisposable
                         throw;
                     }
 
+#if USE_DML
                     OnnxHardwareDiagnostics.LogDirectMlDevice(logger, "Piper Model", deviceId);
+#else
+                    LogWebGpuLoaded(logger, deviceId, poolSize);
+#endif
                     return (null, pool, true, true, poolSize);
-#elif USE_WEBGPU
-                    // [HYBRID ARCHITECTURE] 
-                    // WebGPU is currently not thread-safe for concurrent executions.
-                    // To maintain high throughput, we use a Hybrid approach:
-                    // Piper (lightweight) runs on CPU using CPU settings and CPU concurrency limits.
-                    // OpenVoice (heavy) runs exclusively on WebGPU with a fixed pool size of 1.
-                    logger.LogInformation("[HARDWARE] WebGPU HYBRID mode: Piper routed to CPU for optimal parallel performance.");
-
-                    // The name is "hybridCpuOptions" to avoid conflict with the global fallback
-                    using var hybridCpuOptions = new Microsoft.ML.OnnxRuntime.SessionOptions
-                    {
-                        LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR,
-                        GraphOptimizationLevel = onnxSettings.EnableGraphOptimization 
-                            ? GraphOptimizationLevel.ORT_ENABLE_ALL 
-                            : GraphOptimizationLevel.ORT_DISABLE_ALL
-                    };
-                    
-                    // Honestly apply CPU threading settings (e.g., 4 threads) to maximize CPU speed
-                    onnxSettings.Cpu.ApplyTo(hybridCpuOptions);
-                    var session = new InferenceSession(modelPath, hybridCpuOptions);
-
-                    OnnxHardwareDiagnostics.LogCpuDevice(logger, "Piper Model");
-
-                    // IsUsingGPU = false ensures Program.cs strictly applies MaxConcurrentCpuRequests
-                    // for the global request gate.
-                    return (session, null, false, false, int.MaxValue);
 #endif
                 }
                 catch (Exception ex)
@@ -279,10 +262,13 @@ public partial class PiperRunner : IDisposable
 
         if (_isUsingPool)
         {
-            // DirectML Object Pool
+            // The request gate normally avoids waiting; this also protects direct callers.
+            _sessionGate!.Wait();
             if (!_isolatedSessionPool!.TryDequeue(out activeSession!))
-                throw new InvalidOperationException("DirectML Session Pool is exhausted. Check your request gate limits.");
-
+            {
+                _sessionGate.Release();
+                throw new InvalidOperationException("Piper session pool is unexpectedly empty.");
+            }
             returnToPool = true;
         }
         else
@@ -321,6 +307,7 @@ public partial class PiperRunner : IDisposable
             if (returnToPool)
             {
                 _isolatedSessionPool!.Enqueue(activeSession);
+                _sessionGate!.Release();
             }
         }
     }
@@ -419,6 +406,7 @@ public partial class PiperRunner : IDisposable
             }
         }
 
+        _sessionGate?.Dispose();
         GC.SuppressFinalize(this);
     }
 
@@ -451,6 +439,6 @@ public partial class PiperRunner : IDisposable
     private static partial void LogDmlLoaded(ILogger logger, int deviceId);
 
     /// <summary>Logs successful Piper loading on the selected WebGPU device.</summary>
-    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (WebGPU, Device ID: {DeviceId})")]
-    private static partial void LogWebGpuLoaded(ILogger logger, int deviceId);
+    [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded on GPU (WebGPU, Dawn adapter index: {AdapterIndex}, Sessions: {PoolSize})")]
+    private static partial void LogWebGpuLoaded(ILogger logger, int adapterIndex, int poolSize);
 }

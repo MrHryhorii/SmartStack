@@ -9,7 +9,7 @@ public class HardwareSettings
 {
     /// <summary>
     /// Limits parallel requests for the GPU. 
-    /// IMPORTANT FOR DirectML: This exact number dictates how many isolated InferenceSession 
+    /// IMPORTANT FOR DirectML/WebGPU: This exact number dictates how many isolated InferenceSession 
     /// objects are simultaneously kept alive in the Object Pool within the video memory (VRAM) 
     /// to serve concurrent requests. Higher numbers require significantly more VRAM.
     /// </summary>

@@ -71,20 +71,20 @@ code material. Keep the package's LICENSE.txt, LICENSE-CODE.txt and
 ThirdPartyNotices.txt in THIRD_PARTY_LICENSES/DirectML/ with the build.
 https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4
 
-Conditional builds confirmed by the six restore graphs:
-  CPU: Microsoft.ML.OnnxRuntime 1.29.0 (MIT) and its managed bindings.
+Conditional builds (each publish records its current restore graph):
+  CPU: Microsoft.ML.OnnxRuntime 1.31.1 (MIT) and its managed bindings.
   CUDA: Microsoft.ML.OnnxRuntime.Gpu 1.29.0 (MIT); the package declares
     Microsoft.ML.OnnxRuntime.Gpu.Linux, .Gpu.Windows and .Managed 1.29.0
     as dependencies. Check which native files are actually published.
-  WebGPU: Microsoft.ML.OnnxRuntime 1.29.0 (MIT) plus
-    Microsoft.ML.OnnxRuntime.EP.WebGpu 0.3.0 (MIT). Its package LICENSE was
+  WebGPU: Microsoft.ML.OnnxRuntime 1.31.1 (MIT) plus
+    Microsoft.ML.OnnxRuntime.EP.WebGpu 0.5.0 (MIT). Its package LICENSE was
     inspected, and ThirdPartyNotices.txt includes Dawn (BSD-3-Clause) among
-    many upstream notices. Windows selects a WebGPU provider, dxcompiler.dll
-    and dxil.dll; Linux selects a WebGPU provider. Match the shipped native
+    many upstream notices. Windows includes a WebGPU provider and dxcompiler.dll;
+    Linux includes a WebGPU provider. Match the shipped native
     files against the package notices before release.
-  NuGet pages: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.29.0
+  NuGet pages: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.31.1
   https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.Gpu/1.29.0
-  https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.EP.WebGpu/0.3.0
+  https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.EP.WebGpu/0.5.0
 The Linux CUDA graph also includes the Windows GPU package as a restore
 dependency, but its linux-x64 target does not select native assets from it.
 The actual publish folders and package build targets require a separate check.
