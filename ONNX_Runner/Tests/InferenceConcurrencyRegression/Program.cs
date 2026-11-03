@@ -74,6 +74,27 @@ try
             "Pool capacity changed after stress."));
 
     Type? provider = typeof(PiperRunner).Assembly.GetType("ONNX_Runner.Services.Inference.WebGpuExecutionProvider");
+    Check("Explicit Piper CPU keeps the independent OpenVoice adapter without initializing WebGPU", () =>
+    {
+        var hardware = new HardwareSettings { ForcePiperToCpu = true, PiperGpuDeviceId = 0, OpenVoiceGpuDeviceId = 2 };
+        string original = JsonSerializer.Serialize(hardware);
+        var logger = new WarningLogger();
+        object? device = provider?.GetField("Device", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+        if (device != null)
+            Require(!(bool)device.GetType().GetProperty("IsValueCreated")!.GetValue(device)!, "WebGPU was initialized before the CPU test.");
+        using var forced = new PiperRunner(piperPath, new PiperConfig(), new FixturePhonemizer(),
+            new OnnxSettings { Cpu = { IntraOpNumThreads = 1 } }, hardware, new ModelSettings(), logger, openVoiceEnabled: true);
+        Require(!forced.IsUsingGPU && forced.ConcurrencyCapacity == int.MaxValue, "The CPU override was ignored.");
+        Require(JsonSerializer.Serialize(hardware) == original, "Piper changed the OpenVoice GPU selection.");
+        if (provider != null)
+        {
+            Require(device != null && !(bool)device.GetType().GetProperty("IsValueCreated")!.GetValue(device)!, "CPU Piper initialized the shared WebGPU adapter.");
+            Require(logger.Warnings.Count == 1 && logger.Warnings[0].Contains("ForcePiperToCpu", StringComparison.Ordinal), "The explicit override lost warning priority.");
+        }
+        var result = forced.SynthesizeAudioRaw("17");
+        try { Require(result.Length == 3 && result.Buffer.AsSpan(0, 3).SequenceEqual(new float[] { 17, 18, 19 }), "Forced CPU inference failed."); }
+        finally { ArrayPool<float>.Shared.Return(result.Buffer); }
+    });
     MethodInfo routing = typeof(PiperRunner).GetMethod("ShouldRunOnCpu", BindingFlags.NonPublic | BindingFlags.Static)!;
     foreach (var (piperId, voiceId, cloning, forceCpu) in new[]
     {
@@ -123,14 +144,8 @@ try
             Check($"WebGPU rejects core {version}", () => Reject(() => validate.Invoke(null, [version, null])));
         Check("Legacy override cannot overlap the two runners", () => Reject(() => validate.Invoke(null, ["1.31.1", "1"])));
     }
-    Console.WriteLine(JsonSerializer.Serialize(new
-    {
-        Checks = checks,
-        Failures = failures,
-        ConcurrentRequestsPerRunner = 200,
-        PoolSize = 3,
-        GpuPerformanceTested = false
-    }));
+    Console.WriteLine(JsonSerializer.Serialize(new { Checks = checks, Failures = failures,
+        ConcurrentRequestsPerRunner = 200, PoolSize = 3, GpuPerformanceTested = false }));
     return failures == 0 ? 0 : 1;
 
     void RunPiper(int value)

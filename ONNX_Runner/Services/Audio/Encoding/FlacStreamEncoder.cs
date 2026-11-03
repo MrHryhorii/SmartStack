@@ -62,11 +62,20 @@ internal sealed class FlacStreamEncoder : IDisposable
         _residualBuffer = ArrayPool<int>.Shared.Rent(BlockSize);
         _outputBuffer = ArrayPool<byte>.Shared.Rent(FrameOutputBufferSize);
 
-        _streamInfoCombinedFieldPosition = stream.CanSeek
-            ? stream.Position + 18
-            : -1;
+        try
+        {
+            _streamInfoCombinedFieldPosition = stream.CanSeek
+                ? stream.Position + 18
+                : -1;
 
-        WriteStreamHeader();
+            WriteStreamHeader();
+        }
+        catch
+        {
+            // A failed constructor has no caller-owned instance to dispose.
+            Abort();
+            throw;
+        }
     }
 
     /// <summary>

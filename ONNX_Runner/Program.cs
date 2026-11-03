@@ -209,7 +209,8 @@ if (piperConfig != null && piperModelPath != null)
      modelConfig,
      bootstrapLoggerFactory.CreateLogger<PiperRunner>(),
      openVoiceEnabled: clonerConfig.EnableCloning);
-    builder.Services.AddSingleton(runner);
+    // A factory transfers ownership of the preloaded model to the application host.
+    builder.Services.AddSingleton(_ => runner);
 
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig, chunkerRules);
     builder.Services.AddSingleton(punctuationMapper);
@@ -252,6 +253,7 @@ if (piperConfig != null && piperModelPath != null)
     if (clonerConfig.EnableCloning &&
         File.Exists(extractPath) && File.Exists(colorPath) && File.Exists(toneJsonPath))
     {
+        OpenVoiceRunner? pendingOpenVoice = null;
         try
         {
             string toneJsonContent = File.ReadAllText(toneJsonPath);
@@ -259,6 +261,7 @@ if (piperConfig != null && piperModelPath != null)
             if (toneConfig != null)
             {
                 var openVoice = new OpenVoiceRunner(extractPath, colorPath, toneConfig, onnxConfig, hardwareConfig, bootstrapLoggerFactory.CreateLogger<OpenVoiceRunner>());
+                pendingOpenVoice = openVoice;
                 var audioProc = new AudioProcessor(toneConfig);
 
                 if (!Directory.Exists(voicesDirectory)) Directory.CreateDirectory(voicesDirectory);
@@ -287,16 +290,16 @@ if (piperConfig != null && piperModelPath != null)
                         System.Buffers.ArrayPool<float>.Shared.Return(normalizedAudio.Buffer);
                         continue;
                     }
-                    // Normalizes loudness before extraction to keep tone embeddings level-invariant.
-                    audioProc.NormalizeLufs(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length), targetRate, clonerConfig.ReferenceAudioTargetLufs);
                     float[,] spec;
                     try
                     {
+                        // Keep loudness normalization inside the rented reference buffer's lifetime.
+                        audioProc.NormalizeLufs(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length), targetRate, clonerConfig.ReferenceAudioTargetLufs);
                         spec = audioProc.GetMagnitudeSpectrogram(normalizedAudio.Buffer.AsSpan(0, normalizedAudio.Length));
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"   -> [ERROR] Spectrogram generation failed: {ex.Message}");
+                        Console.WriteLine($"   -> [ERROR] Reference preparation failed: {ex.Message}");
                         continue;
                     }
                     finally
@@ -339,13 +342,18 @@ if (piperConfig != null && piperModelPath != null)
                     }
                 }
                 // Register cloner services
-                builder.Services.AddSingleton(openVoice);
+                builder.Services.AddSingleton(_ => openVoice);
                 builder.Services.AddSingleton(audioProc);
+                pendingOpenVoice = null;
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[ERROR] Failed to load OpenVoice/Voices: {ex.Message}");
+        }
+        finally
+        {
+            pendingOpenVoice?.Dispose();
         }
     }
     else if (clonerConfig.EnableCloning)
@@ -477,7 +485,7 @@ builder.Services.AddSingleton(sp =>
 // and friends lazily, inside SynthesizeAsync, at request time — the same graceful "model not
 // loaded" 500 response that already existed continues to work exactly as before.
 builder.Services.AddSingleton<SpeechSynthesisService>();
-var app = builder.Build();
+await using var app = builder.Build();
 
 // =================================================================
 // ENABLE STATIC FILES (WEB UI HOSTING)
@@ -620,14 +628,14 @@ if (!string.IsNullOrEmpty(url))
             clone_intensity = 1.0f,
             tone_temperature = 0.7f
         };
-        var content = new StringContent(
+        using var content = new StringContent(
             System.Text.Json.JsonSerializer.Serialize(warmupRequest),
             System.Text.Encoding.UTF8,
             "application/json"
         );
 
         // Dispatch the request to the local instance
-        var response = await client.PostAsync($"{baseUrl}/tsbk/audio/speech", content);
+        using var response = await client.PostAsync($"{baseUrl}/tsbk/audio/speech", content);
         if (response.IsSuccessStatusCode)
         {
             // Read the byte array to ensure the server streams the response, then immediately discard it for GC

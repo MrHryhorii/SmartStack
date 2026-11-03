@@ -89,29 +89,37 @@ public class AudioStreamManager : IDisposable
                 1,
                 OpusApplication.OPUS_APPLICATION_VOIP);
 
-            // RFC 7845 stores pre-skip in 48 kHz granule units, while Concentus
-            // reports encoder lookahead in samples at the encoder input rate.
-            _opusPreSkip48k = checked((int)ScaleToOpusGranules(
-                _opusEncoder.Lookahead,
-                sampleRate));
-
-            if ((uint)_opusPreSkip48k > ushort.MaxValue)
+            try
             {
-                throw new InvalidOperationException(
-                    $"Opus encoder pre-skip is too large: {_opusPreSkip48k} samples at 48 kHz.");
+                // RFC 7845 stores pre-skip in 48 kHz granule units, while Concentus
+                // reports encoder lookahead in samples at the encoder input rate.
+                _opusPreSkip48k = checked((int)ScaleToOpusGranules(
+                    _opusEncoder.Lookahead,
+                    sampleRate));
+
+                if ((uint)_opusPreSkip48k > ushort.MaxValue)
+                {
+                    throw new InvalidOperationException(
+                        $"Opus encoder pre-skip is too large: {_opusPreSkip48k} samples at 48 kHz.");
+                }
+
+                _opusFrameBuffer = ArrayPool<short>.Shared.Rent(_opusFrameSize);
+                _opusPacketBuffer = ArrayPool<byte>.Shared.Rent(OpusPacketMaxBytes);
+
+                string vendor = $"Tsubaki TTS Engine / {_opusEncoder.GetVersionString()}";
+                _oggMuxer = new OggOpusMuxer(
+                    _baseStream,
+                    inputSampleRate: sampleRate,
+                    channels: 1,
+                    preSkip: (ushort)_opusPreSkip48k,
+                    vendor: vendor);
             }
-
-            _opusFrameBuffer = ArrayPool<short>.Shared.Rent(_opusFrameSize);
-            _opusPacketBuffer = ArrayPool<byte>.Shared.Rent(OpusPacketMaxBytes);
-
-            string vendor = $"Tsubaki TTS Engine / {_opusEncoder.GetVersionString()}";
-
-            _oggMuxer = new OggOpusMuxer(
-                _baseStream,
-                inputSampleRate: sampleRate,
-                channels: 1,
-                preSkip: (ushort)_opusPreSkip48k,
-                vendor: vendor);
+            catch
+            {
+                // Release the encoder and leases even when the initial header write fails.
+                Abort();
+                throw;
+            }
 
             return;
         }
@@ -638,12 +646,20 @@ public class AudioStreamManager : IDisposable
             _segmentTable = ArrayPool<byte>.Shared.Rent(MaxLacingSegments);
             _pagePayload = ArrayPool<byte>.Shared.Rent(MaxOggPagePayload);
 
-            WriteOpusHead(
-                inputSampleRate,
-                channels,
-                preSkip);
-
-            WriteOpusTags(vendor);
+            try
+            {
+                WriteOpusHead(
+                    inputSampleRate,
+                    channels,
+                    preSkip);
+                WriteOpusTags(vendor);
+            }
+            catch
+            {
+                // The outer manager cannot dispose a muxer whose constructor failed.
+                Dispose();
+                throw;
+            }
         }
 
         /// <summary>

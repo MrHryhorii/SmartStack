@@ -214,7 +214,16 @@ public partial class OpenVoiceRunner : IDisposable
         onnxSettings.Cpu.ApplyTo(cpuOptions);
 
         var cpuExtract = new InferenceSession(extractPath, cpuOptions);
-        var cpuColor = new InferenceSession(colorPath, cpuOptions);
+        InferenceSession cpuColor;
+        try
+        {
+            cpuColor = new InferenceSession(colorPath, cpuOptions);
+        }
+        catch
+        {
+            cpuExtract.Dispose();
+            throw;
+        }
 
         OnnxHardwareDiagnostics.LogCpuDevice(logger, "OpenVoice Models");
 
