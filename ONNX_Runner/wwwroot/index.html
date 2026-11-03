@@ -22,10 +22,10 @@
         <!-- Header section with title and theme toggle button -->
         <header class="header">
             <h1 class="title help-tooltip tooltip-wide"
-                data-tooltip="Local TTS engine built around Piper, with optional OpenVoice voice cloning, streaming, audio effects, and cross-language pronunciation. Foreign sounds are adapted to what the active Piper model can actually pronounce.">
+                data-tooltip="Local TTS engine built around Piper, with optional OpenVoice voice cloning, streaming, audio effects, and cross-language pronunciation. Unsupported sounds are adapted to the sounds available in the active Piper model.">
                 🎙️ Tsubaki TTS Engine</h1>
             <button id="themeToggle" class="btn-icon help-tooltip tooltip-right"
-                data-tooltip="Switch the dashboard between light and dark themes. This changes only the interface, not the generated audio."
+                data-tooltip="Switch the dashboard between light and dark themes. Only the interface changes; generated audio is unaffected."
                 aria-label="Toggle light and dark theme">🌓</button>
         </header>
         <!-- Main layout containing the text input, controls, and log panel -->
@@ -35,7 +35,7 @@
                 <!-- Textarea for user input to synthesize speech from -->
                 <div class="field">
                     <label for="textInput" class="label help-tooltip tooltip-wide"
-                        data-tooltip="Text to synthesize. API field: input (required). Use [[...]] for explicit raw phonemes. Single [...] or /.../ are treated as phonemes only when they actually look like IPA; unsupported sounds are adapted to the active Piper model.">Text
+                        data-tooltip="API: input. The only required API field; all other fields are optional. Enter text to synthesize. Use [[...]] for explicit raw phonemes. Single [...] or /.../ are treated as phonemes only when they contain IPA symbols. Unsupported sounds are adapted to the active Piper model.">Text (required)
                         <span class="help-mark" aria-hidden="true">ⓘ</span></label>
                     <textarea id="textInput" spellcheck="false" placeholder="Enter text to synthesize..."></textarea>
                 </div>
@@ -52,7 +52,7 @@
                     <div class="toggle">
                         <input type="checkbox" id="streamToggle" checked>
                         <span class="toggle-label-help help-tooltip"
-                            data-tooltip="Start playback while audio is still being generated when the format supports it. API field: stream (this dashboard always sends true/false). WAV cannot begin playback early; Base64 JSON must be completed before normal playback.">
+                            data-tooltip="API: stream (the dashboard always sends true/false). Start playback while audio is still being generated, if the format and browser support it. WAV waits for the complete audio; Base64 JSON must be received in full before normal playback.">
                             <label for="streamToggle">Real-time Playback</label>
                             <span class="help-mark" aria-hidden="true">ⓘ</span>
                         </span>
@@ -60,7 +60,7 @@
 
                     <div class="language-selector">
                         <label for="languageSelect" class="help-tooltip tooltip-right"
-                            data-tooltip="Choose how the text is pronounced. API field: language. Auto uses Tsubaki's configured language detector; choosing a language directly skips detection. Foreign sounds are still adapted to the active Piper model, so an accent may remain.">Pronunciation:
+                            data-tooltip="API: language. Auto lets the server choose pronunciation using its language settings; if automatic detection is disabled, it uses the model language. Selecting a language applies its pronunciation rules to the text and bypasses detection. In both modes, unsupported sounds are adapted to the active Piper model, so an accent may remain.">Pronunciation:
                             <span class="help-mark" aria-hidden="true">ⓘ</span></label>
                         <select id="languageSelect"></select>
                     </div>
@@ -74,14 +74,14 @@
             <aside class="panel panel-side">
                 <div class="field">
                     <label for="voiceSelect" class="label help-tooltip"
-                        data-tooltip="Select the output voice. API field: voice (this dashboard always sends the selection). piper_base uses the active Piper voice; other entries are local cloned voices handled through OpenVoice.">Voice
+                        data-tooltip="API: voice (the dashboard always sends the selection). Choose the output voice. piper_base uses the active Piper model; other entries are local cloned voices processed through OpenVoice.">Voice
                         <span class="help-mark" aria-hidden="true">ⓘ</span></label>
                     <select id="voiceSelect"></select>
                 </div>
                 <div class="output-options">
                     <div class="field">
                         <label for="formatSelect" class="label help-tooltip"
-                            data-tooltip="Choose the returned audio format. API field: response_format (this dashboard always sends it). MP3 is the general-purpose choice, Opus is compact and stream-friendly, AAC is a compact lossy format with good speech quality and streaming support, FLAC is lossless, WAV is uncompressed and cannot start early, PCM is raw audio, and b64_json wraps MP3 in JSON.">Format
+                            data-tooltip="API: response_format (the dashboard always sends it). MP3 is a general-purpose choice; Opus is compact and suited to streaming; AAC offers compact, lossy speech audio with streaming support. FLAC is lossless, WAV is uncompressed and waits for the full result, PCM is raw audio without a file header, and b64_json wraps MP3 in JSON.">Format
                             <span class="help-mark" aria-hidden="true">ⓘ</span></label>
                         <select id="formatSelect">
                             <option value="mp3">MP3</option>
@@ -95,7 +95,7 @@
                     </div>
                     <div class="field">
                         <label for="sampleRateNum" class="label help-tooltip tooltip-right"
-                            data-tooltip="Output sample rate in Hz. API field: samplerate. Empty uses the server default; 0 keeps the model/codec rate. Nonzero rates are clamped to 8000–48000 Hz; lower rates reduce high-frequency detail. MP3/AAC use the nearest supported rate; Opus decodes at 48000 Hz.">Rate (Hz)
+                            data-tooltip="API: samplerate. Output sample rate in Hz. Empty inherits the server default; 0 keeps the normal model/codec rate. Nonzero requests are clamped to 8000–48000 Hz. Lower rates reduce high-frequency detail. MP3, AAC, and Opus select the nearest codec-supported input rate; Opus always decodes at 48000 Hz.">Rate (Hz)
                             <span class="help-mark" aria-hidden="true">ⓘ</span></label>
                         <input type="number" id="sampleRateNum" aria-describedby="sampleRateError" min="0" max="48000" step="1" placeholder="0"
                             list="sampleRateOptions" aria-label="Output sample rate in Hz">
@@ -117,7 +117,7 @@
                 <!-- Slider and number input for adjusting the speed of the synthesized speech -->
                 <div class="field">
                     <label class="label help-tooltip"
-                        data-tooltip="Speaking speed. API field: speed (this dashboard always sends it). 1.0 is normal, lower is slower, higher is faster. Extreme values can sound less natural.">Speed
+                        data-tooltip="API: speed (the dashboard always sends it). Speaking speed: 1.0 is normal, lower is slower, higher is faster. Extreme values can sound less natural.">Speed
                         <span class="help-mark" aria-hidden="true">ⓘ</span></label>
                     <div class="row">
                         <input type="range" id="speedSlider" aria-label="Speech speed" min="0.25" max="4" step="0.01"
@@ -131,13 +131,13 @@
 
                 <!-- Collapsible section for voice shift controls, allowing users to adjust pitch and volume parameters -->
                 <details class="advanced-group">
-                    <summary title="Pitch and output-level overrides.">Voice Shift</summary>
+                    <summary title="Adjust pitch and output volume.">Voice Shift</summary>
                     <div class="group-content">
                         <div class="field">
                             <div class="toggle">
                                 <input type="checkbox" id="usePitch">
                                 <span class="toggle-label-help help-tooltip"
-                                    data-tooltip="Shift voice pitch. API field: pitch. 1.0 is unchanged; 0.5 / 2.0 are about one octave down / up. When disabled, this override is not sent and the server default is used.">
+                                    data-tooltip="API: pitch. Shift voice pitch without changing speaking speed. 1.0 applies no pitch shift; 0.5 is about one octave lower and 2.0 about one octave higher. Unchecked sends no override and uses the server default.">
                                     <label for="usePitch">Pitch</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -154,7 +154,7 @@
                             <div class="toggle">
                                 <input type="checkbox" id="useVolume">
                                 <span class="toggle-label-help help-tooltip"
-                                    data-tooltip="Adjust output volume. API field: volume. 1.0 is unchanged, 0.5 ≈ −6 dB, 2.0 ≈ +6 dB, 4.0 ≈ +12 dB. Server VolumeBoosterDb still applies underneath. When disabled, the server default is used.">
+                                    data-tooltip="API: volume. Output level multiplier: 0 mutes, 1.0 keeps the normal level, 0.5 requests about −6 dB, 2.0 about +6 dB, and 4.0 about +12 dB. The server's VolumeBoosterDb also applies; peak protection can reduce the actual boost. Unchecked sends no override and uses the server default.">
                                     <label for="useVolume">Volume Boost</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -170,14 +170,14 @@
                 </details>
                 <!-- Collapsible section for prosody and rhythm controls, allowing users to adjust expression and rhythm parameters -->
                 <details class="advanced-group">
-                    <summary title="Pronunciation variation, rhythm, and first-audio latency controls.">Speech Dynamics
+                    <summary title="Pronunciation, rhythm, and faster playback startup.">Speech Dynamics
                     </summary>
                     <div class="group-content">
                         <div class="field">
                             <div class="toggle">
                                 <input type="checkbox" id="useNoiseScale">
                                 <span class="toggle-label-help help-tooltip"
-                                    data-tooltip="Controls Piper pronunciation/intonation variation. API field: noise_scale. Higher values allow more variation; lower values are steadier. This is not a direct emotion control. When disabled, the model/server default is used.">
+                                    data-tooltip="API: noise_scale. Controls Piper pronunciation and intonation variation. Higher values allow more variation; lower values are steadier. This does not directly control emotion. Unchecked sends no override and uses the model/server default.">
                                     <label for="useNoiseScale">Expression</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -193,7 +193,7 @@
                             <div class="toggle">
                                 <input type="checkbox" id="useNoiseW">
                                 <span class="toggle-label-help help-tooltip"
-                                    data-tooltip="Controls variation in phoneme timing and rhythm. API field: noise_w. Higher values allow more timing variation. When disabled, the model/server default is used.">
+                                    data-tooltip="API: noise_w. Controls variation in phoneme timing and rhythm. Higher values allow more timing variation; lower values are steadier. Unchecked sends no override and uses the model/server default.">
                                     <label for="useNoiseW">Rhythm</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -209,7 +209,7 @@
                             <div class="toggle">
                                 <input type="checkbox" id="earlySplitToggle" checked>
                                 <span class="toggle-label-help help-tooltip"
-                                    data-tooltip="Reduces time to the first audio by allowing one early split at a safe clause boundary. API field: early_split (this dashboard always sends true/false). It can slightly change the first sentence's rhythm or intonation. Recommended for streaming; usually unnecessary for non-streaming output.">
+                                    data-tooltip="API: early_split (the dashboard always sends true/false). Allows one early split at a suitable clause boundary to reduce time to the first audio. It can slightly change the opening phrase's rhythm or intonation. Recommended for streaming; usually unnecessary when waiting for the complete result.">
                                     <label for="earlySplitToggle">Early Split</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -219,13 +219,13 @@
                 </details>
                 <!-- Collapsible controls for character effects and acoustic spaces -->
                 <details class="advanced-group">
-                    <summary title="Character DSP effects and simulated acoustic spaces.">Audio Effects</summary>
+                    <summary title="Voice effects and acoustic environments.">Audio Effects</summary>
                     <div class="group-content">
                         <div class="field">
                             <div class="toggle">
                                 <input type="checkbox" id="useEffect">
                                 <span class="toggle-label-help help-tooltip"
-                                    data-tooltip="Apply a character-style DSP effect such as Telephone or LoFiTape. API field: effect. When disabled, the dashboard does not send an effect override and the server default can apply.">
+                                    data-tooltip="API: effect. Apply a character effect such as Telephone or LoFiTape. Unchecked sends no override, so the server default may still apply. Selecting None explicitly disables this character-effect layer.">
                                     <label for="useEffect">Character Effect</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -233,7 +233,7 @@
                             <select id="effectSelect" disabled aria-label="Character effect"></select>
 
                             <div class="sub-control-label help-tooltip"
-                                data-tooltip="Strength of the selected character effect. API field: effect_intensity. 0 = no audible effect contribution, 1 = full effect strength.">
+                                data-tooltip="API: effect_intensity. Strength of the selected character effect: 0 removes this effect's contribution, 1 applies its full strength.">
                                 Intensity <span class="help-mark" aria-hidden="true">ⓘ</span>
                             </div>
                             <div class="row effect-row">
@@ -247,7 +247,7 @@
                             <div class="toggle">
                                 <input type="checkbox" id="useEnvironment">
                                 <span class="toggle-label-help help-tooltip"
-                                    data-tooltip="Place the voice in a simulated acoustic space such as a room, hall, cave, or underwater environment. API field: environment. When disabled, the dashboard does not send an environment override and the server default can apply.">
+                                    data-tooltip="API: environment. Place the voice in a simulated room, hall, cave, or special environment such as Underwater. Unchecked sends no override, so the server default may still apply. Selecting None disables this spatial layer.">
                                     <label for="useEnvironment">Acoustic Space</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -255,7 +255,7 @@
                             <select id="environmentSelect" disabled aria-label="Acoustic environment"></select>
 
                             <div class="sub-control-label help-tooltip"
-                                data-tooltip="Strength of the selected acoustic environment. API field: environment_intensity. Higher values make the room/reverb effect more prominent; 0.25 is a good general starting point.">
+                                data-tooltip="API: environment_intensity. Strength of the selected acoustic environment. Higher values make its reflections, echoes, or muffling more prominent; 0 removes it and 1 applies it fully. Try 0.25 as a general starting point.">
                                 Intensity <span class="help-mark" aria-hidden="true">ⓘ</span>
                             </div>
                             <div class="row effect-row">
@@ -268,7 +268,7 @@
                             <div class="toggle" style="margin-top: 8px;">
                                 <input type="checkbox" id="extendTailToggle" checked disabled>
                                 <span class="toggle-label-help help-tooltip tooltip-up"
-                                    data-tooltip="Let spatial reverb fade out naturally after the voice ends. API field: extend_reverb_tail. Strong environments can make the final audio longer. It affects environments only, not character effects.">
+                                    data-tooltip="API: extend_reverb_tail. Let spatial echoes and reverberation fade naturally after speech ends. This can make the final audio longer. It affects acoustic environments only, not character effects; environments without a tail are unaffected.">
                                     <label for="extendTailToggle">Extend Reverb Tail</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -282,7 +282,7 @@
                     <div class="group-content">
                         <p class="equalizer-hint" id="equalizerHint">
                             <span class="help-tooltip" tabindex="0" role="note" aria-label="Equalizer API help"
-                                data-tooltip="API field: equalizer. Accepts an array of profile IDs. Selected profiles apply sequentially from top to bottom.">
+                                data-tooltip="API: equalizer. Accepts an array of profile IDs. Selected playback profiles apply sequentially from top to bottom. Leaving all unchecked sends an empty array and bypasses the server's playback-profile defaults.">
                                 Usually select one profile.
                                 <span class="help-mark" aria-hidden="true">ⓘ</span>
                             </span>
@@ -299,7 +299,7 @@
                             <div class="toggle">
                                 <input type="checkbox" id="useCloneInt">
                                 <span class="toggle-label-help help-tooltip tooltip-up"
-                                    data-tooltip="Control how strongly a cloned voice differs from the base Piper voice. API field: clone_intensity. 0.0 = base voice, 0.5 = blend, 1.0 = normal target clone; values above 1.0 exaggerate the difference. When disabled, the server default is used.">
+                                    data-tooltip="API: clone_intensity. Controls how strongly the cloned voice differs from the base Piper voice. 0 uses the base voice, 0.5 blends base and target voice characteristics, and 1 gives the normal target clone; values above 1 exaggerate the difference. Unchecked sends no override and uses the server default.">
                                     <label for="useCloneInt">Clone Intensity</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -316,7 +316,7 @@
                             <div class="toggle">
                                 <input type="checkbox" id="useToneTemp">
                                 <span class="toggle-label-help help-tooltip tooltip-up"
-                                    data-tooltip="OpenVoice conversion randomness for cloned voices. API field: tone_temperature. Lower values are steadier; higher values add variation and can cause trembling or warbling. This is not an emotion control. When disabled, the server default is used.">
+                                    data-tooltip="API: tone_temperature. OpenVoice conversion randomness for cloned voices. Lower values are steadier; higher values add variation and may cause trembling or warbling. This does not directly control emotion. Unchecked sends no override and uses the server default.">
                                     <label for="useToneTemp">Tone Temperature</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
@@ -333,7 +333,7 @@
                             <div class="toggle">
                                 <input type="checkbox" id="useLpqf">
                                 <span class="toggle-label-help help-tooltip tooltip-up"
-                                    data-tooltip="Fine-tunes the cloned-voice low-pass filter when that filter is enabled. API field: low_pass_q_factor. The audible difference is usually very small. When disabled, the server default is used.">
+                                    data-tooltip="API: low_pass_q_factor. Fine-tunes the cloned-voice low-pass filter only when that filter is enabled. The audible difference is usually very small. Unchecked sends no override and uses the server default.">
                                     <label for="useLpqf">Low-Pass Q-Factor</label>
                                     <span class="help-mark" aria-hidden="true">ⓘ</span>
                                 </span>
