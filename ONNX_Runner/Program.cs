@@ -169,6 +169,8 @@ var onnxConfig = builder.Configuration.GetSection("OnnxSettings").Get<OnnxSettin
 var effectsConfig = builder.Configuration.GetSection("EffectsSettings").Get<EffectsSettings>() ?? new EffectsSettings();
 var clonerConfig = builder.Configuration.GetSection("ClonerSettings").Get<ClonerSettings>() ?? new ClonerSettings();
 var rateLimitConfig = builder.Configuration.GetSection("RateLimitSettings").Get<RateLimitSettings>() ?? new RateLimitSettings();
+ServerConfigurationValidator.Validate(dspConfig, streamConfig, effectsConfig, clonerConfig,
+    chunkerConfig, rateLimitConfig, phonemizerConfig);
 // =================================================================
 // SERVICE REGISTRATION (Dependency Injection)
 // =================================================================
@@ -535,10 +537,12 @@ using (var scope = app.Services.CreateScope())
 // API ENDPOINTS
 // =================================================================
 
-app.MapPost("/v1/audio/speech", SpeechEndpoint.HandleOpenAiRequest)
+app.MapPost("/v1/audio/speech", SpeechEndpoint.HandleOpenAiHttpRequest)
+   .Accepts<ONNX_Runner.Models.Requests.OpenAiSpeechRequest>("application/json")
    .WithName("GetSpeech")
    .RequireRateLimiting("ip_limit");
-app.MapPost("/tsbk/audio/speech", SpeechEndpoint.HandleTsubakiRequest)
+app.MapPost("/tsbk/audio/speech", SpeechEndpoint.HandleTsubakiHttpRequest)
+   .Accepts<ONNX_Runner.Models.Requests.TsubakiSpeechRequest>("application/json")
    .WithName("GetSpeechExtended")
    .RequireRateLimiting("ip_limit");
 

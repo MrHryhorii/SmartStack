@@ -9,24 +9,12 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class OpenAiRequestAdapter
 {
-    /// <summary>Validates wire formats and maps OpenAI fields to a synthesis request, leaving engine extensions at server defaults.</summary>
+    /// <summary>Resolves optional OpenAI controls while leaving engine extensions at server defaults.</summary>
     public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(
         OpenAiSpeechRequest dto)
     {
-        if (!AudioFormatParser.TryParse(dto.ResponseFormat, out AudioFormat format))
-        {
-            return (
-                null,
-                $"Unsupported response_format: '{dto.ResponseFormat}'. " +
-                "Supported formats are: wav, mp3, opus, aac, flac, pcm, b64_json.");
-        }
-
-        if (!SpeechStreamFormatParser.TryParse(dto.StreamFormat, out SpeechStreamFormat streamFormat))
-        {
-            return (
-                null,
-                $"Unsupported stream_format: '{dto.StreamFormat}'. Supported values are: audio, sse.");
-        }
+        if (!AudioFormatParser.TryParse(dto.ResponseFormat, out AudioFormat format)) format = AudioFormat.Mp3;
+        if (!SpeechStreamFormatParser.TryParse(dto.StreamFormat, out SpeechStreamFormat streamFormat)) streamFormat = SpeechStreamFormat.Audio;
 
         string voice = string.IsNullOrWhiteSpace(dto.Voice?.Id)
             ? "piper_base"

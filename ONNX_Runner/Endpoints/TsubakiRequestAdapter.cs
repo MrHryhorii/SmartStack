@@ -9,18 +9,11 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class TsubakiRequestAdapter
 {
-    /// <summary>Validates wire formats and normalizes the language override while preserving optional engine controls.</summary>
+    /// <summary>Resolves optional wire controls and preserves inherited defaults for unusable selections.</summary>
     public static (SynthesisRequest? Request, string? ValidationError) ToSynthesisRequest(TsubakiSpeechRequest dto)
     {
-        if (!AudioFormatParser.TryParse(dto.ResponseFormat, out AudioFormat format))
-        {
-            return (null, $"Unsupported response_format: '{dto.ResponseFormat}'. Supported formats are: wav, mp3, opus, aac, flac, pcm, b64_json.");
-        }
-
-        if (!SpeechStreamFormatParser.TryParse(dto.StreamFormat, out SpeechStreamFormat streamFormat))
-        {
-            return (null, $"Unsupported stream_format: '{dto.StreamFormat}'. Supported values are: audio, sse.");
-        }
+        if (!AudioFormatParser.TryParse(dto.ResponseFormat, out AudioFormat format)) format = AudioFormat.Mp3;
+        if (!SpeechStreamFormatParser.TryParse(dto.StreamFormat, out SpeechStreamFormat streamFormat)) streamFormat = SpeechStreamFormat.Audio;
 
         // dto.Instructions is intentionally accepted but ignored.
         // It is a wire-compatibility field only and must not enter SynthesisRequest.
@@ -36,17 +29,17 @@ public static class TsubakiRequestAdapter
             Input = dto.Input,
             Format = format,
             SampleRate = dto.SampleRate,
-            Voice = dto.Voice,
+            Voice = string.IsNullOrWhiteSpace(dto.Voice) ? "piper_base" : dto.Voice.Trim(),
             Speed = dto.Speed,
             StreamFormat = streamFormat,
             Stream = dto.Stream,
             EarlySplit = dto.EarlySplit,
             NoiseScale = dto.NoiseScale,
             NoiseW = dto.NoiseW,
-            Equalizer = dto.Equalizer,
-            Effect = dto.Effect,
+            Equalizer = SpeechRequestJson.Equalizer(dto.Equalizer),
+            Effect = SpeechRequestJson.EnumName<VoiceEffectType>(dto.Effect),
             EffectIntensity = dto.EffectIntensity,
-            Environment = dto.Environment,
+            Environment = SpeechRequestJson.EnumName<SpatialEnvironment>(dto.Environment),
             EnvironmentIntensity = dto.EnvironmentIntensity,
             Pitch = dto.Pitch,
             Volume = dto.Volume,

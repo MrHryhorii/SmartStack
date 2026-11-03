@@ -65,7 +65,7 @@ public class SynthesisRequest
     /// </summary>
     public float? NoiseW { get; set; }
 
-    /// <summary>Optional ordered device profiles. Unknown entries are ignored; no server default is applied.</summary>
+    /// <summary>Optional ordered device profiles. Null inherits server profiles; empty bypasses them. Unknown entries are ignored.</summary>
     public string?[]? Equalizer { get; set; }
 
     /// <summary>

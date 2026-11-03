@@ -28,12 +28,12 @@ internal static class RequestAdapterChecks
 
         foreach (string format in new[] { "99", "0", "-1", "wav, mp3", "unknown", "" })
         {
-            check($"Both adapters reject unsupported format '{format}'", () =>
+            check($"Both adapters retain MP3 for an unusable optional format '{format}'", () =>
             {
                 var openAi = OpenAiRequestAdapter.ToSynthesisRequest(new OpenAiSpeechRequest { Input = "Test.", ResponseFormat = format });
                 var tsubaki = TsubakiRequestAdapter.ToSynthesisRequest(new TsubakiSpeechRequest { Input = "Test.", ResponseFormat = format });
-                Require(openAi.Request == null && openAi.ValidationError != null &&
-                    tsubaki.Request == null && tsubaki.ValidationError != null, "Unsupported enum value reached synthesis.");
+                Require(openAi.Request?.Format == AudioFormat.Mp3 && openAi.ValidationError == null &&
+                    tsubaki.Request?.Format == AudioFormat.Mp3 && tsubaki.ValidationError == null, "Unusable output format did not retain the wire default.");
             });
         }
 

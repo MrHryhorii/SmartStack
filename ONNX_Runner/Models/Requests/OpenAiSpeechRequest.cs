@@ -53,7 +53,7 @@ public class OpenAiSpeechRequest
     public float Speed
     {
         get => _speed;
-        set => _speed = Math.Clamp(value, 0.25f, 4.0f);
+        set => _speed = SpeechRequestNumber.Clamp(value, 0.25f, 4.0f);
     }
     /// <summary>
     /// Official OpenAI response framing selector.

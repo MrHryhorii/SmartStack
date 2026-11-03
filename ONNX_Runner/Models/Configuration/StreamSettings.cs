@@ -6,7 +6,7 @@ namespace ONNX_Runner.Models.Configuration;
 public class StreamSettings
 {
     /// <summary>
-    /// Globally enables or disables HTTP chunked streaming.
+    /// Default delivery timing when a request omits stream; an explicit request value overrides it.
     /// </summary>
     public bool EnableStreaming { get; set; } = true;
 

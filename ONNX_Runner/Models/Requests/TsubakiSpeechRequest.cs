@@ -73,7 +73,7 @@ public class TsubakiSpeechRequest
     {
         get => _speed;
         // Clamp the value to a reasonable range to prevent extreme settings that could break the model.
-        set => _speed = Math.Clamp(value, 0.25f, 4.0f);
+        set => _speed = SpeechRequestNumber.Clamp(value, 0.25f, 4.0f);
     }
     // =====================================================================
     // CUSTOM EXTENSIONS (Piper/VITS & Server Specific)
@@ -101,7 +101,7 @@ public class TsubakiSpeechRequest
     {
         get => _noiseScale;
         // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings that could break the model.
-        set => _noiseScale = value.HasValue ? Math.Clamp(value.Value, 0f, 1.0f) : null;
+        set => _noiseScale = SpeechRequestNumber.Clamp(value, 0f, 1.0f);
     }
     /// <summary>
     /// Variance of phoneme duration (Rhythm/Pacing). Typically ranges from 0.0 to 1.0.
@@ -112,13 +112,13 @@ public class TsubakiSpeechRequest
     {
         get => _noiseW;
         // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings that could break the model.
-        set => _noiseW = value.HasValue ? Math.Clamp(value.Value, 0f, 1.0f) : null;
+        set => _noiseW = SpeechRequestNumber.Clamp(value, 0f, 1.0f);
     }
     private string?[]? _equalizer;
     /// <summary>
     /// Optional ordered device-profile IDs applied after cloning and before character effects.
-    /// Missing, null, or empty bypasses equalization; unsupported entries are ignored.
-    /// Only the first MaxProfilesPerRequest entries are retained, including unknown IDs and nulls.
+    /// Missing or null inherits server profiles; an empty array bypasses equalization. Unsupported entries are ignored.
+    /// Only the first MaxProfilesPerRequest entries are retained; lists without a supported ID inherit server profiles.
     /// </summary>
     [JsonPropertyName("equalizer")]
     public string?[]? Equalizer
@@ -147,7 +147,7 @@ public class TsubakiSpeechRequest
         get => _effectIntensity;
         // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings that
         // could break the model or cause excessive distortion.
-        set => _effectIntensity = value.HasValue ? Math.Clamp(value.Value, 0.0f, 1.0f) : null;
+        set => _effectIntensity = SpeechRequestNumber.Clamp(value, 0.0f, 1.0f);
     }
     /// <summary>
     /// Specifies an acoustic spatial environment to apply (e.g., "LivingRoom", "ConcreteHall").
@@ -164,7 +164,7 @@ public class TsubakiSpeechRequest
         get => _environmentIntensity;
         // Clamp the value to a reasonable range (0.0 to 1.0) to prevent extreme settings
         // that could break the model or cause excessive reverb.
-        set => _environmentIntensity = value.HasValue ? Math.Clamp(value.Value, 0.0f, 1.0f) : null;
+        set => _environmentIntensity = SpeechRequestNumber.Clamp(value, 0.0f, 1.0f);
     }
     /// <summary>
     /// Pitch shift factor.
@@ -176,7 +176,7 @@ public class TsubakiSpeechRequest
     {
         get => _pitch;
         // Clamp the value to a safe range (0.5 to 2.0) to prevent extreme audio distortion or algorithm failure.
-        set => _pitch = value.HasValue ? Math.Clamp(value.Value, 0.5f, 2.0f) : null;
+        set => _pitch = SpeechRequestNumber.Clamp(value, 0.5f, 2.0f);
     }
     /// <summary>
     /// Volume multiplier.
@@ -188,7 +188,7 @@ public class TsubakiSpeechRequest
     {
         get => _volume;
         // Clamp from 0.0 (mute) to 4.0 (+12dB boost)
-        set => _volume = value.HasValue ? Math.Clamp(value.Value, 0.0f, 4.0f) : null;
+        set => _volume = SpeechRequestNumber.Clamp(value, 0.0f, 4.0f);
     }
     /// <summary>
     /// Forces the engine to use a specific language code, bypassing automatic language detection.
@@ -206,7 +206,7 @@ public class TsubakiSpeechRequest
     {
         get => _cloneIntensity;
         // Clamp the value to a reasonable range (0.0 to 2.0) to prevent extreme settings that could break the model.
-        set => _cloneIntensity = value.HasValue ? Math.Clamp(value.Value, 0.0f, 2.0f) : null;
+        set => _cloneIntensity = SpeechRequestNumber.Clamp(value, 0.0f, 2.0f);
     }
     /// <summary>
     /// Tau parameter for adjusting tone diversity.
@@ -218,7 +218,7 @@ public class TsubakiSpeechRequest
     {
         get => _toneTemperature;
         // Clamp the value to a reasonable range (0.1 to 2.0) to prevent extreme settings that could break the model.
-        set => _toneTemperature = value.HasValue ? Math.Clamp(value.Value, 0.1f, 2.0f) : null;
+        set => _toneTemperature = SpeechRequestNumber.Clamp(value, 0.1f, 2.0f);
     }
     /// <summary>
     /// Per-request override of the Low-Pass Filter Q-Factor (resonance/roll-off curve).
@@ -233,7 +233,7 @@ public class TsubakiSpeechRequest
         get => _lowPassQFactor;
         // Clamp to a safe and physically meaningful range for this specific anti-aliasing application.
         // Values above 1.0 start introducing resonant peaks (ringing), which defeats the purpose of smoothing.
-        set => _lowPassQFactor = value.HasValue ? Math.Clamp(value.Value, 0.1f, 1.0f) : null;
+        set => _lowPassQFactor = SpeechRequestNumber.Clamp(value, 0.1f, 1.0f);
     }
     /// <summary>
     /// Per-request override of whether the server keeps feeding the active spatial Environment

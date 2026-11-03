@@ -13,6 +13,22 @@ namespace ONNX_Runner.Endpoints;
 /// </summary>
 public static class SpeechEndpoint
 {
+    /// <summary>Reads optional OpenAI controls tolerantly while requiring a usable input body.</summary>
+    public static async Task<IResult> HandleOpenAiHttpRequest(HttpContext context,
+        SpeechSynthesisService synthesisService, CancellationToken cancellationToken)
+    {
+        var (request, error) = await SpeechRequestJson.ReadAsync<OpenAiSpeechRequest>(context.Request, cancellationToken);
+        return error ?? await HandleOpenAiRequest(context, request!, synthesisService, cancellationToken);
+    }
+
+    /// <summary>Reads optional Tsubaki controls tolerantly without discarding other valid fields.</summary>
+    public static async Task<IResult> HandleTsubakiHttpRequest(HttpContext context,
+        SpeechSynthesisService synthesisService, CancellationToken cancellationToken)
+    {
+        var (request, error) = await SpeechRequestJson.ReadAsync<TsubakiSpeechRequest>(context.Request, cancellationToken);
+        return error ?? await HandleTsubakiRequest(context, request!, synthesisService, cancellationToken);
+    }
+
     /// <summary>Validates an OpenAI speech request and delegates synthesis with the client cancellation token.</summary>
     public static async Task<IResult> HandleOpenAiRequest(
         HttpContext httpContext,
