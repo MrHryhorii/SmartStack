@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Text.Json;
 using NAudio.Wave;
+using NAudio.Wave.SampleProviders;
 using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
 
@@ -15,7 +16,8 @@ double? minimumSnr = null;
 string? baselinePath = Option("--baseline");
 Assembly? baseline = baselinePath == null ? null :
     new AssemblyLoadContext("resampler-baseline").LoadFromAssemblyPath(Path.GetFullPath(baselinePath));
-Type? baselineType = baseline?.GetType("ONNX_Runner.Services.AudioResampler", throwOnError: true);
+Type? baselineType = baseline?.GetType(typeof(AudioResampler).FullName!)
+    ?? baseline?.GetType("ONNX_Runner.Services.AudioResampler", throwOnError: true);
 var benchmarks = new List<object>();
 int[] rates = [8000, 11025, 12345, 16000, 22050, 24000, 44100, 48000];
 
@@ -180,17 +182,26 @@ foreach (var (rate, channels, floating, length) in new[]
 
 foreach (string voice in Options("--voice"))
 {
-    Check($"Complete reference PCM comparison: {Path.GetFileName(voice)}", () =>
+    Check($"Reference WAV downmix, duration, finite PCM and optional baseline: {Path.GetFileName(voice)}", () =>
     {
         using var reader = new AudioFileReader(voice);
-        Require(reader.WaveFormat.Channels == 1, "Comparison reference must be mono.");
-        float[] source = new float[checked((int)(reader.Length / sizeof(float)))];
+        ISampleProvider provider = reader;
+        if (reader.WaveFormat.Channels == 2)
+            provider = new StereoToMonoSampleProvider(provider) { LeftVolume = .5f, RightVolume = .5f };
+        else if (reader.WaveFormat.Channels > 2)
+            provider = provider.ToMono();
+        float[] source = new float[checked((int)(reader.Length / sizeof(float) / reader.WaveFormat.Channels))];
         int count = 0, read;
-        while (count < source.Length && (read = reader.Read(source.AsSpan(count))) > 0) count += read;
+        while (count < source.Length && (read = provider.Read(source.AsSpan(count))) > 0) count += read;
         foreach (int target in new[] { 8000, 16000, 22050, 24000, 44100, 48000 })
         {
             var output = new AudioResampler(reader.WaveFormat.SampleRate, target).Resample(source.AsSpan(0, count));
-            try { ComparePrevious(source[..count], reader.WaveFormat.SampleRate, target, output.Buffer.AsSpan(0, output.Length)); }
+            try
+            {
+                Require(Math.Abs(output.Length - count * (double)target / reader.WaveFormat.SampleRate) <= 1, "Reference duration drifted by more than one sample.");
+                Require(output.Buffer.AsSpan(0, output.Length).ToArray().All(float.IsFinite), "Reference conversion produced non-finite PCM.");
+                ComparePrevious(source[..count], reader.WaveFormat.SampleRate, target, output.Buffer.AsSpan(0, output.Length));
+            }
             finally { ArrayPool<float>.Shared.Return(output.Buffer); }
         }
     });

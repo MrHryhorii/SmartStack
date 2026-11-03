@@ -1,303 +1,218 @@
-# Tsubaki TTS Engine regression tests
+# Tsubaki TTS Engine tests
 
-[Tsubaki TTS Engine](https://github.com/MrHryhorii/SmartStack/tree/main/ONNX_Runner)
-is a local text-to-speech engine built with C# (.NET 10), Piper voice models, and
-ONNX Runtime. These standalone console projects check the text preprocessing
-used before speech synthesis: multilingual sentence boundaries, abbreviations,
-initials, language segmentation, punctuation normalization, technical-symbol and emoji pronunciation,
-and managed allocations. Server configuration checks also cover capability reporting
-and optional CPU waveform comparisons for DSP controls.
+Regression and integration tests for [Tsubaki TTS Engine](../readMe.md), a local C#/.NET 10 text-to-speech server using Piper, OpenVoice voice cloning and ONNX Runtime. They cover text chunking, multilingual pronunciation, request handling, audio processing, streaming, resource ownership and release packaging.
 
-## What the tests check
+Run commands from the `ONNX_Runner` directory. The order starts with everyday text/server checks and ends with specialist audio, hardware and distribution checks.
 
-| Project | Purpose |
-| --- | --- |
-| [TextChunkerRegression](TextChunkerRegression/) | Check sentence boundaries around abbreviations, initials, names, references, technical addresses, and Unicode punctuation. Verify line boundaries, list markers, chunk limits, completion flags, Unicode text integrity, and optional custom rules. |
-| [LanguageSegmentationRegression](LanguageSegmentationRegression/) | Check source preservation, shared rules, abbreviations, initials, and technical phrase boundaries. Exercise real Lingua with competing same-script languages and model/script routing with empty, duplicate, or unmapped candidates. Verify configuration binding, confidence and margin boundaries, technical-context inheritance, dialects, forced languages, and the Latin classification of romaji. Check complete emoji sequences, neutral language analysis, enabled defaults, and explicit disabling in ordinary and technical text. |
-| [PunctuationRegression](PunctuationRegression/) | Check Unicode punctuation, including Thai sentence endings, against the symbols supported by a Piper model. Verify custom punctuation rules, compound marks, lexical connectors, normalization idempotence, and model control-token handling. |
-| [TechnicalSpeechIntegration](TechnicalSpeechIntegration/) | Check complete symbol and emoji descriptions against explicitly declared spoken names. Preserve literal punctuation names, localized pronunciation, compatible fullwidth characters, native voice state, callbacks, and cached output under concurrent calls. Verify adapted phoneme coverage and complete technical names in Piper IDs. Compare statistical and model/script routing against explicit-language native references. Check default emoji reading, explicit disabling, and the model's exact dialect. |
-| [TextAnalysisAllocations](TextAnalysisAllocations/) | Detect unexpected managed allocations in text analysis using explicit budgets, and report other scenarios for local investigation. See [Managed allocation checks](#managed-allocation-checks) below. |
-| [ServerConfigurationRegression](ServerConfigurationRegression/) | Check version consistency, liveness versus readiness, available capabilities, detector candidates and tuning, configuration defaults, named format validation, JSON ranges and request overrides, and effective emergency chunk limits. Managed equalizer checks cover device-profile discovery, optional arrays, truncation to the first 16 raw entries, bounded list access, ordered/repeated filtering, frequency response, streaming state, concurrent isolation, and allocation budgets. Optional CPU waveform checks cover character/spatial/equalizer order, output resampling, the DSP master switch, tails, volume, and safe voice fallback with cloning enabled. Cloning fixtures also verify that equalizer profiles follow OpenVoice conversion and respect the DSP master switch. |
+## Prerequisites
 
-Expected boundaries and punctuation are defined by explicit fixtures. Fixed-seed
-generated cases check source preservation, Unicode text elements, splitting progress,
-size limits, and completion flags. Ambiguous initials and abbreviations have documented
-heuristic expectations; grammatical understanding requires a different kind of analysis.
+- Use the .NET 10 SDK and Release builds.
+- These are standalone console runners. Use `dotnet run`; building the solution or calling `dotnet test` does not execute them.
+- Nonzero exit codes indicate a failed check or invalid arguments. Preserve failure logs before changing expectations or fixtures.
+- `-p:CpuOnly=true` selects CPU engine dependencies. CPU passes do not establish DirectML/CUDA/WebGPU hardware performance.
+- Native pronunciation and real synthesis need eSpeak NG and `PiperNative/espeak-ng-data`. Windows uses bundled native files; Linux needs a compatible eSpeak NG library. `TSUBAKI_ESPEAK_LIBRARY` selects an explicit engine library.
+- Codec/HTTP tests need the native encoders used by the server, including LAME for MP3. Model-dependent commands use the bundled model files.
 
-Pipeline checks use a test double at the native eSpeak boundary to inspect the text
-sent for phonemization. Forced-language fixtures test structural speech parts;
-automatic fixtures use real Lingua models or model/script fallback, with independently
-declared language expectations.
-Separate speech parts are allowed within one shared language-analysis phrase.
-The optional `TechnicalSpeechIntegration` runner uses real eSpeak and a model JSON
-inventory. Waveform quality still requires listening tests.
+The engine excludes `Tests/**` from compilation/publishing. These checks add no test work to ordinary server requests.
 
-## Requirements
+## 1. Text chunking and language handling
 
-Use the .NET 10 SDK and the complete `ONNX_Runner` source tree. The four managed test projects
-compile production sources directly and run independently of the TTS server,
-voice models, and native speech synthesis binaries. The optional native integration
-runner additionally needs eSpeak, its data, and a Piper model JSON; it does not need
-the ONNX weights or start the server.
-
-`ServerConfigurationRegression` references the actual engine assembly; the commands
-below select the CPU build. Its
-default checks need no model weights or native synthesis library. Equalizer checks use deterministic PCM to verify bandwidth and broad tonal coloration without generated noise or saturation. Optional waveform
-checks need a matching Piper `.onnx` / `.onnx.json` pair and the native eSpeak
-dependencies used by the engine. They run the public synthesis pipeline without
-starting the HTTP server. The two-path mode leaves cloning disabled; adding the
-OpenVoice and voice directories enables the optional cloning checks below.
-
-Managed character-effect checks compare every G.711 PCM16 input and decoded codeword
-with independent ITU reference digests. Rolling decoder-glitch checks cover capture
-duration, low/high-frequency detection, live replacement, streaming partitions, and
-allocation-free processing from 8000 to 192000 Hz, with 22050 Hz as the character reference.
-Mixer component checks retain the frozen voice moments used to fit the codec,
-Crusher, FM, and Telephone
-coefficients. They protect coefficient evaluation, joins, endpoints and the recorded
-component-level tradeoffs. These historical moments do not represent the revised
-engine intensity path and must not be read as current waveform-level guarantees.
-
-Bitcrusher additionally checks current frozen moments from all 16 voices at 21
-strengths. Its joined dry/wet halves preserve clean/full output while reducing
-transition humps. Checks protect previous voice-error and reverse-step budgets,
-base-voice midpoint windows and hump, the common midpoint value and slopes,
-streaming, silence, and allocation-free preparation. The tenth-bit quantizer
-and fractional decimation clock are unchanged.
-
-The shared G.711 mixer additionally uses current fixed-path moments from three
-unaltered base-voice recordings. Its 21-point checks protect decreasing loudness,
-the clean/full window, a mean midpoint near the center in dB, close levels between
-A-law and mu-law, and unchanged dry/wet proportions. Separate real-engine multitone
-checks retain full-output references, streaming independence, and allocation budgets.
-The two cubic level-correction segments are prepared once per buffer; codec transfer
-laws, telephone bandwidth and full-strength waveforms remain unchanged.
-
-Telephone additionally checks independent current-path moments from the full voice
-catalog at 21 strengths. Its prepared dry/wet weights use one positive rational curve
-with increasing wet share and no midpoint join. Historical primary and endpoint
-controls keep their original data and tolerances; independent wet moments allow those
-controls to remain valid after changing the mix ratio. Embedded numeric fixtures are
-loaded only by the test runner. Checks cover the clean/full endpoints, current midpoint
-windows, curve progression and bending, the preceding curve's quality budgets, streaming
-partitions, and zero-allocation mixing.
-
-Overdrive checks use current post-DC wet moments from 48 recordings at 21 strengths,
-including the eased wet strength and fixed output trim. Three base recordings are the
-primary calibration inputs; the remaining voices constrain selection and are not blind
-validation. Checks protect base midpoint windows and nearly ordered progression, catalog
-error budgets, joined gain values/slopes, increasing wet share, exact clean/full selection,
-stream partitions, and zero-allocation gain preparation. Independent routing checks use
-three rates and three input levels. Historical pre-trim moments remain in the research
-archive rather than defining the new signal path. RMS budgets describe these fixtures;
-they do not promise identical loudness or monotonicity for arbitrary input audio.
-The stronger Overdrive uses a fixed drive and output-trim calibration. A 250 Hz tone
-at peak 0.18 and 22050 Hz targets 10% full-strength THD over harmonics 2-9, measured
-after warmup; this reference does not define speech distortion or perceived strength.
-Checks retain the milder midpoint, harmonic growth at 21 strengths over three rates
-and input levels, the calibrated base-mean full level, and current waveform references.
-
-RingModulator checks use independent post-DC wet moments from 48 recordings at 21
-strengths on the current eased path. The common gain preserves its original dry/wet
-ratio and tremolo transition. Two cubic halves share their midpoint value and physical
-slope; the first half reuses the prepared square root. Checks protect ordered base-voice
-paths, the centered base-mean midpoint, bounded catalog errors, independent PCM routing
-at three rates and input levels, stream partitions, and allocation-free preparation.
-Individual catalog midpoint windows remain a reported limitation. Historical linear-path
-moments are retained in the research archive rather than defining current output.
-
-TacticalRadio checks use frozen post-DC wet moments from the current eased input-EQ
-and codec path at 21 strengths. Three base passages guide the common quartic gain;
-the remaining 45 recordings are controls. Checks preserve the equal-power dry/wet
-ratio, independent Hermite values, midpoint continuity, base midpoint windows and
-ordered mean progression, declared individual level budgets, synthetic waveform
-checkpoints, stream partitions, exact bypass and allocation-free preparation.
-Historical linear-strength mixer moments remain in the research archive. A common
-fixed gain does not ensure every voice follows its own ideal level curve.
-
-Chorus and Flanger checks capture the unchanged saturated additive branch separately
-from the outer mixture. The prepared quadratic blend gives the processed branch a
-larger share at intermediate strengths while retaining exact clean/full endpoints.
-Checks protect its increasing bounded share and nominal midpoint anchor, independently
-recombine captured dry/composite moments, and compare engine PCM against those branches.
-Separate scalar gains control level after the new blend, outside delay feedback.
-The current catalog retains exactly 21 captured audio strengths; dense scalar audits
-add no audio measurements. Checks also cover bounded base/catalog level behavior,
-midpoint coverage, shared gain values/slopes, streaming partitions, zero-allocation
-preparation, and independent checkpoints at three rates and input levels. The previous
-mixture and its fixtures remain in the development research archive. Numeric branch
-shares do not define perceived effect strength, and a fixed common correction cannot
-make every recording follow the same loudness path.
-
-Separate engine-routing fixtures replay the unchanged synthetic inputs at three rates.
-Their expected levels come from frozen accepted effect algorithms, the declared
-`amount * (2 - amount)` wet-strength curve, and fixed output trims. The request amount
-controls the effect-specific outer blend; Chorus and Flanger prepare a stronger
-quadratic share before entering the sample loop. G.711 keeps its fixed codec transfer characteristic;
-cassette and decoder-glitch intensity laws remain separate.
-
-Character-strength checks verify the prepared Overdrive and Tactical input strength,
-midpoint Bitcrusher quantization, and independent full-waveform checkpoints, peaks and
-RMS levels after the agreed output trims. Existing streaming and hot-loop allocation
-checks exercise the revised engine. Effects without current-path mixer checks above still need separate external-curve
-calibration; routing fixtures verify the declared processing, not ideal midpoint loudness.
-
-Bitcrusher quantization checks cover all 121 depths from 16.0 to 4.0 bits in
-0.1-bit steps, exact legacy quantization at every integer depth across all PCM16
-inputs, bounded fractional grids, exact silence, and a continuously varying
-decimation clock inside a fixed depth step. Changing-depth preparation is checked
-for managed allocations. Its fractional routing references use a separate per-sample
-quantizer; integer-depth midpoint/full references and historical mixer moments remain
-unchanged. The quantization scale and clock ratio are prepared once per buffer.
-
-Additional character-effect checks cover finite PCM, true bypass, streaming partitions,
-and hot-loop allocations for every effect at nine rates. Cassette noise calibration,
-reference-clock radio/telephone noise, the longest chorus tap, and fixed-clock CVSD
-state are checked separately. Noise-level tolerances allow statistical variation;
-these checks do not assess subjective sound quality.
-Cassette intensity checks also exercise the internal algorithm at zero, including
-warm delay/noise/filter state, convergence toward clean PCM, fixed transport
-frequencies, changing intensity across streaming buffers, and allocation budgets.
-Output-noise fixtures check the agreed levels at seven intensities against an
-independently recorded baseline after playback processing. A windowed spectral
-check verifies the reference-rate balance between the 3-6 kHz and 6-10 kHz bands
-and ensures that the mid-band share of total noise power decreases.
-Playback checks also verify the 700 Hz enclosure resonance, bounded intensity-dependent
-output attenuation, and exact scalar placement after cassette saturation and DC removal.
-Noise references include this playback trim; its absolute floor changes together with
-the voice while the existing noise spectrum and allocation limits remain protected.
-
-The engine project excludes `Tests/**` from compilation and publishing. Listing
-test projects in the solution adds build work when building the whole solution;
-it does not load or execute tests in a running TTS server.
-
-`dotnet run` builds each project and restores its dependencies. The language
-segmentation and allocation projects use `SearchPioneer.Lingua` from NuGet.
-
-## Run the tests
-
-Run these commands from the `ONNX_Runner` directory containing `ONNX_Runner.csproj`:
+Start here after editing sentence boundaries, abbreviations, technical text, Unicode punctuation, emoji or multilingual routing. These runners do not perform neural synthesis.
 
 ```shell
-dotnet run --project Tests/TextChunkerRegression/TextChunkerRegression.csproj -c Release -- --failures-only
-dotnet run --project Tests/LanguageSegmentationRegression/LanguageSegmentationRegression.csproj -c Release -- --failures-only
-dotnet run --project Tests/PunctuationRegression/PunctuationRegression.csproj -c Release -- --failures-only
-dotnet run --project Tests/TextAnalysisAllocations/TextAnalysisAllocations.csproj -c Release -- --iterations=10000
-dotnet run --project Tests/ServerConfigurationRegression/ServerConfigurationRegression.csproj -c Release -p:CpuOnly=true -- --failures-only
+dotnet run --project Tests/TextChunkerRegression -c Release -- --failures-only
+dotnet run --project Tests/LanguageSegmentationRegression -c Release -- --failures-only
+dotnet run --project Tests/PunctuationRegression -c Release -- --failures-only
 ```
 
-The regression runners print failures and a summary. Omit `--failures-only` to
-display passing case messages. Each project returns a nonzero exit code when a
-check or allocation budget fails, so the commands can also be used in CI.
-
-`TextChunkerRegression` accepts a category filter for focused checks:
+Omit `--failures-only` for passing-case messages. TextChunkerRegression also accepts a focused category:
 
 ```shell
-dotnet run --project Tests/TextChunkerRegression/TextChunkerRegression.csproj -c Release -- --failures-only --category="Ambiguous letter endings"
-dotnet run --project Tests/TextChunkerRegression/TextChunkerRegression.csproj -c Release -- --failures-only --category="Name binding boundaries"
+dotnet run --project Tests/TextChunkerRegression -c Release -- --failures-only --category="Ambiguous letter endings"
 ```
 
-## Native technical-speech integration
+## 2. Server configuration, pronunciation and HTTP
 
-From the same `ONNX_Runner` directory, using the native dependencies configured for Tsubaki:
+The configuration runner checks defaults, capabilities and DSP contracts. Native pronunciation needs a compatible Piper JSON and eSpeak NG. The HTTP runners start isolated production servers on temporary ports, disable browser launch and write reports.
 
 ```shell
-dotnet run --project Tests/TechnicalSpeechIntegration/TechnicalSpeechIntegration.csproj -c Release -- Model/en_US-hfc_female-medium.onnx.json
+dotnet run --project Tests/ServerConfigurationRegression -c Release -p:CpuOnly=true -- --failures-only
+dotnet run --project Tests/TechnicalSpeechIntegration -c Release -- Model/en_US-hfc_female-medium.onnx.json
+dotnet run --project Tests/ServerDefaultsRegression -c Release -p:CpuOnly=true -- --synthesis --http test-artifacts/defaults/http --report test-artifacts/defaults/results.json
+dotnet run --project Tests/StartupWarmupRegression -c Release -p:CpuOnly=true -- --http test-artifacts/startup/http --report test-artifacts/startup/results.json
 ```
 
-Use any compatible Piper model JSON to check its actual phoneme inventory. Windows
-uses the bundled `PiperNative/espeak-ng.dll`; Linux uses `libespeak-ng.so.1` when no
-local library is present. Two optional arguments select an exact native library and
-the parent directory containing `espeak-ng-data`. The runner returns a nonzero exit
-code on failure and prints the individual checks and a summary. It checks phonemes
-and tensor IDs; it does not assert synthesized audio quality.
-
-Symbol checks distinguish ordinary dictionary descriptions from literal character
-names. Multiword descriptions such as `not equal to` and `square root` must remain
-complete. Independent references use the declared words, including pronunciation
-before a following variable; lexical comparisons allow stress differences while
-still checking every spoken phoneme. Literal punctuation and existing localized
-names are compared with direct native character calls. English fallback checks
-apply where the native character path already switches to English. Names absent
-from the installed dictionaries can still use eSpeak's Unicode-code fallback.
-
-## Server configuration and CPU synthesis
-
-Run the default `ServerConfigurationRegression` command above for managed status
-and configuration checks. To include real waveform checks, pass both model paths:
+For full configuration checks with real Piper/OpenVoice CPU inference:
 
 ```shell
-dotnet run --project Tests/ServerConfigurationRegression/ServerConfigurationRegression.csproj -c Release -p:CpuOnly=true -- --failures-only Model/en_US-hfc_female-medium.onnx Model/en_US-hfc_female-medium.onnx.json
+dotnet run --project Tests/ServerConfigurationRegression -c Release -p:CpuOnly=true -- --failures-only Model/en_US-hfc_female-medium.onnx Model/en_US-hfc_female-medium.onnx.json Cloner Voices
 ```
 
-`-p:CpuOnly=true` selects the lightweight CPU engine for this runner. When building
-the whole solution, the test reference follows the same build variant as the server.
-The runner uses bundled eSpeak data from `PiperNative/` and the engine's native
-library resolver. On Linux, install eSpeak NG; `TSUBAKI_ESPEAK_LIBRARY` can select
-an explicit compatible library. Keep the working directory at `ONNX_Runner` so
-`PiperNative/` and `PHOIBLE/` resolve correctly.
+The first two paths enable Piper synthesis; the optional `Cloner Voices` pair adds cloning/fallback checks. `--synthesis-only` runs only model-dependent cases. TechnicalSpeechIntegration accepts two additional positional arguments for an exact eSpeak library and the parent of `espeak-ng-data`.
 
-Waveform comparisons use one CPU inference thread, zero synthesis noise, and
-the same technical text. Disabled effects must return the same dry PCM and length,
-even with configured or requested spatial effects. Enabled spatial processing must
-change the output and extend a long reverb tail; volume control must still work
-with effects disabled. These checks validate observable behavior, not perceived
-voice quality. `--synthesis-only` runs only these optional checks and requires both
-model paths. No synthesized files are written by the runner.
+ServerDefaultsRegression covers provider priority, tolerant optional fields, input coercion, API isolation, codecs, streaming/SSE, fragmented bodies and unsafe startup configuration. Its HTTP comparisons use temporary deterministic model JSON; shipped configuration is preserved. Omit `--synthesis`/`--http` for fast reader/adapter checks.
 
-To also test voice cloning and its fallback, pass the OpenVoice model directory
-and the directory containing `female.voice`:
+StartupWarmupRegression covers cloned warmups, active DSP, English/automatic language routing, markers, numbering, rate-limit isolation, global switches and failure/cancellation. Its default mode omits child HTTP servers. Longer passages increase startup/test time.
+
+See [defaults/override details](ServerDefaultsRegression/README.md) and [startup profiles](StartupWarmupRegression/README.md). Report paths need an existing parent directory when HTTP mode is omitted.
+
+## 3. Shared audio pipeline and resampling
+
+Run after changing gain, peak protection, output buffering, resampling or encoding. Reference WAV checks accept mono/stereo input. These numeric PCM checks are distinct from the neural HTTP checks above.
 
 ```shell
-dotnet run --project Tests/ServerConfigurationRegression/ServerConfigurationRegression.csproj -c Release -p:CpuOnly=true -- --failures-only Model/en_US-hfc_female-medium.onnx Model/en_US-hfc_female-medium.onnx.json Cloner Voices
+dotnet run --project Tests/SignalPipelineRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/StreamingGainRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/OutputVolumeRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/ResamplerRegression -c Release -p:CpuOnly=true -- --voice Voices/female.wav --voice Voices/male.wav
+dotnet run --project Tests/CodecPipelineRegression -c Release -p:CpuOnly=true
 ```
 
-`Cloner` must contain `tone_extract.onnx`, `tone_color.onnx`, and `tone_config.json`.
-The runner generates the model's source fingerprint in memory, loads the target
-fingerprint, and checks that an unavailable voice or missing source fingerprint
-preserves dry base audio even with the cloning-only low-pass filter enabled.
-Zero clone intensity and disabled cloning must also bypass conversion and filtering.
-The global DSP switch must still allow actual voice conversion. These optional
-checks load real OpenVoice models on CPU; the default managed checks do not.
+Resampler options:
 
-## Managed allocation checks
+- Repeat `--voice path.wav` for more reference recordings.
+- `--baseline path/to/TsubakiTTS.dll` compares a retained compatible assembly; current and historical flat audio namespaces are recognized.
+- `--benchmark` adds timing when a baseline is supplied and correctness passes.
+- `--report path.json` writes a result; create its parent directory first.
 
-`--iterations` accepts a positive integer and defaults to `5000` when omitted.
-Use Release for measurements. The allocation runner returns `0` when all budgets
-pass, `1` when a budget fails, and `2` when the iteration argument is invalid.
+Zero previous-PCM comparisons means no baseline was supplied. Do not describe that run as a comparison with a previous implementation.
 
-<details>
-<summary><strong>Allocation budgets and measurement method</strong></summary>
+## 4. Allocations and resource lifetime
 
-| Scenarios | Allocation contract |
-| --- | --- |
-| Technical-token classification and numeric pronunciation exceptions | Zero managed bytes allocated during classification. |
-| Abbreviation, name-binding, and lowercase-letter period classification | Zero managed bytes allocated during classification. |
-| Inherited forced-language code and unchanged punctuation | Zero managed bytes allocated for these unchanged paths. |
-| Whole-input sentence chunking, with and without abbreviations | At most 96 managed bytes per call for the returned list and array on .NET 10. The fixtures protect against copying the input string or reserving an unnecessarily large result array. |
-| Punctuation rewriting, early and Unicode emergency splitting, forced and automatic language tokenization | Measurements for local investigation; these scenarios have no enforced allocation budget. |
+Check current-thread managed allocation budgets, pooled buffers, encoders, normal/SSE completion, cancellation, write failures and synthesis-gate ownership. Compare the same runtime, architecture, build mode and inputs; these are not native-memory or VRAM measurements.
 
-These budgets apply to the runner's fixtures. Chunk lists, rewritten strings,
-and language tokens can require output allocations in other inputs.
+```shell
+dotnet run --project Tests/TextAnalysisAllocations -c Release -- --iterations=10000
+dotnet run --project Tests/ResourceLifetimeRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/EffectResourceRegression -c Release -p:CpuOnly=true
+```
 
-Inputs, delegates, rule catalogs, punctuation inventories, and language-detector
-initialization are prepared before measurement. Each scenario receives 2048 warmup
-calls, then the requested number of synchronous measured calls.
+## 5. Character effects and output paths
 
-The runner prints the runtime, architecture, build configuration, and scenario rows.
-`B/op` is managed bytes allocated per operation, measured with
-`GC.GetAllocatedBytesForCurrentThread()`. `ns/op` is elapsed nanoseconds per operation.
-`Allocation budget` shows `PASS` or `FAIL` for an enforced budget, or `reported` for
-an informational scenario. Timing has no pass/fail threshold.
+Specialist checks for transfer curves, fixed reference moments, strength/mixing rules, streaming state, tails, output gain and hot-loop allocations. Telephone/device equalization and additional mixer contracts are also covered by ServerConfigurationRegression and the shared pipeline suites.
 
-Compare measurements using the same runtime, architecture, configuration, and inputs.
-The measurements cover current-thread managed allocations; retained memory, native
-allocations, and complete speech synthesis cost need separate measurements. Forced-language
-tokenizer scenarios bypass statistical detection; automatic comparison scenarios include
-Lingua after model initialization. Script-only scenarios measure routing without Lingua.
-All scenarios use the same per-scenario warmup.
+```shell
+dotnet run --project Tests/OverdriveRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/BitcrusherRegression -c Release -p:CpuOnly=true -- --failures-only
+dotnet run --project Tests/RingRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/ModulationRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/CassetteRegression -c Release -p:CpuOnly=true -- --failures-only
+dotnet run --project Tests/FmPipelineRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/FmCompletionRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/TacticalPipelineRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/HarmonizerRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/RobotRegression -c Release -p:CpuOnly=true
+```
 
-</details>
+Frozen waveform/moment fixtures protect accepted processing. Investigate source changes, namespaces and fixture assumptions before updating them. Numeric power shares and PCM equality do not independently establish perceived loudness or voice quality.
 
-For engine setup, APIs, and text processing configuration, see the
-[main Tsubaki TTS Engine documentation](https://github.com/MrHryhorii/SmartStack/tree/main/ONNX_Runner).
+FM's `--character-only` is a focused subset. Its `--record`/`--corpus` modes and Robot's `--audition` require external corpus inputs and create study artifacts. They are optional research modes, not substitutes for default regressions.
+
+## 6. Spatial environments and tails
+
+Run the affected environment after a local change, or the whole group after modifying shared spatial processing. Hall/Cavern/Forest/Room/LivingRoom/Underwater also check real output-pipeline tails. The broad tail sweep can take longer than individual environments.
+
+```shell
+dotnet run --project Tests/RoomRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/LivingRoomRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/BathroomRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/HallRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/CavernRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/ForestRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/UnderwaterRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/DeepWaterRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/SwimmingPoolRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/MuffledRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/InnerVoiceRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/LargeSpaceRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/StadiumRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/OutdoorRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/UrbanRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/ClassicSpatialRegression -c Release -p:CpuOnly=true
+dotnet run --project Tests/SpatialTailRegression -c Release -p:CpuOnly=true
+```
+
+## 7. Model download smoke checks
+
+Use a disposable build directory with internet access. These PowerShell commands modify only that copy and its voice caches.
+
+```powershell
+$modelSmoke = Join-Path ([IO.Path]::GetTempPath()) ("Tsubaki-ModelSmoke-" + [guid]::NewGuid().ToString("N"))
+dotnet build ONNX_Runner.csproj -c Release -p:CpuOnly=true -o $modelSmoke
+foreach ($modelSmokeFolder in @("Model", "Cloner")) {
+    $modelSmokePath = Join-Path $modelSmoke $modelSmokeFolder
+    if (Test-Path -LiteralPath $modelSmokePath) { Remove-Item -LiteralPath $modelSmokePath -Recurse -Force }
+}
+$modelSmokeListener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+$modelSmokeListener.Start()
+$modelSmokePort = $modelSmokeListener.LocalEndpoint.Port
+$modelSmokeListener.Stop()
+Push-Location $modelSmoke
+try {
+    dotnet ./TsubakiTTS.dll --Kestrel:Endpoints:Http:Url "http://127.0.0.1:$modelSmokePort" --StartupSettings:OpenBrowserOnStart false --HardwareSettings:ForcePiperToCpu true --ModelSettings:AutoDownloadFallbackModel true
+}
+finally { Pop-Location }
+```
+
+Wait for loading/warm-up and inspect `/tsbk/server/status`: `synthesisReady` and `voiceCloning.available` should be true. Stop with Ctrl+C. Expect a Piper fallback pair under `Model/Fallback` and three OpenVoice files under `Cloner`.
+
+For partial-file recovery, stop the copy, remove one file from each family, then repeat the launch from `$modelSmoke`:
+
+```powershell
+Remove-Item (Join-Path $modelSmoke "Model/Fallback/fallback.onnx.json")
+Remove-Item (Join-Path $modelSmoke "Cloner/tone_color.onnx")
+```
+
+Only missing files should be fetched; compare remaining file hashes to check reuse. Repeat individually for fallback ONNX, tone extractor, tone converter and tone JSON. Failed transfers must leave no completed partial model.
+
+Piper's shipped `AutoDownloadFallbackModel` is `false`: an interactive launch asks before downloading; non-interactive input needs `true` for automatic retrieval. A usable cached fallback is reused regardless of that switch. A primary voice missing ONNX/JSON uses the configured complete fallback pair; an unrelated fallback JSON is not used to repair an arbitrary custom voice. OpenVoice fetches missing files when cloning is enabled; disabled cloning does not request them. Unavailable OpenVoice retains base Piper speech.
+
+## 8. Inference concurrency and hardware
+
+CPU fixtures validate pool ownership, cancellation, concurrency policy and forced-CPU routing. They do not establish real GPU execution or performance.
+
+```shell
+dotnet run --project Tests/InferenceConcurrencyRegression -c Release -p:CpuOnly=true
+```
+
+WebGPU-compiled guard/routing fixtures:
+
+```shell
+dotnet run --project Tests/InferenceConcurrencyRegression -c Release -p:CpuOnly=false -p:UseWebGpu=true
+```
+
+These also check version guards and preservation of OpenVoice device selection. They do not require proof of physical GPU execution.
+
+For real HTTP concurrency, first start a server with the intended backend/device settings, then run PowerShell 7:
+
+```powershell
+pwsh -NoProfile -File Tests/InferenceConcurrencyRegression/Test-WebGpuRequests.ps1 -BaseUrl http://localhost:5045 -Voice female -Requests 6 -OutputDirectory test-artifacts/webgpu-http
+```
+
+The voice must exist. The script checks simultaneous successful WAV responses; confirm the actual backend/device in server diagnostics. Real DirectML/CUDA/WebGPU runs require suitable hardware and drivers.
+
+## 9. Dependency and release packaging checks
+
+Run the NAudio boundary checks after updating audio dependencies.
+
+```shell
+dotnet run --project Tests/NAudioUpgradeRegression -c Release -p:CpuOnly=true
+```
+
+The specialist distribution checks need PowerShell 7.4+, restored packages and real matching published artifacts. They are not executed by the console runners.
+
+Example Windows CPU release with a dedicated corresponding-source cache:
+
+```powershell
+pwsh -NoProfile -File tools/Publish-WithLicenses.ps1 -Variant Windows-CPU -SourcesRoot test-artifacts/corresponding-sources
+$testReleaseRun = (Get-ChildItem ./Publish-Licensed -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1).FullName
+$testPublish = Join-Path $testReleaseRun "tsubaki-tts-engine-windows-x64-cpu"
+$testPackageRoot = if ($env:NUGET_PACKAGES) { $env:NUGET_PACKAGES } else { Join-Path ([Environment]::GetFolderPath("UserProfile")) ".nuget/packages" }
+$testSignalPackage = Join-Path $testPackageRoot "signalsmithstretch-cs/1.1.2"
+pwsh -NoProfile -File Tests/HarmonizerRegression/PublishLicenseChecks.ps1 -PublishDirectory $testPublish -RuntimeIdentifier win-x64 -PackageDirectory $testSignalPackage -WorkDirectory test-artifacts/signalsmith-licenses -SourceDirectory test-artifacts/corresponding-sources
+pwsh -NoProfile -File Tests/ReleasePackagingRegression/Verify-Release.ps1 -RunDirectory $testReleaseRun
+```
+
+Use the matching Linux CPU artifact and `linux-x64` for a Linux package. Checks cover native/package identity, notices, corresponding sources, source hashes and client ZIP inventory. Use artifacts from the current matching release run.
+
+For setup, APIs and deployment, return to the [main Tsubaki TTS Engine project](https://github.com/MrHryhorii/SmartStack/tree/main/ONNX_Runner).
