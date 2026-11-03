@@ -21,6 +21,7 @@ public class TsubakiSpeechRequest
     public string Model { get; set; } = "tts-1";
     /// <summary>
     /// The text to synthesize into audio.
+    /// The HTTP reader converts non-null JSON values to text; missing, null or blank text is rejected.
     /// </summary>
     [JsonPropertyName("input")]
     public required string Input { get; set; }
@@ -39,7 +40,8 @@ public class TsubakiSpeechRequest
     public string ResponseFormat { get; set; } = "mp3";
     private int? _sampleRate;
     /// <summary>
-    /// Optional output sample rate in Hz. Missing or null uses the server default;
+    /// Optional integer output sample rate in Hz. The HTTP reader also accepts integer strings.
+    /// Missing, null or unreadable values use the server default;
     /// zero bypasses that default and keeps the established model/codec rate.
     /// Nonzero values are clamped to 8000-48000 Hz; codecs may select a nearby supported rate.
     /// </summary>

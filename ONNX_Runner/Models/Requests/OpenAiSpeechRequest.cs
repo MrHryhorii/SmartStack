@@ -18,6 +18,7 @@ public class OpenAiSpeechRequest
     public string Model { get; set; } = "tts-1";
     /// <summary>
     /// The text to synthesize into audio.
+    /// The HTTP reader converts non-null JSON values to text; missing, null or blank text is rejected.
     /// </summary>
     [JsonPropertyName("input")]
     public required string Input { get; set; }

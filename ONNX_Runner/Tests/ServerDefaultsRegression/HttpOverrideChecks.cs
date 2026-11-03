@@ -93,8 +93,18 @@ internal static class HttpOverrideChecks
                 Require(extended.GetProperty("required").EnumerateArray().Any(value => value.GetString() == "input") && extended.GetProperty("properties").GetProperty("volume").GetRawText().Contains("number", StringComparison.Ordinal), "Tolerant body reading damaged the documented input/number schema.");
                 Require(!openAi.GetProperty("properties").TryGetProperty("volume", out _), "The OpenAI schema exposed engine extensions.");
             });
-            foreach (string json in new[] { "{}", "{\"input\":null}", "{\"input\":\" \"}", "{\"input\":42}", "{\"input\":\"Test.\",\"pitch\":[}" })
+            foreach (string json in new[] { "{}", "{\"input\":null}", "{\"input\":\" \"}", "[]", "{\"input\":\"Test.\",\"pitch\":[}" })
                 await run.CheckAsync("HTTP cannot synthesize unreadable required input: " + json, async () => Require((await host.Raw(json)).Status == 400, "Missing text or malformed JSON was not rejected."));
+            foreach (object value in new object[] { 123, false, new[] { "hello", "world" }, new { message = "hello" } })
+            foreach (string route in new[] { "/tsbk/audio/speech", "/v1/audio/speech" })
+                await run.CheckAsync("HTTP input converts to text: " + route + " " + JsonSerializer.Serialize(value), async () =>
+                {
+                    var converted = Payload(); converted["input"] = value;
+                    var literal = Payload(); literal["input"] = JsonSerializer.Serialize(value);
+                    Outcome actual = await host.Send(converted, route);
+                    Outcome expected = await host.Send(literal, route);
+                    Require(actual.Audio.SequenceEqual(expected.Audio), "Input conversion changed the synthesized text.");
+                });
             run.Evidence.Add(new { HttpProfile = "shipped", host.Successes, host.RejectedInput, host.Requests });
         }
 
@@ -136,8 +146,8 @@ internal static class HttpOverrideChecks
                 });
             foreach (var (field, value) in new (string, object)[]
             {
-                ("samplerate", "8000"), ("samplerate", 8.5), ("stream", "false"), ("early_split", 0),
-                ("extend_reverb_tail", "true"), ("effect", "unknown"), ("environment", "999"),
+                ("samplerate", "invalid"), ("samplerate", 8.5), ("stream", "invalid"), ("early_split", 0),
+                ("extend_reverb_tail", "invalid"), ("effect", "unknown"), ("environment", "999"),
                 ("equalizer", new[] { "unknown" }), ("equalizer", new { bad = true }), ("voice", new { bad = true })
             })
                 await run.CheckAsync($"HTTP optional shape/name fallback: {field}", async () =>
@@ -149,6 +159,13 @@ internal static class HttpOverrideChecks
             {
                 var payload = Payload(); payload["volume"] = 0; payload["pitch"] = new { invalid = true };
                 Require((await host.Send(payload)).Audio.All(sample => sample == 0), "Bad pitch discarded explicit mute.");
+            });
+            await run.CheckAsync("HTTP chunked request body preserves nested fallback and profile arrays", async () =>
+            {
+                var payload = Payload(); payload["volume"] = 0; payload["pitch"] = new { bad = new[] { 1, 2, 3 } };
+                payload["equalizer"] = new[] { "handset-class-device", "telephony-class-application" };
+                Outcome response = await host.Fragmented(JsonSerializer.Serialize(payload));
+                Require(response.Status == 200 && response.Audio.Length > 0 && response.Audio.All(sample => sample == 0), "Fragmented request JSON lost fallback, valid fields or synthesis.");
             });
             foreach (int rate in new[] { 0, 8000, 48000 })
                 await run.CheckAsync("HTTP explicit output clock overrides server 16000: " + rate, async () =>
@@ -296,6 +313,16 @@ internal static class HttpOverrideChecks
         internal async Task<Outcome> Raw(string json, string route = "/tsbk/audio/speech")
         {
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
+            return await ReadContent(content, route);
+        }
+        internal async Task<Outcome> Fragmented(string json)
+        {
+            using var content = new FragmentedJsonContent(Encoding.UTF8.GetBytes(json));
+            content.Headers.ContentType = new("application/json");
+            return await ReadContent(content, "/tsbk/audio/speech");
+        }
+        private async Task<Outcome> ReadContent(HttpContent content, string route)
+        {
             using var response = await _client.PostAsync(route, content); Interlocked.Increment(ref _requests);
             byte[] audio = await response.Content.ReadAsByteArrayAsync();
             string type = response.Content.Headers.ContentType?.MediaType ?? "";
@@ -324,6 +351,19 @@ internal static class HttpOverrideChecks
             int rate = response.Headers.TryGetValues("X-Audio-Sample-Rate", out var rates) && int.TryParse(rates.First(), out int value) ? value : 0;
             string codec = response.Headers.TryGetValues("X-Audio-Codec", out var codecs) ? codecs.First() : "";
             return new((int)response.StatusCode, audio, rate, codec, type, response.Headers.TransferEncodingChunked == true);
+        }
+        private sealed class FragmentedJsonContent(byte[] data) : HttpContent
+        {
+            protected override bool TryComputeLength(out long length) { length = 0; return false; }
+            protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+            {
+                for (int offset = 0; offset < data.Length; offset += 7)
+                {
+                    await stream.WriteAsync(data.AsMemory(offset, Math.Min(7, data.Length - offset)));
+                    await stream.FlushAsync();
+                    await Task.Delay(1);
+                }
+            }
         }
         public async ValueTask DisposeAsync()
         {

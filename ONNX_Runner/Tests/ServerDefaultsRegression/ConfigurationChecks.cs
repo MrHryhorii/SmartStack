@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.AspNetCore.Http;
 using ONNX_Runner.Endpoints;
 using ONNX_Runner.Models.Audio;
 using ONNX_Runner.Models.Configuration;
@@ -10,9 +11,6 @@ using static TestRun;
 
 internal static class ConfigurationChecks
 {
-    private static readonly JsonSerializerOptions HttpJson = (JsonSerializerOptions?)typeof(SynthesisRequest).Assembly
-        .GetType("ONNX_Runner.Endpoints.SpeechRequestJson")?.GetField("Options", BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null)
-        ?? new Microsoft.AspNetCore.Http.Json.JsonOptions().SerializerOptions;
     private static readonly (string Json, string Property, float Min, float Max)[] Floats =
     [
         ("speed", nameof(SynthesisRequest.Speed), .25f, 4),
@@ -63,7 +61,7 @@ internal static class ConfigurationChecks
         }
         foreach (string value in new[] { "\"NaN\"", "\"Infinity\"", "\"-Infinity\"", "1e999", "-1e999", "{}", "null" })
             run.Check($"OpenAI HTTP JSON ignores unusable speed={value}", () =>
-                Require(JsonSerializer.Deserialize<OpenAiSpeechRequest>($"{{\"input\":\"Test.\",\"speed\":{value}}}", HttpJson)!.Speed == 1, "Invalid speed did not retain the normal rate."));
+                Require(Read<OpenAiSpeechRequest>($"{{\"input\":\"Test.\",\"speed\":{value}}}").Speed == 1, "Invalid speed did not retain the normal rate."));
         foreach (string field in new[] { "stream", "early_split", "extend_reverb_tail" })
         foreach (string value in new[] { "false", "true", "null" })
             run.Check($"HTTP JSON boolean override {field}={value}", () =>
@@ -72,16 +70,16 @@ internal static class ConfigurationChecks
                 object? actual = typeof(SynthesisRequest).GetProperty(property)!.GetValue(Adapt($"{{\"input\":\"Test.\",\"{field}\":{value}}}"));
                 Require(value == "null" ? actual == null : actual is bool flag && flag == (value == "true"), "Boolean null/false/true collapsed together.");
             });
-        foreach (string json in new[] { "\"8000\"", "8.5", "true", "1e999" })
+        foreach (string json in new[] { "\"8.5\"", "8.5", "true", "1e999" })
             run.Check("Output rate ignores non-integer JSON: " + json, () => Require(Adapt($"{{\"input\":\"Test.\",\"samplerate\":{json}}}").SampleRate == null, "Invalid output rate replaced the configured default."));
         foreach (var (value, expected) in new (int, int)[] { (-1, 8000), (0, 0), (1, 8000), (22050, 22050), (96000, 48000) })
             run.Check($"Output rate explicit boundary {value}", () => Require(Adapt($"{{\"input\":\"Test.\",\"samplerate\":{value}}}").SampleRate == expected, "Output rate sentinel or clamp changed."));
         run.Check("OpenAI extensions cannot override server-only controls", () =>
         {
-            var dto = JsonSerializer.Deserialize<OpenAiSpeechRequest>("""
+            var dto = Read<OpenAiSpeechRequest>("""
                 {"input":"Test.","volume":0,"effect":"None","environment":"None","samplerate":8000,
                  "early_split":false,"clone_intensity":0,"enable_global_effects":true}
-                """, HttpJson)!;
+                """);
             var request = OpenAiRequestAdapter.ToSynthesisRequest(dto).Request!;
             Require(request.Volume == null && request.Effect == null && request.Environment == null && request.SampleRate == null && request.EarlySplit == null && request.CloneIntensity == null, "An unsupported extension bypassed the OpenAI adapter boundary.");
         });
@@ -125,6 +123,7 @@ internal static class ConfigurationChecks
         ResponseDecisions(run);
         ValidationContracts(run, shipped);
         OptionalFallbacks(run);
+        TextAndScalarConversions(run);
     }
 
     private static void OptionalFallbacks(TestRun run)
@@ -143,7 +142,7 @@ internal static class ConfigurationChecks
                 Require((field == "effect" ? request.Effect : request.Environment) == "None", "Explicit bypass became inheritance.");
             });
         foreach (string field in new[] { "stream", "early_split", "extend_reverb_tail" })
-        foreach (string value in new[] { "\"false\"", "0", "{}", "[]" })
+        foreach (string value in new[] { "\"invalid\"", "0", "{}", "[]" })
             run.Check($"Unusable boolean inherits {field}: {value}", () =>
             {
                 var request = Adapt($"{{\"input\":\"Test.\",\"{field}\":{value}}}");
@@ -161,11 +160,39 @@ internal static class ConfigurationChecks
         foreach (string value in new[] { "false", "3", "[]", "{}", "{\"id\":3}" })
             run.Check("Unusable OpenAI voice retains the base voice: " + value, () =>
             {
-                var dto = JsonSerializer.Deserialize<OpenAiSpeechRequest>($"{{\"input\":\"Test.\",\"voice\":{value}}}", HttpJson)!;
+                var dto = Read<OpenAiSpeechRequest>($"{{\"input\":\"Test.\",\"voice\":{value}}}");
                 Require(OpenAiRequestAdapter.ToSynthesisRequest(dto).Request?.Voice == "piper_base", "Invalid custom voice displaced its default.");
             });
-        foreach (string json in new[] { "{}", "{\"input\":[]}", "{\"input\":42}", "{\"input\":\"Test.\",\"pitch\":[}" })
+        foreach (string json in new[] { "{}", "{\"input\":null}", "{\"input\":\" \"}", "{\"input\":\"Test.\",\"pitch\":[}" })
             run.Check("Required text/JSON remains readable: " + json, () => RejectJson(() => Adapt(json)));
+    }
+
+    private static void TextAndScalarConversions(TestRun run)
+    {
+        foreach (string value in new[] { "123", "-2.5", "true", "false", "0", "[]", "{}", "[\"hello\",2]", "{\"message\":\"hello\"}", "\"Line one\\nLine two\"" })
+            run.Check("Input normalizes to text in both APIs: " + value, () =>
+            {
+                using var document = JsonDocument.Parse(value);
+                string expected = document.RootElement.ValueKind == JsonValueKind.String ? document.RootElement.GetString()! : value;
+                string json = "{\"input\":" + value + ",\"volume\":0.5}";
+                Require(Adapt(json).Input == expected && Read<OpenAiSpeechRequest>(json).Input == expected, "Input text conversion changed the value.");
+                Require(Adapt(json).Volume == .5f, "Text conversion discarded a valid optional field.");
+            });
+        foreach (string field in new[] { "stream", "early_split", "extend_reverb_tail" })
+        foreach (string value in new[] { "true", "FALSE" })
+            run.Check($"Boolean string parses in its format: {field}={value}", () =>
+            {
+                var request = Adapt($"{{\"input\":\"Test.\",\"{field}\":\"{value}\"}}");
+                bool? actual = field == "stream" ? request.Stream : field == "early_split" ? request.EarlySplit : request.ExtendReverbTail;
+                Require(actual == bool.Parse(value), "A parsable boolean string was ignored.");
+            });
+        foreach (int rate in new[] { 0, 8000, 16000, 96000 })
+            run.Check("Integer string retains rate clamp and zero: " + rate, () => Require(Adapt($"{{\"input\":\"Test.\",\"samplerate\":\"{rate}\"}}").SampleRate == (rate == 0 ? 0 : Math.Clamp(rate, 8000, 48000)), "A parsable integer string was ignored."));
+        run.Check("Property casing and last duplicate remain predictable", () =>
+        {
+            var request = Adapt("{\"INPUT\":42,\"VOLUME\":0.25,\"Volume\":0.5,\"STREAM\":\"false\"}");
+            Require(request.Input == "42" && request.Volume == .5f && request.Stream == false, "Case-insensitive field lookup or last-value priority changed.");
+        });
     }
 
     private static void ProviderPriority(TestRun run)
@@ -270,8 +297,21 @@ internal static class ConfigurationChecks
 
     private static SynthesisRequest Adapt(string json)
     {
-        var (request, error) = TsubakiRequestAdapter.ToSynthesisRequest(JsonSerializer.Deserialize<TsubakiSpeechRequest>(json, HttpJson)!);
+        var (request, error) = TsubakiRequestAdapter.ToSynthesisRequest(Read<TsubakiSpeechRequest>(json));
         return request ?? throw new InvalidOperationException(error);
+    }
+
+    private static T Read<T>(string json) where T : class
+    {
+        using var body = new MemoryStream(Encoding.UTF8.GetBytes(json));
+        var context = new DefaultHttpContext();
+        context.Request.ContentType = "application/json";
+        context.Request.Body = body;
+        var read = typeof(SynthesisRequest).Assembly.GetType("ONNX_Runner.Endpoints.SpeechRequestJson")!
+            .GetMethod("ReadAsync", BindingFlags.NonPublic | BindingFlags.Static)!.MakeGenericMethod(typeof(T))
+            .CreateDelegate<Func<HttpRequest, CancellationToken, Task<(T? Request, IResult? Error)>>>();
+        var (request, error) = read(context.Request, CancellationToken.None).GetAwaiter().GetResult();
+        return error == null && request != null ? request : throw new JsonException("The request body could not be read.");
     }
 
     private static void RejectJson(Func<object?> parse)

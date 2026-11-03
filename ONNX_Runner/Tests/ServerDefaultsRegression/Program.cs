@@ -3,6 +3,7 @@ using System.Text.Json;
 var run = new TestRun();
 ConfigurationChecks.Run(run);
 RequestAdapterChecks.Run(run.Check);
+await StreamingJsonChecks.Run(run);
 if (args.Contains("--synthesis")) await SynthesisOverrideChecks.Run(run);
 int httpIndex = Array.IndexOf(args, "--http");
 if (httpIndex >= 0) await HttpOverrideChecks.Run(run, Path.GetFullPath(args[httpIndex + 1]));
