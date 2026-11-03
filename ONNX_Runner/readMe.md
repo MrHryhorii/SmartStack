@@ -29,9 +29,9 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 **Reference**
 
 - [API Endpoints](#api-endpoints)
-- [Equalizer Profiles](#available-equalizer-profiles)
 - [Available Effects](#available-effects)
 - [Available Environments](#available-environments)
+- [Equalizer Profiles](#available-equalizer-profiles)
 - [Voice Cloning](#voice-cloning-openvoice-v2)
 - [DSP Defaults](#server-side-dsp-defaults)
 - [Model Management](#installation--model-management)
@@ -74,9 +74,9 @@ Tsubaki is built with an engineering-first approach to distribution:
 
 - **No Python Required:** Runs purely on compiled C# and `Microsoft.ML.OnnxRuntime`.
 - **Portable (Self-Contained):** Download the release ZIP, extract it, and run the included executable. No .NET SDK is needed.
-- **Hardware Acceleration:** Runs on CPU by default, with optional WebGPU, DirectML, or CUDA acceleration depending on the selected build and hardware configuration.
+- **Hardware Acceleration:** Runs on CPU or uses WebGPU, DirectML, or CUDA acceleration, depending on the selected build and hardware configuration.
 - **Memory Protection (OOM Guard):** Built-in request gating and provider-specific concurrency limits reduce the risk of exhausting CPU/GPU resources under heavy load.
-- **True Concurrency:** On CPU and CUDA, concurrent requests share the same loaded model instead of requiring a full model/runtime copy per request. DirectML uses a fixed-size session pool because a single DirectML session cannot execute concurrently; see `HardwareSettings` for details.
+- **True Concurrency:** On CPU and CUDA, concurrent requests share the same loaded model instead of requiring a full model/runtime copy per request. DirectML and WebGPU use fixed-size pools of independent sessions; see `HardwareSettings` for details.
 
 | Tsubaki                               | Typical Python TTS                   |
 | ------------------------------------- | ------------------------------------ |
@@ -460,31 +460,12 @@ curl -o speech.mp3 http://localhost:5045/tsbk/audio/speech \
 
 | Parameter               | Type   | Description                                                |
 | ----------------------- | ------ | ---------------------------------------------------------- |
-| `equalizer`             | string[] | Ordered playback-profile IDs. Only the first 16 entries are processed; unknown names are ignored. |
 | `effect`                | string | DSP character effect to apply. See available values below. |
 | `effect_intensity`      | float  | Effect strength: `0.0` bypasses the character effect; `1.0` applies its full character. |
 | `environment`           | string | Acoustic spatial environment. See available values below.  |
 | `environment_intensity` | float  | Spatial effect strength. Default: `0.25`. |
 | `extend_reverb_tail`    | bool   | Lets the active `environment` reverb or echoes decay naturally at the end of the request instead of being cut off. Overrides the server's `ExtendReverbTailOnFinish` default for this request only. Has no effect on character `effect`s. See *Reverb Tail Extension* in Server-Side DSP Defaults below. |
-
-#### Available Equalizer Profiles
-
-`equalizer` accepts an array of profile IDs. Omitted or `null` values use `EffectsSettings.DefaultEqualizer`; an explicit `[]` disables this layer for the request. Profiles apply sequentially in array order after voice cloning, character effects, and spatial environments, including reverb tails, before final gain and output resampling; repeated IDs apply again. Arrays longer than 16 entries are truncated to the first 16, including unknown names and null entries.
-
-| Profile ID | Playback device | Filter settings |
-| --- | --- | --- |
-| `wearable-class-device` | Wearable speaker | HP 350 Hz; LP 5 kHz; 2.5 kHz +3 dB |
-| `handset-class-device` | Phone speaker | HP 180 Hz; LP 8 kHz; 400 Hz -2 dB; 1.5 kHz +3 dB |
-| `headphone-class-device` | Headphones | HP 40 Hz; LP 18 kHz; 120 Hz +1.5 dB; 4.5 kHz +1.5 dB |
-| `small-bluetooth-speaker-class-device` | Small Bluetooth speaker | HP 120 Hz; LP 10 kHz; 250 Hz +3 dB; 800 Hz -2 dB |
-| `medium-bluetooth-speaker-class-device` | Medium Bluetooth speaker | HP 70 Hz; LP 14 kHz; 180 Hz +2 dB; 4 kHz +1 dB |
-| `large-home-entertainment-class-device` | Home entertainment system | HP 30 Hz; LP 20 kHz; 100 Hz +2 dB; 900 Hz -1.5 dB; 6 kHz +2 dB |
-| `large-automotive-class-device` | Car speakers | HP 90 Hz; LP 12 kHz; 180 Hz +3 dB; 3 kHz -2 dB |
-| `telephony-class-application` | Telephone line | HP 300 Hz; LP 3.4 kHz; 1 kHz +3 dB |
-
-HP/LP are high-pass/low-pass cutoff frequencies; the other values are tonal-band centers and gain. Settings adapt to the available frequency range of the audio.
-
-> These IDs match Google's public audio-profile names; the filters are Tsubaki's own device approximations. Usually select one profile. Available IDs are also returned by `GET /tsbk/audio/equalizers`.
+| `equalizer`             | string[] | Ordered playback-profile IDs. Only the first 16 entries are processed; unknown names are ignored. |
 
 #### Available Effects
 
@@ -536,6 +517,25 @@ Lower intensity brings the voice closer to its original sound; higher intensity 
 | `Reverb` | Dense, neutral reverberation without a specific location. |
 | `Echo` | Regularly spaced repeats that become quieter and darker. |
 | `DualEcho` | Two distinct echoes followed by a fading, repeating pattern. |
+
+#### Available Equalizer Profiles
+
+`equalizer` accepts an array of profile IDs. Omitted or `null` values use `EffectsSettings.DefaultEqualizer`; an explicit `[]` disables this layer for the request. Profiles apply sequentially in array order after voice cloning, character effects, and spatial environments, including reverb tails, before final gain and output resampling; repeated IDs apply again. Arrays longer than 16 entries are truncated to the first 16, including unknown names and null entries.
+
+| Profile ID | Playback device | Filter settings |
+| --- | --- | --- |
+| `wearable-class-device` | Wearable speaker | HP 350 Hz; LP 5 kHz; 2.5 kHz +3 dB |
+| `handset-class-device` | Phone speaker | HP 180 Hz; LP 8 kHz; 400 Hz -2 dB; 1.5 kHz +3 dB |
+| `headphone-class-device` | Headphones | HP 40 Hz; LP 18 kHz; 120 Hz +1.5 dB; 4.5 kHz +1.5 dB |
+| `small-bluetooth-speaker-class-device` | Small Bluetooth speaker | HP 120 Hz; LP 10 kHz; 250 Hz +3 dB; 800 Hz -2 dB |
+| `medium-bluetooth-speaker-class-device` | Medium Bluetooth speaker | HP 70 Hz; LP 14 kHz; 180 Hz +2 dB; 4 kHz +1 dB |
+| `large-home-entertainment-class-device` | Home entertainment system | HP 30 Hz; LP 20 kHz; 100 Hz +2 dB; 900 Hz -1.5 dB; 6 kHz +2 dB |
+| `large-automotive-class-device` | Car speakers | HP 90 Hz; LP 12 kHz; 180 Hz +3 dB; 3 kHz -2 dB |
+| `telephony-class-application` | Telephone line | HP 300 Hz; LP 3.4 kHz; 1 kHz +3 dB |
+
+HP/LP are high-pass/low-pass cutoff frequencies; the other values are tonal-band centers and gain. Settings adapt to the available frequency range of the audio.
+
+> These IDs match Google's public audio-profile names; the filters are Tsubaki's own device approximations. Usually select one profile. Available IDs are also returned by `GET /tsbk/audio/equalizers`.
 
 ### Synthesis Parameters
 
@@ -802,13 +802,13 @@ Tsubaki provides several build variants for different hardware configurations. Y
 > For OpenVoice cloning, **WebGPU** provides GPU acceleration on Windows and Linux;
 > DirectML is an alternative on Windows, and CUDA supports NVIDIA GPUs on Linux.
 >
-> **WebGPU:** Piper synthesis stays on the CPU. GPU voice conversion runs one request
-> at a time while CPU synthesis can prepare other requests. If WebGPU cannot initialize,
-> cloning falls back to the CPU.
+> **WebGPU:** Piper synthesis and OpenVoice conversion use GPU session pools for concurrent
+> requests, limited by `HardwareSettings.MaxConcurrentGpuRequests`. If GPU initialization
+> fails, the affected model falls back to CPU.
 
 #### 1. Windows (WebGPU + CPU) — Recommended for Voice Cloning
 
-Uses WebGPU for hardware-accelerated OpenVoice voice cloning.
+Uses WebGPU to accelerate Piper synthesis and OpenVoice voice cloning.
 
 ```bash
 dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-webgpu
@@ -830,7 +830,7 @@ dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./
 
 #### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
 
-Uses WebGPU through Vulkan for hardware-accelerated OpenVoice voice cloning. A working Vulkan driver is required for GPU acceleration; if WebGPU cannot initialize, Tsubaki falls back to CPU.
+Uses WebGPU through Vulkan to accelerate Piper synthesis and OpenVoice voice cloning. A working Vulkan driver is required; if GPU initialization fails, the affected model falls back to CPU.
 
 ```bash
 dotnet publish -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
@@ -1195,19 +1195,19 @@ supplementary symbols and whitespace-separated code constructs are outside this 
   "MaxConcurrentCpuRequests": 2,
   "PiperGpuDeviceId": 0,
   "OpenVoiceGpuDeviceId": 0,
-  "ForcePiperToCpu": true
+  "ForcePiperToCpu": false
 }
 ```
 
 | Parameter                 | Description                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `MaxConcurrentGpuRequests` | Maximum simultaneous GPU requests. CUDA shares one loaded model; DirectML keeps a resident inference-session pool of this size because one session cannot run concurrently. Raising it on DirectML increases VRAM use. |
+| `MaxConcurrentGpuRequests` | Maximum simultaneous GPU requests. CUDA uses shared sessions; DirectML and WebGPU keep fixed-size session pools. Raising the pool size increases VRAM use. |
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value automatically derives a safe limit from the available logical processors and `OnnxSettings.Cpu.IntraOpNumThreads`. If `IntraOpNumThreads` is also automatic (`0`), Tsubaki uses one concurrent CPU request. |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
-| `OpenVoiceGpuDeviceId`     | Selects the GPU for OpenVoice. In WebGPU builds, Windows uses the DXGI adapter number; Linux uses a zero-based index among WebGPU-compatible GPUs. These indices are specific to each machine and may differ between Windows and Linux. |
-| `ForcePiperToCpu`          | Runs base Piper synthesis on the CPU. With `true`, GPU acceleration is reserved for OpenVoice conversion, so CPU synthesis can prepare other requests while voice conversion runs. |
+| `OpenVoiceGpuDeviceId`     | Hardware index (starting at `0`) of the GPU used for OpenVoice. See the WebGPU note below. |
+| `ForcePiperToCpu`          | Forces base Piper synthesis onto the CPU, including in GPU builds. Default: `false`. |
 
-> **WebGPU note:** GPU voice conversion is currently processed one request at a time for stability, while multiple CPU synthesis requests can still be prepared in parallel.
+> **WebGPU note:** Models running on WebGPU must use the same GPU within one server process. WebGPU's adapter order may differ from DirectML.
 
 - **`RateLimitSettings`** — Provides basic per-IP request throttling by limiting how many requests are accepted within a fixed time window and how many excess requests may queue. It helps control accidental or abusive request bursts, but it is not a substitute for a reverse proxy, firewall, or network-level DDoS protection on a public deployment.
 
