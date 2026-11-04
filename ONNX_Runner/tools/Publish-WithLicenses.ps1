@@ -255,7 +255,7 @@ foreach ($build in $variants) {
         throw "Release output already exists: $($build.Artifact). Choose another -OutputRoot or start a new run."
     }
     $arguments = @('publish', $projectFile, '-c', 'Release', '-r', $build.Rid,
-        '--self-contained', 'true', '--force', '-o', $publishDirectory)
+        '--self-contained', 'true', '-p:PublishSingleFile=true', '--force', '-o', $publishDirectory)
     if ($build.Property) { $arguments += $build.Property }
 
     & dotnet @arguments

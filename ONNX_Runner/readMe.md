@@ -798,6 +798,11 @@ building `ONNX_Runner.sln` also compiles the separate test runners. See
 [Tests/README.md](Tests/README.md) for their purpose, prerequisites, and commands.
 Tests are excluded from the server's compiled and published files.
 
+The Windows and Linux publish commands bundle managed libraries into the
+`TsubakiTTS` executable and include the .NET runtime. Native libraries, models,
+configuration, and web assets remain alongside it. Use a fresh output directory
+when switching from an older publish layout.
+
 Tsubaki provides several build variants for different hardware configurations. You can build a **Lightweight CPU-only** version, or enable **WebGPU, DirectML, or CUDA** for hardware-accelerated configurations, especially voice cloning.
 
 > **Which version should I choose?** Use **CPU-only** for base Piper synthesis.
@@ -813,7 +818,7 @@ Tsubaki provides several build variants for different hardware configurations. Y
 Uses WebGPU to accelerate Piper synthesis and OpenVoice voice cloning.
 
 ```bash
-dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-webgpu
+dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -p:PublishSingleFile=true -o ./bin/publish/tsubaki-tts-engine-windows-x64-webgpu
 ```
 
 #### 2. Windows (DirectML + CPU)
@@ -821,13 +826,13 @@ dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:UseWebGpu=true --self
 Alternative Windows GPU acceleration with support for NVIDIA, AMD, and Intel GPUs.
 
 ```bash
-dotnet publish ONNX_Runner.csproj -c Release -r win-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-directml
+dotnet publish ONNX_Runner.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o ./bin/publish/tsubaki-tts-engine-windows-x64-directml
 ```
 
 #### 3. Windows (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
-dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-cpu
+dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:CpuOnly=true --self-contained true -p:PublishSingleFile=true -o ./bin/publish/tsubaki-tts-engine-windows-x64-cpu
 ```
 
 #### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
@@ -835,13 +840,13 @@ dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:CpuOnly=true --self-c
 Uses WebGPU through Vulkan to accelerate Piper synthesis and OpenVoice voice cloning. A working Vulkan driver is required; if GPU initialization fails, the affected model falls back to CPU.
 
 ```bash
-dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
+dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -p:PublishSingleFile=true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
 ```
 
 #### 5. Linux (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
-dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cpu
+dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -p:PublishSingleFile=true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cpu
 ```
 
 #### 6. Linux (CUDA + CPU) — Advanced Users Only
@@ -849,7 +854,7 @@ dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:CpuOnly=true --self
 Builds the NVIDIA CUDA version. See the Linux Deployment section for strict hardware and software requirements:
 
 ```bash
-dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cuda
+dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cuda
 ```
 
 #### 7. Docker (Lightweight CPU)
