@@ -36,17 +36,30 @@ function Invoke-Git([string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) { throw "git failed: $($Arguments -join ' ')" }
 }
 
-# Downloads a missing artifact through a temporary file and removes incomplete downloads on failure.
-function Save-Download([string]$Url, [string]$Path) {
-    if (Test-Path -LiteralPath $Path -PathType Leaf) { return }
-    $partial = "$Path.partial"
-    try {
-        Invoke-WebRequest -Uri $Url -OutFile $partial
-        Move-Item -LiteralPath $partial -Destination $Path -Force
+# Verifies pinned downloads before committing them and retries invalid caches through approved sources.
+function Save-Download([string]$Url, [string]$Path, [string]$ExpectedSha256,
+    [string[]]$FallbackUrls = @()) {
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        if (-not $ExpectedSha256) { return }
+        $cachedHash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+        if ($cachedHash -eq $ExpectedSha256) { return }
     }
-    finally {
-        Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+    $failures = New-Object 'System.Collections.Generic.List[string]'
+    foreach ($sourceUrl in (@($Url) + @($FallbackUrls))) {
+        if (-not $sourceUrl) { continue }
+        $partial = "$Path.$([guid]::NewGuid().ToString('N')).partial"
+        try {
+            Invoke-WebRequest -Uri $sourceUrl -OutFile $partial -UseBasicParsing -TimeoutSec 120
+            if ($ExpectedSha256) { Assert-Hash $partial $ExpectedSha256 }
+            Move-Item -LiteralPath $partial -Destination $Path -Force
+            return
+        }
+        catch { $failures.Add("$sourceUrl`: $($_.Exception.Message)") }
+        finally {
+            Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+        }
     }
+    throw "Could not download source to $Path. $($failures -join ' | ')"
 }
 
 # Verifies a cached source checkout against its pinned commit before building corresponding sources.
@@ -81,11 +94,11 @@ function Get-AudioLibrarySources([string]$Destination) {
     $sources = @(
         @{ Component = 'SoundTouch.Net 2.3.2'; Revision = '98e5b8fd2f8efed0ddf7c8f66b435bfb231659dc'; File = 'soundtouch.net-98e5b8fd2f8efed0ddf7c8f66b435bfb231659dc.tar.gz'; Sha256 = 'e166e77d5fedb4e5b6e785458fe26a0e0e0cb89460d835cbf0304c4f9cb17703'; Url = 'https://codeload.github.com/owoudenberg/soundtouch.net/tar.gz/98e5b8fd2f8efed0ddf7c8f66b435bfb231659dc' },
         @{ Component = 'NAudio.Lame 2.1.0'; Revision = '5b5bb009d8c63ef8ab95cb36ca9105c8acc1c5fc'; File = 'NAudio.Lame-5b5bb009d8c63ef8ab95cb36ca9105c8acc1c5fc.tar.gz'; Sha256 = '9e34ec2119e90ebaa031830654fd763ed8f529da961ebd5619c7a850327188d1'; Url = 'https://codeload.github.com/Corey-M/NAudio.Lame/tar.gz/5b5bb009d8c63ef8ab95cb36ca9105c8acc1c5fc' },
-        @{ Component = 'LAME 3.100'; Revision = '3.100'; File = 'lame-3.100.tar.gz'; Sha256 = 'ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e'; Url = 'https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz' }
+        @{ Component = 'LAME 3.100'; Revision = '3.100'; File = 'lame-3.100.tar.gz'; Sha256 = 'ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e'; Url = 'https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz'; FallbackUrls = @('https://download.videolan.org/pub/contrib/lame/lame-3.100.tar.gz') }
     )
     foreach ($source in $sources) {
         $archive = Join-Path $Destination $source.File
-        Save-Download $source.Url $archive
+        Save-Download $source.Url $archive $source.Sha256 $source.FallbackUrls
         Assert-Hash $archive $source.Sha256
         [pscustomobject]$source
     }

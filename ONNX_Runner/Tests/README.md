@@ -183,15 +183,23 @@ dotnet run --project Tests/InferenceConcurrencyRegression -c Release -p:CpuOnly=
 
 These also check version guards and preservation of OpenVoice device selection. They do not require proof of physical GPU execution.
 
-For real HTTP concurrency, first start a server with the intended backend/device settings, then run PowerShell 7:
+For real HTTP concurrency, first start a server with the intended backend/device settings. In Windows PowerShell, run:
 
 ```powershell
-pwsh -NoProfile -File Tests/InferenceConcurrencyRegression/Test-WebGpuRequests.ps1 -BaseUrl http://localhost:5045 -Voice female -Requests 6 -OutputDirectory test-artifacts/webgpu-http
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File Tests/InferenceConcurrencyRegression/Test-WebGpuRequests.ps1 -BaseUrl http://localhost:5045 -Voice female -Requests 6 -OutputDirectory test-artifacts/webgpu-http
 ```
 
-The voice must exist. The script checks simultaneous successful WAV responses; confirm the actual backend/device in server diagnostics. Real DirectML/CUDA/WebGPU runs require suitable hardware and drivers.
+PowerShell 7 can use `pwsh -NoProfile -File` with the same arguments. The voice must exist; omit `-Voice` to test Piper and the first available cloned voice. The script checks simultaneous successful WAV responses; confirm the actual backend/device in server diagnostics. Real DirectML/CUDA/WebGPU runs require suitable hardware and drivers.
 
 ## 9. Dependency and release packaging checks
+
+Check source-download cache recovery, mirror fallback, hash rejection, partial-file cleanup and debug-symbol routing independently of published builds:
+
+```powershell
+pwsh -NoProfile -File Tests/ReleasePackagingRegression/DownloadChecks.ps1
+```
+
+On Windows, this download check also supports `powershell.exe -NoProfile -ExecutionPolicy Bypass -File Tests/ReleasePackagingRegression/DownloadChecks.ps1`. Add `-SourceDirectory <verified-source-cache>` to exercise LAME recovery with the actual three audio-library archives. Pinned audio-source downloads verify SHA-256 before entering the completed cache; an invalid cached file is retried, and LAME can fall back from SourceForge to the VideoLAN mirror using the same pinned hash.
 
 Run the NAudio boundary checks after updating audio dependencies.
 

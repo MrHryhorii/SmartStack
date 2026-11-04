@@ -47,6 +47,18 @@ function Assert-SignalsmithDistribution {
     return "Signalsmith native asset: $RuntimeIdentifier/$nativeName | SHA256 $nativeHash | wrapper/core/FFT notices included"
 }
 
+function Move-PublishedSymbols {
+    param([string]$PublishDirectory, [string]$ReviewDirectory)
+    $root = $PublishDirectory.TrimEnd([char[]]@('\', '/'))
+    foreach ($file in (Get-ChildItem -LiteralPath $PublishDirectory -Recurse -File -Force |
+        Where-Object { $_.Extension -ieq '.pdb' })) {
+        $relative = $file.FullName.Substring($root.Length).TrimStart([char[]]@('\', '/'))
+        $target = Join-Path (Join-Path $ReviewDirectory 'Symbols') $relative
+        New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force | Out-Null
+        Move-Item -LiteralPath $file.FullName -Destination $target -Force
+    }
+}
+
 function Copy-ProjectSource {
     param([string]$ProjectDirectory, [string]$Destination, [string[]]$ExcludedDirectories)
 
@@ -456,7 +468,8 @@ foreach ($build in $variants) {
     if (Test-Path -LiteralPath $symbols -PathType Leaf) {
         Copy-Item -LiteralPath $symbols -Destination $buildReview -Force
     }
-    $publishedHashes = foreach ($file in (Get-ChildItem -LiteralPath $publishDirectory -Recurse -File)) {
+    Move-PublishedSymbols -PublishDirectory $publishDirectory -ReviewDirectory $buildReview
+    $publishedHashes = foreach ($file in (Get-ChildItem -LiteralPath $publishDirectory -Recurse -File -Force)) {
         $relative = $file.FullName.Substring($publishDirectory.TrimEnd([char[]]@('\', '/')).Length).TrimStart([char[]]@('\', '/')).Replace('\', '/')
         "$( (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() )  $relative"
     }
