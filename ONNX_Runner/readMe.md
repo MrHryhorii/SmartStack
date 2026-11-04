@@ -548,8 +548,8 @@ HP/LP are high-pass/low-pass cutoff frequencies; the other values are tonal-band
 | `pitch`       | float  | Pitch multiplier. `1.0` is unchanged. |
 | `volume`      | float  | Output volume multiplier. `1.0` leaves the multiplier unchanged; final peak protection applies. |
 | `samplerate`  | int    | Output sample rate in Hz. Omit it or use `null` to inherit `DspSettings.DefaultSampleRate`; `0` keeps the normal model/codec rate. Other values are clamped to `8000`–`48000`. |
-| `noise_scale` | float  | Pronunciation/intonation variance. Default: `0.667`. |
-| `noise_w`     | float  | Phoneme-duration/rhythm variance. Default: `0.8`. |
+| `noise_scale` | float  | Pronunciation and intonation variance. Omit it or use `null` to inherit `inference.noise_scale` from the loaded Piper model's JSON config. The bundled `hfc_female` model uses `0.667`. |
+| `noise_w`     | float  | Phoneme duration and rhythm variance. Omit it or use `null` to inherit `inference.noise_w` from the loaded Piper model's JSON config. The bundled `hfc_female` model uses `0.8`. |
 
 Resampling is applied after effects and voice cloning, before output encoding.
 Lower sample rates reduce high-frequency detail; increasing the rate does not restore it.
