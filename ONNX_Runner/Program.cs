@@ -14,7 +14,25 @@ using Microsoft.Extensions.Logging.Console;
 // Set console output encoding to UTF-8 to properly display international characters and phonemes in logs and diagnostics.
 Console.OutputEncoding = System.Text.Encoding.UTF8;
 
-var builder = WebApplication.CreateBuilder(args);
+string? portableContentRoot = null;
+#pragma warning disable IL3000 // The bundled entry assembly has an empty location.
+bool isSingleFile = typeof(Program).Assembly.Location.Length == 0;
+#pragma warning restore IL3000
+if (isSingleFile)
+{
+    // Resolve explicit host settings before falling back to the portable bundle directory.
+    using var hostConfiguration = new ConfigurationManager();
+    hostConfiguration.AddEnvironmentVariables("ASPNETCORE_");
+    hostConfiguration.AddEnvironmentVariables("DOTNET_");
+    hostConfiguration.AddCommandLine(args);
+    portableContentRoot = hostConfiguration[HostDefaults.ContentRootKey] ?? AppContext.BaseDirectory;
+}
+
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = portableContentRoot
+});
 // Logging must never become backpressure for synthesis. The built-in console provider already
 // formats/enqueues on the caller and drains output on its own worker thread; use a bounded
 // non-blocking queue so a stalled terminal cannot stall TTS requests. Under an extreme log burst,
@@ -101,7 +119,7 @@ try
         Console.WriteLine($"[WARNING] Directory '{modelDirectory}' was created. Please put your .onnx and .json files there.");
     }
 
-    var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelConfig);
+    var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelConfig, isSingleFile ? AppContext.BaseDirectory : null);
     piperModelPath = onnxPath;
     piperConfig = config;
 

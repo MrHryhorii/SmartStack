@@ -29,8 +29,10 @@ public static class ModelLoader
     /// or loads exact files if specified in the settings.
     /// </summary>
     /// <param name="settings">Model settings containing directory or exact file paths.</param>
+    /// <param name="exactPathsBaseDirectory">Base directory for relative exact paths. Defaults to the working directory.</param>
     /// <returns>A tuple containing the ONNX model file path and the deserialized PiperConfig object.</returns>
-    public static (string OnnxFilePath, PiperConfig Config) LoadFromDirectory(ModelSettings settings)
+    public static (string OnnxFilePath, PiperConfig Config) LoadFromDirectory(
+        ModelSettings settings, string? exactPathsBaseDirectory = null)
     {
         string onnxPath;
         string jsonPath;
@@ -41,8 +43,8 @@ public static class ModelLoader
             !string.IsNullOrWhiteSpace(settings.ExactConfigFilePath))
         {
             // Validate and use the exact file paths provided by the user
-            string absoluteModelPath = Path.GetFullPath(settings.ExactModelFilePath);
-            string absoluteConfigPath = Path.GetFullPath(settings.ExactConfigFilePath);
+            string absoluteModelPath = ResolveExactPath(settings.ExactModelFilePath, exactPathsBaseDirectory);
+            string absoluteConfigPath = ResolveExactPath(settings.ExactConfigFilePath, exactPathsBaseDirectory);
 
             if (!File.Exists(absoluteModelPath))
                 throw new FileNotFoundException($"Exact model file not found at: {absoluteModelPath}");
@@ -124,4 +126,7 @@ public static class ModelLoader
         // Return the validated model path and the successfully parsed config
         return (onnxPath, config);
     }
+
+    private static string ResolveExactPath(string path, string? baseDirectory) =>
+        baseDirectory is null ? Path.GetFullPath(path) : Path.GetFullPath(path, baseDirectory);
 }
