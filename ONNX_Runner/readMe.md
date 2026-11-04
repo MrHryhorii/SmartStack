@@ -46,7 +46,7 @@ Built with **C# (.NET 10)** and **ONNX Runtime**, Tsubaki runs locally on Window
 
 ![Dashboard preview](tsubaki-tts.png)
 
-Built-in web interface for testing voices and DSP effects, available immediately after launch.
+Built-in web interface for testing voices and DSP effects, available after the server finishes startup.
 
 Dashboard features:
 
@@ -78,16 +78,16 @@ Tsubaki is built with an engineering-first approach to distribution:
 - **Memory Protection (OOM Guard):** Built-in request gating and provider-specific concurrency limits reduce the risk of exhausting CPU/GPU resources under heavy load.
 - **True Concurrency:** On CPU and CUDA, concurrent requests share the same loaded model instead of requiring a full model/runtime copy per request. DirectML and WebGPU use fixed-size pools of independent sessions; see `HardwareSettings` for details.
 
-| Tsubaki                               | Typical Python TTS                   |
-| ------------------------------------- | ------------------------------------ |
-| Self-contained release                | Python virtual environments          |
-| OpenAI-compatible out of the box      | Custom APIs required                 |
-| DirectML support (NVIDIA, AMD, Intel) | Often CUDA-only                      |
-| Built-in DSP effects                  | External audio processing chains     |
-| Real-time streaming                   | Full audio generated before playback |
-| CPU-first deployment                  | GPU dependency pressure              |
-| Portable self-contained builds        | Fragile installations                |
-| True multithreading (Shared RAM)      | GIL bottleneck / Memory duplication  |
+| Tsubaki                               | Typical Python TTS                    |
+| ------------------------------------- | ------------------------------------- |
+| Self-contained release                | Python virtual environments           |
+| OpenAI-compatible out of the box      | API support varies by server          |
+| DirectML support (NVIDIA, AMD, Intel) | GPU backends vary by engine           |
+| Built-in DSP effects                  | External audio processing chains      |
+| Real-time streaming                   | Streaming support varies by engine    |
+| CPU-first deployment                  | GPU dependency pressure               |
+| Portable self-contained builds        | Fragile installations                 |
+| Shared CPU/CUDA sessions; GPU pools   | Concurrency depends on engine/workers |
 
 ---
 
@@ -209,6 +209,8 @@ To inspect the running build and its actual capabilities, open
 ## OpenAI API Compatibility
 
 Tsubaki mimics the standard OpenAI `/v1/audio/speech` endpoint. Clients that use the standard OpenAI TTS request fields can usually connect to Tsubaki by changing only the base URL.
+
+Use `http://localhost:5045/v1` as the base URL in OpenAI-shaped clients that append `/audio/speech`. If a client requires an API key, a placeholder such as `local` is sufficient; Tsubaki itself does not require an OpenAI key.
 
 Both API surfaces use the same synthesis engine. Server-side cloning, DSP, pitch, volume, and reverb defaults still apply to `/v1/audio/speech`; the dedicated `/tsbk/...` endpoint simply adds per-request control over Tsubaki-specific settings.
 
@@ -590,7 +592,7 @@ The following example enables a phone-speaker profile, LoFiTape, and LivingRoom 
 `DefaultEqualizer` is an ordered array of profile IDs; `[]` or `null` disables the server-default equalizer. Only its first 16 entries are processed, and unknown names are ignored.
 `DefaultEffect: "None"` disables the default character effect only;
 `DefaultEnvironment: "None"` disables the default spatial environment only.
-Omitted or `null` request fields inherit their server defaults. An explicit `equalizer` array replaces `DefaultEqualizer` completely; `[]` disables it for that request. Likewise, `effect: "None"` and `environment: "None"` disable their respective layers. The dashboard sends `[]` when no profiles are selected. Restart the server after changing `appsettings.json`.
+Omitted or `null` request fields inherit their server defaults. An explicit `equalizer` array of supported profile IDs replaces `DefaultEqualizer` completely; `[]` disables it for that request. Likewise, `effect: "None"` and `environment: "None"` disable their respective layers. The dashboard sends `[]` when no profiles are selected. Restart the server after changing `appsettings.json`.
 
 Set `EnableGlobalEffects: false` to bypass all three layers, including spatial reverb
 tails. Per-request effects cannot re-enable them while this switch is off.
@@ -674,7 +676,7 @@ All official Piper voices are hosted on HuggingFace:
 
 **[rhasspy/piper-voices on HuggingFace](https://huggingface.co/rhasspy/piper-voices/tree/main)**
 
-The repository contains **35 languages**, each in its own folder (`en`, `de`, `fr`, `uk`, `cmn`, etc.).
+Voices are organized by language folder (`en`, `de`, `fr`, `uk`, etc.), then by locale, voice, and quality.
 
 ### What to Download
 
@@ -692,7 +694,7 @@ For each voice you need to download exactly **2 files**:
 3. Download both files: `en_US-lessac-medium.onnx` and `en_US-lessac-medium.onnx.json`
 4. Place both files into the `Model/` folder next to the executable
 
-> Both files **must be present** — the engine will fail to load without the accompanying `.json` config.
+> Keep the matching pair together: the selected Piper voice needs both its `.onnx` weights and accompanying `.json` configuration.
 
 ### Available Quality Tiers
 
@@ -811,7 +813,7 @@ Tsubaki provides several build variants for different hardware configurations. Y
 Uses WebGPU to accelerate Piper synthesis and OpenVoice voice cloning.
 
 ```bash
-dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-webgpu
+dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-webgpu
 ```
 
 #### 2. Windows (DirectML + CPU)
@@ -819,13 +821,13 @@ dotnet publish -c Release -r win-x64 -p:UseWebGpu=true --self-contained true -o 
 Alternative Windows GPU acceleration with support for NVIDIA, AMD, and Intel GPUs.
 
 ```bash
-dotnet publish -c Release -r win-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-directml
+dotnet publish ONNX_Runner.csproj -c Release -r win-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-directml
 ```
 
 #### 3. Windows (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
-dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-cpu
+dotnet publish ONNX_Runner.csproj -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-windows-x64-cpu
 ```
 
 #### 4. Linux (WebGPU + CPU) — Recommended for Voice Cloning
@@ -833,13 +835,13 @@ dotnet publish -c Release -r win-x64 -p:CpuOnly=true --self-contained true -o ./
 Uses WebGPU through Vulkan to accelerate Piper synthesis and OpenVoice voice cloning. A working Vulkan driver is required; if GPU initialization fails, the affected model falls back to CPU.
 
 ```bash
-dotnet publish -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
+dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:UseWebGpu=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-webgpu
 ```
 
 #### 5. Linux (Lightweight: CPU Only) — Recommended for Base TTS
 
 ```bash
-dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cpu
+dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cpu
 ```
 
 #### 6. Linux (CUDA + CPU) — Advanced Users Only
@@ -847,7 +849,7 @@ dotnet publish -c Release -r linux-x64 -p:CpuOnly=true --self-contained true -o 
 Builds the NVIDIA CUDA version. See the Linux Deployment section for strict hardware and software requirements:
 
 ```bash
-dotnet publish -c Release -r linux-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cuda
+dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 --self-contained true -o ./bin/publish/tsubaki-tts-engine-linux-x64-cuda
 ```
 
 #### 7. Docker (Lightweight CPU)
@@ -914,15 +916,12 @@ Tsubaki detects these native libraries at startup and reports which audio format
 
 ### Bare-Metal Linux (CUDA GPU) — Not Recommended
 
-Tsubaki supports NVIDIA GPU acceleration on Linux, but we **strongly advise against using it** unless absolutely necessary.
+Tsubaki supports NVIDIA CUDA acceleration on Linux. For a first deployment, use CPU-only for base Piper synthesis or WebGPU for GPU-accelerated cloning. CUDA is an advanced option for hosts with a compatible NVIDIA runtime stack.
 
-For TTS workloads, the performance gain over a modern CPU is often small, while the downsides are significant:
+- **Larger Runtime Bundle:** The CUDA provider adds native libraries; the size difference depends on the ONNX Runtime version and release contents.
+- **Host Dependencies:** The matching NVIDIA driver, CUDA, and cuDNN runtimes must be installed separately. Performance and power use depend on the workload and hardware.
 
-- **Massive Build Size:** The CUDA build is over 1.5 GB larger.
-- **High Power Consumption:** GPU execution consumes significantly more power.
-- **Dependency Hell:** CUDA requires a compatible system-level NVIDIA stack that is not bundled with Tsubaki.
-
-If you still want to proceed, the host system must provide:
+For the current CUDA build, the host system must provide:
 
 - NVIDIA Linux driver with CUDA 13.x support
 - NVIDIA CUDA 13.x runtime libraries / CUDA Toolkit 13.x
@@ -979,7 +978,7 @@ does not automatically bypass normal text pronunciation merely because brackets 
 
 ```json
 "PhonemizerSettings": {
-  "SupportedLanguages": ["en", "uk", "fr"],
+  "SupportedLanguages": ["en", "es", "fr"],
   "UseLanguageDetector": true
 }
 ```
@@ -998,7 +997,7 @@ This complete example shows the defaults:
 
 ```json
 "PhonemizerSettings": {
-  "SupportedLanguages": ["en", "uk", "fr"],
+  "SupportedLanguages": ["en", "es", "fr"],
   "UseLanguageDetector": true,
   "LocalWinnerProbabilityFloor": 0.50,
   "LocalWinnerMarginFloor": 0.08,
@@ -1066,7 +1065,7 @@ Routing selects eSpeak pronunciation rules, while the Piper model retains its vo
 
 ### Network & Access
 
-- **`Kestrel > Endpoints > Http > Url`** — Defines the port the server listens on. Default is `http://+:5045`.
+- **`Kestrel > Endpoints > Http > Url`** — Defines the HTTP listening address and port. The shipped `http://+:5045` binds port `5045` on all network interfaces.
 
 - **`StartupSettings > OpenBrowserOnStart`** — Attempts to open the Web Dashboard after startup (default: `true`). Set `false` for services, headless use, or manual opening at `http://localhost:5045`. Linux skips this without a graphical session; Docker disables it.
 
@@ -1360,7 +1359,7 @@ Tsubaki TTS Engine stands on the shoulders of giants. A massive thank you to the
 ### C# / .NET Libraries
 
 - [**Microsoft.ML.OnnxRuntime**](https://github.com/microsoft/onnxruntime) — CPU and GPU neural network inference.
-- [**NAudio & NAudio.Lame**](https://github.com/naudio/NAudio) — Audio processing and the .NET LAME integration.
+- [**NAudio**](https://github.com/naudio/NAudio) and [**NAudio.Lame**](https://github.com/Corey-M/NAudio.Lame) — Audio processing and the .NET LAME integration.
 - [**Concentus**](https://github.com/lostromb/concentus) — Pure C# Opus encoding.
 - [**SoundTouch.Net**](https://github.com/owoudenberg/soundtouch.net) — High-quality pitch and tempo shifting (WSOLA algorithm).
 - [**SignalsmithStretch-CS**](https://github.com/Estrol/signalsmith-stretch-cs) — Pitch-shifted harmony voices for Harmonizer.
