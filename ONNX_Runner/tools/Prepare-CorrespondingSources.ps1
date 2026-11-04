@@ -1,3 +1,5 @@
+# Collects the upstream sources for the native and browser components shipped with Tsubaki.
+# The publisher consumes the finished source directory and its SHA-256 manifest.
 param(
     [string]$ProjectDirectory,
     [string]$SourcesRoot,
@@ -5,14 +7,16 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Resolve project inputs from the script location and default to the current user's source cache.
 if (-not $ProjectDirectory) { $ProjectDirectory = Join-Path $PSScriptRoot '..' }
 $projectDirectory = (Resolve-Path -LiteralPath $ProjectDirectory).Path
-$cacheRoot = if ($env) { $env }
-elseif ($env) { $env }
-else { Join-Path $HOME '.cache' }
+$cacheRoot = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA }
+    elseif ($env:XDG_CACHE_HOME) { $env:XDG_CACHE_HOME }
+    else { Join-Path $HOME '.cache' }
 if (-not $SourcesRoot) { $SourcesRoot = Join-Path $cacheRoot 'Tsubaki/CorrespondingSources' }
 $sourcesRoot = [System.IO.Path]::GetFullPath($SourcesRoot)
 
+# Fail before staging if the tools for checking out or packing sources are unavailable.
 foreach ($command in @('git', 'tar')) {
     if (-not (Get-Command $command -ErrorAction SilentlyContinue)) {
         throw "$command is required to collect the corresponding source."
@@ -23,23 +27,20 @@ $workRoot = Join-Path $cacheRoot 'Tsubaki/SourceCache'
 New-Item -ItemType Directory -Path $workRoot -Force | Out-Null
 $completed = $false
 
-Checks that a cached artifact exists and matches its pinned SHA-256 before reuse.
-
+# Checks that a cached artifact exists and matches its pinned SHA-256 before reuse.
 function Assert-Hash([string]$Path, [string]$Expected) {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { throw "Missing file: $Path" }
     $actual = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
     if ($actual -ne $Expected) { throw "Unexpected SHA-256 for $Path`: $actual" }
 }
 
-Runs git with the supplied arguments and fails the script on a nonzero exit code.
-
+# Runs git with the supplied arguments and fails the script on a nonzero exit code.
 function Invoke-Git([string[]]$Arguments) {
     & git @Arguments
     if ($LASTEXITCODE -ne 0) { throw "git failed: $($Arguments -join ' ')" }
 }
 
-Verifies pinned downloads before committing them and retries invalid caches through approved sources.
-
+# Verifies pinned downloads before committing them and retries invalid caches through approved sources.
 function Save-Download([string]$Url, [string]$Path, [string]$ExpectedSha256,
     [string[]]$FallbackUrls = @()) {
     if (Test-Path -LiteralPath $Path -PathType Leaf) {
@@ -48,6 +49,7 @@ function Save-Download([string]$Url, [string]$Path, [string]$ExpectedSha256,
         if ($cachedHash -eq $ExpectedSha256) { return }
     }
     $failures = New-Object 'System.Collections.Generic.List[string]'
+    # Download each attempt to a separate temporary file. Replace the cache only after validation.
     foreach ($sourceUrl in (@($Url) + @($FallbackUrls))) {
         if (-not $sourceUrl) { continue }
         $partial = "$Path.$([guid]::NewGuid().ToString('N')).partial"
@@ -65,8 +67,7 @@ function Save-Download([string]$Url, [string]$Path, [string]$ExpectedSha256,
     throw "Could not download source to $Path. $($failures -join ' | ')"
 }
 
-Verifies a cached source checkout against its pinned commit before building corresponding sources.
-
+# Verifies a cached source checkout against its pinned commit before building corresponding sources.
 function Assert-Revision([string]$Directory, [string]$Expected) {
     $actual = (& git -C $Directory rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $actual -ne $Expected) {
@@ -74,8 +75,7 @@ function Assert-Revision([string]$Directory, [string]$Expected) {
     }
 }
 
-Stages the pinned wrapper, DSP core and FFT source without rebuilding package binaries.
-
+# Stages the pinned wrapper, DSP core and FFT source without rebuilding package binaries.
 function Get-SignalsmithSources([string]$Destination) {
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     $sources = @(
@@ -89,13 +89,11 @@ function Get-SignalsmithSources([string]$Destination) {
         Save-Download $url $archive
         Assert-Hash $archive $source.Sha256
         [pscustomobject]@{ File = $source.File; Sha256 = $source.Sha256;
-            Repository = $source.Repository; Revision = $source.Revision; Url = $url 
-        }
+            Repository = $source.Repository; Revision = $source.Revision; Url = $url }
     }
 }
 
-Retains LGPL library source and the upstream wrapper containing the shipped LAME DLLs.
-
+# Retains LGPL library source and the upstream wrapper containing the shipped LAME DLLs.
 function Get-AudioLibrarySources([string]$Destination) {
     New-Item -ItemType Directory -Path $Destination -Force | Out-Null
     $sources = @(
@@ -111,6 +109,7 @@ function Get-AudioLibrarySources([string]$Destination) {
     }
 }
 
+# Reuse a complete cache unless -Force requests fresh staging. Verify the original entries first.
 $manifestFile = Join-Path $sourcesRoot 'SOURCE_MANIFEST.json'
 if ((Test-Path -LiteralPath $manifestFile -PathType Leaf) -and -not $Force) {
     $existing = Get-Content -LiteralPath $manifestFile -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -128,6 +127,7 @@ if ((Test-Path -LiteralPath $manifestFile -PathType Leaf) -and -not $Force) {
         Assert-Hash (Join-Path $sourcesRoot $entry.File) $entry.Sha256
     }
     Assert-Hash (Join-Path $sourcesRoot 'SOURCE_REVISIONS.txt') $existing.SourceRevisionsSha256
+    # Backfill the Signalsmith and audio-library inventories and write the manifest through a temporary file.
     $signalsmithSources = @(Get-SignalsmithSources $sourcesRoot)
     $existing | Add-Member -NotePropertyName SignalsmithSources -NotePropertyValue $signalsmithSources -Force
     $audioLibrarySources = @(Get-AudioLibrarySources $sourcesRoot)
@@ -145,6 +145,7 @@ if ((Test-Path -LiteralPath $manifestFile -PathType Leaf) -and -not $Force) {
 }
 
 try {
+    # Match each vendored browser decoder byte for byte against its published npm package.
     $bundles = @(
         @{ Package = 'mpg123-decoder'; Version = '1.0.3'; File = 'mpg123-decoder.min.js'; Module = 'modules/mpg123'; Hash = 'c13a80f0455795eb0c8a1c7844fb5e567cf37acc00fdd3e1f3e6b89f7b4601ce' },
         @{ Package = 'ogg-opus-decoder'; Version = '1.7.5'; File = 'ogg-opus-decoder.min.js'; Module = 'modules/opus'; Hash = 'c5055d3410ca02728d10708e154b47219c38ceef52155f18702e34204150651f' }
@@ -161,13 +162,14 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Could not unpack $tarball" }
         $bundleFiles = @(Get-ChildItem -LiteralPath $extracted -Recurse -File -Filter $bundle.File)
         $matchingBytes = @($bundleFiles | Where-Object {
-                (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -eq $bundle.Hash
-            })
+            (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() -eq $bundle.Hash
+        })
         if ($matchingBytes.Count -eq 0) {
             throw "No byte-identical $($bundle.File) in $($bundle.Package) $($bundle.Version). Review the actual bundle origin."
         }
     }
 
+    # Check the shipped eSpeak DLL, then collect the pinned eSpeak and Piper phonemizer checkouts.
     $espeak = Join-Path $projectDirectory 'PiperNative/espeak-ng.dll'
     Assert-Hash $espeak '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189'
 
@@ -188,6 +190,7 @@ try {
     Assert-Revision $phonemizeSource 'fccd4f335aa68ac0b72600822f34d84363daa2bf'
     Invoke-Git @('-C', $phonemizeSource, 'submodule', 'update', '--init', '--recursive')
 
+    # Collect each decoder release and its native submodule. Read the codec-parser version from its lockfile.
     $sourceNames = @('espeak-ng-piper', 'piper-phonemize')
     $codecParserVersions = New-Object System.Collections.Generic.List[string]
     foreach ($bundle in $bundles) {
@@ -214,6 +217,7 @@ try {
         if (-not $codecParserVersions.Contains($version)) { $codecParserVersions.Add($version) }
     }
 
+    # Record the checkout and submodule revisions. Refuse to archive mismatched submodules.
     $revisions = New-Object System.Collections.Generic.List[string]
     foreach ($name in $sourceNames) {
         $directory = Join-Path $workRoot $name
@@ -235,6 +239,7 @@ try {
         }
     }
 
+    # Stage the codec-parser packages separately because their sources are dependencies of the decoder bundles.
     $stage = Join-Path $workRoot 'staged'
     if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
     New-Item -ItemType Directory -Path $stage -Force | Out-Null
@@ -255,6 +260,7 @@ try {
         $supplemental.Add($file)
         $revisions.Add("codec-parser $version (npm package; version from decoder package-lock.json)")
     }
+    # Add the remaining pinned audio sources and pack the checked-out trees without Git metadata.
     $signalsmithSources = @(Get-SignalsmithSources $stage)
     foreach ($source in $signalsmithSources) {
         $revisions.Add("$($source.Repository) $($source.Revision) (pinned source archive)")
@@ -273,35 +279,37 @@ try {
         Copy-Item -LiteralPath (Join-Path $workRoot "$($bundle.Package)-$($bundle.Version).tgz") -Destination $stage
     }
 
+    # Record the inputs and archive hashes that the publisher will verify before packaging.
     $manifest = [ordered]@{
-        Description           = 'Source snapshots for eSpeak, browser decoders, Signalsmith, SoundTouch.Net and LAME.'
-        EspeakDllSha256       = '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189'
-        Mpg123BundleSha256    = $bundles[0].Hash
-        OggOpusBundleSha256   = $bundles[1].Hash
+        Description = 'Source snapshots for eSpeak, browser decoders, Signalsmith, SoundTouch.Net and LAME.'
+        EspeakDllSha256 = '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189'
+        Mpg123BundleSha256 = $bundles[0].Hash
+        OggOpusBundleSha256 = $bundles[1].Hash
         SourceRevisionsSha256 = (Get-FileHash -LiteralPath (Join-Path $stage 'SOURCE_REVISIONS.txt') -Algorithm SHA256).Hash.ToLowerInvariant()
-        Archives              = @($sourceNames | ForEach-Object {
-                $file = "$_.tar.gz"
-                [ordered]@{ File = $file; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $file) -Algorithm SHA256).Hash.ToLowerInvariant() }
-            })
-        NpmPackages           = @($bundles | ForEach-Object {
-                $file = "$($_.Package)-$($_.Version).tgz"
-                [ordered]@{ File = $file; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $file) -Algorithm SHA256).Hash.ToLowerInvariant() }
-            })
-        SignalsmithSources    = $signalsmithSources
-        AudioLibrarySources   = $audioLibrarySources
-        SupplementalPackages  = @($supplemental | ForEach-Object {
-                [ordered]@{ File = $_; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $_) -Algorithm SHA256).Hash.ToLowerInvariant() }
-            })
+        Archives = @($sourceNames | ForEach-Object {
+            $file = "$_.tar.gz"
+            [ordered]@{ File = $file; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $file) -Algorithm SHA256).Hash.ToLowerInvariant() }
+        })
+        NpmPackages = @($bundles | ForEach-Object {
+            $file = "$($_.Package)-$($_.Version).tgz"
+            [ordered]@{ File = $file; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $file) -Algorithm SHA256).Hash.ToLowerInvariant() }
+        })
+        SignalsmithSources = $signalsmithSources
+        AudioLibrarySources = $audioLibrarySources
+        SupplementalPackages = @($supplemental | ForEach-Object {
+            [ordered]@{ File = $_; Sha256 = (Get-FileHash -LiteralPath (Join-Path $stage $_) -Algorithm SHA256).Hash.ToLowerInvariant() }
+        })
     }
     $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $stage 'SOURCE_MANIFEST.json') -Encoding UTF8
+    # Replace the destination only after the source archives and manifest have been staged.
     if (Test-Path -LiteralPath $sourcesRoot) { Remove-Item -LiteralPath $sourcesRoot -Recurse -Force }
     New-Item -ItemType Directory -Path (Split-Path $sourcesRoot -Parent) -Force | Out-Null
     Move-Item -LiteralPath $stage -Destination $sourcesRoot
     $completed = $true
     Write-Host "Corresponding source staged at $sourcesRoot"
-
 }
 finally {
+    # Remove staging files after success. Keep downloaded inputs and checkouts available for a retry after failure.
     if ($completed) {
         Remove-Item -LiteralPath $workRoot -Recurse -Force -ErrorAction SilentlyContinue
     }

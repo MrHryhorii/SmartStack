@@ -1,3 +1,5 @@
+# Exercises concurrent HTTP synthesis on an already running Tsubaki server.
+# The running server determines the backend. The script saves WAV responses and a JSON report.
 param(
     [string]$BaseUrl = 'http://localhost:5045',
     [string]$Voice,
@@ -6,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# Reuse one client and allow enough server connections for the whole request batch.
 Add-Type -AssemblyName System.Net.Http
 $handler = [System.Net.Http.HttpClientHandler]::new()
 $handler.MaxConnectionsPerServer = $Requests
@@ -18,6 +21,7 @@ $results = New-Object 'System.Collections.Generic.List[object]'
 $failures = 0
 
 try {
+    # Test the requested voice, or Piper and the first available clone in separate batches.
     $available = ($client.GetStringAsync("$base/tsbk/audio/voices").GetAwaiter().GetResult() | ConvertFrom-Json).voices
     if ($Voice -and $available -notcontains $Voice) { throw "Voice is not available: $Voice" }
     $voices = @('piper_base')
@@ -44,6 +48,7 @@ try {
                 $task = $client.PostAsync("$base/v1/audio/speech", $content)
                 $pending.Add([pscustomobject]@{ Index = $index; Task = $task; Content = $content })
             }
+            # Check each HTTP status and WAV header, then retain the audio for inspection.
             foreach ($request in $pending) {
                 $response = $null
                 try {
@@ -65,11 +70,13 @@ try {
             }
         }
         finally {
+            # Request content belongs to the batch. Each response is disposed after processing.
             foreach ($request in $pending) { $request.Content.Dispose() }
             $timer.Stop()
         }
         Write-Host ("Voice: {0}; parallel requests: {1}; batch duration: {2:N3} s" -f $name, $Requests, $timer.Elapsed.TotalSeconds)
     }
+    # Report all requests together and return a failing exit code if any request failed.
     $results | Format-Table Voice, Request, Status, Bytes, Error -AutoSize
     [IO.File]::WriteAllText((Join-Path $outputRoot 'results.json'), ($results | ConvertTo-Json -Depth 4), [Text.Encoding]::UTF8)
     Write-Host "Output: $outputRoot"

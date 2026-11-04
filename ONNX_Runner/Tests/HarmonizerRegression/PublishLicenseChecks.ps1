@@ -1,4 +1,6 @@
-﻿param(
+﻿# Exercises the Signalsmith distribution checks against a published build and its restored package.
+# Passing a source directory also checks cache reuse, corruption detection and legacy manifest upgrades.
+param(
     [Parameter(Mandatory)][string]$PublishDirectory,
     [Parameter(Mandatory)][ValidateSet('win-x64', 'linux-x64')][string]$RuntimeIdentifier,
     [Parameter(Mandatory)][string]$PackageDirectory,
@@ -9,6 +11,7 @@
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $script = Join-Path $project 'tools/Publish-WithLicenses.ps1'
+# Load just the production validator from the PowerShell syntax tree to avoid running a publish.
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$tokens, [ref]$errors)
@@ -23,6 +26,7 @@ $result | Write-Output
 $nativeName = if ($RuntimeIdentifier -eq 'win-x64') { 'SignalsmithStretch.dll' } else { 'libSignalsmithStretch.so' }
 $noticeNames = @('Wrapper-MIT-0.txt', 'Stretch-MIT.txt', 'Linear-MIT.txt')
 $checks = 2
+# Omit a different notice in each copy so the original published build stays intact.
 foreach ($missing in $noticeNames) {
     $trial = Join-Path $WorkDirectory $missing
     $notices = Join-Path $trial 'THIRD_PARTY_LICENSES/SignalsmithStretch'
@@ -37,6 +41,7 @@ foreach ($missing in $noticeNames) {
     if (-not $rejected) { throw "Missing notice was accepted: $missing" }
     $checks++
 }
+# Substitute different bytes to exercise the native binary comparison.
 $trial = Join-Path $WorkDirectory 'changed-native'
 New-Item -ItemType Directory -Path $trial -Force | Out-Null
 [System.IO.File]::WriteAllBytes((Join-Path $trial $nativeName), [byte[]]@(0, 1, 2))
@@ -45,6 +50,7 @@ try { $null = Assert-SignalsmithDistribution $trial $RuntimeIdentifier $PackageD
 catch { $rejected = $_.Exception.Message -like '*differs from the restored package*' }
 if (-not $rejected) { throw 'A changed native binary was accepted.' }
 $checks++
+# An unsupported runtime or package version must fail before the reviewed assets can be accepted.
 $rejected = $false
 try { $null = Assert-SignalsmithDistribution $PublishDirectory 'unsupported-rid' $PackageDirectory }
 catch { $rejected = $_.Exception.Message -like '*has not been reviewed*' }
@@ -56,6 +62,7 @@ catch { $rejected = $_.Exception.Message -like '*version changed*' }
 if (-not $rejected) { throw 'Unreviewed package versions bypassed source/notice validation.' }
 $checks++
 if ($SourceDirectory) {
+    # Extract the production source helpers and exercise them on copies of the staged archives.
     $prepare = Join-Path $project 'tools/Prepare-CorrespondingSources.ps1'
     $sourceAst = [System.Management.Automation.Language.Parser]::ParseFile($prepare, [ref]$tokens, [ref]$errors)
     if ($errors.Count -ne 0) { throw "Source script syntax errors: $errors" }
@@ -70,6 +77,7 @@ if ($SourceDirectory) {
     $cache = Join-Path $WorkDirectory 'source-cache'
     New-Item -ItemType Directory -Path $cache -Force | Out-Null
     Copy-Item (Join-Path $SourceDirectory '*.tar.gz') $cache -Force
+    # Check that reuse preserves the inventory and that a modified archive fails hash validation.
     $entries = @(Get-SignalsmithSources $cache)
     if ($entries.Count -ne 3) { throw 'Source preparation lost a component.' }
     $checks++

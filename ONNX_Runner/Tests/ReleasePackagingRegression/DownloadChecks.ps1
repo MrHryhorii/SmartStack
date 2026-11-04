@@ -1,7 +1,10 @@
+# Tests the release helpers with local fixtures and controlled download responses.
+# Supplying the staged source directory also exercises LAME recovery with the real archive bytes.
 param([string]$SourceDirectory, [string]$PreparationScript)
 
 $ErrorActionPreference = 'Stop'
 $project = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+# Load only the named production helpers from their syntax trees to avoid running either script's entry point.
 $tokens = $null
 $errors = $null
 if (-not $PreparationScript) { $PreparationScript = Join-Path $project 'tools/Prepare-CorrespondingSources.ps1' }
@@ -24,6 +27,7 @@ $moveSymbols = $publishAst.Find({ param($node)
 if (-not $moveSymbols) { throw 'Missing publish symbol routing helper.' }
 Invoke-Expression $moveSymbols.Extent.Text
 
+# Define deterministic payloads and a known SHA-256 so the transport stub needs no network.
 $root = Join-Path ([IO.Path]::GetTempPath()) ('Tsubaki-DownloadChecks-' + [guid]::NewGuid().ToString('N'))
 $primary = 'https://primary.invalid/source.tar.gz'
 $mirror = 'https://mirror.invalid/source.tar.gz'
@@ -59,6 +63,7 @@ function Invoke-WebRequest {
     if ($response.Error) { throw $response.Error }
 }
 
+# Exercise cache misses, valid reuse and repair before testing fallback and failure paths.
 $cases = @(
     @{ Name = 'missing cache'; Run = {
         Save-Download $primary $target $expected
@@ -103,6 +108,7 @@ $cases = @(
         Assert-VerifiedFile
         Assert-Condition ($requests.Count -eq 2) 'Empty source response was accepted.'
     } },
+    # If no attempt succeeds, no completed file should be created or overwritten.
     @{ Name = 'reject all invalid responses'; Run = {
         $script:responses[$primary] = @{ Bytes = $invalid }
         $script:responses[$mirror] = @{ Bytes = $invalid }
@@ -130,6 +136,7 @@ $cases = @(
         Assert-Condition $rejected 'Interrupted transfer was accepted.'
         Assert-Condition (-not (Test-Path -LiteralPath $target)) 'Interrupted transfer created a completed cache file.'
     } },
+    # Some callers have no pinned hash. Preserve both download and reuse behavior for those callers.
     @{ Name = 'unpinned download compatibility'; Run = {
         Save-Download $primary $target
         Assert-VerifiedFile
@@ -140,6 +147,7 @@ $cases = @(
         Assert-VerifiedFile
         Assert-Condition ($requests.Count -eq 0) 'Existing unpinned cache behavior changed.'
     } },
+    # Test symbol routing separately with a synthetic publish tree and a symbol-free variant.
     @{ Name = 'route native and nested debug symbols to review'; Run = {
         $publish = Join-Path $caseRoot 'publish'
         $review = Join-Path $caseRoot 'review'
@@ -165,6 +173,7 @@ $cases = @(
     } }
 )
 
+# Reproduce the LAME gateway response with a corrupt cache and a verified mirror fixture.
 if ($SourceDirectory) {
     $cases += @{ Name = 'LAME cache repair through production audio-source inventory'; Run = {
         foreach ($archive in @('soundtouch.net-98e5b8fd2f8efed0ddf7c8f66b435bfb231659dc.tar.gz',
@@ -185,6 +194,7 @@ if ($SourceDirectory) {
 }
 
 try {
+    # Reset the fake responses and cache for every case, then verify that partial files were cleaned up.
     foreach ($case in $cases) {
         $caseRoot = Join-Path $root ($case.Name.Replace(' ', '-'))
         New-Item -ItemType Directory -Path $caseRoot -Force | Out-Null

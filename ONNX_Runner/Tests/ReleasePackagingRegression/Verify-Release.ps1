@@ -1,4 +1,5 @@
 #Requires -Version 7.4
+# Verifies an existing publish run by comparing its client ZIPs, source archive and review inventories.
 param(
     [Parameter(Mandatory)][string]$RunDirectory,
     [string]$ProjectDirectory = (Join-Path $PSScriptRoot '../..')
@@ -6,6 +7,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.IO.Compression
+# The run must contain at least one client ZIP and exactly one corresponding-source archive.
 $project = (Resolve-Path -LiteralPath $ProjectDirectory).Path
 $run = (Resolve-Path -LiteralPath $RunDirectory).Path
 $archives = @(Get-ChildItem -LiteralPath $run -Filter '*.zip' -File)
@@ -21,6 +23,7 @@ function Assert-FileHash {
     }
 }
 try {
+    # Extract the separate source archive and validate its upstream files against the manifest.
     & tar -xzf $sources[0].FullName -C $work
     if ($LASTEXITCODE -ne 0) { throw 'Source archive could not be extracted.' }
     $manifest = Get-Content (Join-Path $work 'SOURCE_MANIFEST.json') -Raw | ConvertFrom-Json
@@ -30,6 +33,7 @@ try {
     }
     Assert-FileHash (Join-Path $work 'SOURCE_REVISIONS.txt') $manifest.SourceRevisionsSha256
     $checks++
+    # Match key source files to the project checkout, then verify the snapshot's full hash inventory.
     $sourceProject = Join-Path $work 'PROJECT_SOURCE/ONNX_Runner'
     foreach ($relative in @('ONNX_Runner.csproj', 'tools/Publish-WithLicenses.ps1', 'tools/Prepare-CorrespondingSources.ps1',
         'tools/NOTICE_SOURCES.json', 'VOICE_PROVENANCE.txt', 'THIRD_PARTY_LICENSES/SignalsmithStretch/PROVENANCE.txt',
@@ -41,6 +45,7 @@ try {
         Assert-FileHash (Join-Path $sourceProject $line.Substring(66)) $line.Substring(0, 64)
         $checks++
     }
+    # Derive the required client notices from the project and add the top-level and PHOIBLE licenses.
     $legalFiles = @(Get-ChildItem (Join-Path $project 'THIRD_PARTY_LICENSES') -Recurse -File |
         Where-Object { $_.Name -notin @('README.txt', 'PROVENANCE.txt') } |
         ForEach-Object { [System.IO.Path]::GetRelativePath($project, $_.FullName).Replace('\', '/') })
@@ -48,6 +53,7 @@ try {
     foreach ($archive in $archives) {
         $zip = [System.IO.Compression.ZipFile]::OpenRead($archive.FullName)
         try {
+            # Index files by relative path and reject review materials in the client archive.
             $prefix = $archive.BaseName + '/'
             $entries = @{}
             foreach ($entry in $zip.Entries) {
@@ -61,6 +67,7 @@ try {
                 if (-not $entry.FullName.EndsWith('/')) { $entries[$relative] = $entry }
                 $checks++
             }
+            # Compare packaged notices byte for byte, then verify the matching source archive reference.
             foreach ($relative in $legalFiles + @('THIRD_PARTY_LICENSES/Piper-Model-NOTICES.txt')) {
                 $entry = $entries[$relative]
                 if (-not $entry -or $entry.Length -eq 0) { throw "Missing or empty client notice: $relative" }
@@ -76,6 +83,7 @@ try {
             if (-not $noticeText.Contains($sources[0].Name)) { throw 'Client notices do not identify the matching source archive.' }
             if ($noticeText.Contains('Available as a separate download alongside this binary')) { throw 'Client notices promise unverified publication.' }
             $checks++
+            # Find the review record for this variant and check every archived client file against its hash.
             $variant = switch ($archive.BaseName) {
                 'tsubaki-tts-engine-windows-x64-cpu' { 'Windows-CPU' }
                 'tsubaki-tts-engine-windows-x64-directml' { 'Windows-DML' }

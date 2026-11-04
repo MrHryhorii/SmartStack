@@ -1,5 +1,5 @@
 ﻿# Publishes selected runtime/provider bundles with project, NuGet, and runtime-pack notices.
-# References the pinned corresponding-source archive prepared by the companion script.
+# Packages the pinned sources staged by Prepare-CorrespondingSources.ps1 with the build evidence.
 param(
     [ValidateSet('All', 'Windows-CPU', 'Windows-DML', 'Windows-WebGPU', 'Linux-CPU', 'Linux-CUDA', 'Linux-WebGPU')]
     [string]$Variant = 'All',
@@ -11,6 +11,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# Match the published native asset to the reviewed NuGet version and require all three component notices.
 function Assert-SignalsmithDistribution {
     param([string]$PublishDirectory, [string]$RuntimeIdentifier, [string]$PackageDirectory,
         [string]$PackageVersion = '1.1.2')
@@ -47,6 +48,7 @@ function Assert-SignalsmithDistribution {
     return "Signalsmith native asset: $RuntimeIdentifier/$nativeName | SHA256 $nativeHash | wrapper/core/FFT notices included"
 }
 
+# Move debug symbols into the review tree and preserve paths such as runtimes/<rid>/native.
 function Move-PublishedSymbols {
     param([string]$PublishDirectory, [string]$ReviewDirectory)
     $root = $PublishDirectory.TrimEnd([char[]]@('\', '/'))
@@ -59,6 +61,7 @@ function Move-PublishedSymbols {
     }
 }
 
+# Create the project source snapshot and a hash inventory for the separate review archive.
 function Copy-ProjectSource {
     param([string]$ProjectDirectory, [string]$Destination, [string[]]$ExcludedDirectories)
 
@@ -83,6 +86,8 @@ function Copy-ProjectSource {
     }
     $hashes | Sort-Object | Set-Content -LiteralPath (Join-Path $Destination 'FILES_SHA256.txt') -Encoding UTF8
 }
+
+# Resolve the default project path from the script location. A run ID groups the client and review outputs.
 if (-not $ProjectDirectory) { $ProjectDirectory = Join-Path $PSScriptRoot '..' }
 $projectDirectory = (Resolve-Path -LiteralPath $ProjectDirectory).Path
 $projectFile = Join-Path $projectDirectory 'ONNX_Runner.csproj'
@@ -100,6 +105,8 @@ $SourcesRoot = [System.IO.Path]::GetFullPath($SourcesRoot)
 $runId = Get-Date -Format 'yyyyMMdd-HHmmss'
 $runRoot = Join-Path $outputRoot $runId
 $reviewRun = Join-Path $reviewRoot $runId
+
+# Each entry maps a release name to a .NET runtime identifier and any provider override.
 $variants = @(
     @{ Name = 'Windows-CPU'; Artifact = 'tsubaki-tts-engine-windows-x64-cpu'; Rid = 'win-x64'; Property = '-p:CpuOnly=true' },
     @{ Name = 'Windows-DML'; Artifact = 'tsubaki-tts-engine-windows-x64-directml'; Rid = 'win-x64'; Property = $null },
@@ -113,6 +120,7 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
     throw 'The .NET SDK is required.'
 }
 
+# Validate the reviewed notice inputs before using them in any build.
 $noticeSources = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'NOTICE_SOURCES.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 foreach ($notice in $noticeSources.Notices) {
     $file = Join-Path $projectDirectory $notice.File
@@ -125,6 +133,7 @@ $requiredNotices = @(Get-ChildItem -LiteralPath (Join-Path $projectDirectory 'TH
     ForEach-Object { $_.FullName.Substring($projectDirectory.TrimEnd([char[]]@('\', '/')).Length).TrimStart([char[]]@('\', '/')) })
 $requiredNotices += 'LICENSE'
 
+# Require the assets for an offline client release. The model config may use either supported filename.
 $modelDirectory = Join-Path $projectDirectory 'Model'
 $models = @(Get-ChildItem -LiteralPath $modelDirectory -Filter '*.onnx' -File -ErrorAction SilentlyContinue)
 if ($models.Count -eq 0) {
@@ -147,6 +156,7 @@ if (-not (Test-Path -LiteralPath $phoibleLicense -PathType Leaf)) {
     throw "A ready-to-run release needs the PHOIBLE license notice at $phoibleLicense."
 }
 
+# Require the OpenVoice files when cloning is enabled in the shipped configuration.
 $appSettingsPath = Join-Path $projectDirectory 'appsettings.json'
 $appSettings = Get-Content -LiteralPath $appSettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $cloningEnabled = $true
@@ -164,6 +174,7 @@ if ($cloningEnabled) {
     }
 }
 
+# Prepare the upstream source cache on demand and extend older manifests before verification.
 $manifestFile = Join-Path $SourcesRoot 'SOURCE_MANIFEST.json'
 if (-not (Test-Path -LiteralPath $manifestFile -PathType Leaf)) {
     $prepareScript = Join-Path $PSScriptRoot 'Prepare-CorrespondingSources.ps1'
@@ -186,6 +197,7 @@ if (@($sourceManifest.SignalsmithSources).Count -ne 3 -or @($sourceManifest.Audi
         throw 'Corresponding source manifest is missing Signalsmith or audio-library source snapshots.'
     }
 }
+# Verify that the reviewed hashes still identify the bundled decoder and eSpeak binaries.
 if ($sourceManifest.EspeakDllSha256 -ne '9588480f8197df62fd8461a8431f8eaec6e8e7749c5ffcbe7fee656fe40a2189' -or
     $sourceManifest.Mpg123BundleSha256 -ne 'c13a80f0455795eb0c8a1c7844fb5e567cf37acc00fdd3e1f3e6b89f7b4601ce' -or
     $sourceManifest.OggOpusBundleSha256 -ne 'c5055d3410ca02728d10708e154b47219c38ceef52155f18702e34204150651f') {
@@ -205,6 +217,7 @@ $espeakHash = (Get-FileHash -LiteralPath $espeak -Algorithm SHA256).Hash.ToLower
 if ($espeakHash -ne $sourceManifest.EspeakDllSha256) {
     throw 'Bundled eSpeak DLL changed; regenerate and review corresponding source.'
 }
+# Verify the files listed in the source manifest before including them in the release archive.
 $sourceFiles = @($sourceManifest.Archives) + @($sourceManifest.NpmPackages) + @($sourceManifest.SupplementalPackages) + @($sourceManifest.SignalsmithSources) + @($sourceManifest.AudioLibrarySources) + @([pscustomobject]@{
     File = 'SOURCE_REVISIONS.txt'; Sha256 = $sourceManifest.SourceRevisionsSha256
 })
@@ -219,6 +232,7 @@ foreach ($entry in $sourceFiles) {
     if ($actual -ne $entry.Sha256) { throw "Corresponding source hash mismatch: $source" }
 }
 
+# Choose the source archive name before building so every client can reference the same archive.
 $sourcePackageName = 'Tsubaki-Corresponding-Sources-{0}-{1}-{2}-{3}.tar.gz' -f $runId, `
     $sourceManifest.EspeakDllSha256.Substring(0, 12), `
     $sourceManifest.Mpg123BundleSha256.Substring(0, 12), `
@@ -229,6 +243,7 @@ Copy-ProjectSource -ProjectDirectory $projectDirectory `
     -Destination (Join-Path $reviewRun 'PROJECT_SOURCE/ONNX_Runner') `
     -ExcludedDirectories @($outputRoot, $reviewRoot, $SourcesRoot)
 
+# Publish each selected variant into its own directory and collect review evidence for that build.
 foreach ($build in $variants) {
     if ($Variant -ne 'All' -and $Variant -ne $build.Name) { continue }
 
@@ -246,6 +261,7 @@ foreach ($build in $variants) {
     & dotnet @arguments
     if ($LASTEXITCODE -ne 0) { throw "Publish failed for $($build.Name)." }
 
+    # Check that publish copied the notices unchanged and included the required offline assets.
     foreach ($relative in $requiredNotices) {
         $original = Join-Path $projectDirectory $relative
         $published = Join-Path $publishDirectory $relative
@@ -297,6 +313,7 @@ foreach ($build in $variants) {
         'This archive is generated separately by the release packaging script.',
         'Source distribution requirements are set out in the included GPL/LGPL licenses.'
     ) | Add-Content -LiteralPath (Join-Path $publishDirectory 'THIRD_PARTY_NOTICES.txt') -Encoding UTF8
+    # Read the restore graph for this variant to find the exact NuGet packages and cache locations.
     $assetsPath = Join-Path $projectDirectory 'obj/project.assets.json'
     if (-not (Test-Path -LiteralPath $assetsPath)) { throw "Missing $assetsPath" }
 
@@ -323,6 +340,7 @@ foreach ($build in $variants) {
     $report.Add('Missing runtime-pack notices stop packaging. Corresponding sources are in the matching separate archive.')
     $report.Add('')
 
+    # Keep package metadata in the review tree and copy distributable notices into the client tree.
     foreach ($package in $packages) {
         $parts = $package.Name.Split('/')
         $id = $parts[0]
@@ -355,6 +373,7 @@ foreach ($build in $variants) {
         $licenseValue = if ($licenseNode) { $licenseNode.InnerText.Trim() } else { '' }
         $licenseType = if ($licenseNode) { $licenseNode.GetAttribute('type') } else { '' }
 
+        # Look for conventional notice files and the license file explicitly named by the package.
         $files = @(Get-ChildItem -LiteralPath $packageDirectory -Recurse -File |
             Where-Object { $_.Name -match '^(LICENSES?|LICENCES?|COPYING|COPYRIGHT|NOTICES?|THIRD.?PARTY.?NOTICES?)([._-]|$)' })
         if ($licenseType -eq 'file' -and $licenseValue) {
@@ -364,6 +383,7 @@ foreach ($build in $variants) {
             }
             $files += Get-Item -LiteralPath $declared
         }
+        # Use a reviewed upstream notice only when the restored package provides no notice files.
         if ($files.Count -eq 0) {
             $fallback = $fallbackNotices[$id]
             $notice = if ($fallback) { Join-Path $publishDirectory "THIRD_PARTY_LICENSES/$fallback" } else { $null }
@@ -393,6 +413,7 @@ foreach ($build in $variants) {
         )
         $packageReport | Set-Content -LiteralPath (Join-Path $packageMetadata 'PACKAGE_INFO.txt') -Encoding UTF8
         $report.Add("$id $version | $licenseType $licenseValue | $($files.Count) notice files")
+        # Enforce the reviewed audio package versions and verify the native assets where applicable.
         if ($id -ieq 'SignalsmithStretch-CS') {
             $report.Add((Assert-SignalsmithDistribution -PublishDirectory $publishDirectory `
                 -RuntimeIdentifier $build.Rid -PackageDirectory $packageDirectory -PackageVersion $version))
@@ -421,6 +442,7 @@ foreach ($build in $variants) {
         }
     }
 
+    # Self-contained builds also ship .NET runtime packs. Look for their notices in NuGet and SDK pack directories.
     $dotnetRoot = Split-Path (Get-Command dotnet).Source -Parent
     $runtimeDownloads = @($assets.project.frameworks.PSObject.Properties |
         ForEach-Object { $_.Value.downloadDependencies } |
@@ -462,6 +484,7 @@ foreach ($build in $variants) {
         $report.Add("Runtime pack $name $version | $($noticeFiles.Count) notice files copied")
     }
 
+    # Save the restore evidence and separate debug symbols before hashing the client payload.
     $report | Set-Content -LiteralPath (Join-Path $buildReview 'NUGET_PUBLISH_INVENTORY.txt') -Encoding UTF8
     Copy-Item -LiteralPath $assetsPath -Destination (Join-Path $buildReview 'project.assets.json') -Force
     $symbols = Join-Path $projectDirectory "bin/Release/net10.0/$($build.Rid)/TsubakiTTS.pdb"
@@ -474,6 +497,7 @@ foreach ($build in $variants) {
         "$( (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant() )  $relative"
     }
     $publishedHashes | Sort-Object | Set-Content -LiteralPath (Join-Path $buildReview 'PUBLISHED_FILES_SHA256.txt') -Encoding UTF8
+    # Write ZIP entries with portable paths under one root, including hidden files and empty directories.
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archiveRoot = $build.Artifact
@@ -497,6 +521,7 @@ foreach ($build in $variants) {
         $zip.Dispose()
     }
 
+    # Reopen the finished archive and check its paths and file count before reporting success.
     $zip = [System.IO.Compression.ZipFile]::OpenRead($archivePath)
     try {
         $archivedFiles = 0
@@ -517,7 +542,7 @@ foreach ($build in $variants) {
     Write-Host "Published $($build.Name) with $($packages.Count) package records: $archivePath"
 }
 
-# Complete the existing separate source archive after all build evidence is available.
+# Assemble the separate source and review archive after all selected builds have finished.
 $temporaryPackage = "$sourcePackagePath.partial"
 try {
     $sourceNames = @('SOURCE_MANIFEST.json') + @($sourceFiles | ForEach-Object { $_.File } | Sort-Object -Unique)
