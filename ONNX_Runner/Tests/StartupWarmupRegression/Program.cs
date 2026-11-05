@@ -159,6 +159,7 @@ await checks.RunAsync("Canceled startup closes its reserved markers without send
     await task.WaitAsync(TimeSpan.FromSeconds(5));
     Checks.Require(!IsStartup(state)(context.Request) && !Claim(state)(context.Request, out _), "Canceled startup left the reserved marker active.");
 });
+await ResponseChecks.Run(checks, runnerType, stateType);
 int httpIndex = Array.IndexOf(args, "--http");
 if (httpIndex >= 0) await HttpChecks.Run(checks, Path.GetFullPath(args[httpIndex + 1]));
 int reportIndex = Array.IndexOf(args, "--report");

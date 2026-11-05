@@ -14,7 +14,8 @@ internal static class StartupWarmup
     internal static Pass[] CreatePasses(bool mp3Available, IEnumerable<string> voices)
     {
         string format = mp3Available ? "mp3" : "pcm";
-        string[] clones = [.. voices.Where(voice => !string.Equals(voice, "piper_base", StringComparison.OrdinalIgnoreCase)).OrderBy(voice => voice, StringComparer.OrdinalIgnoreCase)];
+        string[] clones = voices.Where(voice => !string.Equals(voice, "piper_base", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(voice => voice, StringComparer.OrdinalIgnoreCase).ToArray();
         string clone = clones.FirstOrDefault(voice => string.Equals(voice, "female", StringComparison.OrdinalIgnoreCase))
             ?? clones.FirstOrDefault() ?? "piper_base";
         Pass CreatePass(string text, bool secondPass) => new("/tsbk/audio/speech", new TsubakiSpeechRequest
@@ -71,12 +72,14 @@ internal static class StartupWarmup
                     request.Headers.Add(StartupWarmupState.HeaderName, state.HeaderForPass(pass));
                     request.Content = new StringContent(JsonSerializer.Serialize(passes[pass].Payload), Encoding.UTF8, "application/json");
                     using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                    await response.Content.CopyToAsync(Stream.Null, cancellationToken);
                     if (!response.IsSuccessStatusCode)
                     {
+                        await response.Content.CopyToAsync(Stream.Null, cancellationToken);
                         Console.WriteLine($"[WARNING] Warm-up {pass + 1}/2 returned HTTP {(int)response.StatusCode}.");
                         continue;
                     }
+                    await ValidateResponseAsync(response,
+                        passes[pass].Payload is TsubakiSpeechRequest { StreamFormat: "sse" }, cancellationToken);
                     completed++;
                     Console.WriteLine($"[SYSTEM] Warm-up {pass + 1}/2 completed.");
                 }
@@ -88,5 +91,59 @@ internal static class StartupWarmup
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
         catch (Exception error) { Console.WriteLine($"[WARNING] Pipeline warm-up skipped: {error.Message}"); }
         finally { state.Complete(); }
+    }
+
+    /// <summary>Requires audio and, for SSE, the synthesis completion event before counting a pass.</summary>
+    internal static async Task ValidateResponseAsync(HttpResponseMessage response, bool expectSse,
+        CancellationToken cancellationToken)
+    {
+        response.EnsureSuccessStatusCode();
+        await using var body = await response.Content.ReadAsStreamAsync(cancellationToken);
+        if (!expectSse)
+        {
+            byte[] buffer = new byte[8192];
+            if (await body.ReadAsync(buffer, cancellationToken) == 0)
+                throw new InvalidDataException("Warm-up response contained no audio.");
+            await body.CopyToAsync(Stream.Null, cancellationToken);
+            return;
+        }
+
+        if (!string.Equals(response.Content.Headers.ContentType?.MediaType, "text/event-stream", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Warm-up response was not an SSE stream.");
+
+        using var reader = new StreamReader(body, Encoding.UTF8, detectEncodingFromByteOrderMarks: true,
+            bufferSize: 4096, leaveOpen: true);
+        bool hasAudio = false;
+        bool completed = false;
+        while (await reader.ReadLineAsync(cancellationToken) is string line)
+        {
+            // The speech endpoint emits one JSON object per SSE data line.
+            if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+            using var payload = JsonDocument.Parse(line[5..]);
+            var root = payload.RootElement;
+            if (root.TryGetProperty("error", out _))
+                throw new InvalidDataException("Warm-up SSE response reported a synthesis error.");
+            if (!root.TryGetProperty("type", out var type)) continue;
+            switch (type.GetString())
+            {
+                case "speech.audio.delta":
+                    hasAudio |= root.TryGetProperty("audio", out var audio)
+                        && audio.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(audio.GetString());
+                    break;
+                case "speech.audio.done":
+                    completed = true;
+                    break;
+                case "error":
+                case "speech.error":
+                case "speech.audio.error":
+                    throw new InvalidDataException("Warm-up SSE response reported a synthesis error.");
+            }
+        }
+
+        // Headers may already be HTTP 200 when synthesis fails partway through a stream.
+        if (!completed)
+            throw new InvalidDataException("Warm-up SSE response ended without speech.audio.done.");
+        if (!hasAudio)
+            throw new InvalidDataException("Warm-up SSE response contained no audio.");
     }
 }
