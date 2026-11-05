@@ -37,6 +37,7 @@ public class HardwareSettings
     /// <summary>
     /// Forces the Piper TTS model to run on the CPU, completely bypassing GPU initialization
     /// regardless of the active build (CUDA, DirectML, or WebGPU).
+    /// Enabled by default; set to false to allow GPU execution in GPU-enabled builds.
     /// </summary>
-    public bool ForcePiperToCpu { get; set; } = false;
+    public bool ForcePiperToCpu { get; set; } = true;
 }

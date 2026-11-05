@@ -1199,7 +1199,7 @@ supplementary symbols and whitespace-separated code constructs are outside this 
   "MaxConcurrentCpuRequests": 2,
   "PiperGpuDeviceId": 0,
   "OpenVoiceGpuDeviceId": 0,
-  "ForcePiperToCpu": false
+  "ForcePiperToCpu": true
 }
 ```
 
@@ -1209,7 +1209,7 @@ supplementary symbols and whitespace-separated code constructs are outside this 
 | `MaxConcurrentCpuRequests` | Maximum number of concurrent CPU-based generation tasks. `0` or a negative value automatically derives a safe limit from the available logical processors and `OnnxSettings.Cpu.IntraOpNumThreads`. If `IntraOpNumThreads` is also automatic (`0`), Tsubaki uses one concurrent CPU request. |
 | `PiperGpuDeviceId`         | Hardware index (starting at `0`) of the GPU used to execute the base Piper neural network. |
 | `OpenVoiceGpuDeviceId`     | Hardware index (starting at `0`) of the GPU used for OpenVoice. See the WebGPU note below. |
-| `ForcePiperToCpu`          | Forces base Piper synthesis onto the CPU, including in GPU builds. Default: `false`. |
+| `ForcePiperToCpu`          | Forces base Piper synthesis onto the CPU, including in GPU builds. Default: `true`. |
 
 > **WebGPU note:** Models running on WebGPU share one GPU within a server process. If cloning is enabled and their configured GPU IDs differ, Piper runs on CPU with a startup warning; OpenVoice keeps its configured GPU selection. WebGPU's adapter order may differ from DirectML.
 

@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.ML.OnnxRuntime;
@@ -107,7 +108,13 @@ try
     {
         Check($"Startup routing: Piper={piperId}, OpenVoice={voiceId}, cloning={cloning}, forced CPU={forceCpu}", () =>
         {
-            var hardware = new HardwareSettings { PiperGpuDeviceId = piperId, OpenVoiceGpuDeviceId = voiceId, ForcePiperToCpu = forceCpu };
+            using ConfigurationRoot configuration = (ConfigurationRoot)new ConfigurationBuilder()
+                .AddJsonFile(Path.Combine(AppContext.BaseDirectory, "appsettings.json"))
+                .AddCommandLine(["--HardwareSettings:ForcePiperToCpu", forceCpu.ToString(),
+                    "--HardwareSettings:PiperGpuDeviceId", piperId.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    "--HardwareSettings:OpenVoiceGpuDeviceId", voiceId.ToString(System.Globalization.CultureInfo.InvariantCulture)])
+                .Build();
+            var hardware = configuration.GetSection(nameof(HardwareSettings)).Get<HardwareSettings>()!;
             string original = JsonSerializer.Serialize(hardware);
             var logger = new WarningLogger();
             bool expected = forceCpu || provider is not null && cloning && Math.Max(0, piperId) != Math.Max(0, voiceId);
@@ -122,7 +129,7 @@ try
     {
         Check("Mismatched WebGPU adapters initialize Piper directly on CPU", () =>
         {
-            var hardware = new HardwareSettings { PiperGpuDeviceId = 0, OpenVoiceGpuDeviceId = 1 };
+            var hardware = new HardwareSettings { ForcePiperToCpu = false, PiperGpuDeviceId = 0, OpenVoiceGpuDeviceId = 1 };
             var logger = new WarningLogger();
             using var guarded = new PiperRunner(piperPath, new PiperConfig(), new FixturePhonemizer(),
                 new OnnxSettings { Cpu = { IntraOpNumThreads = 1 } }, hardware, new ModelSettings(), logger,
