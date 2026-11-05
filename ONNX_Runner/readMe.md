@@ -808,10 +808,6 @@ Tsubaki provides several build variants for different hardware configurations. Y
 > **Which version should I choose?** Use **CPU-only** for base Piper synthesis.
 > For OpenVoice cloning, **WebGPU** provides GPU acceleration on Windows and Linux;
 > DirectML is an alternative on Windows, and CUDA supports NVIDIA GPUs on Linux.
->
-> **WebGPU:** Piper synthesis and OpenVoice conversion use GPU session pools for concurrent
-> requests, limited by `HardwareSettings.MaxConcurrentGpuRequests`. If GPU initialization
-> fails, the affected model falls back to CPU.
 
 #### 1. Windows (WebGPU + CPU) — Recommended for Voice Cloning
 
