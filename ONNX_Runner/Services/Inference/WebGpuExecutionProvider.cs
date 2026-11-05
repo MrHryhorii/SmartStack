@@ -23,7 +23,9 @@ internal static class WebGpuExecutionProvider
             {
                 // OrtEpDevice is only a provider handle. Dawn selects the physical
                 // adapter; deviceId is a context identifier, not an adapter index.
-                ["adapterIndex"] = adapterIndex.ToString(CultureInfo.InvariantCulture)
+                ["adapterIndex"] = adapterIndex.ToString(CultureInfo.InvariantCulture),
+                // Release unused storage buffers to reduce retained GPU memory.
+                ["storageBufferCacheMode"] = "disabled"
             });
     }
 
