@@ -110,7 +110,9 @@ internal static class Program
             .. ProfileUrlChecks.CreateChecks(),
             .. ProfileValidationChecks.CreateChecks(),
             .. HttpClientChecks.CreateChecks(),
-            .. WavInspectorChecks.CreateChecks()
+            .. WavInspectorChecks.CreateChecks(),
+            .. DiagnosticRunnerChecks.CreateChecks(),
+            .. DiagnosticResultChecks.CreateChecks()
         ];
 
         var failures = 0;
