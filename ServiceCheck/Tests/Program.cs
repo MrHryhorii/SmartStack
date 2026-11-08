@@ -99,7 +99,9 @@ internal static class Program
                         Path.Combine(directory, "missing.json")))),
 
             ("Existing file preserved",
-                () => VerifyExistingFileAsync(directory))
+                () => VerifyExistingFileAsync(directory)),
+
+            .. ProfileUrlChecks.CreateChecks()
         ];
 
         var failures = 0;
