@@ -73,6 +73,6 @@ public static class ProfileLoader
             throw new JsonException(
                 $"Unsupported schemaVersion {profile.SchemaVersion}. Expected 1.");
 
-        return profile;
+        return ProfileValidator.ValidateAndNormalize(profile);
     }
 }

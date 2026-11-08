@@ -36,6 +36,12 @@ internal static class Program
             ("Written profile loads",
                 () => VerifyGeneratedProfileAsync(directory)),
 
+            ("Loaded service root normalized",
+                () => VerifyLoadedServiceRootAsync(directory)),
+
+            ("Invalid loaded settings rejected",
+                () => VerifyLoadedSettingsRejectedAsync(directory)),
+
             ("UTF-8 BOM accepted",
                 () => VerifyValidProfileAsync(
                     directory, "\uFEFF" + ValidProfileJson)),
@@ -101,7 +107,8 @@ internal static class Program
             ("Existing file preserved",
                 () => VerifyExistingFileAsync(directory)),
 
-            .. ProfileUrlChecks.CreateChecks()
+            .. ProfileUrlChecks.CreateChecks(),
+            .. ProfileValidationChecks.CreateChecks()
         ];
 
         var failures = 0;
@@ -232,5 +239,34 @@ internal static class Program
 
         throw new InvalidOperationException(
             $"Expected {typeof(TException).Name} was not thrown.");
+    }
+
+    /// <summary>Verifies that loading normalizes the configured proxy prefix.</summary>
+    private static async Task VerifyLoadedServiceRootAsync(string directory)
+    {
+        var json = ValidProfileJson.Replace(
+            "http://127.0.0.1:5045/",
+            "https://tts.example.test/speech",
+            StringComparison.Ordinal);
+
+        var path = await WriteFixtureAsync(directory, json);
+        var profile = await ProfileLoader.LoadAsync(path);
+
+        if (profile.Target.BaseUrl != "https://tts.example.test/speech/")
+            throw new InvalidOperationException(
+                "Loading did not normalize the configured service root.");
+    }
+
+    /// <summary>Verifies that loading rejects valid JSON with invalid settings.</summary>
+    private static async Task VerifyLoadedSettingsRejectedAsync(string directory)
+    {
+        var json = ValidProfileJson.Insert(
+            1,
+            "\"synthesis\":{\"speed\":0},");
+
+        var path = await WriteFixtureAsync(directory, json);
+
+        await ExpectExceptionAsync<ArgumentException>(
+            () => ProfileLoader.LoadAsync(path));
     }
 }
