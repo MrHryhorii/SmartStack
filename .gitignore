@@ -20,3 +20,6 @@ obj/
 # === Mac/Windows system files ===
 .DS_Store
 Thumbs.db
+
+# Generated ServiceCheck run artifacts
+/ServiceCheck/runs/

@@ -3,74 +3,110 @@ using Tsubaki.ServiceCheck.Core.Profiles;
 
 namespace Tsubaki.ServiceCheck.Cli;
 
+/// <summary>
+/// Dispatches supported utility commands.
+/// </summary>
 internal static class Program
 {
     private const int SuccessExitCode = 0;
     private const int InvalidArgumentsExitCode = 2;
     private const int ExecutionErrorExitCode = 3;
 
-    /// <summary>Dispatches supported commands and returns the process exit code.</summary>
-    private static async Task<int> Main(string[] args) => args switch
+    /// <summary>Dispatches arguments to the selected command.</summary>
+    private static async Task<int> Main(string[] args)
     {
-        [] or ["--help"] or ["-h"] => ShowHelp(),
-        ["--version"] => ShowVersion(),
-        ["init", "--output", var path] => await InitializeProfileAsync(path),
-        _ => ShowArgumentError()
-    };
+        return args switch
+        {
+            [] or ["--help"] or ["-h"] => ShowHelp(),
+            ["--version"] => ShowVersion(),
+            ["init", "--help"] or ["init", "-h"] => ShowHelp(),
+            ["check", "--help"] or ["check", "-h"] => ShowHelp(),
+            ["init", "--output", var path] =>
+                await InitializeProfileAsync(path),
+            ["check", .. var checkArguments] =>
+                await CheckCommand.ExecuteAsync(checkArguments, GetVersion()),
+            _ => ShowArgumentError()
+        };
+    }
 
-    /// <summary>Writes usage information to standard output.</summary>
+    /// <summary>Shows available commands, options, and exit codes.</summary>
     private static int ShowHelp()
     {
-        Console.WriteLine(
-            """
+        Console.WriteLine("""
             Tsubaki Service Check
             Diagnostic utility for local and remote Tsubaki TTS servers.
 
             Usage:
-              TsubakiCheck init --output <path>
               TsubakiCheck --help
               TsubakiCheck --version
+              TsubakiCheck init --output <profile.json>
+              TsubakiCheck check --profile <profile.json> --output <directory> [--open]
 
             Commands:
-              init             Write an example target profile.
+              init   Create an editable target profile.
+              check  Send one non-streaming speech request, inspect WAV audio,
+                     and save JSON and offline HTML reports.
 
             Options:
-              --output <path>  Set the destination file for init.
               -h, --help       Show usage information.
               --version        Show the utility version.
+              --profile <path> Select the target profile for a check.
+              --output <path>  Select the profile file or report output directory.
+              --open           Open the newly published HTML report.
+
+            Exit codes:
+              0    Required checks passed; supporting warnings are allowed.
+              1    A required diagnostic check failed.
+              2    Invalid arguments, profile, or configured authentication.
+              3    Incomplete diagnostics or report publication failure.
+              130  User cancellation.
+
+            Quote paths that contain spaces.
             """);
 
         return SuccessExitCode;
     }
 
-    /// <summary>Writes the utility version from assembly metadata.</summary>
+    /// <summary>Shows the actual informational version of the CLI assembly.</summary>
     private static int ShowVersion()
     {
-        var assembly = typeof(Program).Assembly;
-        var version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-            ?? assembly.GetName().Version?.ToString()
-            ?? "unknown";
-
-        Console.WriteLine($"TsubakiCheck {version}");
+        Console.WriteLine($"TsubakiCheck {GetVersion()}");
 
         return SuccessExitCode;
     }
 
-    /// <summary>Writes an example profile and reports its outcome.</summary>
+    /// <summary>Returns the utility version and available source revision metadata.</summary>
+    private static string GetVersion()
+    {
+        var assembly = typeof(Program).Assembly;
+
+        return assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+            ?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString()
+            ?? "unknown";
+    }
+
+    /// <summary>Creates an example profile using a new output file.</summary>
     private static async Task<int> InitializeProfileAsync(string path)
     {
         if (string.IsNullOrWhiteSpace(path))
-            return ShowArgumentError("The output path must not be empty.");
+        {
+            return ShowArgumentError("An output path is required.");
+        }
 
-        string outputPath;
+        string absolutePath;
 
         try
         {
-            outputPath = Path.GetFullPath(path);
-            await ProfileWriter.WriteExampleAsync(outputPath);
+            absolutePath = Path.GetFullPath(path);
+
+            await ProfileWriter.WriteExampleAsync(absolutePath);
         }
         catch (Exception exception) when (
-            exception is ArgumentException or NotSupportedException)
+            exception is ArgumentException or
+            NotSupportedException or
+            PathTooLongException)
         {
             return ShowArgumentError("Invalid output path.");
         }
@@ -78,17 +114,18 @@ internal static class Program
             exception is IOException or UnauthorizedAccessException)
         {
             Console.Error.WriteLine(
-                $"Could not create the profile: {exception.Message}");
+                "Could not create the profile. Check write permissions, " +
+                "the parent directory, and whether the file already exists.");
 
             return ExecutionErrorExitCode;
         }
 
-        Console.WriteLine($"Profile created: {outputPath}");
+        Console.WriteLine($"Profile created: {absolutePath}");
 
         return SuccessExitCode;
     }
 
-    /// <summary>Writes an argument error to standard error and returns its exit code.</summary>
+    /// <summary>Reports invalid syntax without echoing argument values.</summary>
     private static int ShowArgumentError(string message = "Invalid arguments.")
     {
         Console.Error.WriteLine(

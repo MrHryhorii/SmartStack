@@ -1,0 +1,8 @@
+{
+    "schemaVersion": 1,
+    "name": "Tsubaki closed-port check",
+    "target": {
+        "id": "tsubaki-local",
+        "baseUrl": "http://127.0.0.1:5046/"
+    }
+}
