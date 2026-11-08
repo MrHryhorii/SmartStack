@@ -108,7 +108,8 @@ internal static class Program
                 () => VerifyExistingFileAsync(directory)),
 
             .. ProfileUrlChecks.CreateChecks(),
-            .. ProfileValidationChecks.CreateChecks()
+            .. ProfileValidationChecks.CreateChecks(),
+            .. HttpClientChecks.CreateChecks()
         ];
 
         var failures = 0;
