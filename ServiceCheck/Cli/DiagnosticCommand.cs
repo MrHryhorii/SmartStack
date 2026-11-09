@@ -9,9 +9,9 @@ using Tsubaki.ServiceCheck.Core.Reports;
 namespace Tsubaki.ServiceCheck.Cli;
 
 /// <summary>
-/// Executes the active diagnostic command and publishes its reports.
+/// Executes check and inspection commands and publishes their reports.
 /// </summary>
-internal static class CheckCommand
+internal static class DiagnosticCommand
 {
     private const int SuccessExitCode = 0;
     private const int FailedCheckExitCode = 1;
@@ -22,9 +22,15 @@ internal static class CheckCommand
     /// <summary>Parses command options and manages caller cancellation.</summary>
     public static async Task<int> ExecuteAsync(
         string[] args,
-        string toolVersion)
+        string toolVersion,
+        DiagnosticMode mode)
     {
-        CheckOptions? options;
+        if (mode is not (DiagnosticMode.Check or DiagnosticMode.Inspect))
+        {
+            return ShowArgumentError("Unsupported diagnostic mode.");
+        }
+
+        DiagnosticOptions? options;
 
         try
         {
@@ -40,7 +46,7 @@ internal static class CheckCommand
 
         if (options is null)
         {
-            return ShowArgumentError("Invalid check arguments.");
+            return ShowArgumentError("Invalid diagnostic arguments.");
         }
 
         using var cancellation = new CancellationTokenSource();
@@ -55,7 +61,7 @@ internal static class CheckCommand
 
         try
         {
-            return await RunAsync(options, toolVersion, cancellation.Token);
+            return await RunAsync(options, toolVersion, mode, cancellation.Token);
         }
         finally
         {
@@ -65,8 +71,9 @@ internal static class CheckCommand
 
     /// <summary>Loads a profile, executes diagnostics, and saves available results.</summary>
     private static async Task<int> RunAsync(
-        CheckOptions options,
+        DiagnosticOptions options,
         string toolVersion,
+        DiagnosticMode mode,
         CancellationToken cancellationToken)
     {
         TargetProfile profile;
@@ -98,16 +105,28 @@ internal static class CheckCommand
             return InvalidArgumentsExitCode;
         }
 
-        Console.WriteLine("Running speech check...");
+        Console.WriteLine(mode == DiagnosticMode.Inspect
+            ? "Running service inspection..."
+            : "Running service and speech check...");
 
         DiagnosticRunResult result;
 
         try
         {
-            result = await DiagnosticRunner.CheckAsync(
-                profile,
-                toolVersion,
-                cancellationToken: cancellationToken);
+            result = mode switch
+            {
+                DiagnosticMode.Check => await DiagnosticRunner.CheckAsync(
+                    profile,
+                    toolVersion,
+                    cancellationToken: cancellationToken),
+
+                DiagnosticMode.Inspect => await DiagnosticRunner.InspectAsync(
+                    profile,
+                    toolVersion,
+                    cancellationToken: cancellationToken),
+
+                _ => throw new ArgumentOutOfRangeException(nameof(mode))
+            };
         }
         catch (OperationCanceledException)
         {
@@ -189,7 +208,7 @@ internal static class CheckCommand
     }
 
     /// <summary>Accepts each supported option once, in any order.</summary>
-    private static CheckOptions? ParseOptions(string[] args)
+    private static DiagnosticOptions? ParseOptions(string[] args)
     {
         string? profilePath = null;
         string? outputRoot = null;
@@ -243,7 +262,7 @@ internal static class CheckCommand
             return null;
         }
 
-        return new CheckOptions(
+        return new DiagnosticOptions(
             Path.GetFullPath(profilePath),
             Path.GetFullPath(outputRoot),
             openReport);
@@ -256,7 +275,14 @@ internal static class CheckCommand
         Console.WriteLine($"{result.Tool.Name} {result.Tool.Version}");
         Console.WriteLine($"Target: {result.Target.Id}");
         Console.WriteLine($"URL: {result.Target.BaseUrl}");
-        Console.WriteLine("Mode: check");
+        Console.WriteLine($"Mode: {GetModeLabel(result.Mode)}");
+
+        if (result.Server is { } server)
+        {
+            Console.WriteLine($"Reported service: {server.Service ?? "unknown"}");
+            Console.WriteLine($"Reported version: {server.Version ?? "unknown"}");
+            Console.WriteLine($"Reported readiness: {GetReadinessLabel(server.Readiness)}");
+        }
         Console.WriteLine();
 
         foreach (var check in result.Checks)
@@ -289,18 +315,35 @@ internal static class CheckCommand
         }
     }
 
-    /// <summary>Describes the functional result without claiming server-wide health.</summary>
+    /// <summary>Describes the requested scope and its mode-specific result.</summary>
     private static string GetSummary(DiagnosticRunResult result)
     {
         if (result.ExecutionState != DiagnosticExecutionState.Completed)
         {
-            return result.ExecutionState switch
+            var message = result.ExecutionState switch
             {
                 DiagnosticExecutionState.Cancelled =>
                     "The run was cancelled. Available diagnostic observations were collected.",
                 DiagnosticExecutionState.TimedOut =>
                     "The run timed out. Available diagnostic observations were collected.",
                 _ => "The diagnostic run could not be completed."
+            };
+
+            return result.Mode == DiagnosticMode.Inspect
+                ? message + " Speech generation was not tested."
+                : message;
+        }
+
+        if (result.Mode == DiagnosticMode.Inspect)
+        {
+            return result.Outcome switch
+            {
+                DiagnosticOutcome.Passed or DiagnosticOutcome.PassedWithWarnings =>
+                    "The server reported the expected identity and that synthesis was ready. Speech generation was not tested.",
+                DiagnosticOutcome.Failed =>
+                    "Inspection failed a required metadata check. Speech generation was not tested.",
+                _ =>
+                    "Inspection could not establish the required metadata. Speech generation was not tested."
             };
         }
 
@@ -333,6 +376,28 @@ internal static class CheckCommand
                 SuccessExitCode,
             DiagnosticOutcome.Failed => FailedCheckExitCode,
             _ => ExecutionErrorExitCode
+        };
+    }
+
+    /// <summary>Returns the canonical operation-mode label.</summary>
+    private static string GetModeLabel(DiagnosticMode mode)
+    {
+        return mode switch
+        {
+            DiagnosticMode.Check => "check",
+            DiagnosticMode.Inspect => "inspect",
+            _ => "unknown"
+        };
+    }
+
+    /// <summary>Labels readiness as a server-reported observation.</summary>
+    private static string GetReadinessLabel(DiagnosticReadiness readiness)
+    {
+        return readiness switch
+        {
+            DiagnosticReadiness.Ready => "ready",
+            DiagnosticReadiness.NotReady => "not_ready",
+            _ => "unknown"
         };
     }
 
@@ -401,7 +466,7 @@ internal static class CheckCommand
     }
 
     /// <summary>Stores normalized paths and the optional report-opening preference.</summary>
-    private sealed record CheckOptions(
+    private sealed record DiagnosticOptions(
         string ProfilePath,
         string OutputRoot,
         bool OpenReport);

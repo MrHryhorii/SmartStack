@@ -260,7 +260,7 @@ internal static class DiagnosticRunnerChecks
         var result = await DiagnosticRunner.CheckAsync(
             profile,
             ToolVersion,
-            handler,
+            new FixtureMetadataHandler(handler),
             networkProbe: FixtureNetworkProbe.Connected)
             .WaitAsync(TimeSpan.FromSeconds(10));
 
@@ -283,7 +283,7 @@ internal static class DiagnosticRunnerChecks
         var pending = DiagnosticRunner.CheckAsync(
             CreateProfile(),
             ToolVersion,
-            handler,
+            new FixtureMetadataHandler(handler),
             cancellation.Token,
             networkProbe: FixtureNetworkProbe.Connected);
 
@@ -340,7 +340,7 @@ internal static class DiagnosticRunnerChecks
         var result = await DiagnosticRunner.CheckAsync(
             profile ?? CreateProfile(),
             ToolVersion,
-            handler,
+            new FixtureMetadataHandler(handler),
             networkProbe: FixtureNetworkProbe.Connected);
 
         Require(

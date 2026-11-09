@@ -1,0 +1,11 @@
+{
+    "schemaVersion": 1,
+    "name": "Tsubaki missing status route",
+    "target": {
+        "id": "tsubaki-local",
+        "baseUrl": "http://127.0.0.1:5045/"
+    },
+    "routes": {
+        "status": "servicecheck/intentional-missing-status"
+    }
+}

@@ -2,13 +2,14 @@ using System.Diagnostics;
 using System.Globalization;
 using Tsubaki.ServiceCheck.Core.Audio;
 using Tsubaki.ServiceCheck.Core.Http;
+using Tsubaki.ServiceCheck.Core.Metadata;
 using Tsubaki.ServiceCheck.Core.Networking;
 using Tsubaki.ServiceCheck.Core.Profiles;
 
 namespace Tsubaki.ServiceCheck.Core.Diagnostics;
 
 /// <summary>
-/// Executes supporting network probes and one bounded speech check.
+/// Executes network and metadata inspection with optional speech verification.
 /// </summary>
 public static class DiagnosticRunner
 {
@@ -21,22 +22,55 @@ public static class DiagnosticRunner
         ("service.readiness", "Server-reported synthesis readiness was not inspected.")
     ];
 
-    private static readonly (string Id, string Summary)[] RequiredChecks =
+    private static readonly (string Id, string Summary)[] SpeechChecks =
     [
         ("speech.request", "The speech request did not produce a result."),
         ("audio.container", "Audio container inspection was not completed."),
         ("audio.signal", "Audio signal inspection was not completed.")
     ];
 
-    /// <summary>
-    /// Inspects the network, performs one speech request, and verifies its audio.
-    /// </summary>
-    public static async Task<DiagnosticRunResult> CheckAsync(
+    /// <summary>Inspects the target and verifies one speech response.</summary>
+    public static Task<DiagnosticRunResult> CheckAsync(
         TargetProfile profile,
         string toolVersion,
         HttpMessageHandler? httpHandler = null,
         CancellationToken cancellationToken = default,
         INetworkProbe? networkProbe = null)
+    {
+        return RunAsync(
+            profile,
+            toolVersion,
+            DiagnosticMode.Check,
+            httpHandler,
+            cancellationToken,
+            networkProbe);
+    }
+
+    /// <summary>Inspects network and metadata without requesting speech.</summary>
+    public static Task<DiagnosticRunResult> InspectAsync(
+        TargetProfile profile,
+        string toolVersion,
+        HttpMessageHandler? httpHandler = null,
+        CancellationToken cancellationToken = default,
+        INetworkProbe? networkProbe = null)
+    {
+        return RunAsync(
+            profile,
+            toolVersion,
+            DiagnosticMode.Inspect,
+            httpHandler,
+            cancellationToken,
+            networkProbe);
+    }
+
+    /// <summary>Runs the shared diagnostic stages under one overall deadline.</summary>
+    private static async Task<DiagnosticRunResult> RunAsync(
+        TargetProfile profile,
+        string toolVersion,
+        DiagnosticMode mode,
+        HttpMessageHandler? httpHandler,
+        CancellationToken cancellationToken,
+        INetworkProbe? networkProbe)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolVersion);
 
@@ -61,6 +95,7 @@ public static class DiagnosticRunner
         var executionState = DiagnosticExecutionState.Completed;
 
         NetworkProbeResult? network = null;
+        DiagnosticServerEvidence? server = null;
         SpeechRequestResult? speech = null;
         WavInspectionResult? inspection = null;
         byte[]? audioPayload = null;
@@ -76,36 +111,44 @@ public static class DiagnosticRunner
 
             checks.Add(network.Dns);
             checks.Add(network.Tcp);
-            checks.AddRange(CreateMetadataChecks());
 
             inspectionCancellation.Token.ThrowIfCancellationRequested();
 
-            speech = await client.RequestSpeechAsync(
+            var metadata = await ObserveMetadataAsync(
+                client,
+                mode,
+                mode == DiagnosticMode.Check
+                    ? normalized.Synthesis.Voice
+                    : null,
                 cancellationToken,
                 runDeadline.Token);
 
-            checks.Add(CreateSpeechCheck(speech, snapshots.Request.Route));
-            executionState = GetExecutionState(speech.State);
+            server = metadata.Inspection.Server;
+            checks.AddRange(metadata.Inspection.Checks);
+            executionState = metadata.ExecutionState;
 
-            if (speech.State == SpeechRequestState.Completed)
+            inspectionCancellation.Token.ThrowIfCancellationRequested();
+
+            if (mode == DiagnosticMode.Check &&
+                executionState == DiagnosticExecutionState.Completed)
             {
-                inspectionCancellation.Token.ThrowIfCancellationRequested();
+                speech = await client.RequestSpeechAsync(
+                    cancellationToken,
+                    runDeadline.Token);
 
-                var payload = speech.Payload
-                    ?? throw new InvalidOperationException(
-                        "A completed speech response has no payload.");
+                checks.Add(CreateSpeechCheck(speech, snapshots.Request.Route));
+                executionState = GetExecutionState(speech.State);
 
-                inspection = WavInspector.Inspect(
-                    payload,
+                inspection = InspectReceivedAudio(
+                    checks,
+                    server,
+                    speech,
                     inspectionCancellation.Token);
 
-                AddAudioChecks(checks, inspection, speech);
-
-                if (normalized.Output.RetainAudio &&
-                    inspection.ContainerState == WavContainerState.Valid)
-                {
-                    audioPayload = payload;
-                }
+                audioPayload = normalized.Output.RetainAudio &&
+                    inspection?.ContainerState == WavContainerState.Valid
+                        ? speech.Payload
+                        : null;
             }
         }
         catch (OperationCanceledException)
@@ -144,7 +187,7 @@ public static class DiagnosticRunner
             executionState = DiagnosticExecutionState.TimedOut;
         }
 
-        AddMissingChecks(checks, executionState);
+        AddMissingChecks(checks, mode, executionState);
         clock.Stop();
 
         return new DiagnosticRunResult
@@ -154,18 +197,19 @@ public static class DiagnosticRunner
             Tool = new DiagnosticToolInfo(
                 "Tsubaki Service Check",
                 client.Redact(toolVersion)),
-            Mode = DiagnosticMode.Check,
+            Mode = mode,
             StartedAtUtc = startedAtUtc,
             FinishedAtUtc = DateTimeOffset.UtcNow,
             ExecutionState = executionState,
             Outcome = DiagnosticOutcomeRules.Evaluate(
-                DiagnosticMode.Check,
+                mode,
                 executionState,
                 checks),
             Target = snapshots.Target,
             Profile = snapshots.Profile,
-            Request = snapshots.Request,
+            Request = mode == DiagnosticMode.Check ? snapshots.Request : null,
             Network = network?.Evidence,
+            Server = server,
             Timings = new DiagnosticTimings(
                 clock.ElapsedMilliseconds,
                 speech?.HeadersDurationMs,
@@ -273,19 +317,114 @@ public static class DiagnosticRunner
         };
     }
 
-    /// <summary>
-    /// Records metadata coverage that is unavailable in this execution path.
-    /// </summary>
-    private static IEnumerable<DiagnosticCheckResult> CreateMetadataChecks()
+    /// <summary>Preserves optional metadata failures while honoring whole-run interruption.</summary>
+    private static async Task<(
+        MetadataInspectionResult Inspection,
+        DiagnosticExecutionState ExecutionState)> ObserveMetadataAsync(
+        TsubakiClient client,
+        DiagnosticMode mode,
+        string? requestedVoice,
+        CancellationToken cancellationToken,
+        CancellationToken runCancellationToken)
     {
-        return MetadataChecks.Select(item => new DiagnosticCheckResult
+        try
         {
-            Id = item.Id,
+            return await MetadataInspector.InspectAsync(
+                client,
+                mode,
+                requestedVoice,
+                cancellationToken,
+                runCancellationToken);
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            var executionState = cancellationToken.IsCancellationRequested
+                ? DiagnosticExecutionState.Cancelled
+                : runCancellationToken.IsCancellationRequested
+                    ? DiagnosticExecutionState.TimedOut
+                    : DiagnosticExecutionState.Completed;
+
+            var inspection = MetadataEvidenceBuilder.Build(
+                mode,
+                [],
+                requestedVoice,
+                client.Redact,
+                executionState);
+
+            if (executionState != DiagnosticExecutionState.Completed)
+            {
+                return (inspection, executionState);
+            }
+
+            var code = exception is OperationCanceledException
+                ? "unexpected_cancellation"
+                : "metadata_inspection_error";
+
+            inspection = inspection with
+            {
+                Checks = inspection.Checks
+                    .Select(check => check with
+                    {
+                        Status = DiagnosticCheckStatus.Error,
+                        Code = code,
+                        Summary = "The utility could not complete metadata inspection."
+                    })
+                    .ToArray()
+            };
+
+            return (inspection, executionState);
+        }
+    }
+
+    /// <summary>Inspects audio only after a completed speech response.</summary>
+    private static WavInspectionResult? InspectReceivedAudio(
+        List<DiagnosticCheckResult> checks,
+        DiagnosticServerEvidence? server,
+        SpeechRequestResult speech,
+        CancellationToken cancellationToken)
+    {
+        if (speech.State != SpeechRequestState.Completed)
+        {
+            return null;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var payload = speech.Payload
+            ?? throw new InvalidOperationException(
+                "A completed speech response has no payload.");
+
+        var inspection = WavInspector.Inspect(payload, cancellationToken);
+
+        AddAudioChecks(checks, inspection, speech);
+        AddReadinessDiscrepancy(checks, server, inspection);
+
+        return inspection;
+    }
+
+    /// <summary>Labels successful audio received after an earlier unready claim.</summary>
+    private static void AddReadinessDiscrepancy(
+        List<DiagnosticCheckResult> checks,
+        DiagnosticServerEvidence? server,
+        WavInspectionResult inspection)
+    {
+        if (server?.Readiness != DiagnosticReadiness.NotReady ||
+            inspection.ContainerState != WavContainerState.Valid ||
+            inspection.SignalState != AudioSignalState.Nonzero)
+        {
+            return;
+        }
+
+        checks.Add(new DiagnosticCheckResult
+        {
+            Id = "service.readiness.speech_discrepancy",
             Role = DiagnosticCheckRole.Supporting,
-            Status = DiagnosticCheckStatus.Skipped,
-            Code = "coverage_unavailable",
-            Summary = item.Summary,
-            ObservedAtUtc = DateTimeOffset.UtcNow
+            Status = DiagnosticCheckStatus.Warning,
+            Code = "speech_after_reported_unready",
+            Summary = "The server reported synthesis was not ready before this request returned supported nonzero audio.",
+            ObservedAtUtc = DateTimeOffset.UtcNow,
+            Http = checks.FirstOrDefault(check =>
+                check.Id == "service.readiness")?.Http
         });
     }
 
@@ -511,11 +650,10 @@ public static class DiagnosticRunner
             "audio/vnd.wave";
     }
 
-    /// <summary>
-    /// Preserves explicit results for required checks that did not finish.
-    /// </summary>
+    /// <summary>Preserves missing metadata and explicit mode-specific speech omissions.</summary>
     private static void AddMissingChecks(
         List<DiagnosticCheckResult> checks,
+        DiagnosticMode mode,
         DiagnosticExecutionState executionState)
     {
         var code = executionState switch
@@ -523,23 +661,56 @@ public static class DiagnosticRunner
             DiagnosticExecutionState.Cancelled => "cancelled",
             DiagnosticExecutionState.TimedOut => "deadline_exceeded",
             DiagnosticExecutionState.Error => "execution_error",
-            _ => "dependency_failed"
+            _ => "coverage_unavailable"
         };
 
-        foreach (var (id, summary) in RequiredChecks)
+        foreach (var (id, summary) in MetadataChecks)
         {
             if (checks.Any(check => check.Id == id))
             {
                 continue;
             }
 
+            var required = mode == DiagnosticMode.Inspect &&
+                (id is "service.identity" or "service.readiness");
+
             checks.Add(new DiagnosticCheckResult
             {
                 Id = id,
-                Role = DiagnosticCheckRole.Required,
+                Role = required
+                    ? DiagnosticCheckRole.Required
+                    : DiagnosticCheckRole.Supporting,
                 Status = DiagnosticCheckStatus.Skipped,
                 Code = code,
                 Summary = summary,
+                ObservedAtUtc = DateTimeOffset.UtcNow
+            });
+        }
+
+        foreach (var (id, summary) in SpeechChecks)
+        {
+            if (checks.Any(check => check.Id == id))
+            {
+                continue;
+            }
+
+            var omitted = mode == DiagnosticMode.Inspect;
+
+            checks.Add(new DiagnosticCheckResult
+            {
+                Id = id,
+                Role = omitted
+                    ? DiagnosticCheckRole.Supporting
+                    : DiagnosticCheckRole.Required,
+                Status = DiagnosticCheckStatus.Skipped,
+                Code = omitted
+                    ? "not_requested"
+                    : executionState == DiagnosticExecutionState.Completed
+                        ? "dependency_failed"
+                        : code,
+                Summary = omitted
+                    ? "This check was not requested in inspection mode."
+                    : summary,
                 ObservedAtUtc = DateTimeOffset.UtcNow
             });
         }

@@ -72,7 +72,7 @@ internal static class NetworkIntegrationChecks
             var result = await DiagnosticRunner.CheckAsync(
                 CreateProfile(),
                 ToolVersion,
-                handler,
+                new FixtureMetadataHandler(handler),
                 networkProbe: probe)
                 .WaitAsync(TimeSpan.FromSeconds(15));
 
@@ -144,7 +144,7 @@ internal static class NetworkIntegrationChecks
             var result = await DiagnosticRunner.CheckAsync(
                 CreateProfile(),
                 ToolVersion,
-                handler,
+                new FixtureMetadataHandler(handler),
                 networkProbe: probe)
                 .WaitAsync(TimeSpan.FromSeconds(15));
 
@@ -179,7 +179,7 @@ internal static class NetworkIntegrationChecks
             var result = await DiagnosticRunner.CheckAsync(
                 CreateProfile(),
                 ToolVersion,
-                handler,
+                new FixtureMetadataHandler(handler),
                 networkProbe: probe)
                 .WaitAsync(TimeSpan.FromSeconds(15));
 
@@ -245,7 +245,7 @@ internal static class NetworkIntegrationChecks
         var pending = DiagnosticRunner.CheckAsync(
             profile,
             ToolVersion,
-            handler,
+            new FixtureMetadataHandler(handler),
             cancellation.Token,
             networkProbe: probe);
 
@@ -360,7 +360,7 @@ internal static class NetworkIntegrationChecks
                 await DiagnosticRunner.CheckAsync(
                     profile,
                     ToolVersion,
-                    handler,
+                    new FixtureMetadataHandler(handler),
                     networkProbe: probe);
             }
             catch (ArgumentException)
@@ -429,7 +429,7 @@ internal static class NetworkIntegrationChecks
             var result = await DiagnosticRunner.CheckAsync(
                 profile,
                 ToolVersion,
-                handler,
+                new FixtureMetadataHandler(handler),
                 networkProbe: probe)
                 .WaitAsync(TimeSpan.FromSeconds(15));
 

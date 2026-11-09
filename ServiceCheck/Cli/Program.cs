@@ -1,4 +1,5 @@
-﻿using System.Reflection;
+using System.Reflection;
+using Tsubaki.ServiceCheck.Core.Diagnostics;
 using Tsubaki.ServiceCheck.Core.Profiles;
 
 namespace Tsubaki.ServiceCheck.Cli;
@@ -21,10 +22,19 @@ internal static class Program
             ["--version"] => ShowVersion(),
             ["init", "--help"] or ["init", "-h"] => ShowHelp(),
             ["check", "--help"] or ["check", "-h"] => ShowHelp(),
+            ["inspect", "--help"] or ["inspect", "-h"] => ShowHelp(),
             ["init", "--output", var path] =>
                 await InitializeProfileAsync(path),
             ["check", .. var checkArguments] =>
-                await CheckCommand.ExecuteAsync(checkArguments, GetVersion()),
+                await DiagnosticCommand.ExecuteAsync(
+                    checkArguments,
+                    GetVersion(),
+                    DiagnosticMode.Check),
+            ["inspect", .. var inspectArguments] =>
+                await DiagnosticCommand.ExecuteAsync(
+                    inspectArguments,
+                    GetVersion(),
+                    DiagnosticMode.Inspect),
             _ => ShowArgumentError()
         };
     }
@@ -40,25 +50,29 @@ internal static class Program
               TsubakiCheck --help
               TsubakiCheck --version
               TsubakiCheck init --output <profile.json>
+              TsubakiCheck inspect --profile <profile.json> --output <directory> [--open]
               TsubakiCheck check --profile <profile.json> --output <directory> [--open]
 
             Commands:
-              init   Create an editable target profile.
-              check  Send one non-streaming speech request, inspect WAV audio,
-                     and save JSON and offline HTML reports.
+              init     Create an editable target profile.
+              inspect  Inspect connectivity and reported server metadata,
+                       and save JSON and offline HTML reports.
+                       Speech generation is not tested.
+              check    Inspect the service, send one non-streaming speech request,
+                       verify PCM16 WAV audio, and save reports.
 
             Options:
               -h, --help       Show usage information.
               --version        Show the utility version.
-              --profile <path> Select the target profile for a check.
+              --profile <path> Select the target profile for inspect or check.
               --output <path>  Select the profile file or report output directory.
               --open           Open the newly published HTML report.
 
             Exit codes:
               0    Required checks passed; supporting warnings are allowed.
-              1    A required diagnostic check failed.
+              1    A completed run contains a failed required check.
               2    Invalid arguments, profile, or configured authentication.
-              3    Incomplete diagnostics or report publication failure.
+              3    Incomplete diagnostics, internal error, or report publication failure.
               130  User cancellation.
 
             Quote paths that contain spaces.

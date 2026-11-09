@@ -2,10 +2,10 @@
 
 Last verified: 2026-11-09 UTC.
 
-Implementation status: Phase 1 complete; Phase 2 in progress.
-Phase 2 milestone: DNS and direct TCP inspection integrated and verified.
+Implementation status: Phases 1 and 2 complete.
+Phase 2 milestone: metadata collection and both diagnostic modes verified.
 Release status: version 0.1.0 remains in development.
-Next implementation block: server metadata and inspection mode.
+Next implementation phase: Phase 3 comparison, documentation, and distribution.
 
 Tsubaki Service Check is an independent command-line utility for checking
 configured local and remote Tsubaki HTTP services.
@@ -13,12 +13,17 @@ configured local and remote Tsubaki HTTP services.
 ## Implemented
 
 - .NET 10 Core, CLI, and executable regression projects.
-- `init`, `check`, `--help`, and `--version` commands.
+- `init`, `inspect`, `check`, `--help`, and `--version` commands.
 - Bounded JSON profile loading, validation, and URL normalization.
 - Relative route resolution that preserves reverse-proxy prefixes.
 - Bounded DNS resolution with IPv4/IPv6 address handling.
 - Direct TCP inspection with bounded concurrency and connection cleanup.
 - Network observations included in canonical diagnostic reports.
+- Bounded health, status, and advertised voice metadata requests.
+- Health alias fallback limited to HTTP 404/405.
+- Typed metadata with bounded JSON structure, fields, and voice lists.
+- Sourced identity, readiness, capabilities, and defaults.
+- Explicit warnings for conflicting claims and partial discovery.
 - At most one bounded, non-streaming speech POST per active run.
 - Direct HTTP transport, disabled automatic redirects, and normal TLS validation.
 - Bearer authentication through a named environment variable.
@@ -33,6 +38,28 @@ configured local and remote Tsubaki HTTP services.
 
 The client is independent of the inference server and its model,
 GPU, and native audio dependencies.
+
+## Operation semantics
+
+`inspect` collects network and metadata observations. Its required checks are
+service identity and server-reported synthesis readiness. It sends no speech
+POST, exports a null request and audio result, and marks speech and audio
+checks as `not_requested`.
+
+`check` collects the same observations and then requests speech while the run
+remains active. Its required checks are the speech request, supported WAV
+container, and nonzero audio signal.
+
+Metadata restrictions and an unready claim do not suppress an active request.
+A successful waveform following an unready claim is explicitly labeled.
+The normal metadata sequence uses three GETs; a missing primary health route
+can add one alias GET for HTTP 404/405.
+
+Readiness uses the most recent valid boolean claim by client observation
+time. Earlier claims, source routes, server timestamps, and disagreements
+remain available. Retained voice lists are limited to 512 distinct IDs.
+Incomplete lists are labeled and cannot establish that a configured voice
+is absent.
 
 ## Network behavior
 
@@ -57,7 +84,7 @@ HTTP and TLS results are established by the HTTP operation itself.
 
 Environment: Windows, .NET SDK 10.0.302.
 
-Latest result: 204 checks passed, 0 failed.
+Latest result: 250 checks passed, 0 failed.
 
 The suite covers profiles, URL rules, HTTP behavior, response limits,
 deadlines, cancellation, secret redaction, WAV parsing, signal metrics,
@@ -71,6 +98,12 @@ Integration checks verify that supporting network failures preserve
 the single speech request, interrupted runs prevent speech,
 missing credentials prevent network inspection, and exported network
 evidence redacts known bearer values.
+
+Metadata checks cover parsing, UTF-8, duplicate properties, field bounds,
+source selection, fallback, conflicting claims, and redaction.
+Complete pipeline checks cover both modes, restricted metadata, unready
+claims followed by valid audio, interruption, canonical inspection output,
+and remote metadata encoding in HTML.
 
 Reference commands, run independently from the repository root:
 
@@ -86,7 +119,52 @@ dotnet build .\ServiceCheck\Tests\Tsubaki.ServiceCheck.Regression.csproj --confi
 .\ServiceCheck\Tests\bin\Release\net10.0\Tsubaki.ServiceCheck.Regression.exe
 ```
 
-## Latest live local verification
+## Phase 2 live local verification
+
+Verified on 2026-11-09 UTC against `http://127.0.0.1:5045/`.
+The server reported `Tsubaki TTS Engine`, version `1.0.10`.
+
+CLI informational version reported by the tested binary:
+
+`0.1.0-dev+e8bb01df796551c15133ab3f32837a3dfa65a082`
+
+The `inspect --help` command was also verified.
+
+| Observation | Inspection | Active check | Missing-status control |
+| --- | --- | --- | --- |
+| Mode | `inspect` | `check` | `check` |
+| Run ID | `20261109T153757Z_863c60eea98b` | `20261109T154055Z_6d7cf935cab7` | `20261109T154755Z_32ad967ab85a` |
+| TCP check | Passed | Passed | Passed |
+| Health check | Passed | Passed | Passed |
+| Status check | Passed | Passed | Failed: HTTP 404 |
+| Advertised voices | 16 | 16 | 16 |
+| Identity and reported readiness | Passed | Passed | Passed |
+| Speech and audio checks | `not_requested` | Passed | Passed |
+| Execution state | `completed` | `completed` | `completed` |
+| Outcome | `passed` | `passed` | `passed_with_warnings` |
+| Process exit code | 0 | 0 | 0 |
+| Client-observed total duration | 178 ms | 511 ms | 409 ms |
+| Published artifacts | JSON, HTML | JSON, HTML, WAV | JSON, HTML, WAV |
+
+Inspection and the ordinary active check used
+`ServiceCheck/tsubaki.local.json`.
+The inspection terminal summary explicitly stated that speech generation
+was not tested.
+
+The missing-status control used
+`ServiceCheck/Tests/Fixtures/tsubaki.missing-status.json`,
+which deliberately sets the status route to
+`servicecheck/intentional-missing-status`.
+The supporting `http_not_found` result did not suppress synthesis.
+
+| Audio observation | Active check | Missing-status control |
+| --- | --- | --- |
+| Payload size | 100314 bytes | 103898 bytes |
+| Format | PCM16, mono, 22050 Hz | PCM16, mono, 22050 Hz |
+| Duration | 2.273696 seconds | 2.354966 seconds |
+
+## Earlier network integration verification
+
 
 Verified on 2026-11-09 UTC.
 
@@ -176,11 +254,13 @@ Earlier manual API contract observations are recorded in
 
 ## Artifact behavior
 
-Each check publishes a separate directory beneath the selected output root:
+Each run publishes a separate directory beneath the selected output root:
 
 - `report.json`: canonical result without audio bytes.
 - `report.html`: offline report with encoded dynamic text.
 - `sample.wav`: supported received WAV when retention is enabled.
+
+Inspection does not publish a WAV artifact.
 
 With audio retention disabled, measurements and hashes remain available,
 while WAV output and embedded playback are omitted.
@@ -203,11 +283,10 @@ diagnostic can still produce a report.
 
 ## Current limits
 
-Health/status requests, voice discovery, server identity, and reported
-readiness remain pending. Their skipped coverage is visible in active results.
+Offline comparison remains pending.
 
-The CLI currently supports active checks only. Inspection and comparison
-commands remain pending.
+Identity and readiness are server-reported claims. A successful inspection
+does not establish that synthesis works.
 
 Live DNS-name and IPv6 endpoint verification remains pending.
 Address-family handling and fallback have controlled regression coverage.
@@ -223,13 +302,10 @@ Live remote HTTP/HTTPS and bearer deployments remain unverified.
 Interactive Ctrl+C verification and narrow-screen/print visual review
 remain pending. Cancellation and redaction behavior have fixture coverage.
 
-## Remaining Phase 2 priorities
+## Phase 3 priorities
 
-1. Retrieve health, selected status fields, and advertised voices.
-2. Derive service identity and readiness from labeled server observations.
-3. Add inspection mode without sending a speech request.
-4. Preserve active synthesis when optional metadata is restricted or unavailable.
-5. Expand live network, authentication, TLS, and cancellation verification.
-
-Offline comparison, the finished report layout, example profiles,
-README, and self-contained packaging belong to Phase 3.
+1. Add bounded offline import and comparison of canonical JSON reports.
+2. Complete the report layout and comparison report.
+3. Add sanitized example profiles and a README.
+4. Publish a self-contained Windows build.
+5. Verify a genuine remote deployment and finish report visual review.
