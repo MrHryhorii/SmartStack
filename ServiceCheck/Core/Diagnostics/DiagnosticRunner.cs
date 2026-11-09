@@ -2,19 +2,18 @@ using System.Diagnostics;
 using System.Globalization;
 using Tsubaki.ServiceCheck.Core.Audio;
 using Tsubaki.ServiceCheck.Core.Http;
+using Tsubaki.ServiceCheck.Core.Networking;
 using Tsubaki.ServiceCheck.Core.Profiles;
 
 namespace Tsubaki.ServiceCheck.Core.Diagnostics;
 
 /// <summary>
-/// Executes one bounded speech check and builds its diagnostic result.
+/// Executes supporting network probes and one bounded speech check.
 /// </summary>
 public static class DiagnosticRunner
 {
-    private static readonly (string Id, string Summary)[] SupportingChecks =
+    private static readonly (string Id, string Summary)[] MetadataChecks =
     [
-        ("dns.resolve", "DNS resolution was not inspected."),
-        ("tcp.connect", "Direct TCP connectivity was not inspected."),
         ("service.health", "Service health was not requested."),
         ("service.status", "Server status was not requested."),
         ("service.voices", "Advertised voices were not requested."),
@@ -30,13 +29,14 @@ public static class DiagnosticRunner
     ];
 
     /// <summary>
-    /// Performs one speech request and inspects its complete response.
+    /// Inspects the network, performs one speech request, and verifies its audio.
     /// </summary>
     public static async Task<DiagnosticRunResult> CheckAsync(
         TargetProfile profile,
         string toolVersion,
         HttpMessageHandler? httpHandler = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        INetworkProbe? networkProbe = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolVersion);
 
@@ -57,17 +57,29 @@ public static class DiagnosticRunner
         using var inspectionCancellation = CancellationTokenSource
             .CreateLinkedTokenSource(cancellationToken, runDeadline.Token);
 
-        var checks = CreateSupportingChecks(
-            new Uri(normalized.Target.BaseUrl));
-
+        var checks = new List<DiagnosticCheckResult>();
         var executionState = DiagnosticExecutionState.Completed;
 
+        NetworkProbeResult? network = null;
         SpeechRequestResult? speech = null;
         WavInspectionResult? inspection = null;
         byte[]? audioPayload = null;
 
         try
         {
+            network = await ObserveNetworkAsync(
+                normalized,
+                networkProbe ?? new NetworkProbe(),
+                client,
+                cancellationToken,
+                runDeadline.Token);
+
+            checks.Add(network.Dns);
+            checks.Add(network.Tcp);
+            checks.AddRange(CreateMetadataChecks());
+
+            inspectionCancellation.Token.ThrowIfCancellationRequested();
+
             speech = await client.RequestSpeechAsync(
                 cancellationToken,
                 runDeadline.Token);
@@ -153,6 +165,7 @@ public static class DiagnosticRunner
             Target = snapshots.Target,
             Profile = snapshots.Profile,
             Request = snapshots.Request,
+            Network = network?.Evidence,
             Timings = new DiagnosticTimings(
                 clock.ElapsedMilliseconds,
                 speech?.HeadersDurationMs,
@@ -167,34 +180,113 @@ public static class DiagnosticRunner
     }
 
     /// <summary>
-    /// Records supporting coverage that is unavailable in this execution path.
+    /// Preserves supporting failures without suppressing an available speech attempt.
     /// </summary>
-    private static List<DiagnosticCheckResult> CreateSupportingChecks(
-        Uri baseUri)
+    private static async Task<NetworkProbeResult> ObserveNetworkAsync(
+        TargetProfile profile,
+        INetworkProbe probe,
+        TsubakiClient client,
+        CancellationToken cancellationToken,
+        CancellationToken runCancellationToken)
     {
-        var checks = new List<DiagnosticCheckResult>();
-
-        var isIpLiteral = baseUri.HostNameType is
-            UriHostNameType.IPv4 or UriHostNameType.IPv6;
-
-        foreach (var (id, summary) in SupportingChecks)
+        try
         {
-            var skipDns = id == "dns.resolve" && isIpLiteral;
+            var result = await probe.ProbeAsync(
+                profile,
+                cancellationToken,
+                runCancellationToken);
 
-            checks.Add(new DiagnosticCheckResult
-            {
-                Id = id,
-                Role = DiagnosticCheckRole.Supporting,
-                Status = DiagnosticCheckStatus.Skipped,
-                Code = skipDns ? "ip_literal" : "coverage_unavailable",
-                Summary = skipDns
-                    ? "DNS lookup is not applicable to an IP literal."
-                    : summary,
-                ObservedAtUtc = DateTimeOffset.UtcNow
-            });
+            return RedactNetwork(result, client);
         }
+        catch (Exception exception) when (exception is not OutOfMemoryException)
+        {
+            var interrupted = cancellationToken.IsCancellationRequested ||
+                runCancellationToken.IsCancellationRequested;
 
-        return checks;
+            var status = interrupted
+                ? DiagnosticCheckStatus.Skipped
+                : DiagnosticCheckStatus.Error;
+
+            var code = interrupted
+                ? cancellationToken.IsCancellationRequested
+                    ? "cancelled"
+                    : "deadline_exceeded"
+                : exception is OperationCanceledException
+                    ? "unexpected_cancellation"
+                    : "network_probe_error";
+
+            var summary = interrupted
+                ? "Network inspection was interrupted before evidence was available."
+                : "The utility could not complete preliminary network inspection.";
+
+            return new NetworkProbeResult(
+                NetworkProbe.CreateCheck("dns.resolve", status, code, summary),
+                NetworkProbe.CreateCheck("tcp.connect", status, code, summary),
+                new DiagnosticNetworkEvidence(
+                    new Uri(profile.Target.BaseUrl).Port,
+                    [],
+                    []));
+        }
+    }
+
+    /// <summary>
+    /// Sanitizes collected network text while preserving typed observations.
+    /// </summary>
+    private static NetworkProbeResult RedactNetwork(
+        NetworkProbeResult result,
+        TsubakiClient client)
+    {
+        var evidence = result.Evidence with
+        {
+            ResolvedAddresses = result.Evidence.ResolvedAddresses
+                .Select(client.Redact)
+                .ToArray(),
+            ConnectionAttempts = result.Evidence.ConnectionAttempts
+                .Select(attempt => attempt with
+                {
+                    Address = client.Redact(attempt.Address)
+                })
+                .ToArray()
+        };
+
+        return new NetworkProbeResult(
+            RedactNetworkCheck(result.Dns, "dns.resolve", client),
+            RedactNetworkCheck(result.Tcp, "tcp.connect", client),
+            evidence);
+    }
+
+    /// <summary>
+    /// Restricts a network check to its supporting role and sanitized text.
+    /// </summary>
+    private static DiagnosticCheckResult RedactNetworkCheck(
+        DiagnosticCheckResult check,
+        string id,
+        TsubakiClient client)
+    {
+        return check with
+        {
+            Id = id,
+            Role = DiagnosticCheckRole.Supporting,
+            Summary = client.Redact(check.Summary),
+            Suggestions = check.Suggestions.Select(client.Redact).ToArray(),
+            Http = null
+        };
+    }
+
+    /// <summary>
+    /// Records metadata coverage that is unavailable in this execution path.
+    /// </summary>
+    private static IEnumerable<DiagnosticCheckResult> CreateMetadataChecks()
+    {
+        return MetadataChecks.Select(item => new DiagnosticCheckResult
+        {
+            Id = item.Id,
+            Role = DiagnosticCheckRole.Supporting,
+            Status = DiagnosticCheckStatus.Skipped,
+            Code = "coverage_unavailable",
+            Summary = item.Summary,
+            ObservedAtUtc = DateTimeOffset.UtcNow
+        });
     }
 
     /// <summary>

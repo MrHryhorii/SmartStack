@@ -260,7 +260,9 @@ internal static class DiagnosticRunnerChecks
         var result = await DiagnosticRunner.CheckAsync(
             profile,
             ToolVersion,
-            handler).WaitAsync(TimeSpan.FromSeconds(10));
+            handler,
+            networkProbe: FixtureNetworkProbe.Connected)
+            .WaitAsync(TimeSpan.FromSeconds(10));
 
         RequirePartialResult(result, DiagnosticExecutionState.TimedOut);
 
@@ -282,7 +284,8 @@ internal static class DiagnosticRunnerChecks
             CreateProfile(),
             ToolVersion,
             handler,
-            cancellation.Token);
+            cancellation.Token,
+            networkProbe: FixtureNetworkProbe.Connected);
 
         try
         {
@@ -337,7 +340,8 @@ internal static class DiagnosticRunnerChecks
         var result = await DiagnosticRunner.CheckAsync(
             profile ?? CreateProfile(),
             ToolVersion,
-            handler);
+            handler,
+            networkProbe: FixtureNetworkProbe.Connected);
 
         Require(
             handler.RequestCount == 1,

@@ -114,7 +114,8 @@ internal static class Program
             .. DiagnosticRunnerChecks.CreateChecks(),
             .. DiagnosticResultChecks.CreateChecks(),
             .. ReportExportChecks.CreateChecks(),
-            .. NetworkProbeChecks.CreateChecks()
+            .. NetworkProbeChecks.CreateChecks(),
+            .. NetworkIntegrationChecks.CreateChecks()
         ];
 
         var failures = 0;

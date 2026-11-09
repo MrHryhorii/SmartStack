@@ -511,7 +511,11 @@ internal static class ReportExportChecks
         return DiagnosticRunner.CheckAsync(
             profile ?? CreateProfile(),
             "0.1.0-fixture",
-            new ResponseHandler(payload ?? CreateWav(), statusCode, mediaType));
+            new ResponseHandler(
+                payload ?? CreateWav(),
+                statusCode,
+                mediaType),
+            networkProbe: FixtureNetworkProbe.Connected);
     }
 
     /// <summary>Creates a valid local profile for export fixtures.</summary>
