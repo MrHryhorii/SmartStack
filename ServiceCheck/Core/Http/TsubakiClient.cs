@@ -11,7 +11,7 @@ using Tsubaki.ServiceCheck.Core.Profiles;
 namespace Tsubaki.ServiceCheck.Core.Http;
 
 /// <summary>Executes bounded speech requests against one configured server.</summary>
-public sealed class TsubakiClient : IDisposable
+public sealed partial class TsubakiClient : IDisposable
 {
     private const int MaxErrorBytes = 4096;
     private const int MaxTokenCharacters = 16_384;
@@ -286,43 +286,17 @@ public sealed class TsubakiClient : IDisposable
         try
         {
             var isExpectedStatus = response.StatusCode == HttpStatusCode.OK;
+
             var limit = isExpectedStatus
                 ? _profile.Limits.MaxAudioBytes
                 : MaxErrorBytes;
 
-            var capacity = (int)Math.Min(
-                response.Content.Headers.ContentLength ?? 4096,
-                limit + 1L);
+            var (bytes, complete) = await ReadBoundedBytesAsync(
+                response,
+                limit,
+                count => exchange.BodyBytesRead = count,
+                cancellationToken);
 
-            await using var source =
-                await response.Content.ReadAsStreamAsync(cancellationToken);
-
-            using var output = new MemoryStream(capacity);
-
-            var buffer = new byte[Math.Min(16_384, limit + 1)];
-            var complete = false;
-
-            while (output.Length <= limit)
-            {
-                var remaining = limit + 1 - (int)output.Length;
-
-                var count = await source.ReadAsync(
-                    buffer.AsMemory(0, Math.Min(buffer.Length, remaining)),
-                    cancellationToken);
-
-                if (count == 0)
-                {
-                    complete = true;
-                    break;
-                }
-
-                exchange.BodyBytesRead += count;
-                output.Write(buffer, 0, count);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var bytes = output.ToArray();
             var mediaType = response.Content.Headers.ContentType?.MediaType;
             var textual = IsTextual(mediaType);
             var excerptTruncated = bytes.Length > MaxErrorBytes || !complete;
