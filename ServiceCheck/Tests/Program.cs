@@ -113,7 +113,8 @@ internal static class Program
             .. WavInspectorChecks.CreateChecks(),
             .. DiagnosticRunnerChecks.CreateChecks(),
             .. DiagnosticResultChecks.CreateChecks(),
-            .. ReportExportChecks.CreateChecks()
+            .. ReportExportChecks.CreateChecks(),
+            .. NetworkProbeChecks.CreateChecks()
         ];
 
         var failures = 0;
