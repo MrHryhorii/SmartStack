@@ -116,7 +116,8 @@ internal static class Program
             .. ReportExportChecks.CreateChecks(),
             .. NetworkProbeChecks.CreateChecks(),
             .. NetworkIntegrationChecks.CreateChecks(),
-            .. MetadataHttpChecks.CreateChecks()
+            .. MetadataHttpChecks.CreateChecks(),
+            .. MetadataParserChecks.CreateChecks()
         ];
 
         var failures = 0;
