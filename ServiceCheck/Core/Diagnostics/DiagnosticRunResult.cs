@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Tsubaki.ServiceCheck.Core.Audio;
+using Tsubaki.ServiceCheck.Core.Metadata;
 using Tsubaki.ServiceCheck.Core.Profiles;
 
 namespace Tsubaki.ServiceCheck.Core.Diagnostics;
@@ -126,7 +127,26 @@ public sealed record DiagnosticServerEvidence(
     string? Service,
     string? Version,
     DiagnosticReadiness Readiness,
-    IReadOnlyList<string> AdvertisedVoices);
+    IReadOnlyList<string> AdvertisedVoices)
+{
+    public string? IdentitySourceRoute { get; init; }
+
+    public string? VersionSourceRoute { get; init; }
+
+    public string? ReadinessSourceRoute { get; init; }
+
+    public DateTimeOffset? ReadinessObservedAtUtc { get; init; }
+
+    public string? VoicesSourceRoute { get; init; }
+
+    public bool AdvertisedVoicesComplete { get; init; }
+
+    public MetadataStatusSnapshot? StatusSnapshot { get; init; }
+
+    public string? StatusSourceRoute { get; init; }
+
+    public IReadOnlyList<MetadataObservation> Observations { get; init; } = [];
+}
 
 /// <summary>
 /// Combines audio inspection with artifact retention information.
