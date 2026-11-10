@@ -33,6 +33,10 @@ dotnet publish ONNX_Runner.csproj -c Release -r linux-x64 -p:UseWebGpu=true -p:W
 | `Current` | 1.31.1 | 0.5.0 | Process-wide serialization |
 
 Both profiles use `maxNumPendingDispatches=1` and `storageBufferCacheMode=bucket`.
+The included diagnostic `appsettings.json` sets
+`HardwareSettings.ForcePiperToCpu=false`. The launch commands also specify this
+override explicitly.
+
 The same shared gate covers Piper, tone extraction, tone conversion, output
 copying, and native output disposal. Model sessions stay loaded; pool sizes are
 unchanged. The single extractor remains loaded during baseline generation and
@@ -42,8 +46,8 @@ The comparison rejects CPU routing for Piper, disabled cloning, mismatched GPU
 indexes, and GPU initialization errors. GPU initialization errors stop the
 process instead of trying another adapter or falling back to CPU.
 
-A build without `WebGpuMemoryComparison` keeps the normal production behavior
-and the current package versions.
+A build without `WebGpuMemoryComparison` uses the standard inference scheduling
+and the current package versions. The GPU preset in this branch is for diagnostics.
 
 ## Prepare the Linux test
 
