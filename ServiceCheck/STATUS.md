@@ -1,11 +1,12 @@
 # Tsubaki Service Check status
 
-Last verified: 2026-11-09 UTC.
+Last verified: 2026-11-10 UTC.
 
-Implementation status: Phases 1 and 2 complete.
+Implementation status: Phases 1 and 2 complete; Phase 3 in progress.
 Phase 2 milestone: metadata collection and both diagnostic modes verified.
+Phase 3 milestone: bounded offline report import verified.
 Release status: version 0.1.0 remains in development.
-Next implementation phase: Phase 3 comparison, documentation, and distribution.
+Next implementation step: offline before-and-after comparison.
 
 Tsubaki Service Check is an independent command-line utility for checking
 configured local and remote Tsubaki HTTP services.
@@ -35,6 +36,7 @@ configured local and remote Tsubaki HTTP services.
 - Canonical JSON and self-contained HTML reports.
 - Optional retained WAV and embedded offline playback.
 - Temporary-file publication, collision protection, and surviving-file reporting.
+- Bounded offline import and validation of version 1 diagnostic JSON reports.
 
 The client is independent of the inference server and its model,
 GPU, and native audio dependencies.
@@ -80,11 +82,42 @@ a subsequent speech request and preserves available network evidence.
 Direct TCP observations use separate connections from the HTTP request.
 HTTP and TLS results are established by the HTTP operation itself.
 
+## Offline report import
+
+`ReportLoader.LoadAsync` reads a saved canonical JSON report and returns a
+validated `DiagnosticRunResult` for offline comparison.
+
+- Maximum input: 8 MiB, including an optional UTF-8 BOM.
+- Maximum JSON nesting depth: 32.
+- Maximum decoded string or property name: 65536 UTF-16 code units.
+- Maximum entries per JSON array or properties per object: 1024.
+- Typed evidence collections retain their narrower limits, including
+  256 checks, 32 network addresses or attempts, and 512 advertised voice IDs.
+- Unsupported schemas, unknown or duplicate properties, invalid enum values,
+  missing required data, and null collection entries are rejected.
+- Exported routes, timeouts, and limits must be present; current defaults
+  are not substituted for missing historical settings.
+- Timestamps require an explicit offset and are normalized to UTC.
+- Check IDs, roles, required evidence, audio measurements, and aggregate
+  outcomes are checked for consistency.
+
+Earlier active reports can omit network and server evidence when their
+supporting checks explicitly record the unavailable coverage. Missing check
+records remain missing rather than becoming fabricated observations.
+
+Stored addresses and redacted routes remain report data. Import does not
+request server URLs or load referenced WAV files. Runtime audio payloads
+are excluded, and source files are opened read-only.
+
+Verified on 2026-11-10 UTC: Core and regression Release builds succeeded;
+the complete executable suite passed 282 checks with 0 failures.
+The 32 import checks use controlled HTTP and network fixtures.
+
 ## Regression verification
 
 Environment: Windows, .NET SDK 10.0.302.
 
-Latest result: 250 checks passed, 0 failed.
+Latest result: 282 checks passed, 0 failed.
 
 The suite covers profiles, URL rules, HTTP behavior, response limits,
 deadlines, cancellation, secret redaction, WAV parsing, signal metrics,
@@ -104,6 +137,11 @@ source selection, fallback, conflicting claims, and redaction.
 Complete pipeline checks cover both modes, restricted metadata, unready
 claims followed by valid audio, interruption, canonical inspection output,
 and remote metadata encoding in HTML.
+
+The 32 report import checks cover canonical round trips, earlier coverage
+gaps, failed and interrupted outcomes, UTF-8 and BOM handling, byte and
+structure bounds, malformed data, timestamp offsets, evidence consistency,
+reference isolation, cancellation, and source-file preservation.
 
 Reference commands, run independently from the repository root:
 
@@ -304,7 +342,7 @@ remain pending. Cancellation and redaction behavior have fixture coverage.
 
 ## Phase 3 priorities
 
-1. Add bounded offline import and comparison of canonical JSON reports.
+1. Add pure before-and-after comparison using the verified report importer.
 2. Complete the report layout and comparison report.
 3. Add sanitized example profiles and a README.
 4. Publish a self-contained Windows build.

@@ -119,7 +119,8 @@ internal static class Program
             .. MetadataHttpChecks.CreateChecks(),
             .. MetadataParserChecks.CreateChecks(),
             .. MetadataInspectionChecks.CreateChecks(),
-            .. DiagnosticModeChecks.CreateChecks()
+            .. DiagnosticModeChecks.CreateChecks(),
+            .. ReportImportChecks.CreateChecks()
         ];
 
         var failures = 0;
