@@ -5,14 +5,29 @@ Diagnostic builds for the serialized `2+2` and `3+3` comparison requested in
 
 Based on SmartStack `main` commit `e4ba0b4fc890937959e7c379b847da719bf4eb39`.
 
-## Create a separate branch
+## Use the diagnostic source
 
-Run this in your existing SmartStack checkout, then copy the archive's
-`ONNX_Runner` directory into the repository root, merging the directories:
+The `diagnostics/webgpu-memory-comparison` branch and the
+`tsubakitts-webgpu-memory-diag-20261110` tag already contain all required
+diagnostic changes. Build directly from either checkout using the commands below.
+
+### Optional source archive
+
+The [diagnostic release](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-webgpu-memory-diag-20261110)
+also provides `Tsubaki-v1.0.10-WebGPU-Memory-Comparison.zip`. This source overlay
+is an alternative way to apply the diagnostic changes to a separate checkout of
+the v1.0.10 project from `main`.
+
+When using the archive, create a separate local branch from that checkout:
 
 ```powershell
-git switch -c diagnostics/webgpu-memory-comparison
+git switch -c diagnostics/webgpu-memory-comparison-local
 ```
+
+Extract the archive into the repository root, merging its `ONNX_Runner`
+directory with the existing one and replacing the included files. Then use the
+build commands below. Skip this archive step when using the diagnostic branch
+or tag; those checkouts already include the same changes.
 
 ## Build both Linux variants
 
