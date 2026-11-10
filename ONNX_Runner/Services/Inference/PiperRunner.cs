@@ -128,14 +128,23 @@ public partial class PiperRunner : IDisposable
         // GPU ACCELERATION BLOCK (Compiled when USE_CUDA, USE_DML, or USE_WEBGPU is set)
         // ====================================================================
 #if USE_CUDA || USE_DML || USE_WEBGPU
-        if (!ShouldRunOnCpu(hwSettings, openVoiceEnabled, logger))
+        bool runOnCpu = ShouldRunOnCpu(hwSettings, openVoiceEnabled, logger);
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+        if (runOnCpu || !openVoiceEnabled)
+            throw new InvalidOperationException("WebGPU comparison requires ForcePiperToCpu=false, EnableCloning=true, and matching Piper/OpenVoice GPU indexes.");
+#endif
+        if (!runOnCpu)
         {
             // Protection against negative numbers in config
             int startingDeviceId = Math.Max(0, hwSettings.PiperGpuDeviceId);
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+            foreach (int deviceId in new[] { startingDeviceId })
+#else
             // Try the desired device + the next 3 as a fallback
             int maxGpusToTry = startingDeviceId + 4;
 
             for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
+#endif
             {
                 try
                 {
@@ -200,6 +209,9 @@ public partial class PiperRunner : IDisposable
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex, "[WARNING] Piper failed to load on GPU {DeviceId}", deviceId);
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+                    throw new InvalidOperationException("Piper GPU initialization failed during the WebGPU comparison. Adapter retries and CPU fallback are disabled.", ex);
+#endif
                 }
             }
             logger.LogInformation("[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
@@ -312,6 +324,9 @@ public partial class PiperRunner : IDisposable
 
         try
         {
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+            using var inferenceLease = WebGpuExecutionProvider.EnterInference();
+#endif
             using var results = activeSession.Run(inputs);
             var outputNode = results.First(r => r.Name == "output");
             var outputTensor = outputNode.AsTensor<float>();

@@ -43,13 +43,36 @@
     <DefineConstants Condition="'$(EffectiveWebGpu)' == 'true'">$(DefineConstants);USE_WEBGPU</DefineConstants>
   </PropertyGroup>
 
+  <!-- Both comparison profiles use the same inference gate and session-pool code. -->
+  <PropertyGroup>
+    <WebGpuRuntimeVersion>1.31.1</WebGpuRuntimeVersion>
+    <WebGpuProviderVersion>0.5.0</WebGpuProviderVersion>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WebGpuMemoryComparison)' == 'Legacy'">
+    <WebGpuRuntimeVersion>1.29.0</WebGpuRuntimeVersion>
+    <WebGpuProviderVersion>0.3.0</WebGpuProviderVersion>
+    <DefineConstants>$(DefineConstants);WEBGPU_MEMORY_COMPARISON_LEGACY</DefineConstants>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(WebGpuMemoryComparison)' == 'Legacy' Or '$(WebGpuMemoryComparison)' == 'Current'">
+    <DefineConstants>$(DefineConstants);WEBGPU_MEMORY_COMPARISON</DefineConstants>
+  </PropertyGroup>
+
+  <Target Name="ValidateWebGpuMemoryComparison" BeforeTargets="PrepareForBuild" Condition="'$(WebGpuMemoryComparison)' != ''">
+    <Error Condition="'$(WebGpuMemoryComparison)' != 'Legacy' And '$(WebGpuMemoryComparison)' != 'Current'"
+           Text="WebGpuMemoryComparison must be Legacy or Current." />
+    <Error Condition="'$(EffectiveWebGpu)' != 'true' Or '$(CpuOnly)' == 'true'"
+           Text="WebGPU memory comparison requires UseWebGpu=true and a GPU-enabled build." />
+  </Target>
+
   <ItemGroup>
-    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.31.1" Condition="'$(CpuOnly)' == 'true' Or '$(EffectiveWebGpu)' == 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="$(WebGpuRuntimeVersion)" Condition="'$(CpuOnly)' == 'true' Or '$(EffectiveWebGpu)' == 'true'" />
     
     <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" Condition="'$(IsWindows)' == 'true' And '$(CpuOnly)' != 'true' And '$(EffectiveWebGpu)' != 'true'" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.29.0" Condition="'$(IsLinux)' == 'true' And '$(CpuOnly)' != 'true' And '$(EffectiveWebGpu)' != 'true'" />
     
-    <PackageReference Include="Microsoft.ML.OnnxRuntime.EP.WebGpu" Version="0.5.0" Condition="'$(EffectiveWebGpu)' == 'true' And '$(CpuOnly)' != 'true'" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.EP.WebGpu" Version="$(WebGpuProviderVersion)" Condition="'$(EffectiveWebGpu)' == 'true' And '$(CpuOnly)' != 'true'" />
   </ItemGroup>
 
   <ItemGroup>

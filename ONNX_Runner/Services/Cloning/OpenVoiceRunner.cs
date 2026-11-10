@@ -100,11 +100,15 @@ public partial class OpenVoiceRunner : IDisposable
 #if USE_CUDA || USE_DML || USE_WEBGPU
         // Protection against negative numbers in config
         int startingDeviceId = Math.Max(0, hwSettings.OpenVoiceGpuDeviceId);
+        Exception? firstGpuError = null;
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+        foreach (int deviceId in new[] { startingDeviceId })
+#else
         // Try the desired device + the next 3 as a fallback
         int maxGpusToTry = startingDeviceId + 4;
-        Exception? firstGpuError = null;
 
         for (int deviceId = startingDeviceId; deviceId < maxGpusToTry; deviceId++)
+#endif
         {
             try
             {
@@ -190,6 +194,9 @@ public partial class OpenVoiceRunner : IDisposable
             {
                 firstGpuError ??= ex;
                 LogGpuInitFailed(logger, ex, deviceId);
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+                throw new InvalidOperationException("OpenVoice GPU initialization failed during the WebGPU comparison. Adapter retries and CPU fallback are disabled.", ex);
+#endif
             }
         }
         logger.LogWarning(firstGpuError, "[HARDWARE] GPU initialization failed or unavailable. Falling back to CPU.");
@@ -272,6 +279,9 @@ public partial class OpenVoiceRunner : IDisposable
                 NamedOnnxValue.CreateFromTensor("input", inputTensor)
             };
 
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+            using var inferenceLease = WebGpuExecutionProvider.EnterInference();
+#endif
             using var results = _extractSession.Run(inputs);
             float[] embedding = [.. results.First(r => r.Name == "tone_embedding").AsEnumerable<float>()];
 
@@ -497,6 +507,9 @@ public partial class OpenVoiceRunner : IDisposable
                 NamedOnnxValue.CreateFromTensor("tau", tauTensor)
             };
 
+#if USE_WEBGPU && WEBGPU_MEMORY_COMPARISON
+            using var inferenceLease = WebGpuExecutionProvider.EnterInference();
+#endif
             using var results = activeSession.Run(inputs);
             var outputNode = results.First(r => r.Name == "converted_audio");
             var outputTensor = outputNode.AsTensor<float>();
