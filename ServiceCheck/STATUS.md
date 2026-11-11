@@ -1,12 +1,12 @@
 # Tsubaki Service Check status
 
-Last verified: 2026-11-10 UTC.
+Last verified: 2026-11-11 UTC.
 
 Implementation status: Phases 1 and 2 complete; Phase 3 in progress.
 Phase 2 milestone: metadata collection and both diagnostic modes verified.
-Phase 3 milestone: bounded offline report import verified.
+Phase 3 milestone: bounded report import and pure offline comparison verified.
 Release status: version 0.1.0 remains in development.
-Next implementation step: offline before-and-after comparison.
+Next implementation step: comparison command and offline comparison reports.
 
 Tsubaki Service Check is an independent command-line utility for checking
 configured local and remote Tsubaki HTTP services.
@@ -37,6 +37,7 @@ configured local and remote Tsubaki HTTP services.
 - Optional retained WAV and embedded offline playback.
 - Temporary-file publication, collision protection, and surviving-file reporting.
 - Bounded offline import and validation of version 1 diagnostic JSON reports.
+- Pure before-and-after comparison with explicit context and coverage limits.
 
 The client is independent of the inference server and its model,
 GPU, and native audio dependencies.
@@ -113,11 +114,44 @@ Verified on 2026-11-10 UTC: Core and regression Release builds succeeded;
 the complete executable suite passed 282 checks with 0 failures.
 The 32 import checks use controlled HTTP and network fixtures.
 
+## Offline comparison core
+
+`RunComparer.Compare` accepts validated before/after results plus caller-owned
+tool version, comparison ID, creation timestamp, and cancellation token.
+It returns a typed `RunComparisonResult` without file, network, clock, or
+random-number access. Creation metadata is normalized to UTC.
+
+- Explicit input order and source run IDs are preserved.
+- Configured target IDs, URLs, modes, and fingerprints define the comparison
+  context. Changed routing does not establish physical server identity.
+- Active outcome comparison requires matching configured target ID, mode,
+  and speech request fingerprint. Inspection remains distinct from synthesis.
+- Checks are paired by stable IDs. Missing records stay missing, including
+  known coverage absent from both inputs.
+- Required/supporting role differences and request-dependent observations
+  retain their interpretation limits.
+- Diagnostic codes, HTTP status, and body-completion evidence are compared
+  independently of human-readable error wording.
+- Allowlisted fields retain numbers, booleans, enum labels, and units.
+- Unknown values remain distinct from explicit-null server claims.
+- Address and voice lists are compared without source-order noise. Partial
+  voice discovery cannot establish that an absent retained ID was removed.
+- Version/default changes, individual timings, and audio artifact hashes
+  remain contextual observations rather than automatic regression verdicts.
+- Source records and payload bytes remain unchanged. Runtime audio payloads
+  are detached from the comparison result, and stored WAV paths are not read.
+- Fixed inputs and publication metadata produce deterministic output across
+  the verified culture settings.
+
+Verified on 2026-11-11 UTC: Core and regression Release builds succeeded.
+The complete suite passed 319 checks with 0 failures, including 37 new pure
+comparison checks. The comparison CLI and report publication are pending.
+
 ## Regression verification
 
 Environment: Windows, .NET SDK 10.0.302.
 
-Latest result: 282 checks passed, 0 failed.
+Latest result: 319 checks passed, 0 failed.
 
 The suite covers profiles, URL rules, HTTP behavior, response limits,
 deadlines, cancellation, secret redaction, WAV parsing, signal metrics,
@@ -142,6 +176,11 @@ The 32 report import checks cover canonical round trips, earlier coverage
 gaps, failed and interrupted outcomes, UTF-8 and BOM handling, byte and
 structure bounds, malformed data, timestamp offsets, evidence consistency,
 reference isolation, cancellation, and source-file preservation.
+
+The 37 comparison checks cover target, URL, mode, request and role changes;
+new or missing coverage; interrupted execution; typed values; partial voice
+lists; explicit-null limits; descriptive timing/audio differences; ordinal
+identity; culture independence; deterministic metadata; and source preservation.
 
 Reference commands, run independently from the repository root:
 
@@ -321,7 +360,8 @@ diagnostic can still produce a report.
 
 ## Current limits
 
-Offline comparison remains pending.
+The pure comparison Core API is implemented. The compare CLI command and
+comparison.json/comparison.html publication remain pending.
 
 Identity and readiness are server-reported claims. A successful inspection
 does not establish that synthesis works.
@@ -334,16 +374,27 @@ A nonzero waveform does not establish intelligibility, pronunciation quality,
 language correctness, or speaker identity.
 
 The current build requires an installed .NET 10 runtime.
-Self-contained distribution is planned for Phase 3.
+Self-contained Windows x64 and Linux x64 distributions are planned for Phase 3.
+Linux launch and regression verification remain pending.
 
 Live remote HTTP/HTTPS and bearer deployments remain unverified.
 Interactive Ctrl+C verification and narrow-screen/print visual review
 remain pending. Cancellation and redaction behavior have fixture coverage.
 
+## Target platforms and planned integration
+
+The first release targets Windows x64 and Linux x64 with a shared Core and CLI.
+Separate self-contained packages and native verification are required for each.
+
+Planned LAN verification uses a Linux client on Lubuntu x64 against a Tsubaki
+server on Windows. The exact distribution version and successful runtime
+environment will be recorded during verification. No hosted server is required
+for this independent-client integration path.
+
 ## Phase 3 priorities
 
-1. Add pure before-and-after comparison using the verified report importer.
-2. Complete the report layout and comparison report.
-3. Add sanitized example profiles and a README.
-4. Publish a self-contained Windows build.
-5. Verify a genuine remote deployment and finish report visual review.
+1. Add the compare CLI command and bounded JSON/offline HTML comparison publication.
+2. Complete the report layout and desktop, narrow-screen, and print review.
+3. Add sanitized example profiles and a README for both target platforms.
+4. Publish self-contained Windows x64 and Linux x64 builds.
+5. Verify Linux operation, a genuine LAN client/server run, and interactive cancellation.
