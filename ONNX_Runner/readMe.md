@@ -60,7 +60,7 @@ Dashboard features:
 
 ## Download
 
-**[Tsubaki TTS Engine packaged builds (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases)**
+**[Tsubaki TTS Engine packaged builds (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.10)**
 
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
@@ -126,7 +126,7 @@ Tsubaki is designed for:
 
 Download the build for your OS from:
 
-[GitHub Releases](https://github.com/MrHryhorii/SmartStack/releases)
+[GitHub Releases](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.10)
 
 Extract the complete ZIP. For a first run, the CPU build is the simplest choice.
 
