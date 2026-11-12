@@ -9,11 +9,14 @@ It connects to an existing Tsubaki HTTP or HTTPS endpoint and records what
 this client observed.
 
 Version 0.1.0 is in development. Windows development builds and local server
-checks are verified. Windows x64 and Linux x64 are the intended distribution
-targets; self-contained packages and native Linux verification are pending.
-See [STATUS.md](STATUS.md) for the current verification results and remaining work.
+checks are verified. Portable publish commands for Windows x64 and Linux x64
+are documented below. Published-package verification and native Linux
+verification are pending. See [STATUS.md](STATUS.md) for current results and
+remaining work, and [WALKTHROUGH.md](WALKTHROUGH.md) for a practical guide.
 
 ## Build and run
+
+### Development build
 
 Building from source requires the .NET 10 SDK. Run these commands from the
 repository root:
@@ -28,9 +31,129 @@ dotnet ./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll --help
 
 The DLL launcher uses the same command arguments on Windows and Linux.
 On Windows, the build also creates `TsubakiCheck.exe` in the same output directory.
-The current development output requires an installed .NET 10 runtime.
-Native Linux execution remains to be verified; compatible operating-system
-libraries will also be required by a future self-contained Linux package.
+The development output requires an installed .NET 10 runtime.
+
+### Portable Windows x64 build
+
+Run from the repository root with the .NET 10 SDK:
+
+```sh
+dotnet publish ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:DebugType=embedded --output ./ServiceCheck/Cli/bin/Release/portable/win-x64
+```
+
+Executable: `ServiceCheck/Cli/bin/Release/portable/win-x64/TsubakiCheck.exe`.
+
+### Portable Linux x64 build
+
+Run from the repository root with the .NET 10 SDK:
+
+```sh
+dotnet publish ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:DebugType=embedded --output ./ServiceCheck/Cli/bin/Release/portable/linux-x64
+```
+
+Executable: `ServiceCheck/Cli/bin/Release/portable/linux-x64/TsubakiCheck`.
+
+These commands produce platform-specific, self-contained single-file
+executables. The matching .NET runtime is included, so the target computer
+needs no separately installed .NET SDK or runtime. Compatible operating-system
+libraries are still required, including the native dependencies of .NET on Linux.
+
+Trimming is explicitly disabled for the current reflection-based JSON
+serialization. Debug symbols are embedded. Bundled native runtime libraries
+are extracted into the .NET host's per-user cache at startup. Profiles and
+input reports remain ordinary external files selected by command arguments.
+
+Copy the matching executable to the desired tools directory and run it
+directly, without the `dotnet` launcher. On Linux, preserve or restore its
+execute permission after transfer. For example, after copying it to
+`$HOME/tools/tsubaki-check/TsubakiCheck`:
+
+```bash
+chmod +x "$HOME/tools/tsubaki-check/TsubakiCheck"
+```
+
+Verify each published executable on its target platform. Successful publishing
+alone does not verify native Linux execution or access to a server from another
+computer. Package verification remains pending in [STATUS.md](STATUS.md).
+
+For details about these SDK options, see Microsoft's
+[single-file deployment documentation](https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview)
+and [`dotnet publish` reference](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-publish).
+
+## File paths and working directories
+
+Absolute file paths are used directly. Relative file paths are resolved from
+the current working directory of the invoking shell. The executable can be
+stored elsewhere. Its directory is independent of the location of profiles,
+input reports, and output directories.
+
+| Argument | Selected location |
+| --- | --- |
+| `init --output` | A new profile file in an existing parent directory. |
+| `inspect/check --profile` | An existing external profile file. |
+| `compare --before` and `--after` | Existing external diagnostic JSON files. |
+| `inspect/check/compare --output` | The report output root, created when needed. |
+
+There is no implicit profile lookup beside the executable. Specify the path
+you intend to use. Output paths are independent of the profile's directory.
+Quote paths that contain spaces.
+
+### PowerShell example
+
+Assume the portable executable is stored at
+`C:\Tools\TsubakiCheck\TsubakiCheck.exe` and the separate working directory
+`C:\Work\TsubakiChecks` already exists:
+
+```powershell
+Set-Location 'C:\Work\TsubakiChecks'
+```
+
+```powershell
+& 'C:\Tools\TsubakiCheck\TsubakiCheck.exe' init --output '.\local.json'
+```
+
+Edit `local.json` for the deployment if needed, then run:
+
+```powershell
+& 'C:\Tools\TsubakiCheck\TsubakiCheck.exe' check --profile '.\local.json' --output '.\runs' --open
+```
+
+This reads `C:\Work\TsubakiChecks\local.json` and publishes beneath
+`C:\Work\TsubakiChecks\runs`. The tool directory contains the executable;
+the separate working directory contains the selected data.
+
+Use absolute arguments to keep the same locations from any working directory:
+
+```powershell
+& 'C:\Tools\TsubakiCheck\TsubakiCheck.exe' check --profile 'C:\Work\TsubakiChecks\local.json' --output 'C:\Work\TsubakiChecks\runs'
+```
+
+### Bash example
+
+With the Linux executable stored at `$HOME/tools/tsubaki-check/TsubakiCheck`
+and execute permission set, create a separate working directory:
+
+```bash
+mkdir -p "$HOME/tsubaki-checks"
+```
+
+```bash
+cd "$HOME/tsubaki-checks"
+```
+
+```bash
+"$HOME/tools/tsubaki-check/TsubakiCheck" init --output './local.json'
+```
+
+Edit `local.json` for the deployment if needed, then run:
+
+```bash
+"$HOME/tools/tsubaki-check/TsubakiCheck" check --profile './local.json' --output './runs' --open
+```
+
+The profile and output paths are beneath `$HOME/tsubaki-checks`. The executable
+remains in its tools directory. On another computer, set `target.baseUrl` to
+the server's reachable address before running the check.
 
 ## Quick start
 
