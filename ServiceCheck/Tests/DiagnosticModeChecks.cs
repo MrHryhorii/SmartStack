@@ -25,7 +25,9 @@ internal static class DiagnosticModeChecks
             ("Successful audio preserves earlier unready claims", VerifyUnreadyCheckAsync),
             ("Unready inspection fails without requesting speech", VerifyUnreadyInspectAsync),
             ("Run interruption during metadata prevents speech in both modes", VerifyInterruptionAsync),
-            ("Remote metadata text encoded in diagnostic HTML", VerifyMetadataEncodingAsync)
+            ("Remote metadata text encoded in diagnostic HTML", VerifyMetadataEncodingAsync),
+            ("Reported server settings visible outside technical JSON", VerifyVisibleSnapshotAsync),
+            ("Diagnostic HTML preserves unknown claims and voice coverage", VerifyVisibleCoverageAsync)
         ];
     }
 
@@ -141,6 +143,11 @@ internal static class DiagnosticModeChecks
                 StringComparison.Ordinal) &&
             !html.Contains("data:audio/wav", StringComparison.OrdinalIgnoreCase),
             "Inspection HTML implied audio generation or embedded unrequested audio.");
+
+        Require(SectionHtml(html, "audio-title").Contains(
+                "Speech generation and audio inspection were not requested in inspection mode.",
+                StringComparison.Ordinal),
+            "Inspection HTML presented an intentionally omitted audio test as unfinished work.");
     }
 
     /// <summary>Preserves one successful speech request when every metadata route is denied.</summary>
@@ -166,6 +173,14 @@ internal static class DiagnosticModeChecks
             FindCheck(result, "audio.signal").Status ==
                 DiagnosticCheckStatus.Passed,
             "Metadata restrictions suppressed or invalidated successful synthesis.");
+
+        var html = await RenderHtmlAsync(result);
+        var snapshot = SectionHtml(html, "server-title");
+        Require(snapshot.Contains("Capabilities and defaults were not reported.", StringComparison.Ordinal)
+            && snapshot.Contains("No voice IDs were retained.", StringComparison.Ordinal)
+            && SectionHtml(html, "outcome-title").Contains(
+                "Speech generation verified from this client.", StringComparison.Ordinal),
+            "Unavailable metadata became invented defaults or obscured successful speech verification.");
     }
 
     /// <summary>Labels audio success after a server-reported unready state.</summary>
@@ -217,6 +232,13 @@ internal static class DiagnosticModeChecks
             "An unready inspection passed or attempted synthesis.");
 
         RequireSpeechOmitted(result, "not_requested");
+
+        var html = await RenderHtmlAsync(result);
+        var overview = SectionHtml(html, "outcome-title");
+        Require(overview.Contains(System.Text.Encodings.Web.HtmlEncoder.Default.Encode(
+                FindCheck(result, "service.readiness").Summary), StringComparison.Ordinal)
+            && overview.Contains("Speech generation was not tested.", StringComparison.Ordinal),
+            "A failed inspection hid its primary reason or implied that speech was tested.");
     }
 
     /// <summary>Preserves partial metadata and prevents POST after interruption.</summary>
@@ -317,8 +339,9 @@ internal static class DiagnosticModeChecks
         const string hostile =
             "<script>alert(\"metadata\")</script><img src=\"https://example.test/pixel\">";
 
-        using var handler = new PipelineHandler(route =>
-            DefaultMetadata(route, version: hostile));
+        using var handler = new PipelineHandler(route => route == "tsbk/audio/voices"
+            ? JsonResponse(HttpStatusCode.OK, JsonSerializer.Serialize(new { voices = new[] { hostile } }))
+            : DefaultMetadata(route, version: hostile));
 
         var result = await RunAsync(DiagnosticMode.Inspect, handler);
         var html = await RenderHtmlAsync(result);
@@ -332,6 +355,110 @@ internal static class DiagnosticModeChecks
             !html.Contains("<img", StringComparison.OrdinalIgnoreCase) &&
             !html.Contains("src=\"http", StringComparison.OrdinalIgnoreCase),
             "Remote metadata introduced executable or externally loaded HTML.");
+
+        Require(SectionHtml(html, "server-title").Contains(
+                System.Text.Encodings.Web.HtmlEncoder.Default.Encode(hostile), StringComparison.Ordinal)
+            && result.Server!.AdvertisedVoices.Contains(hostile),
+            "The visible server snapshot lost or failed to encode a retained voice identifier.");
+    }
+
+    /// <summary>Shows selected live-parser claims as readable, sourced metadata rather than raw JSON only.</summary>
+    private static async Task VerifyVisibleSnapshotAsync()
+    {
+        const string status = """
+            {
+              "service":"Tsubaki TTS Engine","version":"1.0.10","synthesisReady":true,
+              "model":{"baseVoiceDialect":"en-us","sampleRateHz":22050},
+              "voiceCloning":{"enabled":false,"available":false},
+              "formats":{"wav":true},
+              "dsp":{"defaultSampleRate":0,"defaultPitch":1,"defaultVolume":0.5,
+                     "volumeBoosterDb":0,"defaultTotalGainDb":0},
+              "limits":{"maxTextLength":null,
+                        "rateLimit":{"permitLimit":20,"windowSeconds":10,"queueLimit":0}}
+            }
+            """;
+        using var handler = new PipelineHandler(route => route == "tsbk/server/status"
+            ? JsonResponse(HttpStatusCode.OK, status) : DefaultMetadata(route));
+        var result = await RunAsync(DiagnosticMode.Inspect, handler);
+        var snapshot = SectionHtml(await RenderHtmlAsync(result), "server-title");
+
+        RequireVisibleRow(snapshot, "Reported service", "Tsubaki TTS Engine");
+        RequireVisibleRow(snapshot, "Reported synthesis readiness", "Ready");
+        RequireVisibleRow(snapshot, "Base voice dialect", "en-us");
+        RequireVisibleRow(snapshot, "Model sample rate", "22050 Hz");
+        RequireVisibleRow(snapshot, "Voice cloning enabled", "No");
+        RequireVisibleRow(snapshot, "Voice cloning available", "No");
+        RequireVisibleRow(snapshot, "WAV support", "Yes");
+        RequireVisibleRow(snapshot, "Configured sample rate", "0 (no sample rate override)");
+        RequireVisibleRow(snapshot, "Default volume", "0.5");
+        RequireVisibleRow(snapshot, "Volume booster", "0 dB");
+        RequireVisibleRow(snapshot, "Text length limit", "No configured limit (explicit null)");
+        RequireVisibleRow(snapshot, "Rate limit permits", "20");
+        RequireVisibleRow(snapshot, "Rate limit window", "10 s");
+        RequireVisibleRow(snapshot, "Rate limit queue", "0");
+        Require(snapshot.Contains("<code>tsbk/server/status</code>", StringComparison.Ordinal)
+            && snapshot.Contains("<code>tsbk/audio/voices</code>", StringComparison.Ordinal)
+            && snapshot.Contains("<code>piper_base</code>", StringComparison.Ordinal)
+            && snapshot.Contains("<code>alloy</code>", StringComparison.Ordinal)
+            && handler.Requests.All(request => request.StartsWith("GET ", StringComparison.Ordinal)),
+            "Readable server settings lost their metadata sources, voice IDs, or inspection scope.");
+    }
+
+    /// <summary>Distinguishes absent defaults and partial voice discovery from a complete empty list.</summary>
+    private static async Task VerifyVisibleCoverageAsync()
+    {
+        foreach (var complete in new[] { false, true })
+        {
+            using var handler = new PipelineHandler(route => route switch
+            {
+                "tsbk/server/status" => JsonResponse(HttpStatusCode.OK,
+                    """{"service":"Tsubaki TTS Engine","synthesisReady":true}"""),
+                "tsbk/audio/voices" => JsonResponse(HttpStatusCode.OK, complete
+                    ? """{"voices":[]}""" : """{"voices":["piper_base",null]}"""),
+                _ => DefaultMetadata(route)
+            });
+            var result = await RunAsync(DiagnosticMode.Inspect, handler);
+            var snapshot = SectionHtml(await RenderHtmlAsync(result), "server-title");
+            RequireVisibleRow(snapshot, "Voice cloning enabled", "Not reported");
+            RequireVisibleRow(snapshot, "WAV support", "Not reported");
+            RequireVisibleRow(snapshot, "Configured sample rate", "Not reported");
+            RequireVisibleRow(snapshot, "Text length limit", "Not reported");
+
+            if (complete)
+            {
+                Require(result.Server?.AdvertisedVoicesComplete == true
+                    && result.Server.AdvertisedVoices.Count == 0
+                    && snapshot.Contains("A complete advertised voice list was received.", StringComparison.Ordinal)
+                    && snapshot.Contains("The reported list is empty.", StringComparison.Ordinal),
+                    "A complete empty voice list was presented as unavailable discovery.");
+                continue;
+            }
+
+            Require(result.Server?.AdvertisedVoicesComplete == false
+                && snapshot.Contains("Voice discovery was unavailable or incomplete.", StringComparison.Ordinal)
+                && snapshot.Contains("A missing ID does not establish that a voice is unavailable.", StringComparison.Ordinal)
+                && snapshot.Contains("<code>piper_base</code>", StringComparison.Ordinal),
+                "A partial voice list implied complete discovery or lost a retained identifier.");
+        }
+    }
+
+    /// <summary>Restricts presentation assertions to the rendered section instead of embedded technical JSON.</summary>
+    private static string SectionHtml(string html, string headingId)
+    {
+        var start = html.IndexOf($"<section aria-labelledby=\"{headingId}\">", StringComparison.Ordinal);
+        Require(start >= 0, $"Expected report section {headingId}.");
+        var end = html.IndexOf("</section>", start, StringComparison.Ordinal);
+        Require(end > start, $"Report section {headingId} was not closed.");
+        return html[start..(end + "</section>".Length)];
+    }
+
+    /// <summary>Requires the claimed value to appear in its labeled metadata row.</summary>
+    private static void RequireVisibleRow(string section, string label, string expected)
+    {
+        var row = "<tr><th scope=\"row\">" + System.Text.Encodings.Web.HtmlEncoder.Default.Encode(label)
+            + "</th><td>" + System.Text.Encodings.Web.HtmlEncoder.Default.Encode(expected) + "</td></tr>";
+        Require(section.Contains(row, StringComparison.Ordinal),
+            $"The visible metadata row '{label}' did not preserve its reported value '{expected}'.");
     }
 
     /// <summary>Runs one public diagnostic mode with controlled network evidence.</summary>

@@ -2,481 +2,182 @@
 
 Last verified: 2026-11-12 UTC.
 
-Implementation status: Phases 1 and 2 complete; Phase 3 in progress.
-Phase 2 milestone: metadata collection and both diagnostic modes verified.
-Phase 3 milestone: report import, comparison CLI, and offline comparison reports verified.
-Release status: version 0.1.0 remains in development.
-Next implementation step: report review and release documentation.
+Tsubaki Service Check is a standalone .NET command-line utility for diagnosing
+local and remote Tsubaki TTS services. It checks connectivity, inspects reported
+server state, verifies a speech response, and compares saved diagnostic runs.
+The client needs no inference engine, model files, or GPU dependencies.
 
-Tsubaki Service Check is an independent command-line utility for checking
-configured local and remote Tsubaki HTTP services.
+Version 0.1.0 is in development. The diagnostic commands, offline comparison,
+and report generation are implemented and verified on Windows. Work remaining
+before the first release is documentation, distribution packaging, and native
+Linux and cross-machine verification.
 
-## Implemented
+## Available functionality
 
-- .NET 10 Core, CLI, and executable regression projects.
-- `init`, `inspect`, `check`, `compare`, `--help`, and `--version` commands.
-- Bounded JSON profile loading, validation, and URL normalization.
-- Relative route resolution that preserves reverse-proxy prefixes.
-- Bounded DNS resolution with IPv4/IPv6 address handling.
-- Direct TCP inspection with bounded concurrency and connection cleanup.
-- Network observations included in canonical diagnostic reports.
-- Bounded health, status, and advertised voice metadata requests.
-- Health alias fallback limited to HTTP 404/405.
-- Typed metadata with bounded JSON structure, fields, and voice lists.
-- Sourced identity, readiness, capabilities, and defaults.
-- Explicit warnings for conflicting claims and partial discovery.
-- At most one bounded, non-streaming speech POST per active run.
-- Direct HTTP transport, disabled automatic redirects, and normal TLS validation.
-- Bearer authentication through a named environment variable.
-- Stage and run deadlines, cancellation, and partial diagnostic evidence.
-- RIFF/WAVE PCM16 validation and nonzero signal verification.
-- Audio duration, format, frame count, level metrics, and payload SHA-256.
-- Typed diagnostic results, required/supporting roles, and outcome aggregation.
-- Deterministic profile and speech request fingerprints.
-- Canonical JSON and self-contained HTML reports.
-- Optional retained WAV and embedded offline playback.
-- Temporary-file publication, collision protection, and surviving-file reporting.
-- Bounded offline import and validation of version 1 diagnostic JSON reports.
-- Pure before-and-after comparison with explicit context and coverage limits.
-- Canonical comparison JSON and self-contained comparison HTML.
-- Comparison publication without copying or opening referenced audio files.
+| Area | Current functionality |
+| --- | --- |
+| Profile creation | `init` creates an editable JSON target profile. |
+| Profile validation | Bounded loading, required settings, strict schema checks, and URL/route validation. |
+| Connectivity | DNS and direct TCP observations, IPv4/IPv6 address handling, connection deadlines, and cleanup. |
+| Service inspection | `inspect` collects health, status, advertised voices, identity, and reported synthesis readiness. It sends no speech request. |
+| Speech verification | `check` collects service observations, sends at most one non-streaming speech POST, and verifies a supported nonzero PCM16 WAV response. |
+| Server metadata | Selected capabilities, configured defaults, source routes, and advertised voices are available in JSON and readable HTML. |
+| Diagnostic reports | Canonical JSON, self-contained HTML, and optional retained WAV with embedded offline playback. |
+| Offline comparison | `compare` loads two saved diagnostic reports in explicit before/after order and exports JSON and HTML comparison reports. |
+| Authentication | Bearer authentication through a named environment variable, with known token values and original request text redacted from diagnostic output. |
+| Bounded execution | Configurable operation and run deadlines, response-size limits, cancellation handling, and partial diagnostic evidence. |
+| Safe export | Encoded report text, restrictive HTML document policies, controlled filenames, temporary-file publication, and collision protection. |
 
-The client is independent of the inference server and its model,
-GPU, and native audio dependencies.
+The core, CLI, and regression projects are independent of the Tsubaki server
+project. The client uses the .NET base class library.
 
-## Operation semantics
+## How results should be interpreted
 
-`inspect` collects network and metadata observations. Its required checks are
-service identity and server-reported synthesis readiness. It sends no speech
-POST, exports a null request and audio result, and marks speech and audio
-checks as `not_requested`.
+`inspect` requires the expected service identity and server-reported synthesis
+readiness. A successful inspection records those claims; speech generation
+has not been tested.
 
-`check` collects the same observations and then requests speech while the run
-remains active. Its required checks are the speech request, supported WAV
-container, and nonzero audio signal.
+`check` requires a successful speech response, a supported WAV container, and
+nonzero PCM16 samples. Optional metadata failures remain visible as supporting
+findings and do not prevent an active speech request while the run remains active.
 
-Metadata restrictions and an unready claim do not suppress an active request.
-A successful waveform following an unready claim is explicitly labeled.
-The normal metadata sequence uses three GETs; a missing primary health route
-can add one alias GET for HTTP 404/405.
+Reports distinguish required failures, supporting warnings, missing evidence,
+and intentionally omitted checks. Unknown metadata remains distinct from a
+reported false or zero value. Incomplete voice discovery cannot establish that
+a missing voice is unavailable.
 
-Readiness uses the most recent valid boolean claim by client observation
-time. Earlier claims, source routes, server timestamps, and disagreements
-remain available. Retained voice lists are limited to 512 distinct IDs.
-Incomplete lists are labeled and cannot establish that a configured voice
-is absent.
+Comparison preserves both source outcomes and their context. Changed target
+IDs, URLs, modes, request fingerprints, and coverage are identified explicitly.
+Different audio hashes and individual timing changes are descriptive evidence,
+not automatic quality or performance regressions.
 
-## Network behavior
+## Reports and offline behavior
 
-IP literals skip DNS resolution and remain available as address evidence.
-DNS names are normalized before resolution. Retained addresses are
-deduplicated, interleaved by address family, and limited to 32 entries.
+Each diagnostic run publishes a new directory beneath the selected output root:
 
-Direct TCP inspection uses at most two concurrent connection attempts.
-Connections are closed without sending application data. A successful
-attempt cancels and joins superseded attempts before inspection returns.
+- `report.json`: canonical diagnostic data without runtime audio bytes or original speech input.
+- `report.html`: offline report with encoded text and optional embedded WAV playback.
+- `sample.wav`: supported received audio when retention is enabled.
 
-DNS and TCP failures are supporting observations. They do not suppress
-the speech request while the overall run remains active.
+Inspection creates JSON and HTML. With audio retention disabled, audio metrics
+and hashes remain available while WAV output and embedded playback are omitted.
 
-Caller cancellation or expiration of the overall run deadline prevents
-a subsequent speech request and preserves available network evidence.
+Each comparison publishes `comparison.json` and `comparison.html` in a new
+directory. Comparison opens the source JSON files read-only, makes no server
+requests, and loads no referenced WAV files. Historical retention flags and
+sample references remain source evidence.
 
-Direct TCP observations use separate connections from the HTTP request.
-HTTP and TLS results are established by the HTTP operation itself.
+Report import is bounded to 8 MiB per input, with a JSON depth limit of 32 and
+additional string and collection limits. Unsupported schemas, duplicate or
+unknown members, missing required settings, and inconsistent evidence are rejected.
+Missing historical settings are not silently replaced with current defaults.
 
-## Offline report import
+HTML reports include their styles and require no JavaScript or external
+resources. Wide tables support horizontal scrolling and keyboard focus.
+Desktop, narrow-viewport, and A4 portrait preview readability have been manually
+reviewed. Printed page breaks and section distribution remain browser-dependent
+and are accepted as a cosmetic limitation.
 
-`ReportLoader.LoadAsync` reads a saved canonical JSON report and returns a
-validated `DiagnosticRunResult` for offline comparison.
+Publication uses a separate 10-second writing budget and preserves available
+working paths when output fails. Existing output is not overwritten. Diagnostic
+publication can preserve a cancelled run; comparison publication also observes
+the command's cancellation token.
 
-- Maximum input: 8 MiB, including an optional UTF-8 BOM.
-- Maximum JSON nesting depth: 32.
-- Maximum decoded string or property name: 65536 UTF-16 code units.
-- Maximum entries per JSON array or properties per object: 1024.
-- Typed evidence collections retain their narrower limits, including
-  256 checks, 32 network addresses or attempts, and 512 advertised voice IDs.
-- Unsupported schemas, unknown or duplicate properties, invalid enum values,
-  missing required data, and null collection entries are rejected.
-- Exported routes, timeouts, and limits must be present; current defaults
-  are not substituted for missing historical settings.
-- Timestamps require an explicit offset and are normalized to UTC.
-- Check IDs, roles, required evidence, audio measurements, and aggregate
-  outcomes are checked for consistency.
+## Verification completed
 
-Earlier active reports can omit network and server evidence when their
-supporting checks explicitly record the unavailable coverage. Missing check
-records remain missing rather than becoming fabricated observations.
+Latest complete regression result: **337 passed, 0 failed**.
 
-Stored addresses and redacted routes remain report data. Import does not
-request server URLs or load referenced WAV files. Runtime audio payloads
-are excluded, and source files are opened read-only.
+Core, CLI, and regression Release builds succeeded on Windows. The SDK reported
+during setup was .NET 10.0.302.
 
-Verified on 2026-11-10 UTC: Core and regression Release builds succeeded;
-the complete executable suite passed 282 checks with 0 failures.
-The 32 import checks use controlled HTTP and network fixtures.
+The executable suite covers:
 
-## Offline comparison core
+- Profiles, URL normalization, proxy-prefix preservation, and route validation.
+- HTTP contracts, access restrictions, redirects, response bounds, deadlines, and cancellation.
+- Known-secret redaction and exclusion of original input text, credentials, and cookies from exports.
+- PCM16 WAV parsing, malformed or unsupported audio, silence, signal metrics, and hashes.
+- Required/supporting outcomes, missing coverage, fingerprints, and both diagnostic modes.
+- DNS/TCP address handling, fallback, concurrency limits, and native loopback connection cleanup.
+- Metadata parsing, conflicting claims, partial voice discovery, source selection, and HTML encoding.
+- Bounded report import, source-file preservation, comparison context, typed values, and export collisions.
+- Readable server settings, explicit-null limits, reported false/zero values, and inspection summaries.
 
-`RunComparer.Compare` accepts validated before/after results plus caller-owned
-tool version, comparison ID, creation timestamp, and cancellation token.
-It returns a typed `RunComparisonResult` without file, network, clock, or
-random-number access. Creation metadata is normalized to UTC.
+Controlled HTTP and network fixtures provide reproducible failure cases.
+Native loopback tests exercise actual socket behavior. These checks require
+no running inference server or model files.
 
-- Explicit input order and source run IDs are preserved.
-- Configured target IDs, URLs, modes, and fingerprints define the comparison
-  context. Changed routing does not establish physical server identity.
-- Active outcome comparison requires matching configured target ID, mode,
-  and speech request fingerprint. Inspection remains distinct from synthesis.
-- Checks are paired by stable IDs. Missing records stay missing, including
-  known coverage absent from both inputs.
-- Required/supporting role differences and request-dependent observations
-  retain their interpretation limits.
-- Diagnostic codes, HTTP status, and body-completion evidence are compared
-  independently of human-readable error wording.
-- Allowlisted fields retain numbers, booleans, enum labels, and units.
-- Unknown values remain distinct from explicit-null server claims.
-- Address and voice lists are compared without source-order noise. Partial
-  voice discovery cannot establish that an absent retained ID was removed.
-- Version/default changes, individual timings, and audio artifact hashes
-  remain contextual observations rather than automatic regression verdicts.
-- Source records and payload bytes remain unchanged. Runtime audio payloads
-  are detached from the comparison result, and stored WAV paths are not read.
-- Fixed inputs and publication metadata produce deterministic output across
-  the verified culture settings.
+### Recorded integration evidence
 
-Verified on 2026-11-11 UTC: Core and regression Release builds succeeded.
-The complete suite passed 319 checks with 0 failures, including 37 new pure
-comparison checks.
+Local server checks used `http://127.0.0.1:5045/`, reporting
+`Tsubaki TTS Engine`, version `1.0.10`.
 
-## Comparison command and artifacts
+| Scenario | Recorded result |
+| --- | --- |
+| Local speech and offline playback | A supported nonzero PCM16 WAV was received, retained, and played. |
+| Known unused port | Port 5046 returned `connection_refused`; the run failed its required speech check and returned exit code 1. |
+| Restricted metadata route | An intentional status-route HTTP 404 remained a supporting warning; speech and audio verification passed with exit code 0. |
+| Fresh inspection | Run `20261112T134158Z_ee1c754f5a29` completed with outcome `passed`, 16 advertised voices, and no speech or audio request evidence. |
+| Offline routing comparison | Saved runs against ports 5046 and 5045 showed `failed` to `passed` under the same configured target ID and speech request fingerprint. Successful comparison publication returned exit code 0. |
+| Invalid comparison input | A profile supplied as the before report was rejected with exit code 2. |
+| Report layout | Diagnostic and comparison reports were manually accepted at desktop and narrow widths and in A4 portrait print preview. |
 
-```text
-TsubakiCheck compare --before <report.json> --after <report.json> --output <directory> [--open]
-```
+The latest inspection took 223 ms as observed by the client. Its JSON and HTML
+preserved selected settings, metadata sources, and the deliberately omitted
+speech checks.
 
-The command loads both reports through the bounded importer and preserves
-their explicit before/after order. It makes no server requests, resolves no
-stored URLs, and opens no referenced WAV files.
+The latest reviewed comparison, `20261112T140301Z_9310ca7017df`, retained 10 paired
+checks and 130 selected fields. It compared runs
+`20261108T215027Z_2193953cf5f7` and `20261109T154055Z_6d7cf935cab7`.
+Its diagnostic evidence matched the earlier verified comparison; publication
+metadata and utility version differed.
 
-Each comparison publishes a new directory containing `comparison.json` and
-`comparison.html`. JSON uses the shared UTC, textual enum, explicit-null,
-and UTF-8 rules. HTML encodes recorded text, includes its styles, requires
-no JavaScript, and blocks external resources through its document policy.
+The binary used for these latest report checks printed informational version
+`0.1.0-dev+af5c632bbd4d711ea9a033832567d1690ecf946e`.
+Earlier API contract observations are recorded in [Tests/LocalIntegration.md](Tests/LocalIntegration.md).
 
-The HTML includes comparison context, source identity and outcomes,
-findings, paired checks, and selected settings and measurements.
-Missing values remain distinct from explicit-null claims. Check status
-changes and descriptive field differences retain their comparison limits.
+## Platform and distribution status
 
-Publication uses controlled filenames, validated output identifiers, a
-staging directory, no-overwrite file moves, and a 10-second writing budget.
-Output failures retain available working paths. The comparison result
-contains no runtime audio bytes, and source files remain unchanged.
+The first release targets Windows x64 and Linux x64 with shared Core and CLI code.
 
-A successfully published comparison returns 0, including when a source
-diagnostic run failed or was incomplete. Invalid arguments or input reports
-return 2; internal or publication failures return 3; caller cancellation
-returns 130. Opening the HTML is optional and does not change comparison
-success if the system cannot launch a viewer.
-
-## Regression verification
-
-Environment: Windows, .NET SDK 10.0.302.
-
-Latest result, 2026-11-12 UTC: 335 checks passed, 0 failed.
-Core, CLI, and regression Release builds succeeded.
-
-The suite covers profiles, URL rules, HTTP behavior, response limits,
-deadlines, cancellation, secret redaction, WAV parsing, signal metrics,
-outcome rules, fingerprints, HTML encoding, and artifact publication.
-
-Network coverage includes address normalization and retention,
-IPv4/IPv6 fallback, bounded concurrency, stage deadlines, run interruption,
-connection cleanup, native loopback closure, and refused connections.
-
-Integration checks verify that supporting network failures preserve
-the single speech request, interrupted runs prevent speech,
-missing credentials prevent network inspection, and exported network
-evidence redacts known bearer values.
-
-Metadata checks cover parsing, UTF-8, duplicate properties, field bounds,
-source selection, fallback, conflicting claims, and redaction.
-Complete pipeline checks cover both modes, restricted metadata, unready
-claims followed by valid audio, interruption, canonical inspection output,
-and remote metadata encoding in HTML.
-
-The 32 report import checks cover canonical round trips, earlier coverage
-gaps, failed and interrupted outcomes, UTF-8 and BOM handling, byte and
-structure bounds, malformed data, timestamp offsets, evidence consistency,
-reference isolation, cancellation, and source-file preservation.
-
-The 37 comparison checks cover target, URL, mode, request and role changes;
-new or missing coverage; interrupted execution; typed values; partial voice
-lists; explicit-null limits; descriptive timing/audio differences; ordinal
-identity; culture independence; deterministic metadata; and source preservation.
-
-The 16 comparison export checks cover the JSON contract and unsupported
-schema, encoded hostile text, missing and explicit-null values, offline
-references, runtime audio exclusion, source-file preservation, directory
-and file collisions, unsafe identifiers, output errors, cancellation before
-and during HTML writing, stream failures and ownership, culture independence,
-and exclusion of credentials, original input text, and cookies.
-
-Reference commands, run independently from the repository root:
-
-```powershell
-dotnet build .\ServiceCheck\Cli\Tsubaki.ServiceCheck.Cli.csproj --configuration Release
-```
-
-```powershell
-dotnet build .\ServiceCheck\Tests\Tsubaki.ServiceCheck.Regression.csproj --configuration Release
-```
-
-```powershell
-.\ServiceCheck\Tests\bin\Release\net10.0\Tsubaki.ServiceCheck.Regression.exe
-```
-
-## Phase 3 offline comparison verification
-
-Verified on 2026-11-12 UTC using previously captured real diagnostic reports.
-The comparison performed no new server diagnostics.
-
-CLI informational version reported by the tested binary:
-
-`0.1.0-dev+944ae919bdf6fbbdb8a74411f137013f27313151`
-
-| Observation | Before | After |
+| Platform | Verified now | Still pending |
 | --- | --- | --- |
-| Run ID | `20261108T215027Z_2193953cf5f7` | `20261109T154055Z_6d7cf935cab7` |
-| Target ID | `tsubaki-local` | `tsubaki-local` |
-| URL | `http://127.0.0.1:5046/` | `http://127.0.0.1:5045/` |
-| Mode | `check` | `check` |
-| Outcome | `failed` | `passed` |
-| Speech request | `connection_refused` | `speech_response_received` |
-| Audio container and signal | Skipped after request failure | Passed |
+| Windows x64 | Development builds, regression execution, local Tsubaki diagnostics, offline comparison, and report review. | Self-contained release packaging and package verification. |
+| Linux x64 | No native verification yet; the client implementation is shared with Windows. | Published build, native launch and regression verification, and a real client/server run. |
 
-Comparison ID: `20261112T101718Z_95caa196f470`.
+The current development build requires an installed .NET 10 runtime.
+Self-contained distributions are planned to include the runtime. A Linux
+distribution will still need compatible operating-system libraries.
 
-- Process exit code: 0.
-- Both JSON and HTML were published and inspected.
-- JSON retained 10 paired checks and 130 selected field comparisons.
-- Configured target ID, mode, and speech request fingerprint matched.
-- URL and effective profile fingerprints differed.
-- Earlier metadata and network gaps stayed explicit.
-- Different source utility versions were identified as coverage context.
-- Timing changes remained individual client observations.
-- Runtime audio payloads were absent from the exported JSON.
-- The HTML opened in the system browser.
-- A desktop screenshot confirmed the header, comparison context, and upper
-  source-run table were readable and aligned.
+Planned cross-machine verification uses a Lubuntu x64 client against a Tsubaki
+server on Windows over a LAN. The exact tested distribution version and runtime
+environment will be recorded with the results.
 
-The `compare --help` output was verified. Passing
-`ServiceCheck/tsubaki.local.json` as the before report produced a clear
-invalid-before-report message and process exit code 2.
+## Remaining work before version 0.1.0
 
-## Phase 2 live local verification
+1. Add the installation and usage README, plus sanitized local and remote example profiles.
+2. Produce and verify self-contained Windows x64 and Linux x64 distribution packages.
+3. Run native Linux and cross-machine LAN checks and verify interactive Ctrl+C behavior.
 
-Verified on 2026-11-09 UTC against `http://127.0.0.1:5045/`.
-The server reported `Tsubaki TTS Engine`, version `1.0.10`.
+## Current limitations and unverified deployments
 
-CLI informational version reported by the tested binary:
-
-`0.1.0-dev+e8bb01df796551c15133ab3f32837a3dfa65a082`
-
-The `inspect --help` command was also verified.
-
-| Observation | Inspection | Active check | Missing-status control |
-| --- | --- | --- | --- |
-| Mode | `inspect` | `check` | `check` |
-| Run ID | `20261109T153757Z_863c60eea98b` | `20261109T154055Z_6d7cf935cab7` | `20261109T154755Z_32ad967ab85a` |
-| TCP check | Passed | Passed | Passed |
-| Health check | Passed | Passed | Passed |
-| Status check | Passed | Passed | Failed: HTTP 404 |
-| Advertised voices | 16 | 16 | 16 |
-| Identity and reported readiness | Passed | Passed | Passed |
-| Speech and audio checks | `not_requested` | Passed | Passed |
-| Execution state | `completed` | `completed` | `completed` |
-| Outcome | `passed` | `passed` | `passed_with_warnings` |
-| Process exit code | 0 | 0 | 0 |
-| Client-observed total duration | 178 ms | 511 ms | 409 ms |
-| Published artifacts | JSON, HTML | JSON, HTML, WAV | JSON, HTML, WAV |
-
-Inspection and the ordinary active check used
-`ServiceCheck/tsubaki.local.json`.
-The inspection terminal summary explicitly stated that speech generation
-was not tested.
-
-The missing-status control used
-`ServiceCheck/Tests/Fixtures/tsubaki.missing-status.json`,
-which deliberately sets the status route to
-`servicecheck/intentional-missing-status`.
-The supporting `http_not_found` result did not suppress synthesis.
-
-| Audio observation | Active check | Missing-status control |
-| --- | --- | --- |
-| Payload size | 100314 bytes | 103898 bytes |
-| Format | PCM16, mono, 22050 Hz | PCM16, mono, 22050 Hz |
-| Duration | 2.273696 seconds | 2.354966 seconds |
-
-## Earlier network integration verification
-
-
-Verified on 2026-11-09 UTC.
-
-CLI informational version:
-
-`0.1.0-dev+e07699e4d3f403e34cb3060d579d47c565db4363`
-
-This is the version reported by the binary used for the following check.
-
-Profile: `ServiceCheck/tsubaki.local.json`.
-
-| Observation | Result |
-| --- | --- |
-| Target URL | `http://127.0.0.1:5045/` |
-| Run ID | `20261109T124413Z_8586240425b6` |
-| DNS check | Skipped with `ip_literal` |
-| Network address evidence | `127.0.0.1` |
-| TCP check | Passed with `tcp_connected` |
-| TCP attempt duration | 15 ms |
-| Required checks | Speech request, WAV container, and audio signal passed |
-| Execution state | `completed` |
-| Outcome | `passed_with_warnings` |
-| Process exit code | 0 |
-| Client-observed total run duration | 357 ms |
-| Payload size | 103386 bytes |
-| Audio format | PCM16, mono, 22050 Hz |
-| Audio duration | 2.343356 seconds |
-| Artifacts | JSON, HTML, and WAV published |
-
-The exported JSON network section was inspected. It preserved port 5045,
-address `127.0.0.1`, the successful connection status, its stable code,
-and the observed TCP duration.
-
-The warning outcome reflects unavailable server metadata coverage.
-The required speech and audio checks passed.
-
-## Historical Phase 1 verification
-
-The following checks were verified on 2026-11-08 UTC.
-
-### Successful speech and offline playback
-
-CLI informational version:
-
-`0.1.0-dev+910a2683ad98f09ad1219479d97c3d2db33e6048`
-
-| Observation | Result |
-| --- | --- |
-| Target URL | `http://127.0.0.1:5045/` |
-| Run ID | `20261108T213507Z_889b24700d1a` |
-| Speech HTTP status | 200 |
-| Required checks | Speech request, WAV container, and audio signal passed |
-| Execution state | `completed` |
-| Outcome | `passed_with_warnings` |
-| Process exit code | 0 |
-| Client-observed total run duration | 415 ms |
-| Payload size | 102362 bytes |
-| Audio format | PCM16, mono, 22050 Hz |
-| Frame count | 51159 |
-| Audio duration | 2.320136 seconds |
-| Artifacts | JSON, HTML, and WAV published |
-| Embedded audio | SHA-256 matched the report; playback confirmed |
-
-### Unavailable endpoint
-
-Profile: `ServiceCheck/Tests/Fixtures/tsubaki.closed-port.json`.
-
-A manual TCP probe returned `False` before the diagnostic run.
-
-| Observation | Result |
-| --- | --- |
-| Target URL | `http://127.0.0.1:5046/` |
-| Required speech check | Failed |
-| Failure code | `connection_refused` |
-| Client-observed speech request duration | 2062 ms |
-| Execution state | `completed` |
-| Outcome | `failed` |
-| Process exit code | 1 |
-| Artifacts | JSON and HTML published |
-| Audio checks | Skipped because the speech request failed |
-
-This live check predates the integrated DNS/TCP inspection.
-Port availability must be checked again before repeating the scenario.
-
-Earlier manual API contract observations are recorded in
-`Tests/LocalIntegration.md`.
-
-## Artifact behavior
-
-Each run publishes a separate directory beneath the selected output root:
-
-- `report.json`: canonical result without audio bytes.
-- `report.html`: offline report with encoded dynamic text.
-- `sample.wav`: supported received WAV when retention is enabled.
-
-Inspection does not publish a WAV artifact.
-
-With audio retention disabled, measurements and hashes remain available,
-while WAV output and embedded playback are omitted.
-
-Generated `ServiceCheck/runs/` directories are excluded by the repository
-ignore rules.
-
-Report publication uses an independent writing budget so a cancelled
-diagnostic can still produce a report.
-Comparison publication uses its own writing budget linked to command
-cancellation and publishes only JSON and HTML.
+- Audio verification supports little-endian RIFF/WAVE PCM16. A nonzero waveform
+  does not establish intelligibility, pronunciation quality, or speaker identity.
+- Observations describe this client's access path and the metadata exposed by
+  the server. They do not establish remote CPU/GPU load or a specific firewall cause.
+- Each active run sends one non-streaming speech request. No automatic speech retry is performed.
+- The HTTP client connects directly, with normal TLS validation and automatic
+  redirects disabled. It does not use the system HTTP proxy.
+- Live DNS-name, IPv6, remote HTTP/HTTPS, and bearer deployments remain unverified;
+  their handling has controlled regression coverage.
+- Interactive Ctrl+C, native Linux operation, and distribution packages remain pending.
+- Printed content fits the tested page width; page breaks are not optimized for publication layout.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Required diagnostic checks passed, or a comparison was published; supporting diagnostic warnings are allowed |
-| 1 | Completed diagnostic run with a failed required check |
-| 2 | Invalid arguments, profile, authentication, or input report |
-| 3 | Incomplete diagnostics, unsupported required coverage, internal error, or output failure |
-| 130 | User cancellation |
-
-## Current limits
-
-The offline comparison block is complete: bounded import, pure comparison,
-CLI execution, and JSON/HTML publication are implemented and verified.
-Version 0.1.0 remains in development while the remaining Phase 3 work is completed.
-
-Identity and readiness are server-reported claims. A successful inspection
-does not establish that synthesis works.
-
-Live DNS-name and IPv6 endpoint verification remains pending.
-Address-family handling and fallback have controlled regression coverage.
-
-The supported audio verification format is little-endian RIFF/WAVE PCM16.
-A nonzero waveform does not establish intelligibility, pronunciation quality,
-language correctness, or speaker identity.
-
-The current build requires an installed .NET 10 runtime.
-Self-contained Windows x64 and Linux x64 distributions are planned for Phase 3.
-Linux launch and regression verification remain pending.
-
-Live remote HTTP/HTTPS and bearer deployments remain unverified.
-Interactive Ctrl+C verification, whole-report desktop review, and
-narrow-screen/print visual review remain pending. Cancellation and
-redaction behavior have fixture coverage.
-
-## Target platforms and planned integration
-
-The first release targets Windows x64 and Linux x64 with a shared Core and CLI.
-Separate self-contained packages and native verification are required for each.
-
-Planned LAN verification uses a Linux client on Lubuntu x64 against a Tsubaki
-server on Windows. The exact distribution version and successful runtime
-environment will be recorded during verification. No hosted server is required
-for this independent-client integration path.
-
-## Phase 3 priorities
-
-1. Complete the report layout and desktop, narrow-screen, and print review.
-2. Add sanitized example profiles and a README for both target platforms.
-3. Publish self-contained Windows x64 and Linux x64 builds.
-4. Verify Linux operation, a genuine LAN client/server run, and interactive cancellation.
+| 0 | Required diagnostic checks passed, or a comparison was published; supporting diagnostic warnings are allowed. |
+| 1 | A completed diagnostic run contains a failed required check. |
+| 2 | Invalid arguments, profile, authentication configuration, or input report. |
+| 3 | Incomplete diagnostics, unsupported required coverage, internal error, or publication failure. |
+| 130 | User cancellation. |

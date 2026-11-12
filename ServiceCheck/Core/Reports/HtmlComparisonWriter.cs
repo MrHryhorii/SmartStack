@@ -146,7 +146,7 @@ public static class HtmlComparisonWriter
             </section>
             <section aria-labelledby="sources-title">
                 <h2 id="sources-title">Source runs</h2>
-                <div class="table-wrap"><table class="comparison">
+                <div class="table-wrap" tabindex="0" role="region" aria-label="Source run comparison"><table class="comparison">
                 <caption>Caller-supplied before/after order; timestamps do not reorder inputs.</caption>
                 <thead><tr><th scope="col">Observation</th><th scope="col">Before</th>
                     <th scope="col">After</th></tr></thead><tbody>
@@ -210,7 +210,7 @@ public static class HtmlComparisonWriter
     {
         await WriteMarkupAsync(writer, """
             <section aria-labelledby="checks-title"><h2 id="checks-title">Check observations</h2>
-            <div class="table-wrap"><table class="comparison">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Diagnostic check comparison"><table class="comparison">
             <caption>Recorded status, role, and evidence for each diagnostic check ID.</caption>
             <thead><tr><th scope="col">Check</th><th scope="col">Before</th>
                 <th scope="col">After</th><th scope="col">Change</th></tr></thead><tbody>
@@ -241,7 +241,7 @@ public static class HtmlComparisonWriter
         await WriteMarkupAsync(writer, """
             <section aria-labelledby="fields-title"><h2 id="fields-title">Settings and measurements</h2>
             <p>Not recorded means a value is unavailable. An explicit null remains a recorded claim.</p>
-            <div class="table-wrap"><table class="comparison">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Settings and measurement comparison"><table class="comparison">
             <caption>Selected settings, reported claims, and client observations; differences first.</caption>
             <thead><tr><th scope="col">Field</th><th scope="col">Before</th>
                 <th scope="col">After</th><th scope="col">Change</th></tr></thead><tbody>

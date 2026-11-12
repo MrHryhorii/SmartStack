@@ -52,6 +52,7 @@ public static class HtmlReportWriter
         }
         h1 { margin: 8px 0; font-size: 2rem; }
         h2 { margin: 0 0 16px; font-size: 1.25rem; }
+        h3 { margin: 24px 0 8px; font-size: 1rem; }
         p { margin: 8px 0; }
         .eyebrow { color: var(--accent); font-weight: 700; }
         .muted { color: var(--secondary); }
@@ -83,7 +84,7 @@ public static class HtmlReportWriter
         }
         th { font-weight: 600; }
         td, dd { font-variant-numeric: tabular-nums; }
-        code, pre, td, dd, p { overflow-wrap: anywhere; }
+        h1, h2, h3, code, pre, th, td, dd, p, li { overflow-wrap: anywhere; }
         pre {
             padding: 16px;
             background: var(--canvas);
@@ -106,7 +107,7 @@ public static class HtmlReportWriter
             body { background: white; color: black; }
             main { max-width: none; padding: 0; }
             section { border: 0; padding: 8px 0; margin: 8px 0; }
-            h1, h2 { break-after: avoid; }
+            h1, h2, h3 { break-after: avoid; }
             audio { display: none; }
             .table-wrap { overflow: visible; }
             table.checks { min-width: 0; }
@@ -146,6 +147,7 @@ public static class HtmlReportWriter
         AppendOverview(document, result);
         AppendFindings(document, result);
         AppendChecks(document, result);
+        AppendServer(document, result);
         AppendAudio(document, result);
 
         await using var writer = new StreamWriter(
@@ -349,6 +351,94 @@ public static class HtmlReportWriter
         document.Append("</section>");
     }
 
+    /// <summary>Appends selected server claims with their metadata sources and coverage.</summary>
+    private static void AppendServer(StringBuilder document, DiagnosticRunResult result)
+    {
+        document.Append("""
+            <section aria-labelledby="server-title">
+            <h2 id="server-title">Reported server metadata</h2>
+            <p>Server claims and configured defaults are separate from verified speech and audio results.</p>
+            """);
+
+        if (result.Server is not { } server)
+        {
+            document.Append("<p>No server metadata was recorded.</p></section>");
+            return;
+        }
+
+        document.Append("""
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Reported server identity">
+            <table><caption>Selected identity and readiness claims</caption><tbody>
+            """);
+        AppendRow(document, "Reported service", server.Service ?? "Not reported");
+        AppendRow(document, "Reported version", server.Version ?? "Not reported");
+        AppendRow(document, "Reported synthesis readiness", GetReadinessLabel(result));
+        AppendRow(document, "Identity source route", server.IdentitySourceRoute ?? "Not reported");
+        AppendRow(document, "Version source route", server.VersionSourceRoute ?? "Not reported");
+        AppendRow(document, "Readiness source route", server.ReadinessSourceRoute ?? "Not reported");
+        AppendRow(document, "Client readiness observation time", server.ReadinessObservedAtUtc is { } observed
+            ? FormatUtc(observed) : "Not reported");
+        document.Append("</tbody></table></div>");
+
+        AppendServerSettings(document, server);
+        document.Append("<h3>Advertised voices</h3><p>Source route: <code>")
+            .Append(Encode(server.VoicesSourceRoute ?? "Not reported")).Append("</code>.</p>")
+            .Append(server.AdvertisedVoicesComplete
+                ? "<p>A complete advertised voice list was received.</p>"
+                : "<p>Voice discovery was unavailable or incomplete. A missing ID does not establish that a voice is unavailable.</p>");
+
+        if (server.AdvertisedVoices.Count == 0)
+        {
+            document.Append(server.AdvertisedVoicesComplete
+                ? "<p>The reported list is empty.</p>"
+                : "<p>No voice IDs were retained.</p>");
+            document.Append("</section>");
+            return;
+        }
+
+        document.Append("<details><summary>Retained voice IDs: ")
+            .Append(Number(server.AdvertisedVoices.Count, "0")).Append("</summary><ul>");
+        foreach (var voice in server.AdvertisedVoices)
+            document.Append("<li><code>").Append(Encode(voice)).Append("</code></li>");
+        document.Append("</ul></details></section>");
+    }
+
+    /// <summary>Appends allowlisted capabilities and defaults while preserving unknown claims.</summary>
+    private static void AppendServerSettings(StringBuilder document, DiagnosticServerEvidence server)
+    {
+        document.Append("<h3>Reported capabilities and defaults</h3>");
+        if (server.StatusSnapshot is not { } status)
+        {
+            document.Append("<p>Capabilities and defaults were not reported.</p>");
+            return;
+        }
+
+        document.Append("<p>Source route: <code>").Append(Encode(server.StatusSourceRoute ?? "Not reported"))
+            .Append("</code>.</p>")
+            .Append("""
+                <div class="table-wrap" tabindex="0" role="region" aria-label="Reported capabilities and defaults">
+                <table><caption>Configured values reported by the server</caption><tbody>
+                """);
+        AppendRow(document, "Base voice dialect", status.BaseVoiceDialect ?? "Not reported");
+        AppendRow(document, "Model sample rate", ReportedNumber(status.SampleRateHz, "0", " Hz"));
+        AppendRow(document, "Voice cloning enabled", ReportedFlag(status.VoiceCloningEnabled));
+        AppendRow(document, "Voice cloning available", ReportedFlag(status.VoiceCloningAvailable));
+        AppendRow(document, "WAV support", ReportedFlag(status.WavAvailable));
+        AppendRow(document, "Configured sample rate", status.DefaultSampleRate == 0
+            ? "0 (no sample rate override)" : ReportedNumber(status.DefaultSampleRate, "0", " Hz"));
+        AppendRow(document, "Default pitch", ReportedNumber(status.DefaultPitch));
+        AppendRow(document, "Default volume", ReportedNumber(status.DefaultVolume));
+        AppendRow(document, "Volume booster", ReportedNumber(status.VolumeBoosterDb, "0.###", " dB"));
+        AppendRow(document, "Default total gain", ReportedNumber(status.DefaultTotalGainDb, "0.###", " dB"));
+        AppendRow(document, "Text length limit", !status.TextLimitKnown ? "Not reported"
+            : status.MaxTextLength is { } limit ? Number(limit, "0", " characters")
+            : "No configured limit (explicit null)");
+        AppendRow(document, "Rate limit permits", ReportedNumber(status.RateLimit?.PermitLimit, "0"));
+        AppendRow(document, "Rate limit window", ReportedNumber(status.RateLimit?.WindowSeconds, "0.###", " s"));
+        AppendRow(document, "Rate limit queue", ReportedNumber(status.RateLimit?.QueueLimit, "0"));
+        document.Append("</tbody></table></div>");
+    }
+
     /// <summary>Appends every recorded check in execution order.</summary>
     private static void AppendChecks(
         StringBuilder document,
@@ -357,7 +447,7 @@ public static class HtmlReportWriter
         document.Append("""
             <section aria-labelledby="checks-title">
             <h2 id="checks-title">Checks</h2>
-            <div class="table-wrap">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Diagnostic checks">
             <table class="checks">
             <caption>Ordered diagnostic observations</caption>
             <thead>
@@ -402,6 +492,12 @@ public static class HtmlReportWriter
             "<section aria-labelledby=\"audio-title\">" +
             "<h2 id=\"audio-title\">Audio evidence</h2>");
 
+        if (result.Mode == DiagnosticMode.Inspect)
+        {
+            document.Append("<p>Speech generation and audio inspection were not requested in inspection mode.</p>");
+            return;
+        }
+
         if (result.Audio is not { } audio)
         {
             document.Append("<p>Audio inspection was not completed.</p>");
@@ -411,7 +507,7 @@ public static class HtmlReportWriter
         var inspection = audio.Inspection;
 
         document.Append("""
-            <div class="table-wrap">
+            <div class="table-wrap" tabindex="0" role="region" aria-label="Audio measurements">
             <table>
             <caption>Received payload and observed audio measurements</caption>
             <tbody>
@@ -505,7 +601,7 @@ public static class HtmlReportWriter
     {
         if (result.ExecutionState != DiagnosticExecutionState.Completed)
         {
-            return result.ExecutionState switch
+            var message = result.ExecutionState switch
             {
                 DiagnosticExecutionState.Cancelled =>
                     "The run was cancelled. Available observations are preserved.",
@@ -513,11 +609,26 @@ public static class HtmlReportWriter
                     "The run exceeded its allowed time. Available observations are preserved.",
                 _ => "The utility could not complete the diagnostic run."
             };
+
+            return result.Mode == DiagnosticMode.Inspect
+                ? message + " Speech generation was not tested."
+                : message;
         }
+
+        var primary = result.Checks.FirstOrDefault(check =>
+            check.Role == DiagnosticCheckRole.Required &&
+            check.Status is DiagnosticCheckStatus.Failed or DiagnosticCheckStatus.Error);
 
         if (result.Mode == DiagnosticMode.Inspect)
         {
-            return "Inspection completed. Speech generation was not tested.";
+            var message = result.Outcome switch
+            {
+                DiagnosticOutcome.Passed or DiagnosticOutcome.PassedWithWarnings =>
+                    "The server reported the expected identity and that synthesis was ready.",
+                DiagnosticOutcome.Failed => primary?.Summary ?? "Inspection failed a required metadata check.",
+                _ => "Inspection could not establish the required metadata."
+            };
+            return message + " Speech generation was not tested.";
         }
 
         if (result.Outcome is
@@ -525,10 +636,6 @@ public static class HtmlReportWriter
         {
             return "Speech generation verified from this client.";
         }
-
-        var primary = result.Checks.FirstOrDefault(check =>
-            check.Role == DiagnosticCheckRole.Required &&
-            check.Status is DiagnosticCheckStatus.Failed or DiagnosticCheckStatus.Error);
 
         return primary?.Summary ?? "Speech generation could not be verified.";
     }
@@ -674,6 +781,18 @@ public static class HtmlReportWriter
             ? number.ToString(format, CultureInfo.InvariantCulture) + unit
             : "Not measured";
     }
+
+    /// <summary>Formats a reported numeric claim without inventing an unknown value.</summary>
+    private static string ReportedNumber(double? value, string format = "0.###", string unit = "") =>
+        value is null ? "Not reported" : Number(value, format, unit);
+
+    /// <summary>Distinguishes reported false from an unavailable capability claim.</summary>
+    private static string ReportedFlag(bool? value) => value switch
+    {
+        true => "Yes",
+        false => "No",
+        null => "Not reported"
+    };
 
     /// <summary>Distinguishes undefined silent levels from missing measurements.</summary>
     private static string Decibels(double? value, AudioSignalState state)
