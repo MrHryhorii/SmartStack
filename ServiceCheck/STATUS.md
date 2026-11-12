@@ -1,12 +1,12 @@
 # Tsubaki Service Check status
 
-Last verified: 2026-11-11 UTC.
+Last verified: 2026-11-12 UTC.
 
 Implementation status: Phases 1 and 2 complete; Phase 3 in progress.
 Phase 2 milestone: metadata collection and both diagnostic modes verified.
-Phase 3 milestone: bounded report import and pure offline comparison verified.
+Phase 3 milestone: report import, comparison CLI, and offline comparison reports verified.
 Release status: version 0.1.0 remains in development.
-Next implementation step: comparison command and offline comparison reports.
+Next implementation step: report review and release documentation.
 
 Tsubaki Service Check is an independent command-line utility for checking
 configured local and remote Tsubaki HTTP services.
@@ -14,7 +14,7 @@ configured local and remote Tsubaki HTTP services.
 ## Implemented
 
 - .NET 10 Core, CLI, and executable regression projects.
-- `init`, `inspect`, `check`, `--help`, and `--version` commands.
+- `init`, `inspect`, `check`, `compare`, `--help`, and `--version` commands.
 - Bounded JSON profile loading, validation, and URL normalization.
 - Relative route resolution that preserves reverse-proxy prefixes.
 - Bounded DNS resolution with IPv4/IPv6 address handling.
@@ -38,6 +38,8 @@ configured local and remote Tsubaki HTTP services.
 - Temporary-file publication, collision protection, and surviving-file reporting.
 - Bounded offline import and validation of version 1 diagnostic JSON reports.
 - Pure before-and-after comparison with explicit context and coverage limits.
+- Canonical comparison JSON and self-contained comparison HTML.
+- Comparison publication without copying or opening referenced audio files.
 
 The client is independent of the inference server and its model,
 GPU, and native audio dependencies.
@@ -145,13 +147,45 @@ random-number access. Creation metadata is normalized to UTC.
 
 Verified on 2026-11-11 UTC: Core and regression Release builds succeeded.
 The complete suite passed 319 checks with 0 failures, including 37 new pure
-comparison checks. The comparison CLI and report publication are pending.
+comparison checks.
+
+## Comparison command and artifacts
+
+```text
+TsubakiCheck compare --before <report.json> --after <report.json> --output <directory> [--open]
+```
+
+The command loads both reports through the bounded importer and preserves
+their explicit before/after order. It makes no server requests, resolves no
+stored URLs, and opens no referenced WAV files.
+
+Each comparison publishes a new directory containing `comparison.json` and
+`comparison.html`. JSON uses the shared UTC, textual enum, explicit-null,
+and UTF-8 rules. HTML encodes recorded text, includes its styles, requires
+no JavaScript, and blocks external resources through its document policy.
+
+The HTML includes comparison context, source identity and outcomes,
+findings, paired checks, and selected settings and measurements.
+Missing values remain distinct from explicit-null claims. Check status
+changes and descriptive field differences retain their comparison limits.
+
+Publication uses controlled filenames, validated output identifiers, a
+staging directory, no-overwrite file moves, and a 10-second writing budget.
+Output failures retain available working paths. The comparison result
+contains no runtime audio bytes, and source files remain unchanged.
+
+A successfully published comparison returns 0, including when a source
+diagnostic run failed or was incomplete. Invalid arguments or input reports
+return 2; internal or publication failures return 3; caller cancellation
+returns 130. Opening the HTML is optional and does not change comparison
+success if the system cannot launch a viewer.
 
 ## Regression verification
 
 Environment: Windows, .NET SDK 10.0.302.
 
-Latest result: 319 checks passed, 0 failed.
+Latest result, 2026-11-12 UTC: 335 checks passed, 0 failed.
+Core, CLI, and regression Release builds succeeded.
 
 The suite covers profiles, URL rules, HTTP behavior, response limits,
 deadlines, cancellation, secret redaction, WAV parsing, signal metrics,
@@ -182,6 +216,13 @@ new or missing coverage; interrupted execution; typed values; partial voice
 lists; explicit-null limits; descriptive timing/audio differences; ordinal
 identity; culture independence; deterministic metadata; and source preservation.
 
+The 16 comparison export checks cover the JSON contract and unsupported
+schema, encoded hostile text, missing and explicit-null values, offline
+references, runtime audio exclusion, source-file preservation, directory
+and file collisions, unsafe identifiers, output errors, cancellation before
+and during HTML writing, stream failures and ownership, culture independence,
+and exclusion of credentials, original input text, and cookies.
+
 Reference commands, run independently from the repository root:
 
 ```powershell
@@ -195,6 +236,44 @@ dotnet build .\ServiceCheck\Tests\Tsubaki.ServiceCheck.Regression.csproj --confi
 ```powershell
 .\ServiceCheck\Tests\bin\Release\net10.0\Tsubaki.ServiceCheck.Regression.exe
 ```
+
+## Phase 3 offline comparison verification
+
+Verified on 2026-11-12 UTC using previously captured real diagnostic reports.
+The comparison performed no new server diagnostics.
+
+CLI informational version reported by the tested binary:
+
+`0.1.0-dev+944ae919bdf6fbbdb8a74411f137013f27313151`
+
+| Observation | Before | After |
+| --- | --- | --- |
+| Run ID | `20261108T215027Z_2193953cf5f7` | `20261109T154055Z_6d7cf935cab7` |
+| Target ID | `tsubaki-local` | `tsubaki-local` |
+| URL | `http://127.0.0.1:5046/` | `http://127.0.0.1:5045/` |
+| Mode | `check` | `check` |
+| Outcome | `failed` | `passed` |
+| Speech request | `connection_refused` | `speech_response_received` |
+| Audio container and signal | Skipped after request failure | Passed |
+
+Comparison ID: `20261112T101718Z_95caa196f470`.
+
+- Process exit code: 0.
+- Both JSON and HTML were published and inspected.
+- JSON retained 10 paired checks and 130 selected field comparisons.
+- Configured target ID, mode, and speech request fingerprint matched.
+- URL and effective profile fingerprints differed.
+- Earlier metadata and network gaps stayed explicit.
+- Different source utility versions were identified as coverage context.
+- Timing changes remained individual client observations.
+- Runtime audio payloads were absent from the exported JSON.
+- The HTML opened in the system browser.
+- A desktop screenshot confirmed the header, comparison context, and upper
+  source-run table were readable and aligned.
+
+The `compare --help` output was verified. Passing
+`ServiceCheck/tsubaki.local.json` as the before report produced a clear
+invalid-before-report message and process exit code 2.
 
 ## Phase 2 live local verification
 
@@ -347,21 +426,24 @@ ignore rules.
 
 Report publication uses an independent writing budget so a cancelled
 diagnostic can still produce a report.
+Comparison publication uses its own writing budget linked to command
+cancellation and publishes only JSON and HTML.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Required checks passed; supporting warnings are allowed |
-| 1 | Completed run with a failed required check |
-| 2 | Invalid arguments, profile, or configured authentication |
+| 0 | Required diagnostic checks passed, or a comparison was published; supporting diagnostic warnings are allowed |
+| 1 | Completed diagnostic run with a failed required check |
+| 2 | Invalid arguments, profile, authentication, or input report |
 | 3 | Incomplete diagnostics, unsupported required coverage, internal error, or output failure |
 | 130 | User cancellation |
 
 ## Current limits
 
-The pure comparison Core API is implemented. The compare CLI command and
-comparison.json/comparison.html publication remain pending.
+The offline comparison block is complete: bounded import, pure comparison,
+CLI execution, and JSON/HTML publication are implemented and verified.
+Version 0.1.0 remains in development while the remaining Phase 3 work is completed.
 
 Identity and readiness are server-reported claims. A successful inspection
 does not establish that synthesis works.
@@ -378,8 +460,9 @@ Self-contained Windows x64 and Linux x64 distributions are planned for Phase 3.
 Linux launch and regression verification remain pending.
 
 Live remote HTTP/HTTPS and bearer deployments remain unverified.
-Interactive Ctrl+C verification and narrow-screen/print visual review
-remain pending. Cancellation and redaction behavior have fixture coverage.
+Interactive Ctrl+C verification, whole-report desktop review, and
+narrow-screen/print visual review remain pending. Cancellation and
+redaction behavior have fixture coverage.
 
 ## Target platforms and planned integration
 
@@ -393,8 +476,7 @@ for this independent-client integration path.
 
 ## Phase 3 priorities
 
-1. Add the compare CLI command and bounded JSON/offline HTML comparison publication.
-2. Complete the report layout and desktop, narrow-screen, and print review.
-3. Add sanitized example profiles and a README for both target platforms.
-4. Publish self-contained Windows x64 and Linux x64 builds.
-5. Verify Linux operation, a genuine LAN client/server run, and interactive cancellation.
+1. Complete the report layout and desktop, narrow-screen, and print review.
+2. Add sanitized example profiles and a README for both target platforms.
+3. Publish self-contained Windows x64 and Linux x64 builds.
+4. Verify Linux operation, a genuine LAN client/server run, and interactive cancellation.

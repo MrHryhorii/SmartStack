@@ -1,11 +1,12 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Tsubaki.ServiceCheck.Core.Comparison;
 using Tsubaki.ServiceCheck.Core.Diagnostics;
 
 namespace Tsubaki.ServiceCheck.Core.Reports;
 
-/// <summary>Serializes and parses canonical diagnostic reports.</summary>
+/// <summary>Serializes canonical reports and parses diagnostic inputs.</summary>
 public static class ReportJson
 {
     internal const int MaximumInputBytes = 8 * 1024 * 1024;
@@ -35,7 +36,7 @@ public static class ReportJson
         RespectRequiredConstructorParameters = true
     };
 
-    /// <summary>Serializes a supported result as UTF-8 JSON without a BOM.</summary>
+    /// <summary>Serializes a diagnostic result as UTF-8 JSON without a BOM.</summary>
     public static byte[] Serialize(DiagnosticRunResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
@@ -43,6 +44,19 @@ public static class ReportJson
         if (result.SchemaVersion != 1)
             throw new ArgumentException(
                 "Unsupported diagnostic result schema version.",
+                nameof(result));
+
+        return JsonSerializer.SerializeToUtf8Bytes(result, Options);
+    }
+
+    /// <summary>Serializes a comparison as UTF-8 JSON without a BOM.</summary>
+    public static byte[] Serialize(RunComparisonResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        if (result.SchemaVersion != 1)
+            throw new ArgumentException(
+                "Unsupported comparison result schema version.",
                 nameof(result));
 
         return JsonSerializer.SerializeToUtf8Bytes(result, Options);

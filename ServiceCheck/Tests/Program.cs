@@ -121,7 +121,8 @@ internal static class Program
             .. MetadataInspectionChecks.CreateChecks(),
             .. DiagnosticModeChecks.CreateChecks(),
             .. ReportImportChecks.CreateChecks(),
-            .. RunComparisonChecks.CreateChecks()
+            .. RunComparisonChecks.CreateChecks(),
+            .. ComparisonExportChecks.CreateChecks()
         ];
 
         var failures = 0;

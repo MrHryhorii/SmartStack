@@ -23,6 +23,7 @@ internal static class Program
             ["init", "--help"] or ["init", "-h"] => ShowHelp(),
             ["check", "--help"] or ["check", "-h"] => ShowHelp(),
             ["inspect", "--help"] or ["inspect", "-h"] => ShowHelp(),
+            ["compare", "--help"] or ["compare", "-h"] => ShowHelp(),
             ["init", "--output", var path] =>
                 await InitializeProfileAsync(path),
             ["check", .. var checkArguments] =>
@@ -35,6 +36,10 @@ internal static class Program
                     inspectArguments,
                     GetVersion(),
                     DiagnosticMode.Inspect),
+            ["compare", .. var comparisonArguments] =>
+                await CompareCommand.ExecuteAsync(
+                    comparisonArguments,
+                    GetVersion()),
             _ => ShowArgumentError()
         };
     }
@@ -52,6 +57,8 @@ internal static class Program
               TsubakiCheck init --output <profile.json>
               TsubakiCheck inspect --profile <profile.json> --output <directory> [--open]
               TsubakiCheck check --profile <profile.json> --output <directory> [--open]
+              TsubakiCheck compare --before <report.json> --after <report.json>
+                                   --output <directory> [--open]
 
             Commands:
               init     Create an editable target profile.
@@ -60,18 +67,23 @@ internal static class Program
                        Speech generation is not tested.
               check    Inspect the service, send one non-streaming speech request,
                        verify PCM16 WAV audio, and save reports.
+              compare  Compare two saved diagnostic reports without server access,
+                       and save JSON and offline HTML comparison reports.
 
             Options:
               -h, --help       Show usage information.
               --version        Show the utility version.
               --profile <path> Select the target profile for inspect or check.
+              --before <path>  Select the diagnostic report used as the before input.
+              --after <path>   Select the diagnostic report used as the after input.
               --output <path>  Select the profile file or report output directory.
               --open           Open the newly published HTML report.
 
             Exit codes:
-              0    Required checks passed; supporting warnings are allowed.
-              1    A completed run contains a failed required check.
-              2    Invalid arguments, profile, or configured authentication.
+              0    Required diagnostic checks passed, or a comparison was published.
+                   Supporting diagnostic warnings are allowed.
+              1    A completed diagnostic run contains a failed required check.
+              2    Invalid arguments, profile, authentication, or input report.
               3    Incomplete diagnostics, internal error, or report publication failure.
               130  User cancellation.
 
