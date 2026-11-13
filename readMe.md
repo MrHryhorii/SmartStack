@@ -45,10 +45,19 @@ Do not treat the default VAD profile or model size as universal production setti
 
 No standalone Mwandishi STT binary release is currently published in the repository; build instructions are included in its documentation.
 
+## Tsubaki Service Check
+
+A standalone command-line utility for local and remote Tsubaki server diagnostics. It checks connectivity and reported readiness, verifies a test WAV response, and saves offline reports for review and comparison. Portable builds are available for Windows x64 and Linux x64.
+
+**Documentation and source:**
+
+- [Tsubaki Service Check documentation and example profiles](https://github.com/MrHryhorii/SmartStack/tree/main/ServiceCheck)
+
 ## Repository
 
 - [SmartStack source code](https://github.com/MrHryhorii/SmartStack)
 - [Tsubaki TTS Engine](https://github.com/MrHryhorii/SmartStack/tree/main/ONNX_Runner)
 - [Mwandishi STT](https://github.com/MrHryhorii/SmartStack/tree/main/STT_Runner)
+- [Tsubaki Service Check](https://github.com/MrHryhorii/SmartStack/tree/main/ServiceCheck)
 
-Both projects are designed to run locally and keep speech processing on the user's machine.
+The speech servers are designed to run locally and keep speech processing on the user's machine.
