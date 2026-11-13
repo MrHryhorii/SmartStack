@@ -1,225 +1,204 @@
 # Tsubaki Service Check
 
-A standalone .NET diagnostic utility for local and remote Tsubaki TTS services.
-Inspect connectivity and reported readiness, verify a speech response, and
-compare saved runs after a configuration change or server update.
+A standalone command-line utility for checking local and remote
+[Tsubaki TTS Engine](https://github.com/MrHryhorii/SmartStack) servers.
+It checks connectivity, reads server metadata, verifies a generated WAV response,
+and compares saved results after a configuration change or server update.
 
-The client needs no inference engine, model files, GPU libraries, or database.
-It connects to an existing Tsubaki HTTP or HTTPS endpoint and records what
-this client observed.
+Use it to confirm that a deployment is reachable from a particular computer,
+check whether synthesis works through the configured address, or save a report
+for troubleshooting. The client connects to an existing HTTP or HTTPS service;
+it needs no inference engine, model files, GPU libraries, or database.
 
-Version 0.1.0 is in development. Windows development builds and local server
-checks are verified. Portable publish commands for Windows x64 and Linux x64
-are documented below. Published-package verification and native Linux
-verification are pending. See [STATUS.md](STATUS.md) for current results and
-remaining work, and [WALKTHROUGH.md](WALKTHROUGH.md) for a practical guide.
+- [Walkthrough](WALKTHROUGH.md): a complete workflow with practical examples.
+- [Verification and limitations](STATUS.md): tested platforms, recorded results,
+  and the scope of the checks.
+- [Example profiles](#example-profiles): local, LAN, and HTTPS configurations.
+- [Build from source](#build-from-source): development and portable builds.
 
-## Build and run
+## Choose a command
 
-### Development build
+| Command | Purpose | Uses the server |
+| --- | --- | --- |
+| `init` | Create an editable JSON profile with local defaults. | No |
+| `inspect` | Check connectivity and reported identity, readiness, and voices. | Yes; no speech request |
+| `check` | Inspect the service, send one speech request, and verify its audio. | Yes |
+| `compare` | Compare two saved diagnostic JSON reports and publish an offline comparison. | No |
 
-Building from source requires the .NET 10 SDK. Run these commands from the
-repository root:
+Each diagnostic command prints a summary and saves JSON and HTML reports.
+The HTML works offline and includes audio playback when a supported WAV is retained.
 
-```sh
-dotnet build ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release
+## Get started with a portable build
+
+Download the matching archive from the
+[Service Check release](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakicheck-v0.1.0)
+and extract it into a writable directory.
+
+| Platform | Executable |
+| --- | --- |
+| Windows x64 | `TsubakiCheck.exe` |
+| Linux x64 | `TsubakiCheck` |
+
+Portable builds include their .NET runtime. They require no separate .NET SDK
+or runtime installation. Compatible operating-system libraries are still required.
+Windows x64 and Ubuntu 24.04.5 LTS x64 have been exercised; see
+[STATUS.md](STATUS.md) for the verified scope.
+
+### Windows PowerShell
+
+Open PowerShell in the extracted directory:
+
+```powershell
+.\TsubakiCheck.exe --version
 ```
 
-```sh
-dotnet ./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll --help
+Create a new profile:
+
+```powershell
+.\TsubakiCheck.exe init --output ".\target.json"
 ```
 
-The DLL launcher uses the same command arguments on Windows and Linux.
-On Windows, the build also creates `TsubakiCheck.exe` in the same output directory.
-The development output requires an installed .NET 10 runtime.
+The default address is `http://127.0.0.1:5045/`. Start the server at that address,
+or edit `target.baseUrl` in `target.json` to match your deployment. Then run:
 
-### Portable Windows x64 build
-
-Run from the repository root with the .NET 10 SDK:
-
-```sh
-dotnet publish ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:DebugType=embedded --output ./ServiceCheck/Cli/bin/Release/portable/win-x64
+```powershell
+.\TsubakiCheck.exe inspect --profile ".\target.json" --output ".\runs"
 ```
 
-Executable: `ServiceCheck/Cli/bin/Release/portable/win-x64/TsubakiCheck.exe`.
-
-### Portable Linux x64 build
-
-Run from the repository root with the .NET 10 SDK:
-
-```sh
-dotnet publish ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:DebugType=embedded --output ./ServiceCheck/Cli/bin/Release/portable/linux-x64
+```powershell
+.\TsubakiCheck.exe check --profile ".\target.json" --output ".\runs" --open
 ```
 
-Executable: `ServiceCheck/Cli/bin/Release/portable/linux-x64/TsubakiCheck`.
+### Linux Bash
 
-These commands produce platform-specific, self-contained single-file
-executables. The matching .NET runtime is included, so the target computer
-needs no separately installed .NET SDK or runtime. Compatible operating-system
-libraries are still required, including the native dependencies of .NET on Linux.
-
-Trimming is explicitly disabled for the current reflection-based JSON
-serialization. Debug symbols are embedded. Bundled native runtime libraries
-are extracted into the .NET host's per-user cache at startup. Profiles and
-input reports remain ordinary external files selected by command arguments.
-
-Copy the matching executable to the desired tools directory and run it
-directly, without the `dotnet` launcher. On Linux, preserve or restore its
-execute permission after transfer. For example, after copying it to
-`$HOME/tools/tsubaki-check/TsubakiCheck`:
+Open a terminal in the extracted directory and restore execute permission:
 
 ```bash
-chmod +x "$HOME/tools/tsubaki-check/TsubakiCheck"
+chmod +x ./TsubakiCheck
 ```
 
-Verify each published executable on its target platform. Successful publishing
-alone does not verify native Linux execution or access to a server from another
-computer. Package verification remains pending in [STATUS.md](STATUS.md).
+```bash
+./TsubakiCheck --version
+```
 
-For details about these SDK options, see Microsoft's
-[single-file deployment documentation](https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview)
-and [`dotnet publish` reference](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-publish).
+Create a new profile:
+
+```bash
+./TsubakiCheck init --output "./target.json"
+```
+
+Edit `target.baseUrl` before continuing if the server runs on another computer.
+Loopback addresses such as `127.0.0.1` refer to the computer running this client.
+
+```bash
+./TsubakiCheck inspect --profile "./target.json" --output "./runs"
+```
+
+```bash
+./TsubakiCheck check --profile "./target.json" --output "./runs" --open
+```
+
+`init` requires an existing parent directory and preserves an existing profile.
+Diagnostic output directories are created when needed. Every publication receives
+a unique run directory, so earlier reports are preserved.
+
+`--open` asks the system viewer to open the new HTML report. You can also open
+the printed HTML path manually. Viewer-launch errors and browser messages should
+be considered separately from the utility's diagnostic result and exit code.
+
+## Example profiles
+
+The `Examples` directory contains complete profiles with the default routes,
+speech settings, deadlines, response limits, and audio retention enabled.
+Copy a profile to your own working file and edit that copy before use.
+
+| Profile | Intended use | Setting to review |
+| --- | --- | --- |
+| [tsubaki.local.json](Examples/tsubaki.local.json) | Server on the same computer, without authentication. | `http://127.0.0.1:5045/` |
+| [tsubaki.lan.json](Examples/tsubaki.lan.json) | Server on another computer in the local network. | Replace `http://192.168.1.25:5045/` with its reachable address. |
+| [tsubaki.bearer.json](Examples/tsubaki.bearer.json) | HTTPS service or reverse proxy requiring a bearer token. | Replace `https://tts.example.test/tsubaki/` and set `TSUBAKI_CHECK_TOKEN`. |
+
+The LAN address and HTTPS hostname are examples. The bearer profile configures
+the client; it does not enable authentication on the server or proxy.
+
+The example target IDs describe separate configurations. When two profiles refer
+to the same logical deployment, give them the same `target.id` before collecting
+runs you want to compare. The display name can differ. A shared ID is a configured
+label, not proof of physical server identity.
+
+## Commands and saved comparisons
+
+```text
+TsubakiCheck --help
+TsubakiCheck --version
+TsubakiCheck init --output <profile.json>
+TsubakiCheck inspect --profile <profile.json> --output <directory> [--open]
+TsubakiCheck check --profile <profile.json> --output <directory> [--open]
+TsubakiCheck compare --before <report.json> --after <report.json> --output <directory> [--open]
+```
+
+The command name above represents the executable for your platform. All file
+arguments are explicit; there is no automatic profile selection.
+
+To compare runs, use the `report.json` paths printed by two earlier diagnostics.
+For example, in PowerShell:
+
+```powershell
+.\TsubakiCheck.exe compare --before ".\runs\BEFORE_RUN_ID\report.json" --after ".\runs\AFTER_RUN_ID\report.json" --output ".\comparisons" --open
+```
+
+Or in Bash:
+
+```bash
+./TsubakiCheck compare --before "./runs/BEFORE_RUN_ID/report.json" --after "./runs/AFTER_RUN_ID/report.json" --output "./comparisons" --open
+```
+
+Replace `BEFORE_RUN_ID` and `AFTER_RUN_ID` with the actual directories.
+The selected order is preserved even when timestamps are reversed. Comparison
+opens its inputs read-only, contacts no server, and loads no referenced WAV files.
+Inputs must be schema version 1 diagnostic reports, each no larger than 8 MiB;
+profiles and `comparison.json` files are not diagnostic inputs.
+
+The result shows recorded outcomes, changes in individual checks, selected
+settings and server claims, voice-list differences, audio measurements, and
+available timings. Differences in target, mode, request, or coverage are reported
+so that unrelated observations are not presented as directly comparable results.
+Comparison exit code 0 means the comparison was published, even if a source run failed.
 
 ## File paths and working directories
 
-Absolute file paths are used directly. Relative file paths are resolved from
-the current working directory of the invoking shell. The executable can be
-stored elsewhere. Its directory is independent of the location of profiles,
-input reports, and output directories.
+Relative paths are resolved from the shell's current working directory.
+Absolute paths work independently of that directory. Profiles, input reports,
+and output directories can be stored separately from the executable and source tree.
+Quote paths containing spaces.
 
 | Argument | Selected location |
 | --- | --- |
 | `init --output` | A new profile file in an existing parent directory. |
 | `inspect/check --profile` | An existing external profile file. |
-| `compare --before` and `--after` | Existing external diagnostic JSON files. |
+| `compare --before`, `--after` | Existing diagnostic JSON files. |
 | `inspect/check/compare --output` | The report output root, created when needed. |
 
-There is no implicit profile lookup beside the executable. Specify the path
-you intend to use. Output paths are independent of the profile's directory.
-Quote paths that contain spaces.
-
-### PowerShell example
-
-Assume the portable executable is stored at
-`C:\Tools\TsubakiCheck\TsubakiCheck.exe` and the separate working directory
-`C:\Work\TsubakiChecks` already exists:
+For example, with the executable under `C:\Tools\TsubakiCheck` and an existing
+profile in a separate work directory:
 
 ```powershell
-Set-Location 'C:\Work\TsubakiChecks'
+& 'C:\Tools\TsubakiCheck\TsubakiCheck.exe' check --profile 'C:\Work\TsubakiChecks\target.json' --output 'C:\Work\TsubakiChecks\Run reports'
 ```
 
-```powershell
-& 'C:\Tools\TsubakiCheck\TsubakiCheck.exe' init --output '.\local.json'
-```
-
-Edit `local.json` for the deployment if needed, then run:
-
-```powershell
-& 'C:\Tools\TsubakiCheck\TsubakiCheck.exe' check --profile '.\local.json' --output '.\runs' --open
-```
-
-This reads `C:\Work\TsubakiChecks\local.json` and publishes beneath
-`C:\Work\TsubakiChecks\runs`. The tool directory contains the executable;
-the separate working directory contains the selected data.
-
-Use absolute arguments to keep the same locations from any working directory:
-
-```powershell
-& 'C:\Tools\TsubakiCheck\TsubakiCheck.exe' check --profile 'C:\Work\TsubakiChecks\local.json' --output 'C:\Work\TsubakiChecks\runs'
-```
-
-### Bash example
-
-With the Linux executable stored at `$HOME/tools/tsubaki-check/TsubakiCheck`
-and execute permission set, create a separate working directory:
+The corresponding Bash pattern is:
 
 ```bash
-mkdir -p "$HOME/tsubaki-checks"
+"$HOME/tools/tsubaki-check/TsubakiCheck" check --profile "$HOME/tsubaki-checks/target.json" --output "$HOME/tsubaki-checks/Run reports"
 ```
 
-```bash
-cd "$HOME/tsubaki-checks"
-```
-
-```bash
-"$HOME/tools/tsubaki-check/TsubakiCheck" init --output './local.json'
-```
-
-Edit `local.json` for the deployment if needed, then run:
-
-```bash
-"$HOME/tools/tsubaki-check/TsubakiCheck" check --profile './local.json' --output './runs' --open
-```
-
-The profile and output paths are beneath `$HOME/tsubaki-checks`. The executable
-remains in its tools directory. On another computer, set `target.baseUrl` to
-the server's reachable address before running the check.
-
-## Quick start
-
-### Create a target profile
-
-```sh
-dotnet ./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll init --output "./ServiceCheck/my-target.json"
-```
-
-`init` creates a new file in an existing parent directory. It preserves an
-existing file at the selected path.
-
-The generated profile targets `http://127.0.0.1:5045/` with the default Tsubaki
-routes, voice `piper_base`, compatibility model label `tts-1`, WAV output,
-and a short English input sentence. Edit the target URL and speech settings
-before running against another deployment.
-
-### Inspect the service
-
-```sh
-dotnet ./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll inspect --profile "./ServiceCheck/my-target.json" --output "./ServiceCheck/runs" --open
-```
-
-Inspection collects DNS/TCP observations and health, status, and voice metadata.
-Its required checks are the expected service identity and server-reported
-synthesis readiness. The report explicitly states that speech generation
-was not tested.
-
-### Verify speech generation
-
-```sh
-dotnet ./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll check --profile "./ServiceCheck/my-target.json" --output "./ServiceCheck/runs" --open
-```
-
-The active check collects the same service observations and sends at most one
-non-streaming speech POST. Its required checks are a successful speech response,
-a supported PCM16 WAV container, and nonzero samples.
-
-Restricted metadata and an unready server claim remain visible as findings.
-The active speech request is still attempted while the run remains active.
-
-### Compare saved runs
-
-```sh
-dotnet ./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll compare --before "./ServiceCheck/runs/BEFORE_RUN_ID/report.json" --after "./ServiceCheck/runs/AFTER_RUN_ID/report.json" --output "./ServiceCheck/runs" --open
-```
-
-Replace the two run-directory placeholders with paths printed by earlier runs.
-The inputs must be diagnostic `report.json` files. Their explicit before/after
-order is preserved, including when their timestamps are reversed.
-
-Comparison runs offline, opens the input files read-only, and loads no server
-URLs or referenced audio files. It exports the source outcomes, check transitions,
-selected field differences, and limits on what can be compared.
-
-All diagnostic and comparison commands require an output directory argument.
-The directory is created when needed. Each publication receives a unique
-subdirectory; existing output is preserved. `--open` launches the newly published
-HTML using the system viewer. A viewer-launch failure does not change the
-result of the completed diagnostic or comparison.
+Moving the executable does not change where absolute arguments point. Relative
+output paths are independent of the profile's directory and the executable's directory.
 
 ## Configure a profile
 
-Profiles are UTF-8 JSON with schema version 1. Unknown or duplicate properties,
-unsupported schemas, invalid settings, and files larger than 64 KiB are rejected.
-The generated profile includes all editable settings. A minimal profile is:
+Profiles are UTF-8 JSON with schema version 1. `init` and the examples expose
+all editable settings. A minimal valid profile is:
 
 ```json
 {
@@ -232,18 +211,18 @@ The generated profile includes all editable settings. A minimal profile is:
 }
 ```
 
-Omitted optional settings receive the client defaults. Keep `target.id` stable
-when comparing corrected configurations of the same logical target. The name
-is a display label; it is independent of the speech request fingerprint.
+Omitted optional settings receive defaults. Unknown or duplicate properties,
+unsupported schemas, invalid values, and files larger than 64 KiB are rejected.
+Use valid JSON without comments.
 
-`target.baseUrl` is the service root. For a reverse proxy, include its path
-prefix, such as `https://tts.example.test/tsubaki/`. Configured routes are
-relative to this root and preserve the prefix. A route must not begin with `/`
-or contain an absolute URL, traversal, query, or fragment.
+`target.baseUrl` is the HTTP or HTTPS service root. For a reverse proxy, include
+its prefix, for example `https://tts.example.test/tsubaki/`. Routes are relative
+to this root: `v1/audio/speech` resolves beneath that prefix. Routes must not
+start with `/` or contain an absolute URL, traversal, query, or fragment.
 
 ### Default routes
 
-| Profile property under `routes` | Default value |
+| Property under `routes` | Default value |
 | --- | --- |
 | `health` | `health` |
 | `healthFallback` | `v1/health` |
@@ -252,8 +231,8 @@ or contain an absolute URL, traversal, query, or fragment.
 | `speech` | `v1/audio/speech` |
 
 The health fallback is attempted only when the primary health route returns
-HTTP 404 or 405. Optional status or voice-route failures do not prevent the
-active speech check.
+HTTP 404 or 405. Status and voice-list failures remain visible and do not prevent
+an active speech check while the run remains active.
 
 ### Speech, deadlines, and retention
 
@@ -261,31 +240,35 @@ active speech check.
 | --- | --- |
 | `synthesis.model` | `tts-1` |
 | `synthesis.voice` | `piper_base` |
+| `synthesis.input` | `This is a Tsubaki service check.` |
 | `synthesis.responseFormat` | `wav` |
 | `synthesis.stream` | `false` |
 | `synthesis.speed` | `1.0` |
-| `timeoutsMs.dns` | `3000` |
-| `timeoutsMs.tcp` | `3000` |
-| `timeoutsMs.metadata` | `5000` |
-| `timeoutsMs.speech` | `60000` |
-| `timeoutsMs.run` | `90000` |
+| `timeoutsMs.dns` | `3000` ms |
+| `timeoutsMs.tcp` | `3000` ms |
+| `timeoutsMs.metadata` | `5000` ms |
+| `timeoutsMs.speech` | `60000` ms |
+| `timeoutsMs.run` | `90000` ms |
 | `limits.maxMetadataBytes` | `1048576` bytes |
 | `limits.maxAudioBytes` | `10485760` bytes |
 | `limits.maxInputCharacters` | `200` UTF-16 code units |
 | `output.retainAudio` | `true` |
 
-The active check currently requires non-streaming WAV. Speed must be finite
-and between 0.25 and 4.0. Speech input must contain non-whitespace text and
-fit the configured input cap. The run deadline bounds diagnostic execution
-across the individual operations.
+Speech verification supports non-streaming PCM16 WAV. Speed must be finite and
+between 0.25 and 4.0. Input must contain non-whitespace text and fit its configured cap.
+Deadlines are independent; the run deadline bounds diagnostic execution across
+the individual operations. Each configured timeout must be 1 to 900000 ms.
+Maximum configurable limits are 4 MiB for metadata, 64 MiB for audio, and
+10000 UTF-16 code units for speech input.
 
-Set `output.retainAudio` to `false` to keep audio measurements and hashes
-without exporting a WAV or embedding playback. Canonical JSON omits original
-speech input and runtime audio bytes; it records input length and SHA-256 instead.
+Set `output.retainAudio` to `false` to keep measurements and hashes without
+exporting a WAV or embedding playback. Diagnostic JSON omits the original input
+text and runtime audio bytes; it records input length and SHA-256 instead.
+Retained audio contains the synthesized speech and can be played from the HTML report.
 
 ### Bearer authentication
 
-In the profile, set `authentication` to:
+Use the bearer example or set this profile section:
 
 ```json
 {
@@ -294,89 +277,136 @@ In the profile, set `authentication` to:
 }
 ```
 
-Provide the variable in the shell that launches the utility.
-
-PowerShell:
+Set the variable in the shell that launches the utility. In PowerShell:
 
 ```powershell
 $env:TSUBAKI_CHECK_TOKEN = '<token>'
 ```
 
-Bash:
+Or in Bash:
 
 ```bash
 export TSUBAKI_CHECK_TOKEN='<token>'
 ```
 
-Replace `<token>` with the deployment credential. The profile stores the
-variable name. Missing or invalid configured authentication is rejected before
-network inspection. Resolved token values and original speech input are redacted
-from recorded diagnostic text. Cookie and authentication header values are not exported.
+Replace `<token>` with the deployment credential. The profile stores the variable
+name, not its value. Missing or invalid configured authentication is rejected
+before network inspection. Resolved token values and original speech input are
+redacted from recorded diagnostic text. Cookie and authentication header values
+are not exported.
 
 For unauthenticated deployments, use `"authentication": { "type": "none" }`
 and omit `tokenEnvironmentVariable`.
 
-## Local and remote access
+## Network behavior and result scope
 
-Use `127.0.0.1` when the client and server run on the same computer. From another
-computer, configure the server's reachable address and port. The server must
-listen on that access path, and the existing network configuration must permit it.
-The client does not change server bindings or firewall rules.
+For access from another computer, the server must listen on a reachable address
+and port, and the network must permit the connection. The utility does not change
+server bindings or firewall rules.
 
-HTTP requests connect directly, use normal TLS validation, and disable automatic
-redirects and system HTTP-proxy handling. A reverse proxy is supported through
-the configured service URL and relative route prefix. Speech requests are not retried.
+The client records DNS and direct TCP observations separately from HTTP results.
+IP literals skip DNS lookup. A TCP connection establishes port reachability;
+service identity and readiness come from recognized metadata. HTTP requests use
+normal TLS validation, no automatic redirects, and no system HTTP-proxy handling.
+An explicitly configured reverse proxy URL is supported. Speech requests are not retried.
 
-An inspection can help distinguish name resolution, direct TCP, metadata access,
-and server-reported readiness. These remain client observations. They do not
-identify remote GPU load, model files, or a particular firewall rule.
+In `inspect`, expected identity and server-reported readiness are required.
+Speech generation is not tested. In `check`, a successful speech response,
+a supported PCM16 WAV container, and nonzero samples are required. Metadata
+failures can remain supporting warnings while the speech check succeeds.
 
-## Read the output
+A successful speech check establishes a supported nonzero waveform. It does not
+establish intelligibility, pronunciation quality, language correctness, or speaker
+identity. Server metadata records claims rather than independently verified
+inference configuration. Durations include the client, network, server, and
+transfer; individual runs are not statistical benchmarks or isolated inference timings.
+
+## Reports and exit codes
 
 | Artifact | Content |
 | --- | --- |
-| `report.json` | Canonical diagnostic result, evidence, settings, timings, and available audio metrics. |
-| `report.html` | Offline diagnostic report with readable metadata, findings, checks, and optional playback. |
-| `sample.wav` | Retained supported response when enabled. |
-| `comparison.json` | Canonical comparison and both source diagnostic records. |
-| `comparison.html` | Offline before/after view with context, findings, paired checks, and selected fields. |
+| `report.json` | Diagnostic evidence, effective settings, timings, and available audio metrics. |
+| `report.html` | Offline diagnostic report with metadata, findings, checks, and optional playback. |
+| `sample.wav` | Optional retained supported WAV response. |
+| `comparison.json` | Comparison result and both source diagnostic records. |
+| `comparison.html` | Offline before/after view with context, findings, checks, and selected fields. |
 
-Required failures determine a completed diagnostic failure. Supporting metadata
-gaps can produce `passed_with_warnings` while speech verification succeeds.
-Missing required evidence or an interrupted run can leave the outcome `incomplete`.
-Deliberately omitted inspection audio checks are marked `not_requested`.
+Reports distinguish `passed`, `passed_with_warnings`, `failed`, and `incomplete`.
+Required failures determine completed diagnostic failure; missing required
+evidence or an interrupted run can leave diagnostics incomplete. Deliberately
+omitted inspection audio checks are marked `not_requested`.
 
-A successful speech check establishes a supported nonzero waveform. It does not
-establish intelligibility, pronunciation quality, language correctness, or speaker identity.
+HTML uses embedded styles and optional audio. Wide tables have horizontal
+scrolling regions. Browser print preview can be used for paper or PDF output;
+page breaks vary with the browser.
 
-Comparison identifies changed URLs, target IDs, modes, request fingerprints,
-settings, versions, and coverage. A changed URL does not establish physical
-server identity. A new audio hash is artifact evidence. Single-run durations
-include the client, access path, server processing, and transfer; they are
-descriptive measurements rather than isolated inference benchmarks.
-
-HTML opens from disk with embedded styles and optional retained audio. Wide
-tables have keyboard-focusable horizontal scrolling regions. A4 portrait print
-preview has been reviewed; page breaks vary with the browser.
-
-## Exit codes and cancellation
-
-| Code | Meaning |
+| Exit code | Meaning |
 | --- | --- |
 | `0` | Required diagnostic checks passed, or a comparison was published. Supporting diagnostic warnings are allowed. |
 | `1` | A completed diagnostic run contains a failed required check. |
 | `2` | Invalid arguments, profile, authentication configuration, or input report. |
-| `3` | Incomplete diagnostics, unsupported required coverage, internal error, or publication failure. |
+| `3` | Incomplete diagnostics, internal error, or report publication failure. |
 | `130` | User cancellation. |
 
-A valid comparison returns 0 even if one of its source diagnostics failed.
+Read the process exit code immediately after the command: `$LASTEXITCODE` in
+PowerShell or `$?` in Bash. Subsequent commands can replace it.
+
 Ctrl+C requests cancellation. When a diagnostic result is available, publication
-uses a separate writing budget to preserve partial evidence. Comparison publication
-also observes command cancellation. Interactive Ctrl+C verification remains pending.
+uses a separate writing budget to preserve partial evidence. Cancellation before
+a result is available may produce no report. Comparison publication also observes
+command cancellation.
 
-## Regression checks
+## Build from source
 
-Build the executable regression project from the repository root:
+Building requires the .NET 10 SDK. Run source commands from the repository root.
+
+### Development build
+
+```sh
+dotnet build ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release
+```
+
+```sh
+dotnet ./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll --help
+```
+
+The DLL launcher accepts the same arguments on Windows and Linux and requires
+an installed .NET 10 runtime. On Windows, the build also creates `TsubakiCheck.exe`
+in the same output directory.
+
+### Portable Windows x64
+
+```sh
+dotnet publish ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:DebugType=embedded --output ./ServiceCheck/Cli/bin/Release/portable/win-x64
+```
+
+Executable: `ServiceCheck/Cli/bin/Release/portable/win-x64/TsubakiCheck.exe`.
+
+### Portable Linux x64
+
+```sh
+dotnet publish ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release --runtime linux-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -p:DebugType=embedded --output ./ServiceCheck/Cli/bin/Release/portable/linux-x64
+```
+
+Executable: `ServiceCheck/Cli/bin/Release/portable/linux-x64/TsubakiCheck`.
+
+These are platform-specific self-contained single-file builds. Trimming is
+disabled for reflection-based JSON serialization; debug symbols are embedded.
+Bundled native runtime libraries are extracted into the .NET host's per-user
+cache at startup. Profiles and reports remain external files selected by arguments.
+The target operating system still needs compatible native libraries.
+
+To assemble a portable archive, place the matching executable, `README.md`,
+`WALKTHROUGH.md`, `STATUS.md`, and the complete `Examples` directory together.
+Source files, models, generated run reports, and the regression executable are
+not needed in the product archive. Restore execute permission on Linux if the
+archive format or transfer did not preserve it.
+
+For SDK option details, see Microsoft's
+[single-file deployment documentation](https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview)
+and [`dotnet publish` reference](https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-publish).
+
+### Regression checks
 
 ```sh
 dotnet build ./ServiceCheck/Tests/Tsubaki.ServiceCheck.Regression.csproj --configuration Release
@@ -386,7 +416,7 @@ dotnet build ./ServiceCheck/Tests/Tsubaki.ServiceCheck.Regression.csproj --confi
 dotnet ./ServiceCheck/Tests/bin/Release/net10.0/Tsubaki.ServiceCheck.Regression.dll
 ```
 
-The checks use controlled HTTP/network fixtures and native loopback connections.
-They require no running inference server or models. Current counts, recorded
-integration evidence, platform verification, and known limitations are maintained
-in [STATUS.md](STATUS.md).
+The executable checks use controlled HTTP/network fixtures, generated temporary
+files, and native loopback connections. They require no running Tsubaki server
+or model files. All 337 checks passed on Windows x64 and native Linux x64;
+live service checks and their limits are documented in [STATUS.md](STATUS.md).

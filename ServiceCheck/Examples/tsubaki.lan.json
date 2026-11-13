@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "name": "Tsubaki LAN",
+  "target": {
+    "id": "tsubaki-lan",
+    "baseUrl": "http://192.168.1.25:5045/"
+  },
+  "routes": {
+    "health": "health",
+    "healthFallback": "v1/health",
+    "status": "tsbk/server/status",
+    "voices": "tsbk/audio/voices",
+    "speech": "v1/audio/speech"
+  },
+  "authentication": {
+    "type": "none"
+  },
+  "synthesis": {
+    "model": "tts-1",
+    "voice": "piper_base",
+    "input": "This is a Tsubaki service check.",
+    "responseFormat": "wav",
+    "stream": false,
+    "speed": 1.0
+  },
+  "timeoutsMs": {
+    "dns": 3000,
+    "tcp": 3000,
+    "metadata": 5000,
+    "speech": 60000,
+    "run": 90000
+  },
+  "limits": {
+    "maxMetadataBytes": 1048576,
+    "maxAudioBytes": 10485760,
+    "maxInputCharacters": 200
+  },
+  "output": {
+    "retainAudio": true
+  }
+}

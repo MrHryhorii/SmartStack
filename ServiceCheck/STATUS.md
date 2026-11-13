@@ -1,183 +1,201 @@
 # Tsubaki Service Check status
 
-Last verified: 2026-11-12 UTC.
+Last verified: 2026-11-13 UTC.
 
 Tsubaki Service Check is a standalone .NET command-line utility for diagnosing
-local and remote Tsubaki TTS services. It checks connectivity, inspects reported
+local and remote Tsubaki TTS services. It checks connectivity, reads reported
 server state, verifies a speech response, and compares saved diagnostic runs.
-The client needs no inference engine, model files, or GPU dependencies.
+The client needs no inference engine, model files, GPU libraries, or database.
 
-Version 0.1.0 is in development. The diagnostic commands, offline comparison,
-and report generation are implemented and verified on Windows. Work remaining
-before the first release is documentation, distribution packaging, and native
-Linux and cross-machine verification.
+The diagnostic commands, offline comparison, report generation, and portable
+executables have been exercised on Windows x64 and Linux x64. The executable
+regression suite passed all 337 checks on each platform. Live integration used
+Tsubaki TTS Engine 1.0.10, including a Linux client reaching a Windows server
+over a LAN.
+
+See [README.md](README.md) for installation, configuration, commands, and portable
+build instructions. [WALKTHROUGH.md](WALKTHROUGH.md) covers a complete practical
+workflow, including additional diagnostic scenarios.
 
 ## Available functionality
 
-| Area | Current functionality |
+| Area | Implemented behavior |
 | --- | --- |
-| Profile creation | `init` creates an editable JSON target profile. |
+| Profile creation | `init` creates an editable JSON target profile and preserves an existing file. |
+| Example profiles | Complete local, LAN, and HTTPS/bearer configurations under `Examples`. |
 | Profile validation | Bounded loading, required settings, strict schema checks, and URL/route validation. |
 | Connectivity | DNS and direct TCP observations, IPv4/IPv6 address handling, connection deadlines, and cleanup. |
-| Service inspection | `inspect` collects health, status, advertised voices, identity, and reported synthesis readiness. It sends no speech request. |
+| Service inspection | `inspect` collects health, status, advertised voices, identity, and reported synthesis readiness without requesting speech. |
 | Speech verification | `check` collects service observations, sends at most one non-streaming speech POST, and verifies a supported nonzero PCM16 WAV response. |
-| Server metadata | Selected capabilities, configured defaults, source routes, and advertised voices are available in JSON and readable HTML. |
-| Diagnostic reports | Canonical JSON, self-contained HTML, and optional retained WAV with embedded offline playback. |
+| Server metadata | Selected capabilities, configured defaults, source routes, and advertised voices appear in JSON and readable HTML. |
+| Diagnostic reports | Canonical JSON, offline HTML, and optional retained WAV with embedded playback. |
 | Offline comparison | `compare` loads two saved diagnostic reports in explicit before/after order and exports JSON and HTML comparison reports. |
-| Authentication | Bearer authentication through a named environment variable, with known token values and original request text redacted from diagnostic output. |
-| Bounded execution | Configurable operation and run deadlines, response-size limits, cancellation handling, and partial diagnostic evidence. |
-| Safe export | Encoded report text, restrictive HTML document policies, controlled filenames, temporary-file publication, and collision protection. |
+| Authentication | Bearer authentication through a named environment variable; resolved token values and original input text are redacted from diagnostic text. |
+| Bounded execution | Configurable operation and run deadlines, response-size limits, cancellation handling, and partial evidence. |
+| Publication | Encoded report text, controlled filenames, staging directories, and collision protection. |
+| Portable execution | Self-contained Windows x64 and Linux x64 executables with external profile, input-report, and output paths. |
 
-The core, CLI, and regression projects are independent of the Tsubaki server
-project. The client uses the .NET base class library.
+Core, CLI, and regression projects are independent of the Tsubaki server project.
+The client uses the .NET base class library.
 
 ## How results should be interpreted
 
 `inspect` requires the expected service identity and server-reported synthesis
-readiness. A successful inspection records those claims; speech generation
-has not been tested.
+readiness. A successful inspection records those claims. Speech generation has
+not been tested by this command.
 
 `check` requires a successful speech response, a supported WAV container, and
-nonzero PCM16 samples. Optional metadata failures remain visible as supporting
-findings and do not prevent an active speech request while the run remains active.
+nonzero PCM16 samples. Metadata failures remain visible as supporting findings
+and do not prevent a speech request while the run remains active.
 
-Reports distinguish required failures, supporting warnings, missing evidence,
-and intentionally omitted checks. Unknown metadata remains distinct from a
+Reports distinguish required failures, supporting warnings, unavailable evidence,
+and deliberately omitted checks. Unknown metadata remains distinct from a
 reported false or zero value. Incomplete voice discovery cannot establish that
 a missing voice is unavailable.
 
-Comparison preserves both source outcomes and their context. Changed target
-IDs, URLs, modes, request fingerprints, and coverage are identified explicitly.
-Different audio hashes and individual timing changes are descriptive evidence,
-not automatic quality or performance regressions.
+Comparison preserves source outcomes and identifies differences in target IDs,
+URLs, modes, request fingerprints, settings, and coverage. A shared target ID
+is a configured logical label. It does not establish physical server identity.
+Audio hashes and individual timings are recorded observations; their changes
+do not automatically establish quality or performance regressions.
 
-## Reports and offline behavior
+## Verification baseline
 
-Each diagnostic run publishes a new directory beneath the selected output root:
+The latest portable integration records used client build:
 
-- `report.json`: canonical diagnostic data without runtime audio bytes or original speech input.
-- `report.html`: offline report with encoded text and optional embedded WAV playback.
-- `sample.wav`: supported received audio when retention is enabled.
+```text
+TsubakiCheck 0.1.0-dev+7973b9f5c52b3d43988f12a51a83b528f85a19ec
+```
 
-Inspection creates JSON and HTML. With audio retention disabled, audio metrics
-and hashes remain available while WAV output and embedded playback are omitted.
+Source revision: `7973b9f5c52b3d43988f12a51a83b528f85a19ec`.
+The identifier pins these observations independently of later documentation
+and example-profile updates.
 
-Each comparison publishes `comparison.json` and `comparison.html` in a new
-directory. Comparison opens the source JSON files read-only, makes no server
-requests, and loads no referenced WAV files. Historical retention flags and
-sample references remain source evidence.
+| Environment | Recorded verification |
+| --- | --- |
+| Windows x64 | Core, CLI, and regression Release builds; 337 regression checks passed; portable executable launch, profile creation, local inspection, speech verification, and offline comparison. |
+| Ubuntu 24.04.5 LTS x64, Lubuntu desktop | Native portable executable launch and profile creation; 337 regression checks passed with exit code 0; LAN inspection and speech against a Windows server; offline comparison, HTML playback, and SIGINT cancellation. |
 
-Report import is bounded to 8 MiB per input, with a JSON depth limit of 32 and
-additional string and collection limits. Unsupported schemas, duplicate or
-unknown members, missing required settings, and inconsistent evidence are rejected.
-Missing historical settings are not silently replaced with current defaults.
+Both portable executables were published on Windows using the .NET 10 SDK.
+The SDK reported during setup was 10.0.302. Linux execution used the resulting
+self-contained binary; a Linux SDK was not required for those checks.
+The distribution version above comes from the Linux machine's `/etc/os-release`.
 
-HTML reports include their styles and require no JavaScript or external
-resources. Wide tables support horizontal scrolling and keyboard focus.
-Desktop, narrow-viewport, and A4 portrait preview readability have been manually
-reviewed. Printed page breaks and section distribution remain browser-dependent
-and are accepted as a cosmetic limitation.
+### Regression coverage
 
-Publication uses a separate 10-second writing budget and preserves available
-working paths when output fails. Existing output is not overwritten. Diagnostic
-publication can preserve a cancelled run; comparison publication also observes
-the command's cancellation token.
-
-## Verification completed
-
-Latest complete regression result: **337 passed, 0 failed**.
-
-Core, CLI, and regression Release builds succeeded on Windows. The SDK reported
-during setup was .NET 10.0.302.
+Latest complete results: **Windows 337 passed, 0 failed; Linux 337 passed, 0 failed**.
 
 The executable suite covers:
 
-- Profiles, URL normalization, proxy-prefix preservation, and route validation.
-- HTTP contracts, access restrictions, redirects, response bounds, deadlines, and cancellation.
-- Known-secret redaction and exclusion of original input text, credentials, and cookies from exports.
+- Profile loading, schema validation, URL normalization, proxy prefixes, and routes.
+- HTTP contracts, access failures, redirects, response bounds, deadlines, and cancellation.
+- Known-secret redaction and exclusion of original input text and sensitive headers from exports.
 - PCM16 WAV parsing, malformed or unsupported audio, silence, signal metrics, and hashes.
-- Required/supporting outcomes, missing coverage, fingerprints, and both diagnostic modes.
-- DNS/TCP address handling, fallback, concurrency limits, and native loopback connection cleanup.
-- Metadata parsing, conflicting claims, partial voice discovery, source selection, and HTML encoding.
-- Bounded report import, source-file preservation, comparison context, typed values, and export collisions.
-- Readable server settings, explicit-null limits, reported false/zero values, and inspection summaries.
+- Required/supporting outcomes, missing evidence, fingerprints, and both diagnostic modes.
+- DNS/TCP address handling, fallback, concurrency limits, and native loopback cleanup.
+- Metadata parsing, conflicting claims, partial voice discovery, and source selection.
+- Bounded report import, source-file preservation, comparison context, typed values, and publication collisions.
+- HTML encoding, selected server settings, explicit-null limits, false/zero values, and inspection summaries.
 
-Controlled HTTP and network fixtures provide reproducible failure cases.
-Native loopback tests exercise actual socket behavior. These checks require
-no running inference server or model files.
+Controlled HTTP/network fixtures make failure cases reproducible. Native loopback
+checks exercise socket behavior. The suite requires no running inference server
+or model files. The regression executable is separate from the product archive.
 
-### Recorded integration evidence
+### Live integration evidence
 
-Local server checks used `http://127.0.0.1:5045/`, reporting
-`Tsubaki TTS Engine`, version `1.0.10`.
+Live checks used Tsubaki TTS Engine 1.0.10. Successful metadata discovery reported
+the expected service identity, synthesis readiness, and 16 advertised voices.
 
 | Scenario | Recorded result |
 | --- | --- |
-| Local speech and offline playback | A supported nonzero PCM16 WAV was received, retained, and played. |
-| Known unused port | Port 5046 returned `connection_refused`; the run failed its required speech check and returned exit code 1. |
-| Restricted metadata route | An intentional status-route HTTP 404 remained a supporting warning; speech and audio verification passed with exit code 0. |
-| Fresh inspection | Run `20261112T134158Z_ee1c754f5a29` completed with outcome `passed`, 16 advertised voices, and no speech or audio request evidence. |
-| Offline routing comparison | Saved runs against ports 5046 and 5045 showed `failed` to `passed` under the same configured target ID and speech request fingerprint. Successful comparison publication returned exit code 0. |
-| Invalid comparison input | A profile supplied as the before report was rejected with exit code 2. |
-| Report layout | Diagnostic and comparison reports were manually accepted at desktop and narrow widths and in A4 portrait print preview. |
+| Windows portable executable outside the repository | A copied executable ran without copied application sidecar files. Profiles and reports were accessed through absolute and relative paths, including spaces, from working directories separate from the executable. |
+| Windows local speech | Run `20261113T100638Z_e6cdd844bfc4` completed with outcome `passed`, exit 0, and JSON/HTML/WAV output. Audio was mono PCM16 at 22050 Hz, 2.320136 seconds, 102362 bytes. |
+| Windows local inspection | Run `20261113T101216Z_7d3d167783f5` completed with outcome `passed` and exit 0. |
+| Windows offline comparison | A speech report compared with itself published JSON/HTML, identified the shared run ID, and returned exit 0. |
+| Linux LAN inspection | Run `20261113T130855Z_3f2868dd6b7c` completed with outcome `passed` and exit 0, with speech and audio deliberately not requested. |
+| Linux LAN speech | Run `20261113T131359Z_2dd0cac894fd` completed with outcome `passed`, exit 0, and JSON/HTML/WAV output. Audio was mono PCM16 at 22050 Hz, 2.308526 seconds, 101850 bytes. Manual report playback was accepted. |
+| Linux offline comparison | An incomplete inspection and a successful inspection were compared without server requests. A repeated invocation with immediate status capture returned exit 0. |
+| Linux SIGINT cancellation | Run `20261113T135126Z_e42df732d57f` cancelled an active speech request, preserved partial JSON/HTML, and returned exit 130. Execution was `cancelled`; outcome was `incomplete`. |
+| Known unused local port | A refused speech connection produced `connection_refused`, failed the required request check, and returned exit 1. |
+| Missing status route | An intentional HTTP 404 remained a supporting finding while speech/audio verification passed with exit 0. |
+| Invalid comparison input | A profile supplied as a diagnostic report was rejected with exit 2. |
+| HTML report review | Diagnostic and comparison reports were accepted at desktop and narrow widths and in A4 portrait print preview. Page breaks remain browser-dependent. |
 
-The latest inspection took 223 ms as observed by the client. Its JSON and HTML
-preserved selected settings, metadata sources, and the deliberately omitted
-speech checks.
+An initial Linux LAN inspection recorded connection timeouts/failures and
+published an incomplete report. Repeating inspection succeeded; the cause of
+the initial connection failure was not isolated.
 
-The latest reviewed comparison, `20261112T140301Z_9310ca7017df`, retained 10 paired
-checks and 130 selected fields. It compared runs
-`20261108T215027Z_2193953cf5f7` and `20261109T154055Z_6d7cf935cab7`.
-Its diagnostic evidence matched the earlier verified comparison; publication
-metadata and utility version differed.
+The Linux cancellation record used SIGINT delivered to the client during an
+active request. It establishes native signal handling and partial publication.
+A separate manual keyboard Ctrl+C check on Windows is not recorded here.
 
-The binary used for these latest report checks printed informational version
-`0.1.0-dev+af5c632bbd4d711ea9a033832567d1690ecf946e`.
-Earlier API contract observations are recorded in [Tests/LocalIntegration.md](Tests/LocalIntegration.md).
+On Linux, automatic HTML opening through Snap/Chromium emitted desktop/browser
+messages after reports were published. Diagnostic results and exit codes were
+verified separately. Manual HTML playback succeeded.
 
-## Platform and distribution status
+Earlier manual API contract observations are recorded in the
+[source verification note](https://github.com/MrHryhorii/SmartStack/blob/main/ServiceCheck/Tests/LocalIntegration.md).
 
-The first release targets Windows x64 and Linux x64 with shared Core and CLI code.
+## Reports, paths, and distribution
 
-| Platform | Verified now | Still pending |
-| --- | --- | --- |
-| Windows x64 | Development builds, regression execution, local Tsubaki diagnostics, offline comparison, and report review. | Self-contained release packaging and package verification. |
-| Linux x64 | No native verification yet; the client implementation is shared with Windows. | Published build, native launch and regression verification, and a real client/server run. |
+Each diagnostic publishes a new directory beneath its selected output root:
 
-The current development build requires an installed .NET 10 runtime.
-Self-contained distributions are planned to include the runtime. A Linux
-distribution will still need compatible operating-system libraries.
+- `report.json`: diagnostic evidence without original speech input or runtime audio bytes.
+- `report.html`: offline report with encoded text and optional embedded WAV playback.
+- `sample.wav`: supported received audio when retention is enabled.
 
-Planned cross-machine verification uses a Lubuntu x64 client against a Tsubaki
-server on Windows over a LAN. The exact tested distribution version and runtime
-environment will be recorded with the results.
+Inspection creates JSON and HTML. Disabling retention keeps audio metrics and
+hashes while omitting WAV output and embedded playback. The retained WAV still
+contains the synthesized speech when retention is enabled.
 
-## Remaining work before version 0.1.0
+Comparison publishes `comparison.json` and `comparison.html` in a new directory.
+It opens source reports read-only, contacts no server, and loads no referenced
+WAV files. Historical sample references remain part of the source evidence.
+Import is bounded to 8 MiB per report, JSON depth 32, and additional string and
+collection limits. Unsupported schemas, unknown or duplicate members, and
+inconsistent required evidence are rejected.
 
-1. Add the installation and usage README, plus sanitized local and remote example profiles.
-2. Produce and verify self-contained Windows x64 and Linux x64 distribution packages.
-3. Run native Linux and cross-machine LAN checks and verify interactive Ctrl+C behavior.
+HTML includes its styles and needs no JavaScript or external resources.
+Wide tables provide horizontal scrolling and keyboard focus. Printed section
+distribution varies with the viewer and print settings.
 
-## Current limitations and unverified deployments
+Publication uses a separate 10-second writing budget. Existing output is
+preserved; output failures report available working paths. Diagnostic publication
+can preserve a cancelled result. Comparison publication also observes command
+cancellation.
 
-- Audio verification supports little-endian RIFF/WAVE PCM16. A nonzero waveform
-  does not establish intelligibility, pronunciation quality, or speaker identity.
-- Observations describe this client's access path and the metadata exposed by
-  the server. They do not establish remote CPU/GPU load or a specific firewall cause.
-- Each active run sends one non-streaming speech request. No automatic speech retry is performed.
-- The HTTP client connects directly, with normal TLS validation and automatic
-  redirects disabled. It does not use the system HTTP proxy.
-- Live DNS-name, IPv6, remote HTTP/HTTPS, and bearer deployments remain unverified;
-  their handling has controlled regression coverage.
-- Interactive Ctrl+C, native Linux operation, and distribution packages remain pending.
-- Printed content fits the tested page width; page breaks are not optimized for publication layout.
+Portable distributions include the matching runtime in a platform-specific
+executable. Compatible operating-system libraries are still required. Bundled
+native runtime libraries use the .NET host's per-user extraction cache.
+The verification machines' independently installed runtime state was not audited.
+
+Profiles and input reports remain external files. Relative arguments resolve
+from the shell's working directory; absolute paths remain independent of it.
+Example profiles and build instructions are linked from the README.
+
+## Limitations and deployments not verified live
+
+- Audio verification supports little-endian RIFF/WAVE PCM16. Intelligibility,
+  pronunciation quality, language correctness, and speaker identity require
+  separate assessment.
+- Live integration covers IPv4 loopback and an IPv4 LAN path to Tsubaki 1.0.10.
+  DNS-name, IPv6, HTTPS/reverse-proxy, and bearer deployments have controlled
+  regression coverage but were not verified against live deployments here.
+- The client records observable access and reported metadata. It does not inspect
+  remote CPU/GPU load, model files, or a particular firewall rule.
+- Each active run sends at most one non-streaming speech request. The utility
+  provides no speech retries or statistical load-testing workflow.
+- HTTP access is direct, with normal TLS validation, automatic redirects disabled,
+  and no system HTTP-proxy handling. Reverse proxies use an explicit service URL.
+- Desktop report opening depends on an available viewer. Printed page breaks
+  are not optimized for publication layout.
 
 ## Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| 0 | Required diagnostic checks passed, or a comparison was published; supporting diagnostic warnings are allowed. |
-| 1 | A completed diagnostic run contains a failed required check. |
-| 2 | Invalid arguments, profile, authentication configuration, or input report. |
-| 3 | Incomplete diagnostics, unsupported required coverage, internal error, or publication failure. |
-| 130 | User cancellation. |
+| `0` | Required diagnostic checks passed, or a comparison was published; supporting diagnostic warnings are allowed. |
+| `1` | A completed diagnostic run contains a failed required check. |
+| `2` | Invalid arguments, profile, authentication configuration, or input report. |
+| `3` | Incomplete diagnostics, internal error, or report publication failure. |
+| `130` | User cancellation. |

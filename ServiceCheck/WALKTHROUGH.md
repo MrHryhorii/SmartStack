@@ -1,183 +1,253 @@
-# Practical walkthrough
+# Tsubaki Service Check walkthrough
 
-This guide takes a target from its first profile to a saved speech check and
-an offline before-and-after comparison. Additional scenarios cover profile
-settings, incomplete metadata, audio retention, authentication, cancellation,
-and access from another computer.
+Tsubaki Service Check diagnoses an existing Tsubaki TTS server from the computer
+running the client. This guide covers creating a profile, inspecting the service,
+verifying generated audio, reading reports, and comparing saved runs offline.
+Additional scenarios cover the example profiles, authentication, response limits,
+supporting failures, invalid inputs, and cancellation.
 
-Use [README.md](README.md) for the command reference and defaults, and
-[STATUS.md](STATUS.md) for verified platforms and outstanding work.
-
-Sections 1 through 7 form the main workflow. The remaining sections are
-additional scenarios; use the ones relevant to your deployment.
-
-- [Build and create a profile](#1-build-and-identify-the-utility)
-- [Inspect the service and verify speech](#3-inspect-connectivity-and-reported-readiness)
-- [Record a failure and compare the correction](#5-record-an-unreachable-endpoint)
-- [Try speech settings and retention](#8-change-speech-settings-in-a-separate-profile)
-- [Explore metadata and invalid inputs](#10-observe-a-supporting-metadata-failure)
-- [Use authentication and another computer](#12-use-bearer-authentication-when-required)
-- [Configure bounds and cancellation](#14-configure-bounds-and-request-cancellation)
-- [Run the regression checks](#15-run-the-regression-checks-without-an-inference-server)
-- [Use Bash](#bash-command-route)
-- [Interpret exit codes](#exit-codes-at-a-glance)
+Use [README.md](README.md) for the command reference, defaults, and build commands.
+Use [STATUS.md](STATUS.md) for verified platforms, recorded results, and limitations.
 
 ## Before starting
 
-The main examples use PowerShell from the repository root and an existing
-Tsubaki server at `http://127.0.0.1:5045/`. The server should have completed
-startup and support the configured `piper_base` voice. Change the profile when
-your deployment uses another address or voice.
+Download the Windows x64 or Linux x64 archive from the
+[Service Check release](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakicheck-v0.1.0)
+and extract it. Portable builds include the .NET runtime; the client needs no
+models, inference libraries, or SDK. Building from source is described in the README.
 
-Building requires the .NET 10 SDK. The development DLL requires an installed
-.NET 10 runtime. The client needs no models or inference libraries.
+The live examples need a running Tsubaki server. The default profile uses
+`http://127.0.0.1:5045/` and voice `piper_base`. If the server is elsewhere,
+configure its reachable address and a supported voice before running diagnostics.
+Client and server can use different operating systems.
 
-Run one command block at a time. Read its result before proceeding. Keep the
-same PowerShell session so that the path variables remain available. Check
-`$LASTEXITCODE` immediately after a CLI invocation, before running another
-native program. A Bash route is included at the end.
+Sections 1 through 7 form the main workflow. In each section, use the block
+for your shell and run one block at a time. Keep the same terminal session so
+that its path variables remain available. Quoted paths support directory names
+containing spaces.
 
-The guide creates a new working directory beneath `ServiceCheck/runs`.
-Existing profiles and reports can remain where they are.
+Read exit codes immediately after the command. The Bash blocks group the CLI
+invocation with its exit-code print so that subsequent shell input does not
+replace the result. PowerShell uses `$LASTEXITCODE` for native processes.
 
-## 1. Build and identify the utility
+## 1. Identify the portable executable
+
+Open your terminal in the extracted archive directory.
+
+PowerShell:
 
 ```powershell
-dotnet build ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release
+$packageDirectory = (Get-Location).Path
+$tsubakiExecutable = (Resolve-Path -LiteralPath '.\TsubakiCheck.exe').Path
+& $tsubakiExecutable --help
 $LASTEXITCODE
 ```
 
-Continue after a successful build and exit code `0`.
+Bash:
 
-```powershell
-$cliDll = (Resolve-Path -LiteralPath './ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll').Path
-dotnet $cliDll --help
+```bash
+package_directory="$(pwd -P)"
+tsubaki_executable="$package_directory/TsubakiCheck"
+chmod +x "$tsubaki_executable"
+{
+    "$tsubaki_executable" --help
+    printf 'Exit code: %s\n' "$?"
+}
 ```
 
-The help lists `init`, `inspect`, `check`, and `compare`, their arguments, and
-the process exit codes. `-h` also shows help.
+The help lists `init`, `inspect`, `check`, and `compare`, their options, and
+the exit codes. `-h` also shows help. Record the build version when collecting
+evidence for a deployment change:
+
+PowerShell:
 
 ```powershell
-dotnet $cliDll --version
+& $tsubakiExecutable --version
+$LASTEXITCODE
 ```
 
-Record the version when collecting evidence for a deployment change. A
-development version can include the source revision used to build the client.
+Bash:
 
-## 2. Create a working directory and profile
+```bash
+{
+    "$tsubaki_executable" --version
+    printf 'Exit code: %s\n' "$?"
+}
+```
+
+## 2. Create a separate working directory
+
+The executable can stay in its tools directory while profiles and reports live
+elsewhere. The following commands create a new directory under your user directory
+and make it the current working directory.
+
+PowerShell:
 
 ```powershell
-$walkthroughRoot = Join-Path './ServiceCheck/runs' ('walkthrough-' + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $walkthroughRoot -ErrorAction Stop | Out-Null
+$walkthroughRoot = Join-Path $env:USERPROFILE ('Tsubaki checks\walkthrough-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $walkthroughRoot -Force -ErrorAction Stop | Out-Null
 $profilePath = Join-Path $walkthroughRoot 'target.json'
-$outputRoot = Join-Path $walkthroughRoot 'results'
+$outputRoot = Join-Path $walkthroughRoot 'Run reports'
+Set-Location -LiteralPath $walkthroughRoot
 Write-Output $walkthroughRoot
 ```
 
-Keep the printed directory path if you want to revisit these files later.
+Bash:
+
+```bash
+mkdir -p "$HOME/Tsubaki checks"
+walkthrough_root="$(mktemp -d "$HOME/Tsubaki checks/walkthrough.XXXXXXXX")"
+profile_path="$walkthrough_root/target.json"
+output_root="$walkthrough_root/Run reports"
+cd "$walkthrough_root"
+printf '%s\n' "$walkthrough_root"
+```
+
+Keep the printed directory path. Reports remain there after you close the terminal.
+The executable path captured in section 1 still works from this new location.
+Absolute arguments select the same files from any working directory; relative
+arguments are resolved from the shell's current directory.
+
+## 3. Create and configure a profile
+
+PowerShell:
 
 ```powershell
-dotnet $cliDll init --output $profilePath
+& $tsubakiExecutable init --output $profilePath
 $LASTEXITCODE
 ```
 
-Expected: `Profile created: ...` and exit code `0`.
+Bash:
 
-```powershell
-Get-Content -LiteralPath $profilePath
+```bash
+{
+    "$tsubaki_executable" init --output "$profile_path"
+    printf 'Exit code: %s\n' "$?"
+}
 ```
 
-The generated JSON includes the target, routes, authentication, synthesis,
-timeouts, response limits, and audio retention settings.
+Expected: `Profile created: ...` and exit code `0`. `init` requires an existing
+parent directory. Repeating it against the same file preserves the file and
+returns `3`; there is no overwrite option.
 
-If needed, edit `target.baseUrl` in this file before continuing. It is the
-service root, such as `http://127.0.0.1:5045/`, rather than a complete speech
-endpoint. Keep `target.id` as the stable identifier of your logical target.
+Open `target.json` in your text editor and review these fields:
 
-`init` requires an existing parent directory. Repeating it against the same
-file preserves that file and returns `3`; there is no overwrite option.
+| Field | What to configure |
+| --- | --- |
+| `name` | A readable label for this profile. |
+| `target.id` | A stable identifier for the logical deployment. Keep it consistent between runs you want to compare. |
+| `target.baseUrl` | The HTTP or HTTPS service root, including a reverse proxy prefix when used. |
+| `synthesis.voice` | A voice supported by the server; the default is `piper_base`. |
+| `authentication` | `none`, or a bearer environment-variable reference for an authenticated deployment. |
 
-## 3. Inspect connectivity and reported readiness
+For a local server at the default address, the generated profile can be used
+unchanged. For another computer, replace loopback with the server's reachable
+address. `127.0.0.1` refers to the computer running the client.
+
+The file includes routes, speech input, deadlines, size limits, and audio retention.
+Keep valid JSON without comments. Settings use camelCase; for example, the profile
+property is `responseFormat`, even though the HTTP request uses `response_format`.
+
+## 4. Inspect connectivity and reported readiness
+
+PowerShell:
 
 ```powershell
-dotnet $cliDll inspect --profile $profilePath --output $outputRoot --open
+& $tsubakiExecutable inspect --profile $profilePath --output $outputRoot --open
 $LASTEXITCODE
+```
+
+Bash:
+
+```bash
+{
+    "$tsubaki_executable" inspect --profile "$profile_path" --output "$output_root" --open
+    printf 'Exit code: %s\n' "$?"
+}
 ```
 
 For a ready Tsubaki deployment with accessible metadata, expect:
 
-| Observation | Expected interpretation |
+| Observation | Interpretation |
 | --- | --- |
-| `dns.resolve` is skipped with `ip_literal` | The URL already contains an IP address; a DNS lookup is unnecessary. |
-| `tcp.connect` passes | A separate direct connection to the configured address and port succeeded. |
-| Health, status, and voice checks pass | The corresponding metadata routes returned recognized evidence. |
-| `service.identity` passes | Metadata reported the expected Tsubaki service identifier. |
-| `service.readiness` passes | The server reported synthesis readiness. |
-| Speech and audio checks are skipped with `not_requested` | Inspection sends no synthesis request. |
+| `dns.resolve` skipped with `ip_literal` | The URL already contains an IP address. |
+| `tcp.connect` passed | A separate direct connection to the configured port succeeded. |
+| Health, status, and voice checks passed | The corresponding routes returned recognized evidence. |
+| `service.identity` passed | Metadata reported the expected Tsubaki service identifier. |
+| `service.readiness` passed | The server reported synthesis readiness. |
+| Speech and audio checks skipped with `not_requested` | Inspection did not request synthesis. |
 
-The required inspection checks are identity and reported readiness. When they
-pass, the exit code is `0`, including when supporting observations have warnings.
-If a required claim is unavailable or unsuccessful, read the finding before
-proceeding; an inspection has not established that speech works.
+Expected identity and reported readiness are required for inspection. When those
+checks pass, the exit code is `0`; supporting warnings are allowed. If a required
+claim is missing or unsuccessful, review the finding and the aggregate result.
 
-The command prints paths to `report.json` and `report.html`. `--open` asks the
-system viewer to open this newly published HTML file. If automatic opening is
-unavailable, open the printed HTML path manually. This does not change the
-diagnostic result.
+The command prints the JSON and HTML paths. `--open` asks the system viewer to
+open that new HTML report. If opening fails, use the printed path manually.
+Browser-launch messages are separate from the diagnostic evidence and exit code.
 
-In the HTML, examine the checks and reported server metadata. Identity,
-readiness, advertised voices, and selected defaults retain their source routes.
-Unavailable fields remain unknown. A reported `false`, `0`, or explicit null
-can have a different meaning from a missing field.
+The HTML shows selected identity claims, readiness, advertised voices, and reported
+defaults with their source routes. Missing information remains unknown; a reported
+`false`, `0`, or explicit null can have a different meaning from an absent field.
+Inspection produces no WAV and does not establish that speech generation works.
 
-No WAV is produced by inspection. A ready claim is a useful observation, not
-a synthesis test.
+## 5. Verify a speech response and read its evidence
 
-## 4. Verify and listen to a speech response
+PowerShell:
 
 ```powershell
-dotnet $cliDll check --profile $profilePath --output $outputRoot --open
+& $tsubakiExecutable check --profile $profilePath --output $outputRoot --open
 $LASTEXITCODE
 ```
 
-For a working endpoint, expect the required checks `speech.request`,
-`audio.container`, and `audio.signal` to pass. The result is `passed` or
-`passed_with_warnings`, with exit code `0`.
+Bash:
 
-The command collects the service observations and sends at most one
-non-streaming speech POST while the run remains active. Speech requests are
-not retried. Supporting metadata failures do not, by themselves, block this
-request.
+```bash
+{
+    "$tsubaki_executable" check --profile "$profile_path" --output "$output_root" --open
+    printf 'Exit code: %s\n' "$?"
+}
+```
 
-With the default retention setting, the new run directory contains:
+For a working endpoint, the required checks `speech.request`, `audio.container`,
+and `audio.signal` pass. The result is `passed` or `passed_with_warnings`, with
+exit code `0`. The client sends at most one non-streaming speech POST while the
+run remains active. Supporting metadata failures do not, by themselves, block it.
+Speech requests are not retried.
+
+With default retention and a supported WAV response, the new run directory contains:
 
 | File | Use |
 | --- | --- |
-| `report.json` | Read the canonical diagnostic data or use it as a comparison input. |
-| `report.html` | Review the run offline and play the embedded supported WAV. |
+| `report.json` | Read diagnostic data or use it as a comparison input. |
+| `report.html` | Review the run offline and play the embedded WAV. |
 | `sample.wav` | Open the retained response in an audio player. |
 
-Listen to the response in the HTML report. The automated checks establish a
-supported PCM16 WAV container with nonzero samples. Listening lets you assess
-pronunciation and content, which the utility does not automatically verify.
+Listen to the response. Automated checks establish a supported PCM16 WAV with
+nonzero samples; listening lets you assess the spoken content and pronunciation.
+The utility does not automatically score intelligibility or speaker identity.
 
-The HTML includes its styles and retained audio, so it can be opened offline.
-Wide tables scroll horizontally; their scrolling regions can receive keyboard
-focus. Use the browser's print preview to print or save a PDF. Page breaks
-depend on the browser and its print settings.
+The HTML includes its styles and retained audio. Wide tables scroll horizontally,
+and their scrolling regions can receive keyboard focus. Browser print preview
+can print the report or save a PDF; page breaks depend on the browser.
 
-Each run gets its own directory. Repeating a command preserves earlier runs.
+Save the full path from the speech check's `JSON:` line as the before input.
+At the prompt below, paste only the path, without `JSON:` or surrounding quotes.
 
-### Read the same evidence as JSON
-
-At this prompt, paste only the full path from the speech check's `JSON:` line,
-without the prefix or surrounding quotes:
+PowerShell:
 
 ```powershell
-$baselineReportPath = Read-Host 'Paste the full JSON path from the successful speech check'
-$baselineReport = Get-Content -LiteralPath $baselineReportPath -Raw | ConvertFrom-Json
+$beforeReportPath = Read-Host 'Paste the full diagnostic JSON path for the before input'
+$baselineReport = Get-Content -LiteralPath $beforeReportPath -Raw | ConvertFrom-Json
 $baselineReport | Select-Object runId, mode, executionState, outcome
 ```
+
+Bash:
+
+```bash
+IFS= read -r -p 'Before report JSON path: ' before_report_path
+```
+
+In PowerShell, you can also inspect selected evidence:
 
 ```powershell
 $baselineReport.checks | Select-Object id, role, status, code | Format-Table -AutoSize
@@ -191,242 +261,182 @@ $baselineReport.network | ConvertTo-Json -Depth 6
 $baselineReport.audio.inspection | ConvertTo-Json -Depth 6
 ```
 
-The audio evidence includes available format information, sample rate,
-channels, duration, signal measurements, payload length, and SHA-256.
-Use the observed values; payload bytes, timings, and hashes can vary between
+On either platform, the JSON can be read with a text editor. Available audio
+evidence includes format, sample rate, channels, duration, signal measurements,
+payload size, and SHA-256. Timings, hashes, and payload lengths can vary between
 successful requests.
 
-Canonical JSON omits the original synthesis input and runtime audio bytes.
-The local profile still contains the input, and retained audio still speaks
-it. Disabling retention removes playback and WAV export, as shown below.
+Diagnostic JSON omits original synthesis input and runtime audio bytes. The local
+profile still contains that text, and retained audio contains the spoken response.
 
-## 5. Record an unreachable endpoint
+## 6. Collect an after observation
 
-This scenario changes a separate profile to a local port with no listener.
-The server used above can keep running.
+After a server update, configuration correction, or other deployment change,
+run another check using the intended profile. To try the comparison workflow
+without changing the server, repeat the check with the same profile.
 
-The example assumes port `5046` is unused on this computer. Choose another
-known unused local port if an application already listens there. If your
-earlier target was remote, this scenario still deliberately uses local loopback.
+PowerShell:
 
 ```powershell
-$failedProfilePath = Join-Path $walkthroughRoot 'unreachable.json'
-$failedProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
-$failedProfile.name = 'Tsubaki unreachable endpoint'
-$failedProfile.target.baseUrl = 'http://127.0.0.1:5046/'
-$failedProfile | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $failedProfilePath -Encoding UTF8
-```
-
-```powershell
-dotnet $cliDll check --profile $failedProfilePath --output $outputRoot --open
+& $tsubakiExecutable check --profile $profilePath --output $outputRoot --open
 $LASTEXITCODE
 ```
 
-When the connection is refused, expect a failed required `speech.request`
-with `connection_refused`, skipped dependent audio checks, and exit code `1`.
-The report records the unsuccessful request rather than claiming a synthesis
-result.
-
-A deadline or cancellation can instead produce an interrupted run and a
-different exit code. Read what actually happened. If the request succeeds,
-the selected port was not an unreachable endpoint.
-
 ```powershell
-$beforeReportPath = Read-Host 'Paste the full JSON path from the unsuccessful endpoint check'
+$afterReportPath = Read-Host 'Paste the full diagnostic JSON path for the after input'
 ```
 
-Keep the target ID, synthesis text, voice, model, speed, and speech route
-unchanged. This makes the intended routing correction clear in the comparison.
+Bash:
 
-## 6. Check the working endpoint again
+```bash
+{
+    "$tsubaki_executable" check --profile "$profile_path" --output "$output_root" --open
+    printf 'Exit code: %s\n' "$?"
+}
+```
 
-The original profile still contains the working URL:
+```bash
+IFS= read -r -p 'After report JSON path: ' after_report_path
+```
+
+Each run receives a unique directory. Failed and incomplete diagnostic reports
+can also be comparison inputs. A profile-loading failure produces no diagnostic
+report to compare.
+
+Keep `target.id` stable for the same logical deployment. Keep the speech input,
+voice, model, speed, and speech route unchanged when you need an equivalent
+request context. Changed settings remain visible and can limit comparison.
+
+## 7. Compare the reports offline
+
+PowerShell:
 
 ```powershell
-dotnet $cliDll check --profile $profilePath --output $outputRoot --open
+& $tsubakiExecutable compare --before $beforeReportPath --after $afterReportPath --output $outputRoot --open
 $LASTEXITCODE
 ```
 
-After a successful speech check and exit code `0`:
+Bash:
 
-```powershell
-$afterReportPath = Read-Host 'Paste the full JSON path from the new successful speech check'
-```
-
-You now have an unsuccessful endpoint observation followed by a successful
-observation under the same logical target and speech request settings.
-
-## 7. Compare the saved runs offline
-
-```powershell
-dotnet $cliDll compare --before $beforeReportPath --after $afterReportPath --output $outputRoot --open
-$LASTEXITCODE
+```bash
+{
+    "$tsubaki_executable" compare --before "$before_report_path" --after "$after_report_path" --output "$output_root" --open
+    printf 'Exit code: %s\n' "$?"
+}
 ```
 
 Expected: `Offline comparison published.`, paths to `comparison.json` and
 `comparison.html`, and exit code `0`. Successful publication returns `0` even
-when a source diagnostic failed.
+when a source diagnostic failed. A comparison is not a new server test.
 
-The comparison makes no server requests and loads no referenced WAV files.
-The server can be unavailable during this operation.
+The operation opens source JSON files read-only, makes no server requests,
+loads no referenced audio files, and produces no new WAV. The server can be
+unavailable while you compare saved reports.
 
-In the HTML report, review:
+In the comparison HTML, review:
 
-- The recorded source outcomes and execution states.
-- The configured target, URL, mode, profile, and speech request context.
-- Transitions such as a failed speech request becoming successful.
-- Supporting coverage changes and unavailable observations.
-- Selected server defaults, advertised voice lists, timings, and audio evidence.
+- Recorded source outcomes and execution states.
+- Configured target IDs, URLs, modes, and speech request context.
+- Changes in individual diagnostic checks and their available evidence.
+- Selected server defaults, advertised voices, timings, and audio measurements.
+- Findings that limit what can be compared.
 
-A changed URL is explicitly identified. A shared target ID describes the
-configured logical target; it does not prove that two URLs reach the same
-physical server. Profile settings can differ while the speech request
-fingerprint remains the same.
+The explicit before/after order is preserved; timestamps do not reorder inputs.
+Missing historical evidence is not filled in using current defaults. Comparing
+the same report twice is allowed and identifies the shared run ID.
 
-`--before` and `--after` determine the order. Timestamps do not reorder inputs.
-Different modes or speech settings can limit comparison, and the report says
-so. Missing historical evidence is not treated as a failed check or filled in
-from current defaults.
+A shared target ID is a configured label, not proof that URLs reach the same
+physical server. A different audio hash does not establish a quality regression.
+Individual durations include the client, access path, server processing, and
+transfer; they are observations rather than isolated inference benchmarks.
 
-A different audio hash does not establish a quality regression. Individual
-run durations include client work, the access path, server processing, and
-transfer. They are descriptive observations rather than statistical benchmarks
-or isolated model inference timings.
+## 8. Use the example profiles
 
-Comparison produces no new WAV and does not modify its source reports.
+The portable package and source tree provide these complete JSON examples:
 
-## 8. Change speech settings in a separate profile
+| Example | Purpose |
+| --- | --- |
+| [tsubaki.local.json](Examples/tsubaki.local.json) | Local loopback server without authentication. |
+| [tsubaki.lan.json](Examples/tsubaki.lan.json) | Server on another computer, using an example LAN address. |
+| [tsubaki.bearer.json](Examples/tsubaki.bearer.json) | HTTPS service or reverse proxy with bearer authentication. |
+
+For example, copy the LAN profile to a separate working file.
+
+PowerShell:
 
 ```powershell
-$customProfilePath = Join-Path $walkthroughRoot 'custom-speech.json'
-$customProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
-$customProfile.name = 'Tsubaki custom speech'
-$customProfile.synthesis.input = 'The service returned a complete audio response.'
-$customProfile.synthesis.speed = 1.1
-$customProfile | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $customProfilePath -Encoding UTF8
+$lanProfilePath = Join-Path $walkthroughRoot 'target.lan.json'
+Copy-Item -LiteralPath (Join-Path $packageDirectory 'Examples\tsubaki.lan.json') -Destination $lanProfilePath -ErrorAction Stop
 ```
 
+Bash:
+
+```bash
+lan_profile_path="$walkthrough_root/target.lan.json"
+cp "$package_directory/Examples/tsubaki.lan.json" "$lan_profile_path"
+```
+
+Edit the copy and replace `http://192.168.1.25:5045/` with the server's actual
+address. Then inspect it, followed by a speech check when you want to test synthesis.
+
+PowerShell:
+
 ```powershell
-dotnet $cliDll check --profile $customProfilePath --output $outputRoot --open
+& $tsubakiExecutable inspect --profile $lanProfilePath --output $outputRoot
 $LASTEXITCODE
 ```
 
-Choose a different `synthesis.voice` only when the deployment supports it.
-The advertised voice list is useful evidence; an incomplete list does not
-prove that an absent ID is unavailable. `synthesis.model` is the request's
-model label, not a local model path.
+Bash:
 
-The current check supports `responseFormat: "wav"`, `stream: false`, and a
-finite speed from `0.25` through `4.0`. Other formats and streaming are rejected
-as profile settings rather than silently changing this diagnostic contract.
-
-Comparing this run against the earlier one will identify the changed speech
-request. Such results are side-by-side observations, not an equivalent-input
-performance comparison.
-
-## 9. Keep metrics without retaining audio
-
-```powershell
-$metricsProfilePath = Join-Path $walkthroughRoot 'metrics-only.json'
-$metricsProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
-$metricsProfile.name = 'Tsubaki metrics only'
-$metricsProfile.output.retainAudio = $false
-$metricsProfile | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $metricsProfilePath -Encoding UTF8
-```
-
-```powershell
-dotnet $cliDll check --profile $metricsProfilePath --output $outputRoot --open
-$LASTEXITCODE
-```
-
-The utility still receives and inspects the response. A successful run keeps
-the audio metrics and payload hash in its JSON and HTML, but exports no
-`sample.wav` and embeds no audio player. This setting does not remove files
-from earlier run directories.
-
-## 10. Observe a supporting metadata failure
-
-Use a separate profile with a deliberately missing status route. The example
-assumes the deployment returns HTTP 404 at this unused route.
-
-```powershell
-$metadataProfilePath = Join-Path $walkthroughRoot 'missing-status.json'
-$metadataProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
-$metadataProfile.name = 'Tsubaki missing status route'
-$metadataProfile.routes.status = 'servicecheck/intentional-missing-status'
-$metadataProfile | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $metadataProfilePath -Encoding UTF8
-```
-
-```powershell
-dotnet $cliDll check --profile $metadataProfilePath --output $outputRoot --open
-$LASTEXITCODE
-```
-
-If speech verification succeeds, expect `service.status` to report
-`http_not_found`, an aggregate outcome of `passed_with_warnings`, and exit
-code `0`. The status failure remains visible; it does not become a required
-speech failure.
-
-The health fallback is separate behavior: the client requests
-`routes.healthFallback` only after the primary health route returns HTTP 404
-or 405. It does not use the fallback to conceal every kind of health failure.
-
-## 11. Recognize invalid inputs before network work
-
-Create an input-cap violation in another profile:
-
-```powershell
-$invalidProfilePath = Join-Path $walkthroughRoot 'invalid-input.json'
-$invalidProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
-$invalidProfile.limits.maxInputCharacters = 1
-$invalidProfile | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $invalidProfilePath -Encoding UTF8
-```
-
-```powershell
-dotnet $cliDll check --profile $invalidProfilePath --output $outputRoot
-$LASTEXITCODE
-```
-
-Expected: profile validation fails with exit code `2`, before diagnostics
-start. No diagnostic run is published. Restore the cap in this copy before
-using it for a real request.
-
-Profiles also reject malformed JSON, unknown or duplicate properties,
-unsupported schema versions, invalid URLs/routes, and files above 64 KiB.
-Input length is measured in UTF-16 code units.
-
-The comparison command accepts diagnostic reports, not target profiles:
-
-```powershell
-dotnet $cliDll compare --before $profilePath --after $afterReportPath --output $outputRoot
-$LASTEXITCODE
-```
-
-Expected: the before input is rejected with exit code `2`. Existing files
-remain available. Each imported diagnostic report must use the supported
-version 1 schema and fit the 8 MiB input limit.
-
-## 12. Use bearer authentication when required
-
-This scenario needs a deployment that accepts a bearer token. An ordinary
-unauthenticated local server does not demonstrate authentication enforcement.
-
-Create a copy with an environment-variable reference. Set its target URL and
-routes to the authenticated deployment when they differ from the original.
-
-```powershell
-$bearerProfilePath = Join-Path $walkthroughRoot 'bearer.json'
-$bearerProfile = Get-Content -LiteralPath $profilePath -Raw | ConvertFrom-Json
-$bearerProfile.name = 'Tsubaki authenticated target'
-$bearerProfile.authentication = [pscustomobject]@{
-    type = 'bearer'
-    tokenEnvironmentVariable = 'TSUBAKI_CHECK_TOKEN'
+```bash
+{
+    "$tsubaki_executable" inspect --profile "$lan_profile_path" --output "$output_root"
+    printf 'Exit code: %s\n' "$?"
 }
-$bearerProfile | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $bearerProfilePath -Encoding UTF8
 ```
 
-If the variable is already configured in this shell, reuse it. Otherwise,
-enter the deployment token without placing its value in the command text:
+Use `check` in place of `inspect` to test speech. The server must listen on a
+reachable address and port, and the network must permit access. The utility
+does not configure server bindings or firewall rules.
+
+The example target IDs describe separate configurations. If local, LAN, and
+HTTPS profiles address the same logical deployment, give them the same
+`target.id` before collecting results you want to compare.
+
+To collect DNS observations, use a real hostname in a profile copy. For a local
+server, `http://localhost:5045/` is an option when its binding supports that host.
+Address evidence can contain IPv4 and IPv6 attempts. The direct TCP probe is
+separate from the HTTP connection and records supporting reachability evidence.
+
+## 9. Connect through HTTPS and bearer authentication
+
+This scenario requires a deployment that enforces bearer authentication. Copy
+the bearer example to another working file:
+
+PowerShell:
+
+```powershell
+$bearerProfilePath = Join-Path $walkthroughRoot 'target.bearer.json'
+Copy-Item -LiteralPath (Join-Path $packageDirectory 'Examples\tsubaki.bearer.json') -Destination $bearerProfilePath -ErrorAction Stop
+```
+
+Bash:
+
+```bash
+bearer_profile_path="$walkthrough_root/target.bearer.json"
+cp "$package_directory/Examples/tsubaki.bearer.json" "$bearer_profile_path"
+```
+
+Replace `https://tts.example.test/tsubaki/` with the actual service root.
+The prefix is preserved: default route `v1/audio/speech` would resolve to
+`https://tts.example.test/tsubaki/v1/audio/speech` in that example. Routes remain
+relative, without a leading `/`. Use the target ID appropriate to the deployment.
+
+The profile names `TSUBAKI_CHECK_TOKEN`. If it is already set correctly in this
+shell, reuse it. Otherwise, enter the deployment token without including its
+value in command text.
+
+PowerShell:
 
 ```powershell
 $secureToken = Read-Host 'Bearer token' -AsSecureString
@@ -434,209 +444,227 @@ $env:TSUBAKI_CHECK_TOKEN = [System.Net.NetworkCredential]::new('', $secureToken)
 $secureToken.Dispose()
 ```
 
+Bash:
+
+```bash
+IFS= read -r -s -p 'Bearer token: ' TSUBAKI_CHECK_TOKEN
+printf '\n'
+export TSUBAKI_CHECK_TOKEN
+```
+
+PowerShell:
+
 ```powershell
-dotnet $cliDll check --profile $bearerProfilePath --output $outputRoot --open
+& $tsubakiExecutable check --profile $bearerProfilePath --output $outputRoot
 $LASTEXITCODE
 ```
 
-The process reads the named environment variable and adds the bearer header.
-A missing, empty, or invalid token configuration returns `2` before network
-inspection. A credential that the server rejects is different: an HTTP 401
-or 403 is recorded as an access failure in the diagnostic evidence.
+Bash:
 
-Resolved token values, original input text, and authentication/cookie header
-values are excluded or redacted from exports. The profile stores the variable
-name rather than the token.
+```bash
+{
+    "$tsubaki_executable" check --profile "$bearer_profile_path" --output "$output_root"
+    printf 'Exit code: %s\n' "$?"
+}
+```
 
-If you created the shell variable solely for this scenario, remove it when
-finished:
+The profile stores the variable name. Missing, empty, or invalid token configuration
+returns `2` before network inspection. A token rejected by the deployment is a
+different result: an HTTP access failure is recorded in the diagnostic evidence.
+Resolved token values and original input text are redacted from diagnostic text;
+authentication and cookie header values are not exported.
+
+HTTP requests use normal certificate validation, without automatic redirects,
+cookies, or system HTTP-proxy handling. Configure the final service URL directly.
+The bearer profile configures the client and does not enable server authentication.
+
+If you set the variable solely for this scenario, remove it when finished.
+
+PowerShell:
 
 ```powershell
 Remove-Item -LiteralPath Env:TSUBAKI_CHECK_TOKEN
 ```
 
-## 13. Inspect a hostname or another computer
-
-To include DNS observations for the local server, create another profile
-copy and use `http://localhost:5045/` as its base URL, then run `inspect` with
-that copy. This assumes the same local server and port as the main example.
-
-A hostname is resolved before the direct TCP probe. Depending on the local
-resolver and server binding, the evidence can include IPv4 and IPv6 addresses
-and unsuccessful connection attempts before a successful one. The HTTP
-request uses its own connection; a TCP probe is supporting evidence.
-
-For a second computer on the same network, replace loopback with the server's
-actual reachable address, for example `http://192.168.1.25:5045/`. The example
-address must be replaced with your server's address. Run `inspect` first and
-then `check` with that profile.
-
-`127.0.0.1` always refers to the computer running the client. The server must
-listen on a reachable interface, and the existing network configuration must
-allow access. The utility does not change server bindings or firewall rules.
-
-For an HTTPS reverse proxy, a root such as
-`https://tts.example.test/tsubaki/` keeps its path prefix. With the default
-speech route, the request goes to
-`https://tts.example.test/tsubaki/v1/audio/speech`.
-Use your deployment's actual URL. Routes stay relative, without a leading `/`.
-
-HTTP access is direct, with normal certificate validation. Automatic redirects,
-cookies, and system HTTP-proxy handling are disabled. There is no certificate
-validation bypass option.
-
-Native Linux and cross-machine verification are pending; see
-[STATUS.md](STATUS.md) for current evidence. The client and server can be on
-different operating systems.
-
-## 14. Configure bounds and request cancellation
-
-Edit these groups in a profile copy when adapting the check to a deployment:
-
-| Group | Effect |
-| --- | --- |
-| `timeoutsMs.dns` and `timeoutsMs.tcp` | Bound the corresponding network inspection stages. |
-| `timeoutsMs.metadata` | Bounds a metadata operation, including body receipt. |
-| `timeoutsMs.speech` | Bounds the speech request, including body receipt. |
-| `timeoutsMs.run` | Bounds overall diagnostic execution across stages. |
-| `limits.maxMetadataBytes` | Bounds a metadata response body. |
-| `limits.maxAudioBytes` | Bounds the received audio payload. |
-| `limits.maxInputCharacters` | Rejects an oversized synthesis input before network work. |
-
-The run deadline can be shorter than individual operation deadlines. Required
-evidence that could not be collected remains incomplete. A response exceeding
-a body limit is rejected rather than saved as a verified sample.
-
-To request cancellation, start a normal check and press Ctrl+C while it is
-still running. Expected cancellation exit code: `130`. A fast local request
-may finish before you press the key; that completed run is not a cancellation
-test.
-
-When a diagnostic result is available, publication uses a separate writing
-budget so that partial evidence can be saved after cancellation or a deadline.
-If cancellation occurs before a result exists, no diagnostic report may be
-available. Publication errors can also prevent a complete artifact set.
-Comparison cancellation is observed during loading, comparison, and publication.
-
-Interactive Ctrl+C verification remains outstanding. Automated cancellation
-and deadline coverage is recorded in [STATUS.md](STATUS.md).
-
-## 15. Run the regression checks without an inference server
-
-```powershell
-dotnet build ./ServiceCheck/Tests/Tsubaki.ServiceCheck.Regression.csproj --configuration Release
-$LASTEXITCODE
-```
-
-After a successful build:
-
-```powershell
-dotnet ./ServiceCheck/Tests/bin/Release/net10.0/Tsubaki.ServiceCheck.Regression.dll
-$LASTEXITCODE
-```
-
-Expected: all checks pass, the summary reports zero failures, and the process
-returns `0`. The suite uses controlled HTTP/network fixtures and native
-loopback connections. It needs no running inference server or model files.
-See [STATUS.md](STATUS.md) for the latest verified count.
-
-## Bash command route
-
-The main walkthrough uses PowerShell variables and JSON editing commands.
-Do not paste those commands into Bash. The following route uses the same
-CLI arguments, with Bash syntax and manual profile editing.
-
-With the .NET 10 SDK installed, build from the repository root:
-
-```bash
-dotnet build ./ServiceCheck/Cli/Tsubaki.ServiceCheck.Cli.csproj --configuration Release
-echo "$?"
-```
-
-After a successful build, prepare a new workspace:
-
-```bash
-cli_dll='./ServiceCheck/Cli/bin/Release/net10.0/TsubakiCheck.dll'
-mkdir -p './ServiceCheck/runs'
-walkthrough_root=$(mktemp -d './ServiceCheck/runs/walkthrough.XXXXXXXX')
-profile_path="$walkthrough_root/target.json"
-output_root="$walkthrough_root/results"
-printf '%s\n' "$walkthrough_root"
-```
-
-```bash
-dotnet "$cli_dll" --help
-```
-
-```bash
-dotnet "$cli_dll" --version
-```
-
-```bash
-dotnet "$cli_dll" init --output "$profile_path"
-echo "$?"
-```
-
-Edit the JSON with your text editor. If the server is on another computer,
-use its reachable address rather than `127.0.0.1`.
-
-```bash
-dotnet "$cli_dll" inspect --profile "$profile_path" --output "$output_root" --open
-echo "$?"
-```
-
-```bash
-dotnet "$cli_dll" check --profile "$profile_path" --output "$output_root" --open
-echo "$?"
-```
-
-To try the other scenarios, copy the generated profile to another filename,
-edit the setting described in that scenario, and pass its path to the CLI.
-For a comparison, read the two full diagnostic JSON paths printed by those
-runs:
-
-```bash
-read -r -p 'Before report JSON path: ' before_report_path
-read -r -p 'After report JSON path: ' after_report_path
-```
-
-```bash
-dotnet "$cli_dll" compare --before "$before_report_path" --after "$after_report_path" --output "$output_root" --open
-echo "$?"
-```
-
-For a bearer profile referencing `TSUBAKI_CHECK_TOKEN`, set the variable in
-the shell that launches the command. This prompt avoids putting the value
-in the command text:
-
-```bash
-read -r -s -p 'Bearer token: ' TSUBAKI_CHECK_TOKEN
-printf '\n'
-export TSUBAKI_CHECK_TOKEN
-```
-
-After the authenticated scenario, remove the variable if you set it solely
-for that scenario:
+Bash:
 
 ```bash
 unset TSUBAKI_CHECK_TOKEN
 ```
 
-Keep `echo "$?"` immediately after the CLI command whose status you want to
-read. The same exit-code meanings apply. Automatic HTML opening requires an
-available system viewer; otherwise, use the printed HTML path.
+## 10. Try speech settings, retention, and failure scenarios
 
-## Exit codes at a glance
+Keep the original profile and create a separate copy for a scenario.
 
-| Code | Meaning | Example in this guide |
+PowerShell:
+
+```powershell
+$scenarioProfilePath = Join-Path $walkthroughRoot 'scenario.json'
+Copy-Item -LiteralPath $profilePath -Destination $scenarioProfilePath -ErrorAction Stop
+```
+
+Bash:
+
+```bash
+scenario_profile_path="$walkthrough_root/scenario.json"
+cp "$profile_path" "$scenario_profile_path"
+```
+
+Edit that copy in a text editor. Start from the original settings for each
+independent scenario. In particular, restore an invalid setting before trying
+another case. Change its `name` to make the resulting reports easier to identify.
+
+| Scenario | Edit in the copied profile | Expected observation |
 | --- | --- | --- |
-| `0` | Required diagnostic checks passed, or a comparison was published. Supporting warnings are allowed. | Successful speech, a supporting status-route warning, or a valid comparison. |
-| `1` | A completed diagnostic run contains a failed required check. | A refused speech connection. |
-| `2` | Invalid arguments, profile, authentication configuration, or input report. | Input above the configured cap, or a profile supplied as a report. |
-| `3` | Incomplete diagnostics, unsupported required coverage, internal error, or publication failure. | A run deadline, an unsupported audio encoding, or an unwritable output destination. |
-| `130` | User cancellation. | Ctrl+C handled while a command is active. |
+| Custom speech | Set `synthesis.input` to `The service returned a complete audio response.` and `synthesis.speed` to `1.1`. | A successful check verifies audio; comparison identifies the changed request context. |
+| Metrics without playback | Set `output.retainAudio` to `false`. | A successful check keeps audio metrics and hash but publishes no WAV or embedded player. |
+| Missing status route | Set `routes.status` to `servicecheck/intentional-missing-status`. | If the route returns HTTP 404 and speech succeeds, the result is `passed_with_warnings`, exit `0`. |
+| Unreachable endpoint | Set `target.baseUrl` to `http://127.0.0.1:5046/` only if that local port has no listener. | A refused speech connection fails the required request check, skips dependent audio checks, and returns `1`. |
+| Input above its cap | Set `limits.maxInputCharacters` to `1` while keeping the normal input sentence. | Profile validation returns `2` before diagnostics start; no diagnostic report is published. |
 
-Start with the reported execution state, then the required checks and their
-codes. A failed supporting check and a failed required check have different
-effects on the aggregate result. Preserve the JSON with the HTML when recording
-a deployment change; JSON is the input for future offline comparisons.
+Run the selected scenario:
+
+PowerShell:
+
+```powershell
+& $tsubakiExecutable check --profile $scenarioProfilePath --output $outputRoot --open
+$LASTEXITCODE
+```
+
+Bash:
+
+```bash
+{
+    "$tsubaki_executable" check --profile "$scenario_profile_path" --output "$output_root" --open
+    printf 'Exit code: %s\n' "$?"
+}
+```
+
+Read the observed execution state and result code. An unused endpoint can time
+out instead of refusing the connection; a deadline or cancellation can change
+the aggregate result. If the request succeeds, the selected address was reachable.
+
+The missing status case demonstrates a supporting failure. It is separate from
+health fallback: the client tries `routes.healthFallback` only when the primary
+health route returns HTTP 404 or 405.
+
+Disabling retention affects the new run, not files already published by earlier
+runs. Other voice IDs should be selected only when supported by the deployment.
+An incomplete advertised list does not prove that an absent voice is unavailable.
+
+The current speech check requires `responseFormat: "wav"`, `stream: false`, and
+a finite speed from `0.25` to `4.0`. `synthesis.model` is a request model label,
+not a path to a local model. Other formats and streaming are rejected as profile
+settings; no audio-format conversion is performed by the client.
+
+To compare a failed endpoint with a successful correction, set the before and
+after path variables from those two `JSON:` lines and repeat section 7. Keep
+the logical target ID and speech settings consistent for the intended comparison.
+
+### Reject a profile supplied as a report
+
+The comparison command accepts saved diagnostic JSON, not target profiles.
+Using the valid after-report path from section 6:
+
+PowerShell:
+
+```powershell
+& $tsubakiExecutable compare --before $profilePath --after $afterReportPath --output $outputRoot
+$LASTEXITCODE
+```
+
+Bash:
+
+```bash
+{
+    "$tsubaki_executable" compare --before "$profile_path" --after "$after_report_path" --output "$output_root"
+    printf 'Exit code: %s\n' "$?"
+}
+```
+
+Expected: the before input is rejected with exit code `2`. Comparison inputs
+must be supported schema version 1 diagnostic reports, no larger than 8 MiB each.
+Existing reports are preserved. Profiles have a separate 64 KiB limit and reject
+unknown or duplicate fields, invalid URLs or routes, and unsupported settings.
+
+## 11. Configure deadlines and request cancellation
+
+Edit bounds in a profile copy when adapting the utility to a deployment:
+
+| Setting | Effect |
+| --- | --- |
+| `timeoutsMs.dns`, `timeoutsMs.tcp` | Bound the respective network inspection stages. |
+| `timeoutsMs.metadata` | Bounds a metadata operation, including body receipt. |
+| `timeoutsMs.speech` | Bounds the speech request, including body receipt. |
+| `timeoutsMs.run` | Bounds overall diagnostic execution across stages. |
+| `limits.maxMetadataBytes` | Bounds a metadata response body. |
+| `limits.maxAudioBytes` | Bounds the received audio payload. |
+| `limits.maxInputCharacters` | Rejects oversized input before network work, measured in UTF-16 code units. |
+
+The run deadline can be shorter than individual operation deadlines. Evidence
+that could not be collected remains unavailable. Oversized bodies are rejected
+rather than treated as verified audio. Defaults and valid ranges are in the README.
+
+To cancel, start a check and press Ctrl+C while the client is still running.
+This requests client cancellation and cancels an active HTTP request. Expected
+cancellation exit code: `130`. A fast request can finish before the keypress;
+a completed run with exit `0` does not demonstrate cancellation.
+
+When a diagnostic result is available, report publication uses a separate writing
+budget so that partial observations can be saved after cancellation or a deadline.
+Cancellation before a result exists may leave no report. Output failures can also
+prevent complete publication. Comparison observes cancellation during loading,
+comparison, and publication.
+
+Native Linux SIGINT cancellation with partial JSON/HTML publication has been
+verified; see [STATUS.md](STATUS.md) for the recorded scope.
+
+## 12. Run regression checks from source
+
+This section is for a source checkout with the .NET 10 SDK. From the repository
+root, build the executable regression project:
+
+```sh
+dotnet build ./ServiceCheck/Tests/Tsubaki.ServiceCheck.Regression.csproj --configuration Release
+```
+
+After a successful build:
+
+```sh
+dotnet ./ServiceCheck/Tests/bin/Release/net10.0/Tsubaki.ServiceCheck.Regression.dll
+```
+
+Read `$LASTEXITCODE` in PowerShell or `$?` in Bash immediately after the command.
+Expected: every check passes, zero failures, and process exit code `0`.
+The suite uses controlled HTTP/network fixtures, generated temporary files,
+and native loopback connections. No running Tsubaki server or models are needed.
+The regression executable is separate from the normal portable product archive.
+
+## Exit codes and troubleshooting
+
+| Exit code | Meaning | Example |
+| --- | --- | --- |
+| `0` | Required diagnostic checks passed, or a comparison was published. Supporting warnings are allowed. | Verified speech, a supporting status-route warning, or successful offline comparison. |
+| `1` | A completed diagnostic run failed a required check. | A refused speech connection or silent PCM16 response. |
+| `2` | Invalid arguments, profile, authentication configuration, or input report. | Input above its cap or a profile supplied as a report. |
+| `3` | Incomplete diagnostics, internal error, or publication failure. | Missing required evidence, a run deadline, unsupported required audio coverage, or unwritable output. |
+| `130` | User cancellation. | A handled cancellation while the command is active. |
+
+Start with the execution state, then the required checks and their result codes.
+A failed supporting check and a failed required check affect the aggregate result
+differently. Preserve JSON with HTML when recording a deployment change; diagnostic
+JSON is the input for future offline comparisons.
+
+| Observation | What to review |
+| --- | --- |
+| `ip_literal` | Expected when the URL contains an IP address instead of a hostname. |
+| Connection refused or timed out | Server address, listening port, binding, and network reachability from this client. |
+| Metadata unavailable but speech passed | Route configuration and access restrictions; inspect the supporting findings. |
+| HTTP 401 or 403 | Authentication required or rejected by the deployment. |
+| Speech returned HTTP success but audio failed | Container and signal findings; an HTTP response alone does not establish valid speech audio. |
+| HTML did not open automatically | Open the printed path in an available browser. On Linux, quote paths with spaces when using `xdg-open`. |
+| Reports could not be published | Output permissions, free space, and any surviving paths printed by the utility. |
+
+The same commands and report formats work on Windows and Linux. Client-side
+evidence can show where an observation failed, but it does not establish a
+specific firewall cause, remote GPU load, or the server's internal model state.
