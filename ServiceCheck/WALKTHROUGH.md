@@ -5,7 +5,7 @@ an offline before-and-after comparison. Additional scenarios cover profile
 settings, incomplete metadata, audio retention, authentication, cancellation,
 and access from another computer.
 
-Use [README.md](readMe.md) for the command reference and defaults, and
+Use [README.md](README.md) for the command reference and defaults, and
 [STATUS.md](STATUS.md) for verified platforms and outstanding work.
 
 Sections 1 through 7 form the main workflow. The remaining sections are
