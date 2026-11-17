@@ -31,6 +31,13 @@ Omit `--failures-only` for passing-case messages. TextChunkerRegression also acc
 dotnet run --project Tests/TextChunkerRegression -c Release -- --failures-only --category="Ambiguous letter endings"
 ```
 
+Quote-specific categories include `Quoted sentence suffixes`, `Separated closing quotes`,
+`Adjacent quoted sentences`, `Quoted early continuations`, `Quoted emergency boundaries`,
+and `Quote boundary counterexamples`. They cover both `EarlySplit` modes, completion flags,
+case-sensitive and caseless scripts, quote pairs, Unicode graphemes, and emergency size caps.
+The language runner also checks that quoted early and emergency chunks retain nonempty
+phoneme payloads and the intended sentence completion flags through managed preprocessing.
+
 ## 2. Server configuration, pronunciation and HTTP
 
 The configuration runner checks defaults, capabilities and DSP contracts. Native pronunciation needs a compatible Piper JSON and eSpeak NG. The HTTP runners start isolated production servers on temporary ports, disable browser launch and write reports.

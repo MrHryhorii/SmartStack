@@ -25,7 +25,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
     /// <summary>
     /// Chunks text while respecting semantic sentence boundaries. When EarlySplit is enabled,
     /// only the first non-empty semantic sentence gets one opportunity to end early at a
-    /// conservative clause boundary. All following text uses normal sentence chunking and
+    /// conservative clause or quoted-continuation boundary. All following text uses normal sentence chunking and
     /// emergency MaxChunkLength splitting.
     /// </summary>
     public List<TextChunk> Split(string text, bool earlySplit = false)
@@ -64,7 +64,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
                     ReadOnlySpan<char> earlyChunk = TrimBoundaryWhitespace(textSpan[currentIndex..earlyEndIndex]);
                     if (!earlyChunk.IsEmpty)
                     {
-                        result.Add(new TextChunk(MaterializeChunk(text, earlyChunk), false));
+                        AddSentence(text, earlyChunk, false, result);
                     }
 
                     currentIndex = earlyEndIndex;
@@ -148,6 +148,13 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
             return true;
         }
 
+        // Lowercase reporting remains part of the semantic sentence even after ...?!.
+        // EarlySplit may expose this boundary without marking the thought as finished.
+        if (IsQuotedReportingContinuation(text, index))
+        {
+            return false;
+        }
+
         if (Rules.PeriodLikeMarks.Contains(terminator))
         {
             return IsRealPeriodBoundary(text, index);
@@ -156,13 +163,6 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         if (Rules.EllipsisMarks.Contains(terminator))
         {
             return IsRealEllipsisBoundary(text, index, index + 1);
-        }
-
-        // A quoted terminal can still belong to the same grammatical sentence when a
-        // lowercase reporting clause follows: "Really?!" she asked.
-        if (IsQuotedReportingContinuation(text, index))
-        {
-            return false;
         }
 
         // Ambiguous Western terminal marks are accepted only after the complete attached
@@ -206,7 +206,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
             return false;
         }
 
-        return !IsRealPeriodBoundary(text, index);
+        return !IsRealSentenceBoundary(text, index);
     }
 
     /// <summary>
@@ -589,36 +589,8 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
     /// </summary>
     private bool IsQuotedReportingContinuation(ReadOnlySpan<char> text, int boundaryIndex)
     {
-        int index = boundaryIndex + 1;
-        bool sawClosing = false;
-
-        // A terminal cluster may come before the closing quote: ?!", !!!"), etc.
-        while (index < text.Length)
-        {
-            bool advanced = false;
-
-            while (index < text.Length &&
-                   Rules.SentenceTerminators.Contains(text[index]) &&
-                   !IsLineBoundary(text[index]))
-            {
-                index++;
-                advanced = true;
-            }
-
-            while (index < text.Length && Rules.ClosingPunctuation.Contains(text[index]))
-            {
-                sawClosing = true;
-                index++;
-                advanced = true;
-            }
-
-            if (!advanced)
-            {
-                break;
-            }
-        }
-
-        if (!sawClosing)
+        int index = ConsumeTerminalCluster(text, boundaryIndex, out bool crossedTerminalLine, out bool sawClosing);
+        if (!sawClosing || crossedTerminalLine)
         {
             return false;
         }
@@ -640,7 +612,10 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
             }
         }
 
-        return char.IsLower(text[nextVisible]);
+        // Georgian Mkhedruli is categorized as lowercase but does not use sentence-initial
+        // capitalization. Supplementary cased letters still provide a valid Unicode signal.
+        return Rune.DecodeFromUtf16(text[nextVisible..], out Rune next, out _) == OperationStatus.Done &&
+            Rune.IsLower(next) && next.Value is not (>= 0x10D0 and <= 0x10FF);
     }
 
     /// <summary>
@@ -691,6 +666,7 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
 
     /// <summary>
     /// Finds the first valid one-time EarlySplit boundary inside the first semantic sentence.
+    /// Quoted terminals before lowercase reporting may end early without finishing the sentence.
     /// ASCII clause marks (, ; :) require a real boundary after the complete attached punctuation
     /// cluster. Non-ASCII clause marks keep script-native behavior because many writing systems do
     /// not use spaces between clauses.
@@ -705,13 +681,24 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
 
         while (searchIndex < searchEnd)
         {
-            int offset = text[searchIndex..searchEnd].IndexOfAny(Rules.ClausePunctuation);
+            int offset = text[searchIndex..searchEnd].IndexOfAny(Rules.EarlySplitCandidates);
             if (offset < 0)
             {
                 return -1;
             }
 
             int candidateIndex = searchIndex + offset;
+
+            if (!Rules.ClausePunctuation.Contains(text[candidateIndex]))
+            {
+                if (!IsLineBoundary(text[candidateIndex]) && IsQuotedReportingContinuation(text, candidateIndex))
+                {
+                    return ConsumeBoundarySuffix(text, candidateIndex);
+                }
+
+                searchIndex = candidateIndex + 1;
+                continue;
+            }
 
             // A Greek question written with ';' is a completed semantic sentence,
             // not an EarlySplit clause. Preserve IsSentenceFinished and its pause.
@@ -765,19 +752,26 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
     /// <summary>
     /// Consumes directly attached punctuation as one cluster. This is intentionally broader than
     /// sentence terminators because EarlySplit candidates may sit inside constructs such as ://.
-    /// Whitespace always ends the cluster.
+    /// Spacing is crossed only when a matching closing quote belongs to the same suffix.
     /// </summary>
     private int ConsumeAttachedPunctuationCluster(ReadOnlySpan<char> text, int index, int limit)
     {
         int end = index;
         int max = Math.Min(limit, text.Length);
+        bool sawQuote = false;
 
         while (end < max && IsPunctuationClusterChar(text[end]))
         {
-            end++;
+            bool visualQuote = Rules.VisualQuotes.Contains(text[end]);
+            if (end > index &&
+                (Rules.OpeningPunctuation.Contains(text[end]) ||
+                 (visualQuote && !IsClosingPunctuationAt(text, end, sawQuote)))) break;
+
+            sawQuote |= visualQuote;
+            end += StringInfo.GetNextTextElementLength(text[end..]);
         }
 
-        return end;
+        return ConsumeClosingSuffix(text, end, ref sawQuote, out _);
     }
 
     /// <summary>Checks Unicode punctuation categories that may join a terminal punctuation cluster.</summary>
@@ -824,10 +818,21 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         int boundaryIndex,
         out bool crossedLineBoundary)
     {
+        return ConsumeTerminalCluster(text, boundaryIndex, out crossedLineBoundary, out _);
+    }
+
+    private int ConsumeTerminalCluster(
+        ReadOnlySpan<char> text,
+        int boundaryIndex,
+        out bool crossedLineBoundary,
+        out bool sawClosing)
+    {
         // The contextual ASCII Greek question mark is deliberately absent from the global
         // terminator set. Consume it here once a Greek boundary has been confirmed.
         int index = text[boundaryIndex] == ';' ? boundaryIndex + 1 : boundaryIndex;
         crossedLineBoundary = false;
+        sawClosing = false;
+        bool sawQuote = false;
 
         while (index < text.Length)
         {
@@ -840,13 +845,11 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
                     crossedLineBoundary = true;
                 }
 
-                index++;
+                index += StringInfo.GetNextTextElementLength(text[index..]);
             }
 
-            while (index < text.Length && Rules.ClosingPunctuation.Contains(text[index]))
-            {
-                index++;
-            }
+            index = ConsumeClosingSuffix(text, index, ref sawQuote, out bool closed);
+            sawClosing |= closed;
 
             if (index == before)
             {
@@ -855,6 +858,76 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         }
 
         return index;
+    }
+
+    /// <summary>Keeps closing quotes attached without taking the opening quote of following text.</summary>
+    private int ConsumeClosingSuffix(ReadOnlySpan<char> text, int index, ref bool sawQuote, out bool sawClosing)
+    {
+        sawClosing = false;
+        while (index < text.Length)
+        {
+            int next = index;
+            while (next < text.Length && !IsLineBoundary(text[next]) &&
+                (char.IsWhiteSpace(text[next]) || IsBoundaryFormatControl(text[next]))) next++;
+
+            bool separated = next > index;
+            if (next >= text.Length || (separated && !Rules.VisualQuotes.Contains(text[next])) ||
+                !IsClosingPunctuationAt(text, next, separated || sawQuote)) break;
+
+            sawClosing = true;
+            sawQuote |= Rules.VisualQuotes.Contains(text[next]);
+            index = next + StringInfo.GetNextTextElementLength(text[next..]);
+        }
+
+        return index;
+    }
+
+    private bool IsClosingPunctuationAt(ReadOnlySpan<char> text, int index, bool requireOpening = false)
+    {
+        char value = text[index];
+        if (!Rules.ClosingPunctuation.Contains(value)) return false;
+        if (!Rules.VisualQuotes.Contains(value)) return true;
+
+        UnicodeCategory category = char.GetUnicodeCategory(value);
+        int after = index + StringInfo.GetNextTextElementLength(text[index..]);
+        bool beforeContent = after < text.Length &&
+            Rune.DecodeFromUtf16(text[after..], out Rune next, out _) == OperationStatus.Done && IsContentRune(next);
+        if (requireOpening || beforeContent || category is UnicodeCategory.InitialQuotePunctuation or UnicodeCategory.OpenPunctuation)
+        {
+            return HasOpeningQuote(text, index);
+        }
+
+        return true;
+    }
+
+    /// <summary>Resolves ambiguous, reversed, and separated quotes using punctuation pairs only.</summary>
+    private bool HasOpeningQuote(ReadOnlySpan<char> text, int closingIndex)
+    {
+        ReadOnlySpan<char> family = TextChunkerDefaults.GetQuoteFamily(text[closingIndex]);
+        if (family.IsEmpty) return false;
+
+        int search = 0;
+        bool open = false;
+        char opening = default;
+        while (search < closingIndex)
+        {
+            int offset = text[search..closingIndex].IndexOfAny(family);
+            if (offset < 0) break;
+
+            int index = search + offset;
+            search = index + 1;
+            if (Rules.LexicalApostrophes.Contains(text[index]) && index > 0 && char.IsLetterOrDigit(text[index - 1]) &&
+                (!open || (index + 1 < text.Length && char.IsLetterOrDigit(text[index + 1])))) continue;
+
+            int backslash = index - 1;
+            while (backslash >= 0 && text[backslash] == '\\') backslash--;
+            if ((index - backslash - 1) % 2 != 0) continue;
+
+            if (!open) opening = text[index];
+            open = !open;
+        }
+
+        return open && TextChunkerDefaults.CanCloseQuote(opening, text[closingIndex]);
     }
 
     /// <summary>
@@ -904,12 +977,8 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
     /// <summary>Advances past catalogued closing punctuation without consuming following content.</summary>
     private int SkipClosingPunctuation(ReadOnlySpan<char> text, int index)
     {
-        while (index < text.Length && Rules.ClosingPunctuation.Contains(text[index]))
-        {
-            index++;
-        }
-
-        return index;
+        bool sawQuote = false;
+        return ConsumeClosingSuffix(text, index, ref sawQuote, out _);
     }
 
     /// <summary>
@@ -1074,6 +1143,8 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         List<TextChunk> result)
     {
         int currentIndex = 0;
+        originalText.AsSpan().Overlaps(sentenceSpan, out int sourceOffset);
+        ReadOnlySpan<char> boundaryContext = originalText.AsSpan(0, sourceOffset + sentenceSpan.Length);
 
         while (currentIndex < sentenceSpan.Length)
         {
@@ -1146,6 +1217,13 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
             }
             bool completedTechnicalToken = splitIndex > originalSplit;
 
+            // The semantic sentence already owns its closing suffix. Emergency cuts must
+            // retain that ownership and leave the final completion flag on speakable text.
+            bool protectedTokenEnd = completedTechnicalToken ||
+                EndsWithProtectedEmergencyToken(sentenceSpan, currentIndex, splitIndex);
+            splitIndex = ProtectEmergencyPunctuationSuffix(boundaryContext, sourceOffset + currentIndex,
+                sourceOffset + splitIndex, sourceOffset + windowEnd, protectedTokenEnd) - sourceOffset;
+
             ReadOnlySpan<char> chunkSpan = TrimBoundaryWhitespace(sentenceSpan[currentIndex..splitIndex]);
 
             if (!chunkSpan.IsEmpty)
@@ -1168,6 +1246,81 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
 
             currentIndex = splitIndex;
         }
+    }
+
+    /// <summary>Moves a cut around an attached suffix while respecting the ordinary size cap.</summary>
+    private int ProtectEmergencyPunctuationSuffix(ReadOnlySpan<char> text, int start, int split, int windowEnd, bool protectedTokenEnd)
+    {
+        if (split >= text.Length) return split;
+        if (!IsAttachedSuffixMark(text, split))
+        {
+            bool quote = false;
+            if (ConsumeClosingSuffix(text, split, ref quote, out _) == split) return split;
+        }
+
+        int suffixStart = split;
+        while (suffixStart > start)
+        {
+            int previous = PreviousTextElementStart(text, start, suffixStart);
+            char value = text[previous];
+            bool spacing = !IsLineBoundary(value) && (char.IsWhiteSpace(value) || IsBoundaryFormatControl(value));
+            if (!spacing && !IsAttachedSuffixMark(text, previous)) break;
+            suffixStart = previous;
+        }
+
+        int end = suffixStart;
+        bool sawQuote = false;
+        while (end < text.Length)
+        {
+            int before = end;
+            while (end < text.Length && !IsLineBoundary(text[end]) &&
+                (Rules.SentenceTerminators.Contains(text[end]) || Rules.PauseMarks.Contains(text[end])))
+            {
+                end += StringInfo.GetNextTextElementLength(text[end..]);
+            }
+            end = ConsumeClosingSuffix(text, end, ref sawQuote, out _);
+            if (end == before) break;
+        }
+
+        if (end <= split || !HasContent(text[start..suffixStart])) return split;
+        if (end <= windowEnd || protectedTokenEnd) return end;
+
+        // Move one content element with the suffix rather than emitting punctuation alone.
+        int contentStart = suffixStart;
+        while (contentStart > start)
+        {
+            contentStart = PreviousTextElementStart(text, start, contentStart);
+            if (HasContent(text[contentStart..suffixStart])) break;
+        }
+
+        if (contentStart > start && HasContent(text[start..contentStart])) return contentStart;
+
+        // An indivisible content element plus its suffix can exceed a tiny configured cap.
+        // Keeping this minimal atom intact guarantees progress without a quote-only chunk.
+        return end;
+    }
+
+    private bool IsAttachedSuffixMark(ReadOnlySpan<char> text, int index) =>
+        !IsLineBoundary(text[index]) && (Rules.SentenceTerminators.Contains(text[index]) ||
+            Rules.PauseMarks.Contains(text[index]) || IsClosingPunctuationAt(text, index));
+
+    private static bool HasContent(ReadOnlySpan<char> text)
+    {
+        foreach (Rune rune in text.EnumerateRunes())
+        {
+            if (IsContentRune(rune)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsContentRune(Rune rune) => Rune.IsLetterOrDigit(rune) ||
+        Rune.GetUnicodeCategory(rune) is UnicodeCategory.OtherSymbol or UnicodeCategory.MathSymbol or UnicodeCategory.CurrencySymbol;
+
+    private static int PreviousTextElementStart(ReadOnlySpan<char> text, int start, int end)
+    {
+        int previous = start;
+        for (int cursor = start; cursor < end; cursor += StringInfo.GetNextTextElementLength(text[cursor..])) previous = cursor;
+        return previous;
     }
 
     // Every supplied span is a slice of originalText. Reuse the input for a whole-text
@@ -1215,13 +1368,20 @@ public class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = nul
         ReadOnlySpan<char> token = text[tokenStart..tokenEnd];
         // Sentence/clause suffixes are not technical evidence by themselves. Otherwise
         // an ordinary long word ending in '.' or '?' would incorrectly bypass the size cap.
-        while (!token.IsEmpty &&
-               (Rules.SentenceTerminators.Contains(token[^1]) ||
-                Rules.TechnicalSuffixMarks.Contains(token[^1]) ||
-                Rules.ClosingPunctuation.Contains(token[^1]) ||
-                IsBoundaryFormatControl(token[^1])))
+        while (!token.IsEmpty)
         {
-            token = token[..^1];
+            int suffix = token.Length - 1;
+            if (char.GetUnicodeCategory(token[suffix]) is UnicodeCategory.NonSpacingMark or
+                UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark)
+            {
+                suffix = PreviousTextElementStart(token, 0, token.Length);
+            }
+
+            char mark = token[suffix];
+            if (!Rules.SentenceTerminators.Contains(mark) && !Rules.TechnicalSuffixMarks.Contains(mark) &&
+                !Rules.ClosingPunctuation.Contains(mark) && !IsBoundaryFormatControl(mark)) break;
+
+            token = token[..suffix];
         }
 
         // Technical boundaries use visible syntax, not specific domains or languages.

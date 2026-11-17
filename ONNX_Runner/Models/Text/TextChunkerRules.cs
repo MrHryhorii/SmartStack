@@ -29,6 +29,7 @@ public sealed class TextChunkerRules
 
     public SearchValues<char> SentenceTerminators { get; }
     public SearchValues<char> SentenceBoundaryCandidates { get; }
+    public SearchValues<char> EarlySplitCandidates { get; }
     public SearchValues<char> PeriodLikeMarks { get; }
     public SearchValues<char> EllipsisMarks { get; }
     public SearchValues<char> ClausePunctuation { get; }
@@ -112,6 +113,7 @@ public sealed class TextChunkerRules
 
         SentenceTerminators = SelectMarks(punctuation, PunctuationRole.Sentence);
         SentenceBoundaryCandidates = SelectMarks(punctuation, PunctuationRole.Sentence | PunctuationRole.ContextualQuestion);
+        EarlySplitCandidates = SelectMarks(punctuation, PunctuationRole.Clause | PunctuationRole.Sentence);
         PeriodLikeMarks = SelectMarks(punctuation, PunctuationRole.PeriodLike);
         EllipsisMarks = SelectMarks(punctuation, PunctuationRole.Ellipsis);
         ClausePunctuation = SelectMarks(punctuation, PunctuationRole.Clause);

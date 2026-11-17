@@ -63,7 +63,7 @@ internal static class TextChunkerDefaults
         new(PunctuationKind.Dash, PunctuationRole.None, "‒⸺⸻〜～"),
         new(PunctuationKind.OpenBracket, PunctuationRole.Opening, "([{（［｛〈《【〔〖〘〚⟨⟦⟪〈"),
         new(PunctuationKind.CloseBracket, PunctuationRole.Closing, ")]}）］｝〉》】〕〗〙〛"),
-        new(PunctuationKind.CloseBracket, PunctuationRole.None, "⟩⟧⟫〉"),
+        new(PunctuationKind.CloseBracket, PunctuationRole.Closing, "⟩⟧⟫〉"),
         new(PunctuationKind.WordSeparator, PunctuationRole.None, "·・･፡"),
         new(PunctuationKind.OpeningQuestion, PunctuationRole.None, "¿𞥟"),
         new(PunctuationKind.OpeningExclamation, PunctuationRole.None, "¡𞥞"),
@@ -88,7 +88,8 @@ internal static class TextChunkerDefaults
         new(null, PunctuationRole.Line | PunctuationRole.Sentence, "\u2028\u2029"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote, "‹›"),
         new(null, PunctuationRole.FormatControl, "\u2066\u2067\u2068\u2069"),
-        new(null, PunctuationRole.VisualQuote, "❛❜❝❞「"),
+        new(null, PunctuationRole.VisualQuote, "❛❝「"),
+        new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote, "❜❞"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote, "」"),
         new(null, PunctuationRole.VisualQuote, "『"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote, "』"),
@@ -104,6 +105,34 @@ internal static class TextChunkerDefaults
         new(null, PunctuationRole.FormatControl, "\uFEFF"),
         new(null, PunctuationRole.LexicalApostrophe, "ʼ"),
     ];
+
+    // Quote families describe typography, including reversed and low/high forms, not languages.
+    internal static ReadOnlySpan<char> GetQuoteFamily(char mark) => mark switch
+    {
+        '"' => "\"",
+        '\'' => "'",
+        '“' or '”' or '„' or '‟' => "“”„‟",
+        '‘' or '’' or '‚' or '‛' => "‘’‚‛",
+        '«' or '»' => "«»",
+        '‹' or '›' => "‹›",
+        '「' or '」' => "「」",
+        '『' or '』' => "『』",
+        '〝' or '〞' or '〟' => "〝〞〟",
+        '❛' or '❜' => "❛❜",
+        '❝' or '❞' => "❝❞",
+        _ => []
+    };
+
+    internal static bool CanCloseQuote(char opening, char closing) => (opening, closing) switch
+    {
+        ('"', '"') or ('\'', '\'') => true,
+        ('“' or '„' or '‟' or '”', '”') or ('„', '“') => true,
+        ('‘' or '‚' or '‛' or '’', '’') or ('‚', '‘') => true,
+        ('«', '»') or ('»', '«') or ('‹', '›') or ('›', '‹') => true,
+        ('「', '」') or ('『', '』') or ('〝', '〞' or '〟') => true,
+        ('❛', '❜') or ('❝', '❞') => true,
+        _ => false
+    };
 
     internal static readonly string[] CommonAbbreviations =
     [

@@ -17,8 +17,8 @@ public class ChunkerSettings
     public int EffectiveMaxChunkLength => MaxChunkLength > 0 ? MaxChunkLength : DefaultMaxChunkLength;
 
     /// <summary>
-    /// Allows one conservative punctuation split before the first generated audio chunk
-    /// of each request. Normal sentence chunking is used after that first chunk.
+    /// Allows one conservative clause or quoted-continuation split before the first generated
+    /// audio chunk. That chunk stays unfinished; normal sentence chunking follows.
     /// </summary>
     public bool EarlySplit { get; set; } = true;
 

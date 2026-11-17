@@ -207,7 +207,7 @@ var cases = new (string Category, string Name, string Input, string[] Expected)[
     ("Quoting and ellipses", "Exclamation in quotation", "\"Stop!\" Then he left.", ["\"Stop!\"", "Then he left."]),
     ("Quoting and ellipses", "Reporting clause after quotation", "\"What?!\" she shouted. Next.", ["\"What?!\" she shouted.", "Next."]),
     ("Quoting and ellipses", "Quoted ellipsis followed by reporting", "He said, \"Wait...\" and looked away. Next.", ["He said, \"Wait...\" and looked away.", "Next."]),
-    ("Quoting and ellipses", "Ellipsis and interrobang followed by report", "\"Really...?!\" he replied.", ["\"Really...?!\"", "he replied."]),
+    ("Quoting and ellipses", "Ellipsis and interrobang followed by report", "\"Really...?!\" he replied.", ["\"Really...?!\" he replied."]),
     ("Quoting and ellipses", "ASCII ellipsis hesitation lowercase", "Well... maybe we should continue. Next.", ["Well... maybe we should continue.", "Next."]),
     ("Quoting and ellipses", "Unicode ellipsis hesitation lowercase", "Well… maybe we should continue. Next.", ["Well… maybe we should continue.", "Next."]),
     ("Quoting and ellipses", "Unicode ellipsis followed uppercase", "This ends here… Next sentence begins.", ["This ends here…", "Next sentence begins."]),
@@ -658,7 +658,7 @@ bool selectedEmergencyCases = string.IsNullOrWhiteSpace(categoryFilter) ||
 bool selectedRulesConfiguration = string.IsNullOrWhiteSpace(categoryFilter) ||
     categoryFilter.Equals("Custom rules configuration", StringComparison.OrdinalIgnoreCase);
 
-var additionalCases = AdditionalChecks.Cases().ToArray();
+var additionalCases = AdditionalChecks.Cases().Concat(QuoteBoundaryChecks.Cases()).ToArray();
 var selectedAdditionalCases = additionalCases.Where(test => string.IsNullOrWhiteSpace(categoryFilter) ||
     test.Category.Equals(categoryFilter, StringComparison.OrdinalIgnoreCase)).ToArray();
 

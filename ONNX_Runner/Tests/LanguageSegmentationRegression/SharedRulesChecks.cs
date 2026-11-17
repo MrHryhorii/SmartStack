@@ -115,6 +115,33 @@ internal static class SharedRulesChecks
             });
         }
 
+        foreach (bool early in new[] { false, true })
+        foreach (bool automaticTokens in new[] { false, true })
+        {
+            yield return ($"Quoted continuation pipeline; early={early}; tokenizer={automaticTokens}", () =>
+            {
+                var bridge = new EspeakWrapper();
+                var phonemizer = new UnifiedPhonemizer(bridge, mapper, Config(), automaticTokens ? detector : null);
+                var chunks = chunker.Split("\"Really...?!\" he replied. Next.", early);
+                Require(chunks.Select(c => c.IsSentenceFinished).SequenceEqual(early ? [false, true, true] : [true, true]),
+                    "A quoted early cut changed the semantic completion flags.");
+                string[] rendered = chunks.Select(c => phonemizer.GetPhonemes(c.Text, "en").Trim()).ToArray();
+                Require(rendered.SequenceEqual(early ? ["Really...?!", "he replied.", "Next."] : ["Really...?! he replied.", "Next."]),
+                    $"Quoted continuation payloads: {string.Join(" | ", rendered)}");
+            });
+            yield return ($"Quoted emergency pipeline; early={early}; tokenizer={automaticTokens}", () =>
+            {
+                var bounded = new TextChunker(new ChunkerSettings { MaxChunkLength = 7 }, rules);
+                var bridge = new EspeakWrapper();
+                var phonemizer = new UnifiedPhonemizer(bridge, mapper, Config(), automaticTokens ? detector : null);
+                var chunks = bounded.Split("\"Hello.\" Next.", early);
+                string[] rendered = chunks.Select(c => phonemizer.GetPhonemes(c.Text, "en")).ToArray();
+                Require(rendered.All(value => !string.IsNullOrWhiteSpace(value)), "A generated closing suffix lost its phoneme payload.");
+                Require(chunks.Count(c => c.IsSentenceFinished) == 2, "A spoken sentence lost its completion flag.");
+                Require(chunks.Where(c => c.IsSentenceFinished).All(c => c.Text.Contains('.')), "Completion moved away from its terminal.");
+            });
+        }
+
         yield return ("Shared rules pipeline: defaults remain independent", () =>
         {
             var defaults = new TextChunker(new ChunkerSettings());
