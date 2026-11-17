@@ -32,8 +32,7 @@ public partial class TextChunker
         while (index < token.Length)
         {
             if (Rune.DecodeFromUtf16(token[index..], out Rune mark, out consumed) != OperationStatus.Done ||
-                Rune.GetUnicodeCategory(mark) is not (UnicodeCategory.NonSpacingMark or
-                    UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark)) return false;
+                !IsCombiningMark(mark)) return false;
 
             index += consumed;
         }
@@ -51,39 +50,35 @@ public partial class TextChunker
             return false;
         }
 
-        bool hasCasedLetter = false;
-
-        for (int i = 0; i < token.Length; i++)
+        foreach (Rune value in token.EnumerateRunes())
         {
-            char value = token[i];
-            if (!char.IsLetter(value))
+            if (!Rune.IsLetter(value))
             {
                 continue;
             }
 
-            if (char.IsUpper(value) || char.GetUnicodeCategory(value) == UnicodeCategory.TitlecaseLetter)
+            if (IsUppercaseOrTitlecase(value))
             {
                 return true;
             }
 
-            if (char.IsLower(value))
+            if (Rune.IsLower(value))
             {
-                hasCasedLetter = true;
-                break;
+                return false;
             }
         }
 
         // Scripts without upper/lower case cannot satisfy a capitalization test; the curated
         // prefix list itself is therefore the strongest available signal for them.
-        return !hasCasedLetter;
+        return true;
     }
 
     /// <summary>Checks whether an abbreviation contains uppercase or titlecase letters.</summary>
     private bool ContainsUppercaseLetter(ReadOnlySpan<char> token)
     {
-        for (int i = 0; i < token.Length; i++)
+        foreach (Rune value in token.EnumerateRunes())
         {
-            if (char.IsUpper(token[i]) || char.GetUnicodeCategory(token[i]) == UnicodeCategory.TitlecaseLetter)
+            if (IsUppercaseOrTitlecase(value))
             {
                 return true;
             }
@@ -148,9 +143,9 @@ public partial class TextChunker
         int maxSegmentLength = 0;
         int minSegmentLength = int.MaxValue;
 
-        for (int i = 0; i < token.Length; i++)
+        foreach (Rune value in token.EnumerateRunes())
         {
-            if (Rules.PeriodLikeMarks.Contains(token[i]))
+            if (value.IsBmp && Rules.PeriodLikeMarks.Contains((char)value.Value))
             {
                 if (segmentLength == 0)
                 {
@@ -166,12 +161,14 @@ public partial class TextChunker
 
             // Dotted acronyms/abbreviations are alphabetic. Numeric/mixed forms such as
             // 127.0.0.1 and v1.2.3 are technical tokens, not abbreviation evidence.
-            if (!char.IsLetter(token[i]))
+            if (Rune.IsLetter(value))
             {
-                return false;
+                segmentLength++;
+                continue;
             }
 
-            segmentLength++;
+            if (segmentLength > 0 && IsCombiningMark(value)) continue;
+            return false;
         }
 
         if (separatorCount == 0 || segmentLength == 0)
@@ -194,4 +191,11 @@ public partial class TextChunker
                minSegmentLength > 0 &&
                maxSegmentLength <= 3;
     }
+
+    private static bool IsUppercaseOrTitlecase(Rune value) =>
+        Rune.GetUnicodeCategory(value) is UnicodeCategory.UppercaseLetter or UnicodeCategory.TitlecaseLetter;
+
+    private static bool IsCombiningMark(Rune value) =>
+        Rune.GetUnicodeCategory(value) is UnicodeCategory.NonSpacingMark or
+            UnicodeCategory.SpacingCombiningMark or UnicodeCategory.EnclosingMark;
 }

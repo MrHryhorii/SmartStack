@@ -50,11 +50,48 @@ internal static class AdditionalChecks
                 () => CheckEmergency(input, 64, false, true));
         }
 
+        var scripts = new (string Name, string Clause, string Terminal)[]
+        {
+            ("Thai", "ฉันกำลังอ่านข้อความภาษาไทยอย่างช้า ๆ เพื่อทดสอบการแบ่งข้อความ ", "."),
+            ("Lao", "ພວກເຮົາກຳລັງອ່ານຂໍ້ຄວາມພາສາລາວ ", "."),
+            ("Khmer", "យើងកំពុងអានអត្ថបទជាភាសាខ្មែរយ៉ាងយឺតៗ ", "។"),
+            ("Devanagari", "हम धीरे धीरे हिंदी पाठ पढ़ रहे हैं और शब्दों का परीक्षण कर रहे हैं ", "।"),
+            ("Bengali", "আমরা ধীরে ধীরে বাংলা লেখা পড়ছি এবং শব্দগুলি পরীক্ষা করছি ", "।"),
+            ("Tamil", "நாங்கள் தமிழ் உரையை மெதுவாக படிக்கிறோம் ", "."),
+            ("Arabic", "نحن نقرأ النص العربي ببطء ونتحقق من تقسيم الكلمات ", "؟"),
+            ("Hebrew", "אנחנו קוראים את הטקסט בעברית ובודקים את חלוקת המילים ", "."),
+            ("Persian with ZWNJ", "ما متن فارسی را می‌خوانیم و واژه‌ها را بررسی می‌کنیم ", "."),
+            ("Korean decomposed syllables", "우리는 한국어 문장을 천천히 읽고 있습니다 ".Normalize(NormalizationForm.FormD), "."),
+            ("Japanese", "私たちは日本語の文章をゆっくり読みながら文字の区切りを確認しています", "。"),
+            ("Georgian", "ჩვენ ნელა ვკითხულობთ ქართულ ტექსტს და ვამოწმებთ სიტყვებს ", ".")
+        };
+        foreach (var script in scripts)
+        foreach (int limit in new[] { 64, 79, 200 })
+        foreach (bool quoted in new[] { false, true })
+        foreach (bool early in new[] { false, true })
+        {
+            string body = string.Concat(Enumerable.Repeat(script.Clause, 12)).TrimEnd() + script.Terminal;
+            string input = quoted ? "“" + body + "”" : body;
+            yield return ("Multilingual emergency invariants", $"{script.Name}; limit={limit}; quoted={quoted}; early={early}",
+                () => CheckEmergency(input, limit, early, true, requireContent: true));
+        }
+
         foreach (string terminal in new[] { ".", "?", "!", "..." })
         foreach (bool early in new[] { false, true })
         {
             yield return ("Ordinary emergency endings", $"Long ordinary word ending '{terminal}'; early={early}",
                 () => CheckEmergency(new string('a', 150) + terminal, 64, early, true));
+        }
+
+        foreach (char opening in new[] { '\u202B', '\u2067' })
+        foreach (int limit in new[] { 64, 200 })
+        foreach (int offset in new[] { -1, 0, 1 })
+        foreach (bool early in new[] { false, true })
+        {
+            char closing = opening == '\u202B' ? '\u202C' : '\u2069';
+            string input = "“" + opening + new string('a', limit - 4 + offset) + "?!" + closing + "”";
+            yield return ("Directional emergency invariants", $"U+{(int)opening:X4}; limit={limit}; offset={offset}; early={early}",
+                () => CheckEmergency(input, limit, early, true, requireContent: true));
         }
         foreach (string terminal in new[] { ".", "?", "!" })
         foreach (string separator in new[] { "—\u0301", " \u0301" })
@@ -220,7 +257,7 @@ internal static class AdditionalChecks
 
     /// <summary>Checks emergency-split progress, source preservation, Unicode validity, and sentence-completion flags.</summary>
     private static void CheckEmergency(string input, int limit, bool early, bool finished,
-        string? protectedToken = null, bool requireValidUnicode = true)
+        string? protectedToken = null, bool requireValidUnicode = true, bool requireContent = false)
     {
         var chunker = new TextChunker(new ChunkerSettings { MaxChunkLength = limit });
         var chunks = chunker.Split(input, earlySplit: early);
@@ -236,6 +273,7 @@ internal static class AdditionalChecks
         foreach (var chunk in chunks)
         {
             Require(chunk.Text.Length > 0, "An empty chunk was emitted.");
+            if (requireContent) Require(chunk.Text.EnumerateRunes().Any(Rune.IsLetterOrDigit), "An attached suffix became a content-free chunk.");
             ReadOnlySpan<char> core = chunk.Text.AsSpan();
             int afterWhitespace = cursor;
             while (afterWhitespace < input.Length && char.IsWhiteSpace(input[afterWhitespace])) afterWhitespace++;

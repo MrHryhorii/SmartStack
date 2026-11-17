@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 
 namespace ONNX_Runner.Services.Text;
 
@@ -57,7 +58,7 @@ public partial class TextChunker
 
         // A period directly embedded between token characters is never a sentence boundary:
         // S.T.A.L.K.E.R, 3.14, v1.2.3, example.com, user.name@example.com, etc.
-        if (index + 1 < text.Length && IsWordLikeAfterPeriod(text[index + 1]))
+        if (index + 1 < text.Length && IsWordLikeAfterPeriod(text[(index + 1)..]))
         {
             return false;
         }
@@ -138,14 +139,15 @@ public partial class TextChunker
             {
                 return true;
             }
-
-            next = text[continuationIndex];
         }
 
-        bool nextIsLower = char.IsLower(next);
-        bool nextIsUpper = char.IsUpper(next);
-        bool nextIsDigit = char.IsDigit(next);
-        bool nextIsLetterOrDigit = char.IsLetterOrDigit(next);
+        Rune.DecodeFromUtf16(text[continuationIndex..], out Rune nextRune, out _);
+        UnicodeCategory nextCategory = Rune.GetUnicodeCategory(nextRune);
+        bool nextIsLower = nextCategory == UnicodeCategory.LowercaseLetter;
+        bool nextIsUpper = nextCategory is UnicodeCategory.UppercaseLetter or UnicodeCategory.TitlecaseLetter;
+        bool nextIsDigit = nextCategory == UnicodeCategory.DecimalDigitNumber;
+        bool nextIsLetterOrDigit = nextIsLower || nextIsUpper || nextIsDigit ||
+            nextCategory is UnicodeCategory.ModifierLetter or UnicodeCategory.OtherLetter;
 
         bool knownAbbreviation = Rules.KnownAbbreviations
             .GetAlternateLookup<ReadOnlySpan<char>>()
@@ -173,7 +175,7 @@ public partial class TextChunker
             // "St. Olav", "Sr. García", "Dr. Smith". Scripts without case also need this
             // path: "ดร. สมชาย". Cased source tokens still require capitalization, so
             // lowercase units such as "ms." cannot masquerade as "Ms.".
-            bool nextIsUncasedLetter = char.IsLetter(next) && !nextIsLower && !nextIsUpper;
+            bool nextIsUncasedLetter = nextCategory is UnicodeCategory.ModifierLetter or UnicodeCategory.OtherLetter;
             if ((nextIsUpper || nextIsUncasedLetter) &&
                 IsCapitalizedPrefixAbbreviation(cleanToken))
             {
@@ -225,7 +227,7 @@ public partial class TextChunker
         // is an exception: Unicode categorizes its letters as lowercase, but Georgian does not
         // capitalize the first word of a sentence. Earlier checks still protect initials and
         // recognized abbreviations before this general fallback.
-        if (nextIsLower && (next < '\u10D0' || next > '\u10FF'))
+        if (nextIsLower && nextRune.Value is not (>= 0x10D0 and <= 0x10FF))
         {
             return false;
         }
@@ -234,11 +236,10 @@ public partial class TextChunker
     }
 
     /// <summary>Checks letters, digits, and combining marks as word continuation after a period.</summary>
-    private bool IsWordLikeAfterPeriod(char value)
+    private bool IsWordLikeAfterPeriod(ReadOnlySpan<char> text)
     {
-        return char.IsLetterOrDigit(value) ||
-               char.GetUnicodeCategory(value) is UnicodeCategory.NonSpacingMark
-                   or UnicodeCategory.SpacingCombiningMark
-                   or UnicodeCategory.EnclosingMark;
+        if (text[0] <= 0x7F) return char.IsAsciiLetterOrDigit(text[0]);
+        Rune.DecodeFromUtf16(text, out Rune value, out _);
+        return Rune.IsLetterOrDigit(value) || IsCombiningMark(value);
     }
 }

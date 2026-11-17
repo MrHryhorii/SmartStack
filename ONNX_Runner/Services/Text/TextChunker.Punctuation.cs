@@ -138,7 +138,13 @@ public partial class TextChunker
         {
             int next = index;
             while (next < text.Length && !IsLineBoundary(text[next]) &&
-                (char.IsWhiteSpace(text[next]) || IsBoundaryFormatControl(text[next]))) next++;
+                (char.IsWhiteSpace(text[next]) || IsBoundaryFormatControl(text[next])))
+            {
+                // Closing bidi scopes stay with preceding content. A scope alone does
+                // not count as a closing quote for reporting-clause detection.
+                if (text[next] is '\u202C' or '\u2069') index = next + 1;
+                next++;
+            }
 
             bool separated = next > index;
             if (next >= text.Length || (separated && !Rules.VisualQuotes.Contains(text[next])) ||

@@ -81,6 +81,7 @@ internal static class TextChunkerDefaults
         new(null, PunctuationRole.FormatControl, "\u061C"),
         new(null, PunctuationRole.Pause, "༔᛫᛬᛭᪨᪩᪪᪫᭞"),
         new(null, PunctuationRole.FormatControl, "\u200E\u200F"),
+        new(null, PunctuationRole.FormatControl, "\u202A\u202B\u202C\u202D\u202E"),
         new(null, PunctuationRole.LexicalHyphen, "‐‑"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote, "‘"),
         new(null, PunctuationRole.Closing | PunctuationRole.VisualQuote | PunctuationRole.LexicalApostrophe, "’"),

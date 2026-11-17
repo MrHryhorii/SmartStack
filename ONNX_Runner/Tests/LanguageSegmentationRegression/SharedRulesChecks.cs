@@ -86,7 +86,13 @@ internal static class SharedRulesChecks
                 ["id", "Kovács arrived"], ["id.", "Kovács arrived."], false),
             ("Default titles remain available", "St. Olav spoke. Next.",
                 ["St. Olav spoke.", "Next."], [true, true],
-                ["St. Olav spoke", "Next"], ["St. Olav spoke.", "Next."], false)
+                ["St. Olav spoke", "Next"], ["St. Olav spoke.", "Next."], false),
+            ("Decomposed Polish abbreviation", "s\u0301w. Jan arrived. Next.",
+                ["s\u0301w. Jan arrived.", "Next."], [true, true],
+                ["s\u0301w. Jan arrived", "Next"], ["s\u0301w. Jan arrived.", "Next."], false),
+            ("Decomposed Turkish abbreviation", "Doc\u0327. Kaya arrived. Next.",
+                ["Doc\u0327. Kaya arrived.", "Next."], [true, true],
+                ["Doc\u0327. Kaya arrived", "Next"], ["Doc\u0327. Kaya arrived.", "Next."], false)
         };
 
         foreach (var fixture in fixtures)

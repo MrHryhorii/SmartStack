@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace ONNX_Runner.Services.Text;
 
 public partial class TextChunker
@@ -204,7 +206,8 @@ public partial class TextChunker
 
         // With spacing, an uppercase letter is a useful language-independent signal of a
         // fresh sentence in bicameral scripts. Lowercase and uncased scripts stay continuous.
-        return char.IsUpper(next);
+        Rune.DecodeFromUtf16(text[nextVisible..], out Rune nextRune, out _);
+        return IsUppercaseOrTitlecase(nextRune);
     }
 
     /// <summary>

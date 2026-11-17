@@ -658,7 +658,8 @@ bool selectedEmergencyCases = string.IsNullOrWhiteSpace(categoryFilter) ||
 bool selectedRulesConfiguration = string.IsNullOrWhiteSpace(categoryFilter) ||
     categoryFilter.Equals("Custom rules configuration", StringComparison.OrdinalIgnoreCase);
 
-var additionalCases = AdditionalChecks.Cases().Concat(QuoteBoundaryChecks.Cases()).ToArray();
+var additionalCases = AdditionalChecks.Cases().Concat(QuoteBoundaryChecks.Cases())
+    .Concat(UnicodeBoundaryChecks.Cases()).ToArray();
 var selectedAdditionalCases = additionalCases.Where(test => string.IsNullOrWhiteSpace(categoryFilter) ||
     test.Category.Equals(categoryFilter, StringComparison.OrdinalIgnoreCase)).ToArray();
 

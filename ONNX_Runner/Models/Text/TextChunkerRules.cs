@@ -240,7 +240,8 @@ public sealed class TextChunkerRules
     /// <summary>Normalizes and validates abbreviation additions, then freezes the case-insensitive union.</summary>
     private FrozenSet<string> MergeAbbreviations(IEnumerable<string> builtIn, IEnumerable<string>? additions)
     {
-        var merged = new HashSet<string>(builtIn, StringComparer.OrdinalIgnoreCase);
+        var merged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string value in builtIn) AddAbbreviationForms(merged, value);
         if (additions is null) return merged.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
 
         foreach (string? value in additions)
@@ -260,10 +261,18 @@ public sealed class TextChunkerRules
 
             string item = normalized.ToString();
             if (item.Any(char.IsWhiteSpace)) throw new ArgumentException($"Invalid abbreviation: '{value}'.");
-            merged.Add(item);
+            AddAbbreviationForms(merged, item);
         }
 
         return merged.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Prepares composed and decomposed spellings once, keeping request-time lookups allocation-free.</summary>
+    private static void AddAbbreviationForms(HashSet<string> target, string value)
+    {
+        target.Add(value);
+        target.Add(value.Normalize(NormalizationForm.FormC));
+        target.Add(value.Normalize(NormalizationForm.FormD));
     }
 
     // This DTO describes additions only; the runtime catalog is immutable.
