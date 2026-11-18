@@ -26,8 +26,19 @@ public partial class TextChunker
             }
 
             int candidateIndex = searchIndex + offset;
-
-
+            if (textSpan[candidateIndex] == '[')
+            {
+                if (SingleBracketPhonemeRecognizer.TryGetSpanLength(textSpan, candidateIndex, out int length))
+                {
+                    searchIndex = candidateIndex + length;
+                    continue;
+                }
+                if (!Rules.SentenceTerminators.Contains('['))
+                {
+                    searchIndex = candidateIndex + 1;
+                    continue;
+                }
+            }
             if (!IsRealSentenceBoundary(textSpan, candidateIndex))
             {
                 searchIndex = candidateIndex + 1;

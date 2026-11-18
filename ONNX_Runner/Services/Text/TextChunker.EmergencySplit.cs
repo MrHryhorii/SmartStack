@@ -91,9 +91,12 @@ public partial class TextChunker
             }
             bool completedTechnicalToken = splitIndex > originalSplit;
 
+            splitIndex = ProtectSinglePhonemeBoundary(originalText.AsSpan(), sourceOffset + currentIndex,
+                sourceOffset + splitIndex, sourceOffset + sentenceSpan.Length, out bool phonemeBoundary) - sourceOffset;
+
             // The semantic sentence already owns its closing suffix. Emergency cuts must
             // retain that ownership and leave the final completion flag on speakable text.
-            bool protectedTokenEnd = completedTechnicalToken ||
+            bool protectedTokenEnd = completedTechnicalToken || phonemeBoundary ||
                 EndsWithProtectedEmergencyToken(sentenceSpan, currentIndex, splitIndex);
             splitIndex = ProtectEmergencyPunctuationSuffix(boundaryContext, sourceOffset + currentIndex,
                 sourceOffset + splitIndex, sourceOffset + windowEnd, protectedTokenEnd) - sourceOffset;
@@ -110,6 +113,7 @@ public partial class TextChunker
                 bool needsEmergencyGlue = !char.IsPunctuation(lastChar) &&
                     splitIndex < sentenceSpan.Length &&
                     !completedTechnicalToken &&
+                    !phonemeBoundary &&
                     !EndsWithProtectedEmergencyToken(sentenceSpan, currentIndex, splitIndex);
                 string finalChunk = needsEmergencyGlue
                     ? string.Concat(chunkSpan, EmergencyGlue)
@@ -120,6 +124,25 @@ public partial class TextChunker
 
             currentIndex = splitIndex;
         }
+    }
+
+    /// <summary>Keeps a recognized IPA override atomic, as with an indivisible technical token.</summary>
+    private static int ProtectSinglePhonemeBoundary(ReadOnlySpan<char> text, int start, int split, int limit, out bool phonemeBoundary)
+    {
+        phonemeBoundary = false;
+        int search = start;
+        int searchLimit = Math.Min(split + 1, limit);
+        while (SingleBracketPhonemeRecognizer.TryFindNext(text, search, searchLimit, out int opening, out int end))
+        {
+            if (split <= end)
+            {
+                phonemeBoundary = true;
+                if (split == end) return split;
+                return opening > start && HasContent(text[start..opening]) ? opening : end;
+            }
+            search = end;
+        }
+        return split;
     }
 
     /// <summary>Moves a cut around an attached suffix while respecting the ordinary size cap.</summary>

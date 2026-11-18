@@ -112,8 +112,8 @@ public sealed class TextChunkerRules
         }
 
         SentenceTerminators = SelectMarks(punctuation, PunctuationRole.Sentence);
-        SentenceBoundaryCandidates = SelectMarks(punctuation, PunctuationRole.Sentence | PunctuationRole.ContextualQuestion);
-        EarlySplitCandidates = SelectMarks(punctuation, PunctuationRole.Clause | PunctuationRole.Sentence);
+        SentenceBoundaryCandidates = SelectMarks(punctuation, PunctuationRole.Sentence | PunctuationRole.ContextualQuestion, '[');
+        EarlySplitCandidates = SelectMarks(punctuation, PunctuationRole.Clause | PunctuationRole.Sentence, '[');
         PeriodLikeMarks = SelectMarks(punctuation, PunctuationRole.PeriodLike);
         EllipsisMarks = SelectMarks(punctuation, PunctuationRole.Ellipsis);
         ClausePunctuation = SelectMarks(punctuation, PunctuationRole.Clause);
@@ -182,11 +182,12 @@ public sealed class TextChunkerRules
 
     /// <summary>Builds a BMP character lookup for entries matching any requested punctuation role.</summary>
     private static SearchValues<char> SelectMarks(
-        Dictionary<Rune, PunctuationEntry> punctuation, PunctuationRole roles)
+        Dictionary<Rune, PunctuationEntry> punctuation, PunctuationRole roles, char? additional = null)
     {
-        return SearchValues.Create(punctuation
+        var marks = punctuation
             .Where(pair => pair.Key.IsBmp && (pair.Value.Roles & roles) != 0)
-            .Select(pair => (char)pair.Key.Value).ToArray());
+            .Select(pair => (char)pair.Key.Value);
+        return SearchValues.Create((additional.HasValue ? marks.Append(additional.Value) : marks).ToArray());
     }
 
     /// <summary>Validates additional punctuation and merges roles, rejecting incompatible meanings when required.</summary>

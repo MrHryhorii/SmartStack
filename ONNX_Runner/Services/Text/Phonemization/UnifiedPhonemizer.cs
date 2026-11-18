@@ -35,11 +35,11 @@ public partial class UnifiedPhonemizer
 
     // Matches standard IPA blocks delimited by /.../, [...], or the eSpeak-style
     // double-bracket [[...]] convention for raw phoneme input.
-    [GeneratedRegex(@"/(?!\d+/)([^/]+?)/|\[\[([^\]]+?)\]\]|\[(?!\d+\])([^\]]+?)\]", RegexOptions.Compiled)]
+    [GeneratedRegex(@"/(?!\d+/)([^/]+?)/|\[\[([^\]]+?)\]\]|\[(?!\[|\d+\])([^\[\]]+?)\]", RegexOptions.Compiled)]
     private static partial Regex RawPhonemeBlockRegex();
 
-    // Explicit allowlist of IPA symbols to distinguish actual phonetic transcription
-    // from unrelated orthography (e.g., URLs or markdown links).
+    // Retains the established IPA-symbol heuristic for slash-delimited input.
+    // Single brackets use complete content and context validation instead.
     private static readonly SearchValues<char> IpaSearchValues = SearchValues.Create(
         "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʐʑʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʲʷˠˤ");
 
@@ -117,9 +117,8 @@ public partial class UnifiedPhonemizer
 
         foreach (ValueMatch match in RawPhonemeBlockRegex().EnumerateMatches(textSpan))
         {
-            // Double brackets are an explicit eSpeak/raw-phoneme contract and therefore bypass
-            // orthographic heuristics completely. Single brackets and /.../ are more ambiguous
-            // (markdown, paths, ordinary notation), so they still need an explicit IPA signal.
+            // Double brackets explicitly request raw phonemes. Implicit single brackets require
+            // confident IPA content and prose context; slash blocks keep their established heuristic.
             bool isExplicitDoubleBracket =
                 match.Length >= 4 &&
                 textSpan[match.Index] == '[' &&
@@ -133,7 +132,10 @@ public partial class UnifiedPhonemizer
                 match.Index + delimLen,
                 match.Length - (2 * delimLen));
 
-            if (!isExplicitDoubleBracket && !ContainsIpaSymbol(phonemeContent))
+            bool recognized = isExplicitDoubleBracket || (textSpan[match.Index] == '/'
+                ? ContainsIpaSymbol(phonemeContent)
+                : SingleBracketPhonemeRecognizer.TryGetSpanLength(textSpan, match.Index, out int length) && length == match.Length);
+            if (!recognized)
             {
                 continue;
             }
@@ -196,6 +198,12 @@ public partial class UnifiedPhonemizer
             // were already extracted above and remain completely untouched.
             if (string.IsNullOrWhiteSpace(segmentText))
             {
+                tokens.Add(new TextChunk
+                {
+                    Text = segmentText,
+                    DetectedLanguage = _modelEspeakCode,
+                    IsPunctuationOrSpace = true
+                });
                 continue;
             }
 

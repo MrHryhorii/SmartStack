@@ -29,6 +29,12 @@ public partial class TextChunker
             }
 
             int candidateIndex = searchIndex + offset;
+            if (text[candidateIndex] == '[' &&
+                SingleBracketPhonemeRecognizer.TryGetSpanLength(text, candidateIndex, out int length))
+            {
+                searchIndex = candidateIndex + length;
+                continue;
+            }
 
             if (!Rules.ClausePunctuation.Contains(text[candidateIndex]))
             {
