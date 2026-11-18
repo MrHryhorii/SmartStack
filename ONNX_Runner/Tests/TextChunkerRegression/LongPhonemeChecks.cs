@@ -3,8 +3,10 @@ using ONNX_Runner.Services.Text;
 
 internal static class LongPhonemeChecks
 {
-    internal static IEnumerable<(string Category, string Name, Action Check)> Cases()
+    internal static IEnumerable<(string Category, string Name, Action Check)> Cases(Dictionary<string, int[]>? phonemeIdMap = null)
     {
+        TextChunker CreateChunker(int limit) => new(new ChunkerSettings { MaxChunkLength = limit }, phonemeIdMap: phonemeIdMap);
+
         string[] bodies =
         [
             string.Join(" ", Enumerable.Repeat("həˈloʊ", 50)),
@@ -21,7 +23,7 @@ internal static class LongPhonemeChecks
             yield return ("Long phoneme blocks", $"{Open}; payload={body.Length}; cap={limit}; early={early}", () =>
             {
                 string input = Open + body + Close;
-                var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(input, early);
+                var chunks = CreateChunker(limit).Split(input, early);
                 var payloads = chunks.Select(chunk => ExplicitPayload(chunk.Text)).ToArray();
                 Require(chunks.Count > 1 && string.Concat(payloads) == body, "Phonemes were lost, duplicated or left unwrapped.");
                 Require(chunks.All(c => c.Text.Length <= limit), "An ordinary IPA element bypassed the configured cap.");
@@ -40,7 +42,7 @@ internal static class LongPhonemeChecks
         {
             yield return ("Long phoneme blocks", $"Phonetic atoms stay attached; cap={limit}", () =>
             {
-                var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split("[[" + bodyWithAtoms + "]]");
+                var chunks = CreateChunker(limit).Split("[[" + bodyWithAtoms + "]]");
                 int cursor = 0;
                 foreach (var chunk in chunks)
                 {
@@ -62,7 +64,7 @@ internal static class LongPhonemeChecks
             {
                 string body = string.Concat(Enumerable.Repeat("ɪa", 100));
                 string prefix = suffix.StartsWith(')') ? "(" : "";
-                var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(prefix + "[" + body + "]" + suffix + " Next.", early);
+                var chunks = CreateChunker(limit).Split(prefix + "[" + body + "]" + suffix + " Next.", early);
                 Require(chunks.Count(c => c.IsSentenceFinished) == 2 && chunks[^1].IsSentenceFinished, "Completion was lost or duplicated.");
                 Require(chunks.All(c => c.Text.Any(char.IsLetterOrDigit)), "A punctuation-only fragment was emitted.");
                 Require(chunks.Any(c => c.Text.EndsWith("]]" + suffix, StringComparison.Ordinal)), "The final phoneme fragment lost its terminal cluster.");
@@ -77,7 +79,7 @@ internal static class LongPhonemeChecks
         {
             yield return ("Long phoneme blocks", $"A decorated closing delimiter stays attached; payload={body.Length}; cap={limit}; early={early}", () =>
             {
-                var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit })
+                var chunks = CreateChunker(limit)
                     .Split("[[" + body + "]]\u0301. Next.", early);
                 Require(chunks.Any(c => c.Text.Contains("]]\u0301.", StringComparison.Ordinal)), "A combining mark was detached from its closing delimiter.");
                 Require(chunks.All(c => c.Text.Any(char.IsLetterOrDigit)) && chunks.Count(c => c.IsSentenceFinished) == 2,
@@ -92,7 +94,7 @@ internal static class LongPhonemeChecks
             yield return ("Long phoneme blocks", $"A block at the cap reserves space for its suffix; {Open}; cap={limit}; early={early}", () =>
             {
                 string body = "ɪ" + new string('a', limit - Open.Length - Close.Length - 1);
-                var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit })
+                var chunks = CreateChunker(limit)
                     .Split("(" + Open + body + Close + ")?! Next.", early);
                 Require(chunks.All(c => c.Text.Length <= limit), "A fitting raw block became oversized when its outside punctuation was attached.");
                 Require(chunks.Any(c => c.Text.EndsWith("]])?!", StringComparison.Ordinal)) && chunks.Count(c => c.IsSentenceFinished) == 2,
@@ -106,7 +108,7 @@ internal static class LongPhonemeChecks
             {
                 string first = string.Concat(Enumerable.Repeat("ɪa", 100));
                 string second = string.Concat(Enumerable.Repeat("əu", 100));
-                var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit })
+                var chunks = CreateChunker(limit)
                     .Split("Say [" + first + "] then [[" + second + "]] now. Next.");
                 Require(chunks.Count(c => c.IsSentenceFinished) == 2 && chunks[^1].Text == "Next.", "Mixed prose lost its sentence boundaries.");
                 Require(chunks.Any(c => c.Text.Contains("Say", StringComparison.Ordinal)) && chunks.Any(c => c.Text.Contains("then", StringComparison.Ordinal)) &&

@@ -1,4 +1,5 @@
 using System.Globalization;
+using ONNX_Runner.Services.Text.Phonemization;
 
 namespace ONNX_Runner.Services.Text;
 
@@ -120,8 +121,25 @@ public partial class TextChunker
         return lastSafe > start ? lastSafe : NextPhonemeElementEnd(text, start);
     }
 
+    /// <summary>Combines IPA attachment rules with complete tokens exposed by the active model.</summary>
+    private int NextPhonemeElementEnd(ReadOnlySpan<char> text, int start)
+    {
+        int end = NextIpaElementEnd(text, start);
+        if (_phonemeInventory == null) return end;
+        int cursor = start;
+        while (cursor < end)
+        {
+            int length = _phonemeInventory.TryMatch(text[cursor..], out int matched, out _)
+                ? matched : PhonemeInventory.ScalarLength(text[cursor..]);
+            int tokenEnd = cursor + length;
+            while (end < tokenEnd) end = NextIpaElementEnd(text, end);
+            cursor = tokenEnd;
+        }
+        return end;
+    }
+
     /// <summary>Keeps diacritics, tied consonants, stress, modifiers and tone sequences on their phonetic base.</summary>
-    private static int NextPhonemeElementEnd(ReadOnlySpan<char> text, int start)
+    private static int NextIpaElementEnd(ReadOnlySpan<char> text, int start)
     {
         if (char.IsWhiteSpace(text[start])) return start + StringInfo.GetNextTextElementLength(text[start..]);
         int end = start;

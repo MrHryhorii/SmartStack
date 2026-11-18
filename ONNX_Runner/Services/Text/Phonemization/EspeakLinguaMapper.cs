@@ -22,7 +22,7 @@ public class EspeakLinguaMapper
 
         foreach (var code in espeakCodes)
         {
-            string cleanCode = code.Trim().ToLower();
+            string cleanCode = code.Trim().ToLowerInvariant();
 
             // Attempt to find an exact match for base codes like "en", "cmn", or "nb"
             if (EspeakLanguageCatalog.TryGetLanguage(cleanCode, out var linguaLang))
@@ -67,6 +67,6 @@ public class EspeakLinguaMapper
     /// </summary>
     public Language? GetLinguaLanguage(string espeakCode)
     {
-        return EspeakLanguageCatalog.TryGetLanguage(espeakCode.Trim().ToLower(), out var lang) ? lang : null;
+        return EspeakLanguageCatalog.TryGetLanguage(espeakCode.Trim().ToLowerInvariant(), out var lang) ? lang : null;
     }
 }

@@ -28,9 +28,7 @@ public partial class UnifiedPhonemizer
     private readonly string _canonicalModelEspeakCode;
     private readonly string[] _modelEspeakParts;
 
-    // Fast model-inventory lookup used by the IPA validation path.
-    private readonly HashSet<string> _supportedPhonemes;
-    private readonly int _maxSupportedPhonemeLength;
+    private readonly PhonemeInventory _inventory;
 
     /// <summary>Connects native phonemization, model punctuation/phoneme adaptation, and optional language routing.</summary>
     public UnifiedPhonemizer(
@@ -48,7 +46,7 @@ public partial class UnifiedPhonemizer
         _fallbackMapper = fallbackMapper;
         _readEmojis = settings?.ReadEmojis ?? true;
 
-        _modelEspeakVoice = _piperConfig.Espeak.Voice ?? "en";
+        _modelEspeakVoice = _piperConfig.Espeak.Voice ?? EspeakConfig.DefaultVoice;
         _modelEspeakCode = _modelEspeakVoice
             .Trim()
             .ToLowerInvariant();
@@ -58,20 +56,7 @@ public partial class UnifiedPhonemizer
             ['-', '_'],
             StringSplitOptions.RemoveEmptyEntries);
 
-        _supportedPhonemes = _piperConfig.PhonemeIdMap != null
-            ? new HashSet<string>(_piperConfig.PhonemeIdMap.Keys, StringComparer.Ordinal)
-            : new HashSet<string>(StringComparer.Ordinal);
-
-        int maxSupportedLength = 1;
-        foreach (string phoneme in _supportedPhonemes)
-        {
-            if (phoneme.Length > maxSupportedLength)
-            {
-                maxSupportedLength = phoneme.Length;
-            }
-        }
-
-        _maxSupportedPhonemeLength = maxSupportedLength;
+        _inventory = new PhonemeInventory(_piperConfig.PhonemeIdMap ?? []);
     }
 
     // Mirrors MixedLanguagePhonemizer's own forced-language resolution (smart inheritance +
@@ -585,7 +570,6 @@ public partial class UnifiedPhonemizer
         }
 
         ReadOnlySpan<char> input = phonemes.AsSpan();
-        var supportedLookup = _supportedPhonemes.GetAlternateLookup<ReadOnlySpan<char>>();
         int index = 0;
 
         while (index < input.Length)
@@ -594,10 +578,7 @@ public partial class UnifiedPhonemizer
 
             // 1. Preserve a multi-character model token exactly when the model explicitly knows it.
             // This includes true multi-phoneme tokens and supplementary-plane scalar values.
-            if (TryFindLongestSupported(
-                remaining,
-                minimumLength: 2,
-                out int supportedLength))
+            if (_inventory.TryMatch(remaining, out int supportedLength, out _) && supportedLength > 1)
             {
                 output.Append(remaining[..supportedLength]);
                 index += supportedLength;
@@ -622,7 +603,7 @@ public partial class UnifiedPhonemizer
             int unitLength = PhonemeFallbackMapper.GetPhonemeUnitLength(remaining);
             ReadOnlySpan<char> unit = remaining[..unitLength];
 
-            if (supportedLookup.Contains(unit))
+            if (_inventory.CanEncode(unit))
             {
                 output.Append(unit);
                 index += unitLength;
@@ -677,39 +658,6 @@ public partial class UnifiedPhonemizer
 
             matchedLength = length;
             fallback = candidate;
-            return true;
-        }
-
-        return false;
-    }
-
-    // Finds the longest model-supported phoneme beginning at the current position.
-    private bool TryFindLongestSupported(
-        ReadOnlySpan<char> input,
-        int minimumLength,
-        out int matchedLength)
-    {
-        matchedLength = 0;
-
-        var supportedLookup = _supportedPhonemes.GetAlternateLookup<ReadOnlySpan<char>>();
-
-        int maxLength = Math.Min(
-            _maxSupportedPhonemeLength,
-            input.Length);
-
-        for (int length = maxLength; length >= minimumLength; length--)
-        {
-            if (SplitsSurrogatePair(input, length))
-            {
-                continue;
-            }
-
-            if (!supportedLookup.Contains(input[..length]))
-            {
-                continue;
-            }
-
-            matchedLength = length;
             return true;
         }
 

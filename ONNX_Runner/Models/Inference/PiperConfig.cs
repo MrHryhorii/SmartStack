@@ -47,11 +47,13 @@ public class AudioConfig
 
 public class EspeakConfig
 {
+    public const string DefaultVoice = "en";
+
     /// <summary>
     /// The native eSpeak-ng voice/dialect code used to generate the phonetic transcription.
     /// </summary>
     [JsonPropertyName("voice")]
-    public string Voice { get; set; } = "en";
+    public string Voice { get; set; } = DefaultVoice;
 }
 
 public class InferenceConfig

@@ -1,6 +1,7 @@
 using System.Globalization;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Text;
+using ONNX_Runner.Services.Text.Phonemization;
 
 namespace ONNX_Runner.Services.Text;
 
@@ -8,11 +9,13 @@ namespace ONNX_Runner.Services.Text;
 /// Multilingual sentence chunker using one immutable shared punctuation and abbreviation catalog.
 /// Boundary heuristics deliberately preserve ambiguous uppercase initials and uncased letters.
 /// </summary>
-public partial class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = null)
+public partial class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = null,
+    Dictionary<string, int[]>? phonemeIdMap = null)
 {
     public TextChunkerRules Rules { get; } = rules ?? TextChunkerRules.Default;
 
     private readonly int _maxLength = settings.EffectiveMaxChunkLength;
+    private readonly PhonemeInventory? _phonemeInventory = phonemeIdMap is { Count: > 0 } ? new(phonemeIdMap) : null;
     private const string EmergencyGlue = "-";
 
     /// <summary>

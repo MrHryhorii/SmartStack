@@ -658,8 +658,12 @@ bool selectedEmergencyCases = string.IsNullOrWhiteSpace(categoryFilter) ||
 bool selectedRulesConfiguration = string.IsNullOrWhiteSpace(categoryFilter) ||
     categoryFilter.Equals("Custom rules configuration", StringComparison.OrdinalIgnoreCase);
 
+var scalarInventory = "həˈloʊɪt\u0361sa˥˩n\u0329kʰe\u0303ːⁿdʼ‿ ,?!\n".Distinct()
+    .Select((value, index) => (Token: value.ToString(), Id: index + 10))
+    .ToDictionary(pair => pair.Token, pair => new[] { pair.Id });
 var additionalCases = AdditionalChecks.Cases().Concat(QuoteBoundaryChecks.Cases())
-    .Concat(UnicodeBoundaryChecks.Cases()).Concat(SingleBracketChecks.Cases()).Concat(LongPhonemeChecks.Cases()).ToArray();
+    .Concat(UnicodeBoundaryChecks.Cases()).Concat(SingleBracketChecks.Cases()).Concat(LongPhonemeChecks.Cases())
+    .Concat(LongPhonemeChecks.Cases(scalarInventory).Select(test => (Category: "Model inventory phoneme blocks", test.Name, test.Check))).ToArray();
 var selectedAdditionalCases = additionalCases.Where(test => string.IsNullOrWhiteSpace(categoryFilter) ||
     test.Category.Equals(categoryFilter, StringComparison.OrdinalIgnoreCase)).ToArray();
 

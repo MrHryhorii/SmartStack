@@ -10,6 +10,7 @@
     <Compile Include="../../Services/Text/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Services/Text/SingleBracketPhonemeRecognizer.cs" Link="SingleBracketPhonemeRecognizer.cs" />
     <Compile Include="../../Services/Text/PhonemeBlockRecognizer.cs" Link="PhonemeBlockRecognizer.cs" />
+    <Compile Include="../../Services/Text/Phonemization/PhonemeInventory.cs" Link="PhonemeInventory.cs" />
     <Compile Include="../../Models/Configuration/ChunkerSettings.cs" Link="ChunkerSettings.cs" />
     <Compile Include="../../Models/Text/TextChunkerRules.cs" Link="TextChunkerRules.cs" />
     <Compile Include="../../Models/Text/TextChunkerDefaults.cs" Link="TextChunkerDefaults.cs" />

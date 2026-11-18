@@ -218,7 +218,7 @@ if (piperConfig != null && piperModelPath != null)
     var phonemizer = new PiperPhonemizer(piperConfig, bootstrapLoggerFactory.CreateLogger<PiperPhonemizer>());
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
-    var textChunker = new TextChunker(chunkerConfig, chunkerRules);
+    var textChunker = new TextChunker(chunkerConfig, chunkerRules, piperConfig.PhonemeIdMap);
     builder.Services.AddSingleton(textChunker);
     var runner = new PiperRunner(
      piperModelPath,
@@ -235,7 +235,7 @@ if (piperConfig != null && piperModelPath != null)
     var punctuationMapper = new DynamicPunctuationMapper(piperConfig, chunkerRules);
     builder.Services.AddSingleton(punctuationMapper);
     string dataPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PiperNative"));
-    var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? "en");
+    var mixedEspeak = new EspeakWrapper(dataPath, piperConfig.Espeak.Voice ?? EspeakConfig.DefaultVoice);
     builder.Services.AddSingleton(mixedEspeak);
     // =================================================================
     // OPENVOICE (CLONER) CHECK & AUTO-DOWNLOAD
@@ -400,7 +400,7 @@ if (piperConfig != null && piperModelPath != null)
     {
         mixedPhonemizer = new MixedLanguagePhonemizer(
             phonemizerConfig,
-            piperConfig.Espeak.Voice ?? "en",
+            piperConfig.Espeak.Voice ?? EspeakConfig.DefaultVoice,
             bootstrapLoggerFactory.CreateLogger<MixedLanguagePhonemizer>(),
             textChunker
         );

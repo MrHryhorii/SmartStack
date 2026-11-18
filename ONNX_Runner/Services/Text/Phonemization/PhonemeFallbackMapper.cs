@@ -23,7 +23,7 @@ public sealed class PhonemeFallbackMapper
 
     // Cached inventory of the currently loaded Piper model.
     private readonly HashSet<string> _supportedModelPhonemes;
-    private readonly int _maxSupportedModelPhonemeLength;
+    private readonly PhonemeInventory _inventory;
 
     // Maximum UTF-16 length of an active complex sequence. The runtime validator uses this
     // to bound longest-match scans to only a few characters.
@@ -36,16 +36,7 @@ public sealed class PhonemeFallbackMapper
             ? new HashSet<string>(piperConfig.PhonemeIdMap.Keys, StringComparer.Ordinal)
             : new HashSet<string>(StringComparer.Ordinal);
 
-        int maxSupportedLength = 1;
-        foreach (string phoneme in _supportedModelPhonemes)
-        {
-            if (phoneme.Length > maxSupportedLength)
-            {
-                maxSupportedLength = phoneme.Length;
-            }
-        }
-
-        _maxSupportedModelPhonemeLength = maxSupportedLength;
+        _inventory = new PhonemeInventory(piperConfig?.PhonemeIdMap ?? []);
 
         if (!File.Exists(csvPath))
         {
@@ -281,42 +272,7 @@ public sealed class PhonemeFallbackMapper
     // Checks whether a phoneme sequence can be emitted entirely from native model tokens.
     private bool CanEmitDirectly(ReadOnlySpan<char> sequence)
     {
-        var supportedLookup = _supportedModelPhonemes.GetAlternateLookup<ReadOnlySpan<char>>();
-
-        // Some Piper models expose genuine multi-character phoneme tokens. Preserve those
-        // exactly instead of unnecessarily decomposing them into smaller IPA units.
-        if (supportedLookup.Contains(sequence))
-        {
-            return true;
-        }
-
-        int index = 0;
-
-        while (index < sequence.Length)
-        {
-            ReadOnlySpan<char> remaining = sequence[index..];
-
-            if (TryFindLongestSupported(
-                remaining,
-                supportedLookup,
-                out int supportedLength))
-            {
-                index += supportedLength;
-                continue;
-            }
-
-            int unitLength = GetPhonemeUnitLength(remaining);
-            ReadOnlySpan<char> unit = remaining[..unitLength];
-
-            if (!supportedLookup.Contains(unit))
-            {
-                return false;
-            }
-
-            index += unitLength;
-        }
-
-        return true;
+        return _inventory.CanEncode(sequence);
     }
 
     // Resolves a decomposition recursively until every emitted token is model-supported.
@@ -324,7 +280,6 @@ public sealed class PhonemeFallbackMapper
         ReadOnlySpan<char> sequence,
         out string resolved)
     {
-        var supportedLookup = _supportedModelPhonemes.GetAlternateLookup<ReadOnlySpan<char>>();
         var fallbackLookup = _precalculatedMap.GetAlternateLookup<ReadOnlySpan<char>>();
         var builder = new StringBuilder(sequence.Length + 4);
         int index = 0;
@@ -334,10 +289,7 @@ public sealed class PhonemeFallbackMapper
             ReadOnlySpan<char> remaining = sequence[index..];
 
             // Prefer the longest exact model token before reducing the sequence to IPA units.
-            if (TryFindLongestSupported(
-                remaining,
-                supportedLookup,
-                out int supportedLength))
+            if (_inventory.TryMatch(remaining, out int supportedLength, out _) && supportedLength > 1)
             {
                 builder.Append(remaining[..supportedLength]);
                 index += supportedLength;
@@ -347,7 +299,7 @@ public sealed class PhonemeFallbackMapper
             int unitLength = GetPhonemeUnitLength(remaining);
             ReadOnlySpan<char> unit = remaining[..unitLength];
 
-            if (supportedLookup.Contains(unit))
+            if (_inventory.CanEncode(unit))
             {
                 builder.Append(unit);
                 index += unitLength;
@@ -368,47 +320,6 @@ public sealed class PhonemeFallbackMapper
 
         resolved = builder.ToString();
         return resolved.Length > 0;
-    }
-
-    // Finds the longest supported model token at the beginning of a span.
-    private bool TryFindLongestSupported(
-        ReadOnlySpan<char> input,
-        HashSet<string>.AlternateLookup<ReadOnlySpan<char>> supportedLookup,
-        out int matchedLength)
-    {
-        int maxLength = Math.Min(
-            _maxSupportedModelPhonemeLength,
-            input.Length);
-
-        for (int length = maxLength; length > 1; length--)
-        {
-            if (SplitsSurrogatePair(input, length))
-            {
-                continue;
-            }
-
-            if (!supportedLookup.Contains(input[..length]))
-            {
-                continue;
-            }
-
-            matchedLength = length;
-            return true;
-        }
-
-        matchedLength = 0;
-        return false;
-    }
-
-    // Checks whether a candidate UTF-16 length would split a surrogate pair.
-    private static bool SplitsSurrogatePair(
-        ReadOnlySpan<char> input,
-        int length)
-    {
-        return length > 0 &&
-               length < input.Length &&
-               char.IsHighSurrogate(input[length - 1]) &&
-               char.IsLowSurrogate(input[length]);
     }
 
     /// <summary>

@@ -85,10 +85,10 @@ public partial class EspeakWrapper
 
             phonemes = GetNativeCharacterPhonemesLocked(character, voice);
 
-            // Keep working localized names. Only follow English when the native character
-            // path already selected it, avoiding truncated/repeated $textmode descriptions.
-            if (preferText && phonemes.Contains("(en)", StringComparison.Ordinal) &&
-                TryGetEnglishSymbolDescriptionLocked(symbolText!, voice, out string description))
+            // Follow an explicitly reported native dictionary fallback only when needed.
+            // Working localized names keep their requested model voice.
+            if (preferText &&
+                TryGetFallbackSymbolDescriptionLocked(symbolText!, voice, phonemes, out string description))
             {
                 phonemes = description;
             }
@@ -142,15 +142,26 @@ public partial class EspeakWrapper
         }
     }
 
-    // English is a native dictionary fallback, not a replacement for valid local names.
-    private bool TryGetEnglishSymbolDescriptionLocked(string text, string requestedVoice, out string phonemes)
+    // The caller holds the process-global lock; every temporary voice is restored before returning.
+    private bool TryGetFallbackSymbolDescriptionLocked(string text, string requestedVoice, string nativePhonemes, out string phonemes)
     {
         phonemes = string.Empty;
+        int search = 0;
+        if (!PhonemeLanguageLabels.TryFind(nativePhonemes.AsSpan(), search, out int start, out int length)) return false;
         try
         {
-            if (!TrySelectVoiceLocked("en")) return false;
-            phonemes = RemoveCharacterLanguageLabels(GetIpaPhonemes(text));
-            return !string.IsNullOrWhiteSpace(phonemes);
+            do
+            {
+                string fallbackVoice = nativePhonemes.Substring(start, length).ToLowerInvariant();
+                if (TrySelectVoiceLocked(fallbackVoice))
+                {
+                    phonemes = RemoveCharacterLanguageLabels(GetIpaPhonemes(text));
+                    if (!string.IsNullOrWhiteSpace(phonemes)) return true;
+                }
+                search = start + length + 1;
+            }
+            while (PhonemeLanguageLabels.TryFind(nativePhonemes.AsSpan(), search, out start, out length));
+            return false;
         }
         finally
         {
@@ -160,24 +171,7 @@ public partial class EspeakWrapper
     }
 
     // Parenthesized language switches are native metadata, not Piper phonemes.
-    private static string RemoveCharacterLanguageLabels(string phonemes)
-    {
-        int opening = phonemes.IndexOf('(');
-        if (opening < 0) return phonemes;
-
-        var output = new System.Text.StringBuilder(phonemes.Length);
-        int start = 0;
-        while (opening >= 0)
-        {
-            int closing = phonemes.IndexOf(')', opening + 1);
-            if (closing < 0) break;
-            output.Append(phonemes.AsSpan(start, opening - start));
-            start = closing + 1;
-            opening = phonemes.IndexOf('(', start);
-        }
-        output.Append(phonemes.AsSpan(start));
-        return output.ToString().Trim();
-    }
+    private static string RemoveCharacterLanguageLabels(string phonemes) => PhonemeLanguageLabels.Remove(phonemes);
 
     // Executed synchronously by espeak_Char while _espeakLock is held.
     private static int CaptureNativePhonemes(IntPtr utf8Phonemes)

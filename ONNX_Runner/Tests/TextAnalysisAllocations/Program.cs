@@ -55,6 +55,18 @@ string unicode = string.Concat(Enumerable.Repeat("a\u0301", 96)) + "。";
 string largeEmojiToken = new string('x', 300) + "\u2764\uFE0F.json";
 string longPhonemeBlock = "[" + string.Join(" ", Enumerable.Repeat("həˈloʊ", 50)) + "]";
 string[] modelParts = ["en", "us"];
+var inventoryConfig = new PiperConfig
+{
+    PhonemeIdMap = new Dictionary<string, int[]>
+    {
+        ["_"] = [0], ["^"] = [1], ["$"] = [2], [" "] = [3],
+        ["a"] = [20, 21], ["ɪ"] = [22], ["aɪ"] = [30, 31], ["e"] = [40], ["\u0303"] = [41]
+    }
+};
+var inventory = new PhonemeInventory(inventoryConfig.PhonemeIdMap);
+var tensorMapper = new PiperPhonemizer(inventoryConfig, NullLogger<PiperPhonemizer>.Instance);
+var modelChunker = new TextChunker(new ChunkerSettings { MaxChunkLength = 64 }, phonemeIdMap: inventoryConfig.PhonemeIdMap);
+string largeTensorInput = new('a', 1024);
 
 var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
 {
@@ -80,6 +92,13 @@ var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
     ("phoneme/explicit-block", () => PhonemeBlockRecognizer.TryGetAt("[[kat]]".AsSpan(), 0, out var block) ? block.Length : 0, 0),
     ("phoneme/slash-block", () => PhonemeBlockRecognizer.TryGetAt("/həˈloʊ/".AsSpan(), 0, out var block) ? block.Length : 0, 0),
     ("phoneme/ordinary-url", () => PhonemeBlockRecognizer.TryFindNext("https://example.test/a/b".AsSpan(), 0, 24, out var block) ? block.Length : 0, 0),
+    ("phoneme/inventory-match", () => inventory.TryMatch("aɪe\u0303".AsSpan(), out int n, out _) ? n : 0, 0),
+    ("phoneme/inventory-encode", () => inventory.CanEncode("aɪe\u0303aɪ".AsSpan()) ? 1 : 0, 0),
+    ("phoneme/native-language-label", () => PhonemeLanguageLabels.TryFind("(123)(fr-ca) text".AsSpan(), 0, out _, out int n) ? n : 0, 0),
+    // Only the returned long[6] is allocated: 24 bytes of array header plus 48 bytes of IDs.
+    ("phoneme/complete-tensor", () => tensorMapper.PhonemesToIds("a", true, false).Length, 72),
+    // The shared pool is warmed before measurement; only the returned long[3075] remains allocated.
+    ("phoneme/pooled-tensor", () => tensorMapper.PhonemesToIds(largeTensorInput, true, false).Length, 24_624),
     ("boundary/lowercase-letter", () => chunker.IsIntraSentencePeriod("Letter z. Continue.".AsSpan(), 8) ? 1 : 0, 0),
     ("language/inherited-code", () => MixedLanguagePhonemizer.ResolveForcedLanguageCode("en", "en-us", modelParts).Length, 0),
     ("punctuation/unchanged", () => mapper.Normalize(plain).Length, 0),
@@ -94,6 +113,8 @@ var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
     ("chunker/directional-suffix", () => chunker.Split(directionalSentence).Count, 96),
     ("chunker/single-bracket-ipa", () => chunker.Split("Say [həˈloʊ] now.").Count, 96),
     ("chunker/short-explicit-ipa", () => chunker.Split("Say [[həˈloʊ]] now.").Count, 96),
+    ("chunker/model-short-ipa", () => modelChunker.Split("Say [[aɪe\u0303]] now.").Count, 96),
+    ("chunker/model-long-ipa", () => modelChunker.Split(longPhonemeBlock).Count, null),
     ("chunker/long-ipa", () => boundedChunker.Split(longPhonemeBlock).Count, null),
     ("chunker/early", () => chunker.Split(reference, earlySplit: true).Count, null),
     ("chunker/unicode-emergency", () => boundedChunker.Split(unicode).Count, null),

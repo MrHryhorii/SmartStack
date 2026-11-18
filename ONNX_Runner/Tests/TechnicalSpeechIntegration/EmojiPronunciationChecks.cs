@@ -1,5 +1,4 @@
 using ONNX_Runner.Services.Text.Phonemization;
-using System.Globalization;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
 using ONNX_Runner.Services;
@@ -28,6 +27,8 @@ internal static class EmojiPronunciationChecks
     internal static void Run(EspeakWrapper bridge, PiperConfig config, MixedLanguagePhonemizer detector,
         PhonemeFallbackMapper adapter, Action<string, Action> check)
     {
+        // These declared spoken references require an English model voice, regardless of the supplied inventory.
+        var englishConfig = new PiperConfig { Espeak = new() { Voice = "en-us" }, PhonemeIdMap = config.PhonemeIdMap };
         // The bundled eSpeak data identifies its default British dialect as "en".
         foreach (string voice in new[] { "en-us", "en", "en-gb-x-rp" })
             for (int index = 0; index < English.Length; index++)
@@ -46,37 +47,32 @@ internal static class EmojiPronunciationChecks
             foreach (bool supplySettings in new[] { false, true })
                 check($"Default emoji reading ({useDetector}, settings supplied: {supplySettings})", () =>
                 {
-                    var pipeline = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config,
+                    var pipeline = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(englishConfig), englishConfig,
                         useDetector ? detector : null, adapter, supplySettings ? new PhonemizerSettings() : null);
-                    var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config,
+                    var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(englishConfig), englishConfig,
                         fallbackMapper: adapter);
                     string actual = pipeline.GetPhonemes("\u2764\uFE0F?", "uk");
-                    string expected = reference.GetPhonemes("red heart", config.Espeak.Voice) + "?";
+                    string expected = reference.GetPhonemes("red heart", englishConfig.Espeak.Voice) + "?";
                     Require(Spoken(actual) == Spoken(expected),
                         $"Default settings did not read the emoji using the model voice: {actual}");
                 });
 
             foreach (bool read in new[] { false, true })
             {
-                var pipeline = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config,
+                var pipeline = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(englishConfig), englishConfig,
                     useDetector ? detector : null, adapter, new PhonemizerSettings { ReadEmojis = read });
-                var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config, fallbackMapper: adapter);
+                var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(englishConfig), englishConfig, fallbackMapper: adapter);
                 for (int index = 0; index < English.Length; index++)
                 {
                     var (Emoji, Name) = English[index];
                     check($"Emoji inventory and punctuation ({useDetector}, {read}): fixture {index}", () =>
                     {
                         string actual = pipeline.GetPhonemes(Emoji + "?", "en-us");
-                        string expected = read ? reference.GetPhonemes(Name, config.Espeak.Voice) + "?" : "?";
+                        string expected = read ? reference.GetPhonemes(Name, englishConfig.Espeak.Voice) + "?" : "?";
                         Require(Spoken(expected) == Spoken(actual) && actual.EndsWith('?'),
                             $"Expected spelling with a separate question mark: {expected}; actual: {actual}");
-                        for (int position = 0; position < actual.Length;)
-                        {
-                            int length = StringInfo.GetNextTextElementLength(actual.AsSpan(position));
-                            string phoneme = actual.Substring(position, length);
-                            Require(config.PhonemeIdMap.ContainsKey(phoneme), $"Emoji phoneme is not representable by the model: {phoneme}");
-                            position += length;
-                        }
+                        Require(new PhonemeInventory(config.PhonemeIdMap).CanEncode(actual.AsSpan()),
+                            "Emoji phonemes are not representable by the model inventory.");
                         Require(pipeline.GetPhonemes(Emoji + "?", "en-us") == actual, "The cached name changed output.");
                     });
                 }
@@ -86,7 +82,7 @@ internal static class EmojiPronunciationChecks
                     string input = "user_\U0001F600name";
                     string actual = pipeline.GetPhonemes(input, "en-us");
                     string expected = reference.GetPhonemes("user_", "en-us") + " " +
-                        (read ? reference.GetPhonemes("grinning face", config.Espeak.Voice) + " " : "") +
+                        (read ? reference.GetPhonemes("grinning face", englishConfig.Espeak.Voice) + " " : "") +
                         reference.GetPhonemes("name", "en-us");
                     Require(Spoken(actual) == Spoken(expected), $"Technical token bypassed the setting: {actual}");
                 });
@@ -95,7 +91,7 @@ internal static class EmojiPronunciationChecks
                 {
                     string actual = pipeline.GetPhonemes("Hello\U0001F600world.", "en-us");
                     string expected = reference.GetPhonemes("Hello", "en-us") + " " +
-                        (read ? reference.GetPhonemes("grinning face", config.Espeak.Voice) + " " : "") +
+                        (read ? reference.GetPhonemes("grinning face", englishConfig.Espeak.Voice) + " " : "") +
                         reference.GetPhonemes("world", "en-us") + ".";
                     Require(Spoken(actual) == Spoken(expected), $"Emoji removal damaged adjacent words: {actual}");
                 });
@@ -129,6 +125,18 @@ internal static class EmojiPronunciationChecks
                 string expected = reference.GetPhonemes(fixture.Item2, fixture.Item1) + "?";
                 Require(Spoken(actual) == Spoken(expected), $"Emoji dialect followed the text language: {actual}");
             });
+
+        check("Emoji routing follows the supplied model's native dictionary", () =>
+        {
+            string voice = config.Espeak.Voice;
+            Require(bridge.TryGetEmojiPhonemes("\u2764\uFE0F", voice, out string native), "Model voice unavailable.");
+            var pipeline = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config,
+                fallbackMapper: adapter, settings: new PhonemizerSettings { ReadEmojis = true });
+            var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config, fallbackMapper: adapter);
+            string expected = (native.Length > 0 ? reference.GetPhonemes("[[" + native + "]]", voice) : "") + "?";
+            Require(pipeline.GetPhonemes("\u2764\uFE0F?", "uk") == expected,
+                "A forced text language replaced the model's dictionary name or silence for an unavailable name.");
+        });
 
         check("Emoji native calls preserve subsequent text and character state", () =>
         {

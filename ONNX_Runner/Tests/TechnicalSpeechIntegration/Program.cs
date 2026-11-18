@@ -69,7 +69,7 @@ Check("Concurrent text and character operations preserve native state", () =>
 });
 
 var rules = TextChunkerRules.Default;
-var chunker = new TextChunker(new ChunkerSettings(), rules);
+var chunker = new TextChunker(new ChunkerSettings(), rules, config.PhonemeIdMap);
 var detector = new MixedLanguagePhonemizer(new PhonemizerSettings { SupportedLanguages = ["en", "fr", "es", "uk"] },
     voice, NullLogger<MixedLanguagePhonemizer>.Instance, chunker);
 var adapter = new PhonemeFallbackMapper(Path.Combine("PHOIBLE", "phoible.csv"), config);
@@ -112,13 +112,8 @@ foreach (bool useDetector in new[] { true, false })
             string ipa = phonemizer.GetPhonemes(fixture, voice);
             Require(ipa.Length > 0 && !ipa.Contains('_') && !ipa.Contains('^') && !ipa.Contains('$'),
                 "Literal control symbols reached the phoneme stream.");
-            for (int index = 0; index < ipa.Length;)
-            {
-                int length = StringInfo.GetNextTextElementLength(ipa.AsSpan(index));
-                string phoneme = ipa.Substring(index, length);
-                Require(config.PhonemeIdMap.ContainsKey(phoneme), $"Unmapped IPA would disappear from IDs: {phoneme}");
-                index += length;
-            }
+            Require(new PhonemeInventory(config.PhonemeIdMap).CanEncode(ipa.AsSpan()),
+                $"Unmapped IPA would disappear from IDs: {ipa}");
             long[] ids = tensorMapper.PhonemesToIds(ipa);
             Require(ids.Length > 4 && ids.Count(id => id == config.PhonemeIdMap["^"][0]) == 1 &&
                 ids.Count(id => id == config.PhonemeIdMap["$"][0]) == 1,
@@ -130,6 +125,10 @@ foreach (bool useDetector in new[] { true, false })
 
 // Each input has unambiguous prose in the declared language. The forced native route is an
 // independent pronunciation reference for the automatic route, including the verb between code.
+// Keep the short-English model prior explicit instead of inheriting a caller-supplied voice.
+var routingConfig = new PiperConfig { Espeak = new() { Voice = "en-us" }, PhonemeIdMap = config.PhonemeIdMap };
+var routingDetector = new MixedLanguagePhonemizer(new PhonemizerSettings { SupportedLanguages = ["en", "fr", "es", "uk"] },
+    "en-us", NullLogger<MixedLanguagePhonemizer>.Instance, chunker);
 var automaticFixtures = new (string Text, string Language)[]
 {
     ("The variable user_name contains build_output.", "en"),
@@ -142,9 +141,9 @@ foreach (var (Text, Language) in automaticFixtures)
 {
     Check($"Native automatic language matches declared prose: {Language}; {Text}", () =>
     {
-        var automatic = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config, rules), config,
-            detector, adapter);
-        var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config, rules), config,
+        var automatic = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(routingConfig, rules), routingConfig,
+            routingDetector, adapter);
+        var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(routingConfig, rules), routingConfig,
             fallbackMapper: adapter);
         string expected = reference.GetPhonemes(Text, Language);
         string actual = automatic.GetPhonemes(Text);
