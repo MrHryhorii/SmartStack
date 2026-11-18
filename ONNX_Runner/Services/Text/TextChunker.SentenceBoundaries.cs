@@ -26,14 +26,14 @@ public partial class TextChunker
             }
 
             int candidateIndex = searchIndex + offset;
-            if (textSpan[candidateIndex] == '[')
+            if (textSpan[candidateIndex] is '[' or '/')
             {
-                if (SingleBracketPhonemeRecognizer.TryGetSpanLength(textSpan, candidateIndex, out int length))
+                if (PhonemeBlockRecognizer.TryGetAt(textSpan, candidateIndex, out var block))
                 {
-                    searchIndex = candidateIndex + length;
+                    searchIndex = block.End;
                     continue;
                 }
-                if (!Rules.SentenceTerminators.Contains('['))
+                if (!Rules.SentenceTerminators.Contains(textSpan[candidateIndex]))
                 {
                     searchIndex = candidateIndex + 1;
                     continue;

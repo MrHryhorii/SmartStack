@@ -19,8 +19,11 @@ internal static class SingleBracketChecks
             {
                 string block = "[" + body + "]";
                 var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split("Say " + block + " now. Next.", early);
-                Require(chunks.Count(c => c.Text.Contains(block, StringComparison.Ordinal)) == 1,
-                    "A phoneme block was split or duplicated.");
+                var blocks = ReadBlocks(chunks).ToArray();
+                Require(string.Concat(blocks.Select(b => b.Payload)) == body,
+                    "Chunking lost or duplicated phonemes.");
+                Require(block.Length > limit || blocks.Length == 1,
+                    "A short phoneme block was split unnecessarily.");
                 Require(chunks.Count(c => c.IsSentenceFinished) == 2 && chunks[^1].IsSentenceFinished,
                     "Phonetic punctuation or a line break became a semantic sentence ending.");
                 Require(!chunks.Any(c => c.Text.EndsWith("[", StringComparison.Ordinal) || c.Text.StartsWith("]", StringComparison.Ordinal)),
@@ -37,8 +40,10 @@ internal static class SingleBracketChecks
                 const string block = "[həˈloʊ]";
                 string prefix = suffix.StartsWith(')') ? "Say (" : "Say ";
                 var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(prefix + block + suffix + " Next.", early);
-                Require(chunks.Count(c => c.Text.Contains(block + suffix, StringComparison.Ordinal)) == 1,
-                    "A phoneme block lost its attached sentence suffix.");
+                var blocks = ReadBlocks(chunks).ToArray();
+                Require(string.Concat(blocks.Select(b => b.Payload)) == "həˈloʊ" &&
+                    blocks[^1].Chunk.Text.EndsWith("]" + suffix, StringComparison.Ordinal),
+                    "Phoneme fragments lost their content or attached sentence suffix.");
                 Require(chunks.All(c => c.Text.Any(char.IsLetterOrDigit)) && chunks.Count(c => c.IsSentenceFinished) == 2,
                     "The block produced a punctuation-only chunk or lost sentence completion.");
             });
@@ -94,5 +99,18 @@ internal static class SingleBracketChecks
     private static void Require(bool condition, string message)
     {
         if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static IEnumerable<(TextChunker.TextChunk Chunk, string Payload)> ReadBlocks(IEnumerable<TextChunker.TextChunk> chunks)
+    {
+        foreach (var chunk in chunks)
+        {
+            int start = 0;
+            while (PhonemeBlockRecognizer.TryFindNext(chunk.Text.AsSpan(), start, chunk.Text.Length, out var block))
+            {
+                yield return (chunk, chunk.Text[block.ContentStart..block.ContentEnd]);
+                start = block.End;
+            }
+        }
     }
 }

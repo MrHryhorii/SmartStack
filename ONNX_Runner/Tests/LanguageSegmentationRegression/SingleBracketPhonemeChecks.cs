@@ -117,9 +117,8 @@ internal static class SingleBracketPhonemeChecks
                         var phonemizer = new UnifiedPhonemizer(bridge, mapper, config, useDetector ? detector : null);
                         var chunks = chunker.Split("Say " + block + " now. Next.", early);
                         string[] rendered = chunks.Select(c => phonemizer.GetPhonemes(c.Text, "en")).ToArray();
-                        Require(chunks.Count(c => c.Text.Contains(block, StringComparison.Ordinal)) == 1,
-                            "A recognized IPA block was split or duplicated.");
-                        Require(rendered.Any(value => value.Contains(body, StringComparison.Ordinal)) &&
+                        Require(chunks.All(c => c.Text.Length <= limit), "A long phoneme block bypassed the size cap.");
+                        Require(string.Concat(rendered).Contains(body, StringComparison.Ordinal) &&
                             bridge.Calls.All(c => !c.Text.Contains("həˈloʊ", StringComparison.Ordinal)),
                             "Chunking sent pre-written IPA to eSpeak.");
                         Require(chunks.Count(c => c.IsSentenceFinished) == 2 && chunks[^1].IsSentenceFinished,

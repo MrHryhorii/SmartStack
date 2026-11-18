@@ -19,6 +19,7 @@ public partial class TextChunker
         int currentIndex = 0;
         originalText.AsSpan().Overlaps(sentenceSpan, out int sourceOffset);
         ReadOnlySpan<char> boundaryContext = originalText.AsSpan(0, sourceOffset + sentenceSpan.Length);
+        if (TrySplitOversizedPhonemeBlocks(originalText, sourceOffset, sentenceSpan.Length, isSentenceFinished, result)) return;
 
         while (currentIndex < sentenceSpan.Length)
         {
@@ -91,7 +92,7 @@ public partial class TextChunker
             }
             bool completedTechnicalToken = splitIndex > originalSplit;
 
-            splitIndex = ProtectSinglePhonemeBoundary(originalText.AsSpan(), sourceOffset + currentIndex,
+            splitIndex = ProtectPhonemeBoundary(originalText.AsSpan(), sourceOffset + currentIndex,
                 sourceOffset + splitIndex, sourceOffset + sentenceSpan.Length, out bool phonemeBoundary) - sourceOffset;
 
             // The semantic sentence already owns its closing suffix. Emergency cuts must
@@ -127,18 +128,19 @@ public partial class TextChunker
     }
 
     /// <summary>Keeps a recognized IPA override atomic, as with an indivisible technical token.</summary>
-    private static int ProtectSinglePhonemeBoundary(ReadOnlySpan<char> text, int start, int split, int limit, out bool phonemeBoundary)
+    private static int ProtectPhonemeBoundary(ReadOnlySpan<char> text, int start, int split, int limit, out bool phonemeBoundary)
     {
         phonemeBoundary = false;
         int search = start;
         int searchLimit = Math.Min(split + 1, limit);
-        while (SingleBracketPhonemeRecognizer.TryFindNext(text, search, searchLimit, out int opening, out int end))
+        while (PhonemeBlockRecognizer.TryFindNext(text, search, searchLimit, out var block))
         {
+            int end = PhonemeDelimiterEnd(text, block.End);
             if (split <= end)
             {
                 phonemeBoundary = true;
                 if (split == end) return split;
-                return opening > start && HasContent(text[start..opening]) ? opening : end;
+                return block.Start > start && HasContent(text[start..block.Start]) ? block.Start : end;
             }
             search = end;
         }

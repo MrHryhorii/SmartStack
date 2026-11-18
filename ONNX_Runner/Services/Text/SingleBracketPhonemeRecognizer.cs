@@ -17,6 +17,11 @@ internal static class SingleBracketPhonemeRecognizer
     private static readonly SearchValues<char> PostfixMarks = SearchValues.Create("ːˑ˞");
     private static readonly SearchValues<char> Modifiers = SearchValues.Create("ʰʱʲʳʴʵʶʷʸˀˁˠˡˢˣˤⁿᵐᵑᵊ");
 
+    internal static bool IsPrefixMark(char value) => value is 'ˈ' or 'ˌ' or '↑' or '↓' or '↗' or '↘';
+    internal static bool IsModifier(char value) => Modifiers.Contains(value);
+    internal static bool IsAttachedMark(char value) => PostfixMarks.Contains(value) ||
+        Modifiers.Contains(value) || value is >= '˥' and <= '˩' or 'ʼ';
+
     /// <summary>Returns the complete bracket span only when both its contents and prose context support an IPA override.</summary>
     internal static bool TryGetSpanLength(ReadOnlySpan<char> text, int start, out int length)
     {
@@ -33,26 +38,6 @@ internal static class SingleBracketPhonemeRecognizer
 
         length = closing - start + 1;
         return true;
-    }
-
-    /// <summary>Searches opening positions in the supplied range while validating against the complete source.</summary>
-    internal static bool TryFindNext(ReadOnlySpan<char> text, int start, int limit, out int opening, out int end)
-    {
-        opening = end = -1;
-        while (start < limit)
-        {
-            int offset = text[start..limit].IndexOf('[');
-            if (offset < 0) return false;
-            int candidate = start + offset;
-            if (TryGetSpanLength(text, candidate, out int length))
-            {
-                opening = candidate;
-                end = candidate + length;
-                return true;
-            }
-            start = candidate + 1;
-        }
-        return false;
     }
 
     private static bool HasProseContext(ReadOnlySpan<char> text, int start, int end)
@@ -109,7 +94,7 @@ internal static class SingleBracketPhonemeRecognizer
                 }
                 continue;
             }
-            if (value is 'ˈ' or 'ˌ' or '↑' or '↓' or '↗' or '↘')
+            if (IsPrefixMark(value))
             {
                 if (needsBase) return false;
                 wordHasSignal = needsBase = true;

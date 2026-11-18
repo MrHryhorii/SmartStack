@@ -29,10 +29,10 @@ public partial class TextChunker
             }
 
             int candidateIndex = searchIndex + offset;
-            if (text[candidateIndex] == '[' &&
-                SingleBracketPhonemeRecognizer.TryGetSpanLength(text, candidateIndex, out int length))
+            if (text[candidateIndex] is '[' or '/' &&
+                PhonemeBlockRecognizer.TryGetAt(text, candidateIndex, out var block))
             {
-                searchIndex = candidateIndex + length;
+                searchIndex = block.End;
                 continue;
             }
 

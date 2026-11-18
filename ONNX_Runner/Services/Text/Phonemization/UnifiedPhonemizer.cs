@@ -4,7 +4,6 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text;
-using System.Text.RegularExpressions;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
 
@@ -32,16 +31,6 @@ public partial class UnifiedPhonemizer
     // Fast model-inventory lookup used by the IPA validation path.
     private readonly HashSet<string> _supportedPhonemes;
     private readonly int _maxSupportedPhonemeLength;
-
-    // Matches standard IPA blocks delimited by /.../, [...], or the eSpeak-style
-    // double-bracket [[...]] convention for raw phoneme input.
-    [GeneratedRegex(@"/(?!\d+/)([^/]+?)/|\[\[([^\]]+?)\]\]|\[(?!\[|\d+\])([^\[\]]+?)\]", RegexOptions.Compiled)]
-    private static partial Regex RawPhonemeBlockRegex();
-
-    // Retains the established IPA-symbol heuristic for slash-delimited input.
-    // Single brackets use complete content and context validation instead.
-    private static readonly SearchValues<char> IpaSearchValues = SearchValues.Create(
-        "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʐʑʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʲʷˠˤ");
 
     /// <summary>Connects native phonemization, model punctuation/phoneme adaptation, and optional language routing.</summary>
     public UnifiedPhonemizer(
@@ -85,12 +74,6 @@ public partial class UnifiedPhonemizer
         _maxSupportedPhonemeLength = maxSupportedLength;
     }
 
-    // Checks whether a span contains at least one explicit IPA symbol.
-    private static bool ContainsIpaSymbol(ReadOnlySpan<char> text)
-    {
-        return text.IndexOfAny(IpaSearchValues) >= 0;
-    }
-
     // Mirrors MixedLanguagePhonemizer's own forced-language resolution (smart inheritance +
     // trim/lowercase normalization) for the no-detector fallback, so the "language" parameter
     // behaves the same regardless of whether the statistical detector is registered.
@@ -115,38 +98,15 @@ public partial class UnifiedPhonemizer
         int lastEnd = 0;
         ReadOnlySpan<char> textSpan = text.AsSpan();
 
-        foreach (ValueMatch match in RawPhonemeBlockRegex().EnumerateMatches(textSpan))
+        while (PhonemeBlockRecognizer.TryFindNext(textSpan, lastEnd, textSpan.Length, out var block))
         {
-            // Double brackets explicitly request raw phonemes. Implicit single brackets require
-            // confident IPA content and prose context; slash blocks keep their established heuristic.
-            bool isExplicitDoubleBracket =
-                match.Length >= 4 &&
-                textSpan[match.Index] == '[' &&
-                textSpan[match.Index + 1] == '[' &&
-                textSpan[match.Index + match.Length - 1] == ']' &&
-                textSpan[match.Index + match.Length - 2] == ']';
-
-            int delimLen = isExplicitDoubleBracket ? 2 : 1;
-
-            ReadOnlySpan<char> phonemeContent = textSpan.Slice(
-                match.Index + delimLen,
-                match.Length - (2 * delimLen));
-
-            bool recognized = isExplicitDoubleBracket || (textSpan[match.Index] == '/'
-                ? ContainsIpaSymbol(phonemeContent)
-                : SingleBracketPhonemeRecognizer.TryGetSpanLength(textSpan, match.Index, out int length) && length == match.Length);
-            if (!recognized)
+            if (block.Start > lastEnd)
             {
-                continue;
+                segments.Add((textSpan[lastEnd..block.Start].ToString(), false));
             }
 
-            if (match.Index > lastEnd)
-            {
-                segments.Add((textSpan[lastEnd..match.Index].ToString(), false));
-            }
-
-            segments.Add((phonemeContent.ToString(), true));
-            lastEnd = match.Index + match.Length;
+            segments.Add((textSpan[block.ContentStart..block.ContentEnd].ToString(), true));
+            lastEnd = block.End;
         }
 
         if (lastEnd < text.Length)

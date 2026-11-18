@@ -15,6 +15,7 @@
     <Compile Include="../../Services/Text/TextChunker*.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../../Services/Text/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Services/Text/SingleBracketPhonemeRecognizer.cs" Link="SingleBracketPhonemeRecognizer.cs" />
+    <Compile Include="../../Services/Text/PhonemeBlockRecognizer.cs" Link="PhonemeBlockRecognizer.cs" />
     <Compile Include="../../Services/Text/Phonemization/EspeakLinguaMapper.cs" Link="EspeakLinguaMapper.cs" />
     <Compile Include="../../Services/Text/Phonemization/EspeakLanguageCatalog.cs" Link="EspeakLanguageCatalog.cs" />
     <Compile Include="../../Services/Text/Phonemization/MixedLanguagePhonemizer.cs" Link="MixedLanguagePhonemizer.cs" />
