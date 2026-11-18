@@ -114,7 +114,7 @@ public static class DiagnosticRunner
 
             inspectionCancellation.Token.ThrowIfCancellationRequested();
 
-            var metadata = await ObserveMetadataAsync(
+            var (Inspection, ExecutionState) = await ObserveMetadataAsync(
                 client,
                 mode,
                 mode == DiagnosticMode.Check
@@ -123,9 +123,9 @@ public static class DiagnosticRunner
                 cancellationToken,
                 runDeadline.Token);
 
-            server = metadata.Inspection.Server;
-            checks.AddRange(metadata.Inspection.Checks);
-            executionState = metadata.ExecutionState;
+            server = Inspection.Server;
+            checks.AddRange(Inspection.Checks);
+            executionState = ExecutionState;
 
             inspectionCancellation.Token.ThrowIfCancellationRequested();
 

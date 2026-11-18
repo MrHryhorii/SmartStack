@@ -150,9 +150,9 @@ internal static class SingleBracketPhonemeRecognizer
         var letters = new StringBuilder("abcdefghijklmnopqrstuvwxyz" + IpaLetters);
         string strongBases = string.Concat(IpaLetters.Where(value => !SharedLetters.Contains(value)));
         var strongLetters = new StringBuilder(strongBases);
-        foreach (var range in new[] { (Start: 0x00C0, End: 0x024F), (Start: 0x1E00, End: 0x1EFF) })
+        foreach (var (Start, End) in new[] { (Start: 0x00C0, End: 0x024F), (Start: 0x1E00, End: 0x1EFF) })
         {
-            for (int code = range.Start; code <= range.End; code++)
+            for (int code = Start; code <= End; code++)
             {
                 char value = (char)code;
                 if (!char.IsLower(value)) continue;

@@ -57,19 +57,19 @@ internal static class MetadataInspectionChecks
     /// <summary>Verifies the complete metadata path without sending synthesis requests.</summary>
     private static async Task VerifyHealthyAsync()
     {
-        var result = await InspectAsync(DefaultResponse);
+        var (Inspection, ExecutionState, Routes) = await InspectAsync(DefaultResponse);
 
         Require(
-            result.ExecutionState == DiagnosticExecutionState.Completed &&
-            result.Routes.SequenceEqual(new[]
-            {
+            ExecutionState == DiagnosticExecutionState.Completed &&
+            Routes.SequenceEqual(
+            [
                 "health",
                 "tsbk/server/status",
                 "tsbk/audio/voices"
-            }),
+            ]),
             "Healthy metadata collection did not use the expected three GETs.");
 
-        var server = result.Inspection.Server;
+        var server = Inspection.Server;
 
         Require(
             server.Service == "Tsubaki TTS Engine" &&
@@ -78,7 +78,7 @@ internal static class MetadataInspectionChecks
             server.ReadinessSourceRoute is not null &&
             server.ReadinessObservedAtUtc is not null &&
             server.AdvertisedVoicesComplete &&
-            server.AdvertisedVoices.SequenceEqual(new[] { "piper_base", "alloy" }) &&
+            server.AdvertisedVoices.SequenceEqual(["piper_base", "alloy"]) &&
             server.VoicesSourceRoute == "tsbk/audio/voices" &&
             server.StatusSourceRoute == "tsbk/server/status" &&
             server.StatusSnapshot?.SampleRateHz == 22050 &&
@@ -86,11 +86,11 @@ internal static class MetadataInspectionChecks
             "Healthy metadata lost normalized values or source information.");
 
         Require(
-            FindCheck(result.Inspection, "service.identity").Role ==
+            FindCheck(Inspection, "service.identity").Role ==
                 DiagnosticCheckRole.Required &&
-            FindCheck(result.Inspection, "service.readiness").Role ==
+            FindCheck(Inspection, "service.readiness").Role ==
                 DiagnosticCheckRole.Required &&
-            Outcome(result.Inspection, result.ExecutionState) ==
+            Outcome(Inspection, ExecutionState) ==
                 DiagnosticOutcome.Passed,
             "A complete healthy inspection did not pass.");
     }
@@ -106,28 +106,28 @@ internal static class MetadataInspectionChecks
 
         foreach (var status in statuses)
         {
-            var result = await InspectAsync(route => route == "health"
+            var (Inspection, ExecutionState, Routes) = await InspectAsync(route => route == "health"
                 ? Response(status, """{"error":"Route unavailable."}""")
                 : DefaultResponse(route));
 
             Require(
-                result.Routes.SequenceEqual(new[]
-                {
+                Routes.SequenceEqual(
+                [
                     "health",
                     "v1/health",
                     "tsbk/server/status",
                     "tsbk/audio/voices"
-                }) &&
-                result.Inspection.Server.Observations.Count == 4,
+                ]) &&
+                Inspection.Server.Observations.Count == 4,
                 "Known health fallback did not preserve the bounded request sequence.");
 
-            var primary = result.Inspection.Server.Observations.Single(
+            var primary = Inspection.Server.Observations.Single(
                 observation => observation.Endpoint == MetadataEndpoint.Health);
 
-            var fallback = result.Inspection.Server.Observations.Single(
+            var fallback = Inspection.Server.Observations.Single(
                 observation => observation.Endpoint == MetadataEndpoint.HealthFallback);
 
-            var health = FindCheck(result.Inspection, "service.health");
+            var health = FindCheck(Inspection, "service.health");
 
             Require(
                 primary.Http.StatusCode == (int)status &&
@@ -136,7 +136,7 @@ internal static class MetadataInspectionChecks
                 health.Status == DiagnosticCheckStatus.Passed &&
                 health.Http?.Route == "v1/health" &&
                 health.DurationMs is >= 0 &&
-                Outcome(result.Inspection, result.ExecutionState) ==
+                Outcome(Inspection, ExecutionState) ==
                     DiagnosticOutcome.Passed,
                 "The alias hid the primary response or lost successful health coverage.");
         }
@@ -158,18 +158,18 @@ internal static class MetadataInspectionChecks
 
         foreach (var (status, body) in cases)
         {
-            var result = await InspectAsync(route => route == "health"
+            var (Inspection, ExecutionState, Routes) = await InspectAsync(route => route == "health"
                 ? Response(status, body)
                 : DefaultResponse(route));
 
             Require(
-                result.Routes.Count == 3 &&
-                !result.Routes.Contains("v1/health", StringComparer.Ordinal) &&
-                result.ExecutionState == DiagnosticExecutionState.Completed &&
-                result.Inspection.Server.Readiness == DiagnosticReadiness.Ready &&
-                FindCheck(result.Inspection, "service.health").Status ==
+                Routes.Count == 3 &&
+                !Routes.Contains("v1/health", StringComparer.Ordinal) &&
+                ExecutionState == DiagnosticExecutionState.Completed &&
+                Inspection.Server.Readiness == DiagnosticReadiness.Ready &&
+                FindCheck(Inspection, "service.health").Status ==
                     DiagnosticCheckStatus.Failed &&
-                Outcome(result.Inspection, result.ExecutionState) ==
+                Outcome(Inspection, ExecutionState) ==
                     DiagnosticOutcome.PassedWithWarnings,
                 "A health restriction or content failure retried or blocked later metadata.");
         }
@@ -296,29 +296,29 @@ internal static class MetadataInspectionChecks
 
         foreach (var (status, body) in cases)
         {
-            var result = await InspectAsync(
+            var (Inspection, ExecutionState, Routes) = await InspectAsync(
                 route => route == "tsbk/audio/voices"
                     ? Response(status, body)
                     : DefaultResponse(route),
                 DiagnosticMode.Check,
                 requestedVoice: "piper_base");
 
-            var server = result.Inspection.Server;
-            var voices = FindCheck(result.Inspection, "service.voices");
+            var server = Inspection.Server;
+            var voices = FindCheck(Inspection, "service.voices");
 
             Require(
-                result.Routes.Count == 3 &&
+                Routes.Count == 3 &&
                 server.VoicesSourceRoute == "tsbk/server/status" &&
                 server.AdvertisedVoicesComplete &&
                 server.AdvertisedVoices.SequenceEqual(
-                    new[] { "piper_base", "alloy" }) &&
+                    ["piper_base", "alloy"]) &&
                 voices.Status == DiagnosticCheckStatus.Warning &&
                 voices.Code == "voices_status_fallback" &&
                 voices.Http?.StatusCode == (int)status &&
                 server.Observations.Any(observation =>
                     observation.Endpoint == MetadataEndpoint.Voices &&
                     observation.Http.StatusCode == (int)status) &&
-                !result.Inspection.Checks.Any(check =>
+                !Inspection.Checks.Any(check =>
                     check.Code == "voice_not_advertised"),
                 "Status discovery fallback lost its source or the dedicated response.");
         }
@@ -336,7 +336,7 @@ internal static class MetadataInspectionChecks
             formats = new { wav = false }
         });
 
-        var complete = await InspectAsync(
+        var (Inspection, ExecutionState, Routes) = await InspectAsync(
             route => route switch
             {
                 "tsbk/server/status" => Response(HttpStatusCode.OK, statusBody),
@@ -349,15 +349,15 @@ internal static class MetadataInspectionChecks
             requestedVoice: "piper_base");
 
         Require(
-            complete.Inspection.Server.AdvertisedVoicesComplete &&
-            complete.Inspection.Server.VoicesSourceRoute == "tsbk/audio/voices" &&
-            complete.Inspection.Server.AdvertisedVoices.SequenceEqual(
-                new[] { "alloy" }) &&
-            FindCheck(complete.Inspection, "speech.voice_advertisement").Code ==
+            Inspection.Server.AdvertisedVoicesComplete &&
+            Inspection.Server.VoicesSourceRoute == "tsbk/audio/voices" &&
+            Inspection.Server.AdvertisedVoices.SequenceEqual(
+                ["alloy"]) &&
+            FindCheck(Inspection, "speech.voice_advertisement").Code ==
                 "voice_not_advertised" &&
-            FindCheck(complete.Inspection, "service.voices.disagreement").Code ==
+            FindCheck(Inspection, "service.voices.disagreement").Code ==
                 "voice_list_disagreement" &&
-            FindCheck(complete.Inspection, "service.wav_advertisement").Code ==
+            FindCheck(Inspection, "service.wav_advertisement").Code ==
                 "wav_not_advertised",
             "Complete conflicting advertisements were merged or their warnings were lost.");
 
@@ -378,7 +378,7 @@ internal static class MetadataInspectionChecks
         Require(
             !partial.Inspection.Server.AdvertisedVoicesComplete &&
             partial.Inspection.Server.AdvertisedVoices.SequenceEqual(
-                new[] { "alloy" }) &&
+                ["alloy"]) &&
             FindCheck(partial.Inspection, "service.voices").Code ==
                 "voices_incomplete" &&
             !partial.Inspection.Checks.Any(check =>
@@ -431,18 +431,18 @@ internal static class MetadataInspectionChecks
     /// <summary>Distinguishes unknown identity caused by access policy from a foreign service.</summary>
     private static async Task VerifyUnavailableAsync()
     {
-        var restricted = await InspectAsync(_ => Response(
+        var (Inspection, ExecutionState, Routes) = await InspectAsync(_ => Response(
             HttpStatusCode.Forbidden,
             """{"error":"Metadata restricted."}"""));
 
         Require(
-            restricted.Routes.Count == 3 &&
-            restricted.Inspection.Server.Readiness == DiagnosticReadiness.Unknown &&
-            FindCheck(restricted.Inspection, "service.identity").Status ==
+            Routes.Count == 3 &&
+            Inspection.Server.Readiness == DiagnosticReadiness.Unknown &&
+            FindCheck(Inspection, "service.identity").Status ==
                 DiagnosticCheckStatus.Error &&
-            FindCheck(restricted.Inspection, "service.readiness").Status ==
+            FindCheck(Inspection, "service.readiness").Status ==
                 DiagnosticCheckStatus.Error &&
-            Outcome(restricted.Inspection, restricted.ExecutionState) ==
+            Outcome(Inspection, ExecutionState) ==
                 DiagnosticOutcome.Incomplete,
             "Restricted metadata was presented as a known foreign or failed service.");
 
@@ -477,20 +477,20 @@ internal static class MetadataInspectionChecks
 
         using var stream = new StalledStream();
 
-        var result = await InspectAsync(
+        var (Inspection, ExecutionState, Routes) = await InspectAsync(
             route => route == "health"
                 ? StreamResponse(stream)
                 : DefaultResponse(route),
             profile: profile);
 
         Require(
-            result.ExecutionState == DiagnosticExecutionState.Completed &&
-            result.Routes.Count == 3 &&
+            ExecutionState == DiagnosticExecutionState.Completed &&
+            Routes.Count == 3 &&
             stream.Disposed &&
-            result.Inspection.Server.Readiness == DiagnosticReadiness.Ready &&
-            FindCheck(result.Inspection, "service.health").Code ==
+            Inspection.Server.Readiness == DiagnosticReadiness.Ready &&
+            FindCheck(Inspection, "service.health").Code ==
                 "metadata_timeout" &&
-            Outcome(result.Inspection, result.ExecutionState) ==
+            Outcome(Inspection, ExecutionState) ==
                 DiagnosticOutcome.PassedWithWarnings,
             "A local metadata deadline stopped independent endpoint requests.");
     }
@@ -531,7 +531,7 @@ internal static class MetadataInspectionChecks
 
                 cancellation.Cancel();
 
-                var result = await pending.WaitAsync(
+                var (Inspection, ExecutionState) = await pending.WaitAsync(
                     TimeSpan.FromSeconds(5));
 
                 var expectedCode = callerCancellation
@@ -539,18 +539,18 @@ internal static class MetadataInspectionChecks
                     : "deadline_exceeded";
 
                 Require(
-                    result.ExecutionState == expectedState &&
+                    ExecutionState == expectedState &&
                     handler.Routes.SequenceEqual(
-                        new[] { "health", "tsbk/server/status" }) &&
+                        ["health", "tsbk/server/status"]) &&
                     stream.Disposed &&
-                    result.Inspection.Server.Observations.Count == 2 &&
-                    result.Inspection.Server.Readiness == DiagnosticReadiness.Ready &&
-                    result.Inspection.Server.ReadinessSourceRoute == "health" &&
-                    FindCheck(result.Inspection, "service.status").Code == expectedCode &&
-                    FindCheck(result.Inspection, "service.voices").Status ==
+                    Inspection.Server.Observations.Count == 2 &&
+                    Inspection.Server.Readiness == DiagnosticReadiness.Ready &&
+                    Inspection.Server.ReadinessSourceRoute == "health" &&
+                    FindCheck(Inspection, "service.status").Code == expectedCode &&
+                    FindCheck(Inspection, "service.voices").Status ==
                         DiagnosticCheckStatus.Skipped &&
-                    FindCheck(result.Inspection, "service.voices").Code == expectedCode &&
-                    Outcome(result.Inspection, result.ExecutionState) ==
+                    FindCheck(Inspection, "service.voices").Code == expectedCode &&
+                    Outcome(Inspection, ExecutionState) ==
                         DiagnosticOutcome.Incomplete,
                     "Interrupted collection lost earlier claims or sent later metadata GETs.");
             }
@@ -649,7 +649,7 @@ internal static class MetadataInspectionChecks
             !json.Contains(token, StringComparison.Ordinal) &&
             result.Server.Version == "***" &&
             result.Server.StatusSnapshot?.BaseVoiceDialect == "***" &&
-            result.Server.AdvertisedVoices.SequenceEqual(new[] { "***" }) &&
+            result.Server.AdvertisedVoices.SequenceEqual(["***"]) &&
             !result.Checks.Any(check =>
                 check.Code == "voice_not_advertised") &&
             result.Server.Observations.All(observation =>
@@ -677,7 +677,7 @@ internal static class MetadataInspectionChecks
         using var runDeadline = new CancellationTokenSource(
             TimeSpan.FromSeconds(10));
 
-        var result = await MetadataInspector.InspectAsync(
+        var (Inspection, ExecutionState) = await MetadataInspector.InspectAsync(
             client,
             mode,
             requestedVoice,
@@ -686,8 +686,8 @@ internal static class MetadataInspectionChecks
             .WaitAsync(TimeSpan.FromSeconds(15));
 
         return (
-            result.Inspection,
-            result.ExecutionState,
+            Inspection,
+            ExecutionState,
             handler.Routes.ToArray());
     }
 

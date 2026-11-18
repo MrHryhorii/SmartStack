@@ -105,9 +105,9 @@ bool failuresOnly = args.Any(argument =>
 
 int failures = 0;
 
-foreach (var test in cases)
+foreach (var (Name, Input, ExpectedPhrases, ExpectedPunctuation) in cases)
 {
-    string language = test.Name switch
+    string language = Name switch
     {
         "Ukrainian references and numbers" => "uk",
         "Polish abbreviated street and name" => "pl",
@@ -115,31 +115,31 @@ foreach (var test in cases)
         _ => "en"
     };
 
-    var tokens = detector.ProcessTextToLanguageTokens(test.Input, language);
+    var tokens = detector.ProcessTextToLanguageTokens(Input, language);
     var phrases = tokens.Where(token => !token.IsPunctuationOrSpace).Select(token => token.Text).ToArray();
     var punctuation = tokens.Where(token => token.IsPunctuationOrSpace).Select(token => token.Text).ToArray();
 
-    bool passed = phrases.SequenceEqual(test.ExpectedPhrases) &&
-                  punctuation.SequenceEqual(test.ExpectedPunctuation) &&
-                  string.Concat(tokens.Select(token => token.Text)) == test.Input;
+    bool passed = phrases.SequenceEqual(ExpectedPhrases) &&
+                  punctuation.SequenceEqual(ExpectedPunctuation) &&
+                  string.Concat(tokens.Select(token => token.Text)) == Input;
 
     if (passed)
     {
         if (!failuresOnly)
         {
-            Console.WriteLine($"PASS {test.Name}");
+            Console.WriteLine($"PASS {Name}");
         }
 
         continue;
     }
 
     failures++;
-    Console.Error.WriteLine($"FAIL {test.Name}");
-    Console.Error.WriteLine($"  Expected phrases: {string.Join(" | ", test.ExpectedPhrases)}");
+    Console.Error.WriteLine($"FAIL {Name}");
+    Console.Error.WriteLine($"  Expected phrases: {string.Join(" | ", ExpectedPhrases)}");
     Console.Error.WriteLine($"  Actual phrases:   {string.Join(" | ", phrases)}");
-    Console.Error.WriteLine($"  Expected marks:   {string.Join(" | ", test.ExpectedPunctuation)}");
+    Console.Error.WriteLine($"  Expected marks:   {string.Join(" | ", ExpectedPunctuation)}");
     Console.Error.WriteLine($"  Actual marks:     {string.Join(" | ", punctuation)}");
-    Console.Error.WriteLine($"  Preserved text:   {string.Concat(tokens.Select(token => token.Text)) == test.Input}");
+    Console.Error.WriteLine($"  Preserved text:   {string.Concat(tokens.Select(token => token.Text)) == Input}");
 }
 
 // Script changes must remain valid detector boundaries even when abbreviations are protected.
@@ -165,20 +165,20 @@ else if (!failuresOnly)
 }
 
 int additionalTotal = 0;
-foreach (var test in SharedRulesChecks.Cases().Concat(TechnicalSpeechChecks.Cases())
+foreach (var (Name, Check) in SharedRulesChecks.Cases().Concat(TechnicalSpeechChecks.Cases())
     .Concat(TechnicalLanguageChecks.Cases()).Concat(LanguageDetectionSettingsChecks.Cases())
     .Concat(ScriptOnlyLanguageChecks.Cases()).Concat(EmojiChecks.Cases()).Concat(SingleBracketPhonemeChecks.Cases()))
 {
     additionalTotal++;
     try
     {
-        test.Check();
-        if (!failuresOnly) Console.WriteLine($"PASS {test.Name}");
+        Check();
+        if (!failuresOnly) Console.WriteLine($"PASS {Name}");
     }
     catch (Exception error)
     {
         failures++;
-        Console.Error.WriteLine($"FAIL {test.Name}: {error.Message}");
+        Console.Error.WriteLine($"FAIL {Name}: {error.Message}");
     }
 }
 

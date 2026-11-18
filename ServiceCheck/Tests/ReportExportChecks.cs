@@ -159,7 +159,7 @@ internal static class ReportExportChecks
 
         Require(
             names.SequenceEqual(
-                new[] { "report.html", "report.json", "sample.wav" }),
+                ["report.html", "report.json", "sample.wav"]),
             "The published run contains unexpected or temporary files.");
 
         Require(

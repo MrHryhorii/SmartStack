@@ -27,7 +27,8 @@ internal static class EmojiChecks
                 Require((configuration.Get<PhonemizerSettings>() ?? new()).ReadEmojis == fixture.Item2,
                     "Configuration did not preserve enabled-by-default reading or an explicit override.");
             }
-        });
+        }
+        );
 
         string[] emoji = [Face, Heart, "\u2764", Technologist, "\U0001F469\U0001F3FD\u200D\U0001F4BB",
             "\U0001F44D\U0001F3FD", "\U0001F1FA\U0001F1E6", "1\uFE0F\u20E3", "#\u20E3",
@@ -61,7 +62,8 @@ internal static class EmojiChecks
                 bool actual = TechnicalTextRecognizer.TryGetSpanLength(fixture.Item1.AsSpan(), 0, TextChunkerRules.Default, out int length);
                 Require(actual == fixture.Item2 && (!actual || length == fixture.Item1.Length),
                     "Emoji changed syntax classification or the protected source length.");
-            });
+            }
+            );
 
         foreach (bool detectorEnabled in new[] { false, true })
         {
@@ -84,17 +86,18 @@ internal static class EmojiChecks
                 };
                 for (int index = 0; index < fixtures.Length; index++)
                 {
-                    var fixture = fixtures[index];
+                    var (Input, Disabled, Enabled, EmojiCalls) = fixtures[index];
                     yield return ($"Emoji pipeline ({detectorEnabled}, {read}): source fixture {index}", () =>
                     {
                         var bridge = new EspeakWrapper();
-                        string actual = Create(bridge, detector, read).GetPhonemes(fixture.Input, "en");
-                        Require(NormalizeSpaces(actual) == (read ? fixture.Enabled : fixture.Disabled),
+                        string actual = Create(bridge, detector, read).GetPhonemes(Input, "en");
+                        Require(NormalizeSpaces(actual) == (read ? Enabled : Disabled),
                             $"Unexpected spelling or lost words: {actual}");
-                        Require(bridge.EmojiCalls.Count == (read ? fixture.EmojiCalls : 0),
+                        Require(bridge.EmojiCalls.Count == (read ? EmojiCalls : 0),
                             "Emoji bypassed the setting or did not use its isolated native route.");
                         Require(bridge.CharacterCalls.All(c => c.Character == '_'), "Emoji reached the literal character API.");
-                    });
+                    }
+                    );
                 }
                 yield return ($"Emoji pipeline ({detectorEnabled}, {read}): punctuation and initials retain their roles", () =>
                 {
@@ -104,14 +107,16 @@ internal static class EmojiChecks
                         Require(pipeline.GetPhonemes(input, "en") == Create(new EspeakWrapper(), detector, false).GetPhonemes(input, "en"),
                             "Emoji configuration changed ordinary text or technical operators.");
                     Require(bridge.EmojiCalls.Count == 0, "Ordinary punctuation invoked emoji spelling.");
-                });
+                }
+                );
                 yield return ($"Emoji pipeline ({detectorEnabled}, {read}): explicit raw IPA is unchanged", () =>
                 {
                     var bridge = new EspeakWrapper();
                     string raw = "a" + Heart + "b";
                     Require(Create(bridge, detector, read).GetPhonemes("[[" + raw + "]]") == raw && bridge.EmojiCalls.Count == 0,
                         "Orthographic emoji handling rewrote explicit raw phonemes.");
-                });
+                }
+                );
             }
             yield return ($"Emoji pipeline ({detectorEnabled}): omitted settings read technical emoji", () =>
             {
@@ -121,7 +126,8 @@ internal static class EmojiChecks
                 Require(NormalizeSpaces(pipeline.GetPhonemes("user_" + Face + "name", "en")) == "user s e name"
                     && bridge.EmojiCalls.Count == 1 && bridge.EmojiCalls[0].Voice == "en-us",
                     "Omitted settings did not read a technical-token emoji using the model voice.");
-            });
+            }
+            );
             yield return ($"Emoji pipeline ({detectorEnabled}): legacy JSON enables ordinary emoji", () =>
             {
                 using var json = new MemoryStream(Encoding.UTF8.GetBytes("{\"UseLanguageDetector\":false}"));
@@ -132,14 +138,16 @@ internal static class EmojiChecks
                     settings: settings);
                 Require(NormalizeSpaces(pipeline.GetPhonemes("Hello " + Face + " world.", "en")) == "Hello e world."
                     && bridge.EmojiCalls.Count == 1, "Legacy JSON did not inherit enabled emoji reading.");
-            });
+            }
+            );
             yield return ($"Emoji pipeline ({detectorEnabled}): disabled spelling retains ordinary phrase context", () =>
             {
                 var bridge = new EspeakWrapper();
                 Create(bridge, detector, false).GetPhonemes("This is" + Face + Heart + "our final result.", "en-us");
                 Require(bridge.Calls.Count == 1 && bridge.Calls[0].Text == "This is our final result",
                     "Emoji caused an ordinary phrase to be fragmented: " + string.Join(" / ", bridge.Calls.Select(c => c.Text)));
-            });
+            }
+            );
             yield return ($"Emoji pipeline ({detectorEnabled}): unsupported names stay silent", () =>
             {
                 var bridge = new EspeakWrapper();
@@ -149,7 +157,8 @@ internal static class EmojiChecks
                     "An unsupported emoji erased adjacent words or introduced a Unicode-code name.");
                 Require(pipeline.GetPhonemes(Face + "?") == "?" && bridge.CharacterCalls.Count == 0,
                     "Unsupported names changed the remaining question mark.");
-            });
+            }
+            );
             foreach (string modelVoice in new[] { "en-us", "en-gb", "pt-br" })
                 yield return ($"Emoji pipeline ({detectorEnabled}): exact model dialect {modelVoice}", () =>
                 {
@@ -158,7 +167,8 @@ internal static class EmojiChecks
                     Require(bridge.EmojiCalls.Count == 1 && bridge.EmojiCalls[0].Voice == modelVoice,
                         "Forced text language replaced the model dialect or cached names were requested again.");
                     Require(bridge.Calls.All(c => c.Voice == "uk"), "Emoji model voice leaked into ordinary text pronunciation.");
-                });
+                }
+                );
             if (detector != null)
                 yield return ("Emoji source: whole sequences remain neutral in language analysis", () =>
                 {
@@ -171,7 +181,8 @@ internal static class EmojiChecks
                         Require(tokens.Where(t => t.Text.Any(char.IsLetter)).All(t => t.DetectedLanguage == "en-us"),
                             "Neutral emoji changed model/script language assignment.");
                     }
-                });
+                }
+                );
         }
     }
 

@@ -15,36 +15,36 @@ internal static class QuoteBoundaryChecks
     /// <summary>Exercises punctuation structure independently of a selected speech language.</summary>
     internal static IEnumerable<(string Category, string Name, Action Check)> Cases()
     {
-        foreach (var pair in QuotePairs)
-        foreach (string terminal in new[] { ".", "?", "!", "?!", "...?!", "…?!", "。", "！" })
-        foreach (bool early in new[] { false, true })
-        {
-            string sentence = pair.Open + "Hello" + terminal + pair.Close;
-            yield return ("Quoted sentence suffixes", $"{pair.Open}{pair.Close}; {terminal}; early={early}",
-                () => Check(sentence + " Next.", [sentence, "Next."], [true, true], early));
-            yield return ("Quoted sentence suffixes", $"EOF; {pair.Open}{pair.Close}; {terminal}; early={early}",
-                () => Check(sentence, [sentence], [true], early));
-        }
+        foreach (var (Open, Close) in QuotePairs)
+            foreach (string terminal in new[] { ".", "?", "!", "?!", "...?!", "…?!", "。", "！" })
+                foreach (bool early in new[] { false, true })
+                {
+                    string sentence = Open + "Hello" + terminal + Close;
+                    yield return ("Quoted sentence suffixes", $"{Open}{Close}; {terminal}; early={early}",
+                        () => Check(sentence + " Next.", [sentence, "Next."], [true, true], early));
+                    yield return ("Quoted sentence suffixes", $"EOF; {Open}{Close}; {terminal}; early={early}",
+                        () => Check(sentence, [sentence], [true], early));
+                }
 
-        foreach (var pair in QuotePairs)
-        foreach (string spacing in new[] { " ", "\t", "\u00A0", "\u202F", "\u200F" })
-        foreach (bool early in new[] { false, true })
-        {
-            string sentence = pair.Open + "Hello." + spacing + pair.Close;
-            yield return ("Separated closing quotes", $"{pair.Open}{pair.Close}; U+{(int)spacing[0]:X4}; early={early}",
-                () => Check(sentence + " Next.", [sentence, "Next."], [true, true], early));
-            yield return ("Separated closing quotes", $"EOF; {pair.Open}{pair.Close}; U+{(int)spacing[0]:X4}; early={early}",
-                () => Check(sentence, [sentence], [true], early));
-        }
+        foreach (var (Open, Close) in QuotePairs)
+            foreach (string spacing in new[] { " ", "\t", "\u00A0", "\u202F", "\u200F" })
+                foreach (bool early in new[] { false, true })
+                {
+                    string sentence = Open + "Hello." + spacing + Close;
+                    yield return ("Separated closing quotes", $"{Open}{Close}; U+{(int)spacing[0]:X4}; early={early}",
+                        () => Check(sentence + " Next.", [sentence, "Next."], [true, true], early));
+                    yield return ("Separated closing quotes", $"EOF; {Open}{Close}; U+{(int)spacing[0]:X4}; early={early}",
+                        () => Check(sentence, [sentence], [true], early));
+                }
 
-        foreach (var pair in QuotePairs)
-        foreach (bool early in new[] { false, true })
-        {
-            string first = pair.Open + "你好！" + pair.Close;
-            string second = pair.Open + "再见！" + pair.Close;
-            yield return ("Adjacent quoted sentences", $"{pair.Open}{pair.Close}; early={early}",
-                () => Check(first + second, [first, second], [true, true], early));
-        }
+        foreach (var (Open, Close) in QuotePairs)
+            foreach (bool early in new[] { false, true })
+            {
+                string first = Open + "你好！" + Close;
+                string second = Open + "再见！" + Close;
+                yield return ("Adjacent quoted sentences", $"{Open}{Close}; early={early}",
+                    () => Check(first + second, [first, second], [true, true], early));
+            }
 
         var reportingCases = new (string Name, string Quote, string Report)[]
         {
@@ -58,15 +58,15 @@ internal static class QuoteBoundaryChecks
             ("Quoted ellipsis", "\"Wait...\"", "he continued."),
             ("Reporting dash", "«Справді…?!»", "— відповів він.")
         };
-        foreach (var fixture in reportingCases)
-        foreach (bool early in new[] { false, true })
-        {
-            string input = fixture.Quote + " " + fixture.Report + " Next.";
-            string[] expected = early ? [fixture.Quote, fixture.Report, "Next."] : [fixture.Quote + " " + fixture.Report, "Next."];
-            bool[] finished = early ? [false, true, true] : [true, true];
-            yield return ("Quoted early continuations", $"{fixture.Name}; early={early}",
-                () => Check(input, expected, finished, early));
-        }
+        foreach (var (Name, Quote, Report) in reportingCases)
+            foreach (bool early in new[] { false, true })
+            {
+                string input = Quote + " " + Report + " Next.";
+                string[] expected = early ? [Quote, Report, "Next."] : [Quote + " " + Report, "Next."];
+                bool[] finished = early ? [false, true, true] : [true, true];
+                yield return ("Quoted early continuations", $"{Name}; early={early}",
+                    () => Check(input, expected, finished, early));
+            }
 
         foreach (bool early in new[] { false, true })
         {
@@ -91,16 +91,16 @@ internal static class QuoteBoundaryChecks
         yield return ("Quoted early continuations", "An earlier comma consumes the one allowed early cut", () =>
             Check("First, \"Really?!\" he replied.", ["First,", "\"Really?!\" he replied."], [false, true], true));
 
-        foreach (var pair in QuotePairs)
-        foreach (string terminal in new[] { ".", "?!", "...?!", "。" })
-        foreach (int limit in new[] { 8, 64, 200 })
-        foreach (int offset in new[] { -1, 0, 1 })
-        foreach (bool early in new[] { false, true })
-        {
-            string input = pair.Open + new string('a', limit - 2 + offset) + terminal + pair.Close;
-            yield return ("Quoted emergency boundaries", $"{pair.Open}{pair.Close}; {terminal}; cap={limit}; offset={offset}; early={early}",
-                () => CheckEmergency(input, limit, early));
-        }
+        foreach (var (Open, Close) in QuotePairs)
+            foreach (string terminal in new[] { ".", "?!", "...?!", "。" })
+                foreach (int limit in new[] { 8, 64, 200 })
+                    foreach (int offset in new[] { -1, 0, 1 })
+                        foreach (bool early in new[] { false, true })
+                        {
+                            string input = Open + new string('a', limit - 2 + offset) + terminal + Close;
+                            yield return ("Quoted emergency boundaries", $"{Open}{Close}; {terminal}; cap={limit}; offset={offset}; early={early}",
+                                () => CheckEmergency(input, limit, early));
+                        }
 
         foreach (bool early in new[] { false, true })
         {
@@ -111,7 +111,8 @@ internal static class QuoteBoundaryChecks
                 var chunks = Split("First, we check the engine. " + longQuote + " Next.", early, 200);
                 Require(!chunks.Skip(1).Any(c => c.Text.StartsWith("\" she", StringComparison.Ordinal)), "A closing quote leaked into the next chunk.");
                 Require(chunks.Any(c => c.Text.EndsWith("wait,\"", StringComparison.Ordinal)), "The comma lost its attached closing quote.");
-            });
+            }
+            );
             yield return ("Quoted emergency boundaries", $"Nested suffix at the default cap; early={early}",
                 () => CheckEmergency("(\"" + new string('a', 197) + "?!\").", 200, early));
             yield return ("Quoted emergency boundaries", $"Combining mark after a closing quote; early={early}",

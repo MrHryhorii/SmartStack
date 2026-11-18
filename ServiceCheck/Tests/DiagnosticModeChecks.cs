@@ -39,13 +39,13 @@ internal static class DiagnosticModeChecks
         var result = await RunAsync(DiagnosticMode.Check, handler);
 
         Require(
-            handler.Requests.SequenceEqual(new[]
-            {
+            handler.Requests.SequenceEqual(
+            [
                 "GET health",
                 "GET tsbk/server/status",
                 "GET tsbk/audio/voices",
                 "POST v1/audio/speech"
-            }),
+            ]),
             "The active run changed metadata order or repeated synthesis.");
 
         Require(
@@ -91,12 +91,12 @@ internal static class DiagnosticModeChecks
         var result = await RunAsync(DiagnosticMode.Inspect, handler);
 
         Require(
-            handler.Requests.SequenceEqual(new[]
-            {
+            handler.Requests.SequenceEqual(
+            [
                 "GET health",
                 "GET tsbk/server/status",
                 "GET tsbk/audio/voices"
-            }) &&
+            ]) &&
             result.Mode == DiagnosticMode.Inspect &&
             result.ExecutionState == DiagnosticExecutionState.Completed &&
             result.Outcome == DiagnosticOutcome.Passed &&
@@ -300,11 +300,11 @@ internal static class DiagnosticModeChecks
                     Require(
                         result.ExecutionState == expectedState &&
                         result.Outcome == DiagnosticOutcome.Incomplete &&
-                        handler.Requests.SequenceEqual(new[]
-                        {
+                        handler.Requests.SequenceEqual(
+                        [
                             "GET health",
                             "GET tsbk/server/status"
-                        }) &&
+                        ]) &&
                         stream.Disposed &&
                         result.Server?.Observations.Count == 2 &&
                         result.Server.Readiness == DiagnosticReadiness.Ready &&

@@ -33,7 +33,11 @@ var mapper = new DynamicPunctuationMapper(new PiperConfig
 {
     PhonemeIdMap = new Dictionary<string, int[]>
     {
-        ["."] = [1], ["?"] = [2], ["!"] = [3], [","] = [4], [" "] = [5]
+        ["."] = [1],
+        ["?"] = [2],
+        ["!"] = [3],
+        [","] = [4],
+        [" "] = [5]
     }
 });
 
@@ -102,20 +106,20 @@ Console.WriteLine($"Configuration: {BuildConfiguration()}; iterations: {iteratio
 Console.WriteLine("Scenario\tB/op\tns/op\tAllocation budget");
 long checksum = 0;
 int failures = 0;
-foreach (var scenario in scenarios)
+foreach (var (Name, Run, ByteBudget) in scenarios)
 {
-    for (int index = 0; index < 2048; index++) checksum += scenario.Run();
+    for (int index = 0; index < 2048; index++) checksum += Run();
 
     long before = GC.GetAllocatedBytesForCurrentThread();
     long start = Stopwatch.GetTimestamp();
-    for (int index = 0; index < iterations; index++) checksum += scenario.Run();
+    for (int index = 0; index < iterations; index++) checksum += Run();
     long elapsed = Stopwatch.GetTimestamp() - start;
     long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
 
-    bool passed = !scenario.ByteBudget.HasValue || allocated <= scenario.ByteBudget.Value * iterations;
+    bool passed = !ByteBudget.HasValue || allocated <= ByteBudget.Value * iterations;
     if (!passed) failures++;
-    string budget = scenario.ByteBudget.HasValue ? $"{(passed ? "PASS" : "FAIL")} <= {scenario.ByteBudget.Value} B/op" : "reported";
-    Console.WriteLine($"{scenario.Name}\t{(double)allocated / iterations:0.##}\t{(double)elapsed / Stopwatch.Frequency * 1_000_000_000 / iterations:0.##}\t{budget}");
+    string budget = ByteBudget.HasValue ? $"{(passed ? "PASS" : "FAIL")} <= {ByteBudget.Value} B/op" : "reported";
+    Console.WriteLine($"{Name}\t{(double)allocated / iterations:0.##}\t{(double)elapsed / Stopwatch.Frequency * 1_000_000_000 / iterations:0.##}\t{budget}");
 }
 
 GC.KeepAlive(checksum);

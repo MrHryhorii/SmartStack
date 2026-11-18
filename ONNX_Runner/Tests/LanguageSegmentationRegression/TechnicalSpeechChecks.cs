@@ -51,30 +51,31 @@ internal static class TechnicalSpeechChecks
             ("Open *.json and pass *args to C*.", "*.json", "*."),
         };
 
-        foreach (var fixture in fixtures)
+        foreach (var (Text, Protected, Symbols) in fixtures)
         {
             foreach (bool useDetector in new[] { true, false })
             {
-                yield return ($"Technical speech ({useDetector}): {fixture.Text}", () =>
+                yield return ($"Technical speech ({useDetector}): {Text}", () =>
                 {
                     var bridge = new EspeakWrapper();
                     var config = Config();
                     var phonemizer = new UnifiedPhonemizer(bridge,
                         new DynamicPunctuationMapper(config, rules), config, useDetector ? detector : null);
-                    string result = phonemizer.GetPhonemes(fixture.Text, "en");
+                    string result = phonemizer.GetPhonemes(Text, "en");
                     Require(bridge.CharacterCalls.Select(c => c.Character).ToHashSet()
-                        .SetEquals(fixture.Symbols), "Character-name routing differs from the fixture.");
+                        .SetEquals(Symbols), "Character-name routing differs from the fixture.");
                     Require(bridge.CharacterCalls.All(c => c.Voice == "en-us"), "Symbol voice was reclassified.");
                     Require(bridge.CharacterCalls.GroupBy(c => c.Character).All(g => g.Count() == 1),
                         "Repeated symbols bypassed the adapted-name cache.");
                     Require(result.EndsWith('.'), "Sentence-final punctuation was spoken as a symbol.");
 
-                    var tokens = detector.ProcessTextToLanguageTokens(fixture.Text, "en");
-                    Require(string.Concat(tokens.Select(t => t.Text)) == fixture.Text.Replace("\"", string.Empty),
+                    var tokens = detector.ProcessTextToLanguageTokens(Text, "en");
+                    Require(string.Concat(tokens.Select(t => t.Text)) == Text.Replace("\"", string.Empty),
                         "Tokenizer lost content beyond its intentional silent quote boundaries.");
-                    Require(tokens.Any(t => t.IsTechnical && t.Text == fixture.Protected),
+                    Require(tokens.Any(t => t.IsTechnical && t.Text == Protected),
                         "The real tokenizer did not identify the expected technical token.");
-                });
+                }
+                );
             }
         }
 
@@ -97,7 +98,8 @@ internal static class TechnicalSpeechChecks
                         new DynamicPunctuationMapper(config, rules), config, useDetector ? detector : null);
                     phonemizer.GetPhonemes(text, "en");
                     Require(bridge.CharacterCalls.Count == 0, "Ordinary punctuation was spelled out.");
-                });
+                }
+                );
             }
         }
 
@@ -123,14 +125,15 @@ internal static class TechnicalSpeechChecks
             ("Do not insert before punctuation", ["həlˈoʊ", ","], "həlˈoʊ,"),
         };
 
-        foreach (var test in partsCases)
+        foreach (var (Name, Parts, Expected) in partsCases)
         {
-            yield return ($"Native fragment joining: {test.Name}", () =>
+            yield return ($"Native fragment joining: {Name}", () =>
             {
                 var output = new StringBuilder();
-                foreach (string part in test.Parts) EspeakPhonemePartJoiner.Append(output, part);
-                Require(output.ToString() == test.Expected, $"Phoneme word boundaries: {output}");
-            });
+                foreach (string part in Parts) EspeakPhonemePartJoiner.Append(output, part);
+                Require(output.ToString() == Expected, $"Phoneme word boundaries: {output}");
+            }
+            );
         }
 
         yield return ("Technical speech: padding and sentence tokens remain structural", () =>
@@ -147,7 +150,8 @@ internal static class TechnicalSpeechChecks
             Require(ids.Count(id => id == 1) == 1 && ids.Count(id => id == 2) == 1,
                 "Literal controls introduced extra sentence IDs.");
             Require(ids.Contains(4) && ids.Contains(5) && ids.Contains(6), "Named symbols disappeared from IDs.");
-        });
+        }
+        );
 
         yield return ("Technical speech: unsupported character-name IPA is adapted before IDs", () =>
         {
@@ -163,7 +167,8 @@ internal static class TechnicalSpeechChecks
             Require(ipa == "tʃ", $"Character name was not adapted: {ipa}");
             long[] ids = new PiperPhonemizer(config, NullLogger<PiperPhonemizer>.Instance).PhonemesToIds(ipa);
             Require(ids.Contains(20) && ids.Contains(21), "Adapted character phonemes did not reach the tensor IDs.");
-        });
+        }
+        );
 
         foreach (bool useDetector in new[] { true, false })
         {
@@ -177,7 +182,8 @@ internal static class TechnicalSpeechChecks
                 Require(result == "config s prod s json tail", $"Technical name merged with the next word: {result}");
                 Require(bridge.CharacterCalls.Count == 1 && bridge.CharacterCalls[0].Character == '.',
                     "A visual quote was pronounced as technical syntax.");
-            });
+            }
+            );
         }
 
         yield return ("Technical speech: raw IPA bypasses symbol pronunciation", () =>
@@ -187,7 +193,8 @@ internal static class TechnicalSpeechChecks
             var phonemizer = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config, detector);
             Require(phonemizer.GetPhonemes("[[a_b]]", "en") == "a_b", "Raw IPA was rewritten.");
             Require(bridge.Calls.Count == 0 && bridge.CharacterCalls.Count == 0, "Raw IPA reached eSpeak.");
-        });
+        }
+        );
 
         foreach (bool useDetector in new[] { true, false })
         {
@@ -200,7 +207,8 @@ internal static class TechnicalSpeechChecks
                 Require(bridge.CharacterCalls.Single().Voice == "en-us", "Forced language replaced the symbol-name voice.");
                 Require(bridge.Calls.Count == 2 && bridge.Calls.All(c => c.Voice == "uk"),
                     "The symbol-name route replaced the text language.");
-            });
+            }
+            );
         }
 
         yield return ("Technical speech: symbol cache belongs to each model voice", () =>
@@ -214,7 +222,8 @@ internal static class TechnicalSpeechChecks
             new UnifiedPhonemizer(second, new DynamicPunctuationMapper(french), french).GetPhonemes("_");
             Require(first.CharacterCalls.Single().Voice == "en-us" &&
                 second.CharacterCalls.Single().Voice == "fr-fr", "Character names leaked between model voices.");
-        });
+        }
+        );
 
         yield return ("Technical speech: optional marker additions preserve immutable defaults", () =>
         {
@@ -234,7 +243,8 @@ internal static class TechnicalSpeechChecks
                 Require(bridge.CharacterCalls.Single().Character == '§', "Custom marker was not pronounced.");
             }
             finally { File.Delete(path); }
-        });
+        }
+        );
     }
 
     /// <summary>Creates the small Piper inventory used by technical pronunciation routing cases.</summary>
@@ -243,10 +253,21 @@ internal static class TechnicalSpeechChecks
         Espeak = new EspeakConfig { Voice = "en-us" },
         PhonemeIdMap = new Dictionary<string, int[]>
         {
-            ["_"] = [0], ["^"] = [1], ["$"] = [2], [" "] = [3],
-            ["a"] = [4], ["b"] = [5], ["c"] = [6], ["s"] = [7],
-            ["."] = [10], ["?"] = [13], ["!"] = [14], [","] = [15],
-            ["-"] = [16], [":"] = [17], [";"] = [18]
+            ["_"] = [0],
+            ["^"] = [1],
+            ["$"] = [2],
+            [" "] = [3],
+            ["a"] = [4],
+            ["b"] = [5],
+            ["c"] = [6],
+            ["s"] = [7],
+            ["."] = [10],
+            ["?"] = [13],
+            ["!"] = [14],
+            [","] = [15],
+            ["-"] = [16],
+            [":"] = [17],
+            [";"] = [18]
         }
     };
 

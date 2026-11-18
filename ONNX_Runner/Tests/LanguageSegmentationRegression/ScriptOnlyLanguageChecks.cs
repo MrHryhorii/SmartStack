@@ -22,16 +22,17 @@ internal static class ScriptOnlyLanguageChecks
             ("blank entries", ["", " ", "\t", "en"])
         };
 
-        foreach (var fixture in configurations)
+        foreach (var (Name, Languages) in configurations)
         {
-            yield return ($"Script-only routing: {fixture.Name} starts and processes a long sentence", () =>
+            yield return ($"Script-only routing: {Name} starts and processes a long sentence", () =>
             {
-                var settings = new PhonemizerSettings { SupportedLanguages = fixture.Languages! };
+                var settings = new PhonemizerSettings { SupportedLanguages = Languages! };
                 var tokens = Read(Create(settings), EnglishSentence);
                 Require(tokens.All(token => token.DetectedLanguage == "en-us" &&
                     token.Probability == 0 && !token.IsReliable),
                     "Model fallback changed the dialect or invented statistical confidence.");
-            });
+            }
+            );
         }
 
         yield return ("Script-only routing: null settings use the shared defaults", () =>
@@ -39,21 +40,24 @@ internal static class ScriptOnlyLanguageChecks
             var detector = new MixedLanguagePhonemizer(null!, "en-us", NullLogger<MixedLanguagePhonemizer>.Instance);
             Require(Read(detector, EnglishSentence).All(token => token.DetectedLanguage == "en-us"),
                 "Null settings did not retain model/script routing.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: missing JSON candidates keep automatic script routing", () =>
         {
             var settings = System.Text.Json.JsonSerializer.Deserialize<PhonemizerSettings>("{}")!;
             Require(Read(Create(settings), "Слова").Single().DetectedLanguage == "uk",
                 "An older configuration lost foreign-script fallback.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: language aliases still form one candidate", () =>
         {
             var settings = new PhonemizerSettings { SupportedLanguages = ["no", "nb-no", "NO"] };
             Require(Read(Create(settings, "nb"), "Dette er en vanlig norsk setning.")
                 .All(token => token.DetectedLanguage == "nb"), "Aliases created a spurious statistical choice.");
-        });
+        }
+        );
 
         var routes = new (string Name, string Model, string Input, string Language, bool Reliable)[]
         {
@@ -81,18 +85,19 @@ internal static class ScriptOnlyLanguageChecks
             ("zero mapped candidates keep technical routing", "as", "user_name", "en", false)
         };
 
-        foreach (var fixture in routes)
+        foreach (var (Name, Model, Input, Language, Reliable) in routes)
         {
-            yield return ($"Script-only routing: {fixture.Name}", () =>
+            yield return ($"Script-only routing: {Name}", () =>
             {
-                var tokens = Read(Create(new PhonemizerSettings(), fixture.Model), fixture.Input);
-                Require(tokens.All(token => token.DetectedLanguage == fixture.Language &&
-                    token.IsReliable == fixture.Reliable), "The model/script route differs from its declared fixture.");
-                if (!fixture.Reliable)
+                var tokens = Read(Create(new PhonemizerSettings(), Model), Input);
+                Require(tokens.All(token => token.DetectedLanguage == Language &&
+                    token.IsReliable == Reliable), "The model/script route differs from its declared fixture.");
+                if (!Reliable)
                 {
                     Require(tokens.All(token => token.Probability == 0), "Fallback invented a Lingua confidence.");
                 }
-            });
+            }
+            );
         }
 
         yield return ("Script-only routing: statistical thresholds do not affect fallback", () =>
@@ -107,23 +112,25 @@ internal static class ScriptOnlyLanguageChecks
             };
             Require(Read(Create(settings), EnglishSentence).All(token => token.DetectedLanguage == "en-us" &&
                 token.Probability == 0 && !token.IsReliable), "Statistical tuning changed the no-detector route.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: mixed scripts keep source and language boundaries", () =>
         {
             const string input = "English user_name, Їжак дані_значення, かな, 漢字.";
             var tokens = Read(Create(new PhonemizerSettings()), input);
-            foreach (var anchor in new[]
+            foreach (var (Text, Language) in new[]
             {
                 (Text: "English", Language: "en-us"), (Text: "user_name", Language: "en-us"),
                 (Text: "Їжак", Language: "uk"), (Text: "дані_значення", Language: "uk"),
                 (Text: "かな", Language: "ja"), (Text: "漢字", Language: "cmn")
             })
             {
-                Require(tokens.Any(token => token.Text.Contains(anchor.Text, StringComparison.Ordinal) &&
-                    token.DetectedLanguage == anchor.Language), "A script boundary lost its declared language anchor.");
+                Require(tokens.Any(token => token.Text.Contains(Text, StringComparison.Ordinal) &&
+                    token.DetectedLanguage == Language), "A script boundary lost its declared language anchor.");
             }
-        });
+        }
+        );
 
         yield return ("Script-only routing: technical spans keep the surrounding model dialect", () =>
         {
@@ -132,28 +139,32 @@ internal static class ScriptOnlyLanguageChecks
             Require(tokens.All(token => token.DetectedLanguage == "en-gb-x-rp"), "A technical span changed the model dialect.");
             Require(tokens.Where(token => token.IsTechnical).Select(token => token.Text)
                 .SequenceEqual(["user_name", "build_output"]), "Initials or prose were misclassified as technical syntax.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: forced language overrides all script routes", () =>
         {
             var tokens = Read(Create(new PhonemizerSettings()), "English user_name, Їжак, かな, 漢字.", "FR-CA");
             Require(tokens.All(token => token.DetectedLanguage == "fr-ca" && token.IsReliable && token.Probability == 1.0),
                 "A script route overrode the explicitly requested language.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: forced base language inherits the model dialect", () =>
         {
             var tokens = Read(Create(new PhonemizerSettings(), "en-gb-x-rp"), EnglishSentence, "en");
             Require(tokens.All(token => token.DetectedLanguage == "en-gb-x-rp" && token.IsReliable),
                 "Removing Lingua changed forced-language dialect inheritance.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: explicit Japanese overrides Latin romaji routing", () =>
         {
             var tokens = Read(Create(new PhonemizerSettings()), "watashi wa gakusei desu", "ja");
             Require(tokens.All(token => token.DetectedLanguage == "ja" && token.IsReliable),
                 "An explicit Japanese request was replaced by Latin fallback.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: unified phonemizer uses the selected script languages", () =>
         {
@@ -171,7 +182,8 @@ internal static class ScriptOnlyLanguageChecks
                 bridge.Calls.Any(call => call.Voice == "ja"), "Script decisions did not reach eSpeak calls.");
             Require(bridge.CharacterCalls.Any(call => call.Character == '_' && call.Voice == "en-us"),
                 "Underscore bypassed literal character pronunciation in the selected language.");
-        });
+        }
+        );
 
         yield return ("Script-only routing: candidate changes take effect after recreation", () =>
         {
@@ -182,7 +194,8 @@ internal static class ScriptOnlyLanguageChecks
                 "Mutating settings activated Lingua in an existing component.");
             Require(Read(Create(settings), "bonjour").Single().DetectedLanguage == "fr",
                 "A recreated component did not load the second statistical candidate.");
-        });
+        }
+        );
     }
 
     /// <summary>Creates a detector with the requested model voice and a silent test logger.</summary>

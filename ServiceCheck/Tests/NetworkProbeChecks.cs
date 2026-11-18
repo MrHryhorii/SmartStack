@@ -118,7 +118,7 @@ internal static class NetworkProbeChecks
 
         Require(
             result.Evidence.ResolvedAddresses.SequenceEqual(
-                new[] { "::1", "127.0.0.1", "2001:db8::1" }),
+                ["::1", "127.0.0.1", "2001:db8::1"]),
             "Resolved addresses were not deduplicated and interleaved.");
 
         Require(

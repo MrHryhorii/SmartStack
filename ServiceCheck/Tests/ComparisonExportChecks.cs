@@ -231,7 +231,7 @@ internal static class ComparisonExportChecks
             && Directory.GetDirectories(output).Length == 1
             && Directory.GetFiles(artifacts.ComparisonDirectory).Select(Path.GetFileName)
                 .OrderBy(name => name, StringComparer.Ordinal)
-                .SequenceEqual(new[] { "comparison.html", "comparison.json" })
+                .SequenceEqual(["comparison.html", "comparison.json"])
             && (await File.ReadAllBytesAsync(beforePath)).AsSpan().SequenceEqual(beforeBytes)
             && (await File.ReadAllBytesAsync(afterPath)).AsSpan().SequenceEqual(afterBytes),
             "Comparison publication modified a source or left incomplete output in its final directory.");
@@ -447,7 +447,8 @@ internal static class ComparisonExportChecks
     /// <summary>Creates a valid local configuration without inference dependencies.</summary>
     private static TargetProfile CreateProfile() => new()
     {
-        SchemaVersion = 1, Name = "Comparison export fixture",
+        SchemaVersion = 1,
+        Name = "Comparison export fixture",
         Target = new ProfileTarget { Id = "comparison-export", BaseUrl = "http://127.0.0.1:5045/" }
     };
 

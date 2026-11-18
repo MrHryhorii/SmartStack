@@ -22,15 +22,15 @@ internal static class AdditionalChecks
             ("Regional indicator pairs", "\U0001F1F3\U0001F1F4"),
             ("Joined emoji", "\U0001F469\u200D\U0001F4BB")
         };
-        foreach (var unit in units)
-        foreach (int limit in new[] { 64, 65, 79, 80 })
-        foreach (bool finished in new[] { false, true })
-        foreach (bool early in new[] { false, true })
-        {
-            string input = string.Concat(Enumerable.Repeat(unit.Text, 72)) + (finished ? "。" : "");
-            yield return (unicodeCategory, $"{unit.Name}; limit={limit}; finished={finished}; early={early}",
-                () => CheckEmergency(input, limit, early, finished));
-        }
+        foreach (var (Name, Text) in units)
+            foreach (int limit in new[] { 64, 65, 79, 80 })
+                foreach (bool finished in new[] { false, true })
+                    foreach (bool early in new[] { false, true })
+                    {
+                        string input = string.Concat(Enumerable.Repeat(Text, 72)) + (finished ? "。" : "");
+                        yield return (unicodeCategory, $"{Name}; limit={limit}; finished={finished}; early={early}",
+                            () => CheckEmergency(input, limit, early, finished));
+                    }
 
         string oversizedGrapheme = "a" + new string('\u0301', 95);
         foreach (bool early in new[] { false, true })
@@ -65,41 +65,41 @@ internal static class AdditionalChecks
             ("Japanese", "私たちは日本語の文章をゆっくり読みながら文字の区切りを確認しています", "。"),
             ("Georgian", "ჩვენ ნელა ვკითხულობთ ქართულ ტექსტს და ვამოწმებთ სიტყვებს ", ".")
         };
-        foreach (var script in scripts)
-        foreach (int limit in new[] { 64, 79, 200 })
-        foreach (bool quoted in new[] { false, true })
-        foreach (bool early in new[] { false, true })
-        {
-            string body = string.Concat(Enumerable.Repeat(script.Clause, 12)).TrimEnd() + script.Terminal;
-            string input = quoted ? "“" + body + "”" : body;
-            yield return ("Multilingual emergency invariants", $"{script.Name}; limit={limit}; quoted={quoted}; early={early}",
-                () => CheckEmergency(input, limit, early, true, requireContent: true));
-        }
+        foreach (var (Name, Clause, Terminal) in scripts)
+            foreach (int limit in new[] { 64, 79, 200 })
+                foreach (bool quoted in new[] { false, true })
+                    foreach (bool early in new[] { false, true })
+                    {
+                        string body = string.Concat(Enumerable.Repeat(Clause, 12)).TrimEnd() + Terminal;
+                        string input = quoted ? "“" + body + "”" : body;
+                        yield return ("Multilingual emergency invariants", $"{Name}; limit={limit}; quoted={quoted}; early={early}",
+                            () => CheckEmergency(input, limit, early, true, requireContent: true));
+                    }
 
         foreach (string terminal in new[] { ".", "?", "!", "..." })
-        foreach (bool early in new[] { false, true })
-        {
-            yield return ("Ordinary emergency endings", $"Long ordinary word ending '{terminal}'; early={early}",
-                () => CheckEmergency(new string('a', 150) + terminal, 64, early, true));
-        }
+            foreach (bool early in new[] { false, true })
+            {
+                yield return ("Ordinary emergency endings", $"Long ordinary word ending '{terminal}'; early={early}",
+                    () => CheckEmergency(new string('a', 150) + terminal, 64, early, true));
+            }
 
         foreach (char opening in new[] { '\u202B', '\u2067' })
-        foreach (int limit in new[] { 64, 200 })
-        foreach (int offset in new[] { -1, 0, 1 })
-        foreach (bool early in new[] { false, true })
-        {
-            char closing = opening == '\u202B' ? '\u202C' : '\u2069';
-            string input = "“" + opening + new string('a', limit - 4 + offset) + "?!" + closing + "”";
-            yield return ("Directional emergency invariants", $"U+{(int)opening:X4}; limit={limit}; offset={offset}; early={early}",
-                () => CheckEmergency(input, limit, early, true, requireContent: true));
-        }
+            foreach (int limit in new[] { 64, 200 })
+                foreach (int offset in new[] { -1, 0, 1 })
+                    foreach (bool early in new[] { false, true })
+                    {
+                        char closing = opening == '\u202B' ? '\u202C' : '\u2069';
+                        string input = "“" + opening + new string('a', limit - 4 + offset) + "?!" + closing + "”";
+                        yield return ("Directional emergency invariants", $"U+{(int)opening:X4}; limit={limit}; offset={offset}; early={early}",
+                            () => CheckEmergency(input, limit, early, true, requireContent: true));
+                    }
         foreach (string terminal in new[] { ".", "?", "!" })
-        foreach (string separator in new[] { "—\u0301", " \u0301" })
-        foreach (bool early in new[] { false, true })
-        {
-            yield return (unicodeCategory, $"Combining separator before '{terminal}'; U+{(int)separator[0]:X4}; early={early}",
-                () => CheckEmergency(new string('a', 63) + separator + new string('b', 90) + terminal, 64, early, true));
-        }
+            foreach (string separator in new[] { "—\u0301", " \u0301" })
+                foreach (bool early in new[] { false, true })
+                {
+                    yield return (unicodeCategory, $"Combining separator before '{terminal}'; U+{(int)separator[0]:X4}; early={early}",
+                        () => CheckEmergency(new string('a', 63) + separator + new string('b', 90) + terminal, 64, early, true));
+                }
 
         const string technicalCategory = "Protected emergency invariants";
         string[] protectedTokens =
@@ -110,15 +110,15 @@ internal static class AdditionalChecks
             "config." + new string('x', 110) + ".prod.json"
         ];
         foreach (string token in protectedTokens)
-        foreach (bool finished in new[] { false, true })
-        foreach (bool early in new[] { false, true })
-        {
-            string suffix = finished ? "." : "";
-            yield return (technicalCategory, $"Oversized token at end; {token[..8]}; finished={finished}; early={early}",
-                () => CheckEmergency("Please review " + token + suffix, 64, early, finished, token));
-            yield return (technicalCategory, $"Oversized token before prose; {token[..8]}; finished={finished}; early={early}",
-                () => CheckEmergency(token + " before the next build" + suffix, 64, early, finished, token));
-        }
+            foreach (bool finished in new[] { false, true })
+                foreach (bool early in new[] { false, true })
+                {
+                    string suffix = finished ? "." : "";
+                    yield return (technicalCategory, $"Oversized token at end; {token[..8]}; finished={finished}; early={early}",
+                        () => CheckEmergency("Please review " + token + suffix, 64, early, finished, token));
+                    yield return (technicalCategory, $"Oversized token before prose; {token[..8]}; finished={finished}; early={early}",
+                        () => CheckEmergency(token + " before the next build" + suffix, 64, early, finished, token));
+                }
         foreach (bool early in new[] { false, true })
         {
             string token = protectedTokens[0];
@@ -158,7 +158,8 @@ internal static class AdditionalChecks
                 var chunks = new TextChunker(new ChunkerSettings()).Split(input, early);
                 Require(chunks.Count == 1 && ReferenceEquals(chunks[0].Text, input));
                 Require(chunks[0].IsSentenceFinished);
-            });
+            }
+            );
         }
         yield return ("Output allocation contracts", "Whitespace trimming still creates the correct slice", () =>
         {
@@ -166,14 +167,16 @@ internal static class AdditionalChecks
             var chunks = new TextChunker(new ChunkerSettings()).Split(input);
             Require(chunks.Count == 1 && chunks[0].Text == "Dr. Morgan spoke.");
             Require(!ReferenceEquals(chunks[0].Text, input));
-        });
+        }
+        );
         yield return ("Output allocation contracts", "Indivisible oversized input is reused and remains completed", () =>
         {
             string input = "https://example.com/" + new string('x', 100) + ".";
             var chunks = new TextChunker(new ChunkerSettings { MaxChunkLength = 64 }).Split(input);
             Require(chunks.Count == 1 && ReferenceEquals(chunks[0].Text, input));
             Require(chunks[0].IsSentenceFinished);
-        });
+        }
+        );
 
         const string configCategory = "Extended rules configuration";
         yield return (configCategory, "Comments are accepted", () =>
@@ -186,19 +189,26 @@ internal static class AdditionalChecks
         {
             var additions = new Dictionary<string, object?>
             {
-                ["AdditionalSentenceTerminators"] = null, ["AdditionalPeriodLikeMarks"] = null,
-                ["AdditionalEllipsisMarks"] = null, ["AdditionalQuestionMarks"] = null,
-                ["AdditionalExclamationMarks"] = null, ["AdditionalClausePunctuation"] = null,
-                ["AdditionalPauseMarks"] = null, ["AdditionalClosingPunctuation"] = null,
-                ["AdditionalAbbreviations"] = null, ["AdditionalPrefixAbbreviations"] = null,
-                ["AdditionalNameBindingAbbreviations"] = null, ["AdditionalNumberBindingAbbreviations"] = null,
+                ["AdditionalSentenceTerminators"] = null,
+                ["AdditionalPeriodLikeMarks"] = null,
+                ["AdditionalEllipsisMarks"] = null,
+                ["AdditionalQuestionMarks"] = null,
+                ["AdditionalExclamationMarks"] = null,
+                ["AdditionalClausePunctuation"] = null,
+                ["AdditionalPauseMarks"] = null,
+                ["AdditionalClosingPunctuation"] = null,
+                ["AdditionalAbbreviations"] = null,
+                ["AdditionalPrefixAbbreviations"] = null,
+                ["AdditionalNameBindingAbbreviations"] = null,
+                ["AdditionalNumberBindingAbbreviations"] = null,
                 ["AdditionalIntroductoryAbbreviations"] = null
             };
             var actual = Load(JsonSerializer.Serialize(additions));
             Require(actual.KnownAbbreviations.SetEquals(TextChunkerRules.Default.KnownAbbreviations));
             Require(actual.SemanticKinds.Count == TextChunkerRules.Default.SemanticKinds.Count);
             Require(TextChunkerRules.Default.SemanticKinds.All(pair => actual.SemanticKinds[pair.Key] == pair.Value));
-        });
+        }
+        );
         yield return (configCategory, "Null and blank abbreviations are ignored", () =>
             Require(Load("{\"AdditionalAbbreviations\":[null,\"\",\"   \",\"  zzq．  \" ]}")
                 .KnownAbbreviations.Contains("zzq")));
@@ -214,7 +224,8 @@ internal static class AdditionalChecks
             var chunks = custom.Split("Alpha※ beta.", earlySplit: true);
             Require(chunks.Select(c => c.Text).SequenceEqual(["Alpha※ beta."]));
             Require(chunks[0].IsSentenceFinished);
-        });
+        }
+        );
         yield return (configCategory, "Configured pause participates in emergency splitting", () =>
         {
             var custom = new TextChunker(new ChunkerSettings { MaxChunkLength = 64 },
@@ -223,7 +234,8 @@ internal static class AdditionalChecks
             var chunks = custom.Split(input, earlySplit: true);
             Require(chunks.Select(c => c.Text).SequenceEqual([new string('a', 40) + "※", new string('b', 40) + "."]));
             Require(chunks.Select(c => c.IsSentenceFinished).SequenceEqual([false, true]));
-        });
+        }
+        );
 
         var invalidJson = new (string Name, string Json)[]
         {
@@ -240,18 +252,19 @@ internal static class AdditionalChecks
             ("Internal tab in abbreviation", "{\"AdditionalAbbreviations\":[\"a\\tb\"]}"),
             ("Overlong abbreviation", JsonSerializer.Serialize(new { AdditionalAbbreviations = new[] { new string('z', 129) } }))
         };
-        foreach (var test in invalidJson)
+        foreach (var (Name, Json) in invalidJson)
         {
-            yield return (configCategory, $"Rejects {test.Name}", () =>
+            yield return (configCategory, $"Rejects {Name}", () =>
             {
-                try { _ = Load(test.Json); }
+                try { _ = Load(Json); }
                 catch (InvalidDataException error)
                 {
                     Require(error.Message.Contains("rules", StringComparison.OrdinalIgnoreCase));
                     return;
                 }
                 throw new InvalidOperationException("Expected InvalidDataException.");
-            });
+            }
+            );
         }
     }
 

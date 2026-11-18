@@ -362,11 +362,11 @@ var initialSamples = new (string Script, string Initial, string Surname, string 
     ("Arabic", "ع", "أحمد", "وصل", "ثم"),
 };
 
-foreach (var sample in initialSamples)
+foreach (var (Script, Initial, Surname, Verb, Next) in initialSamples)
 {
-    string first = $"{sample.Initial}. {sample.Surname} {sample.Verb}.";
-    string second = $"{sample.Next}.";
-    ruleCases.Add(("Unlisted initials", $"{sample.Script} initial", $"{first} {second}", [first, second]));
+    string first = $"{Initial}. {Surname} {Verb}.";
+    string second = $"{Next}.";
+    ruleCases.Add(("Unlisted initials", $"{Script} initial", $"{first} {second}", [first, second]));
 }
 
 // Georgian Mkhedruli is Unicode lowercase but has no ordinary sentence-initial casing.
@@ -454,11 +454,11 @@ var dottedSamples = new (string Name, string Acronym, string Noun, string Verb, 
     ("Vietnamese Latin letters", "Đ.Ơ.Ư.", "Team", "worked", "Next"),
 };
 
-foreach (var sample in dottedSamples)
+foreach (var (Name, Acronym, Noun, Verb, Next) in dottedSamples)
 {
-    string first = $"{sample.Acronym} {sample.Noun} {sample.Verb}.";
-    string second = $"{sample.Next}.";
-    ruleCases.Add(("Unlisted dotted chains", sample.Name, $"{first} {second}", [first, second]));
+    string first = $"{Acronym} {Noun} {Verb}.";
+    string second = $"{Next}.";
+    ruleCases.Add(("Unlisted dotted chains", Name, $"{first} {second}", [first, second]));
 }
 
 // Re-check the same generic rule with every supported period-like compatibility glyph.
@@ -548,27 +548,27 @@ var hungarianPrefixes = new (string[] Spellings, string Surname)[]
     (["özv", "Özv", "ÖZV"], "Kiss")
 };
 
-foreach (var prefix in hungarianPrefixes)
+foreach (var (Spellings, Surname) in hungarianPrefixes)
 {
-    foreach (string spelling in prefix.Spellings)
-    foreach (char period in new[] { '.', '\u2024', '\uFE52', '\uFF0E' })
-    {
-        string first = $"We met {spelling}{period} {prefix.Surname} today.";
-        nameBindingCases.Add(("Name binding boundaries", $"{spelling}; period=U+{(int)period:X4}",
-            $"{first} Next.", [first, "Next."]));
-    }
+    foreach (string spelling in Spellings)
+        foreach (char period in new[] { '.', '\u2024', '\uFE52', '\uFF0E' })
+        {
+            string first = $"We met {spelling}{period} {Surname} today.";
+            nameBindingCases.Add(("Name binding boundaries", $"{spelling}; period=U+{(int)period:X4}",
+                $"{first} Next.", [first, "Next."]));
+        }
 
-    string lowercase = prefix.Spellings[0];
-    string firstLowercase = $"We met {lowercase}. {prefix.Surname.ToLowerInvariant()} today.";
+    string lowercase = Spellings[0];
+    string firstLowercase = $"We met {lowercase}. {Surname.ToLowerInvariant()} today.";
     nameBindingCases.Add(("Name binding boundaries", $"{lowercase} before a lowercase continuation",
         $"{firstLowercase} Next.", [firstLowercase, "Next."]));
     nameBindingCases.Add(("Name binding boundaries", $"{lowercase} at end of input",
         $"The label is {lowercase}.", [$"The label is {lowercase}."]));
     nameBindingCases.Add(("Name binding boundaries", $"Explicit newline overrides {lowercase}",
-        $"{lowercase}.\n{prefix.Surname} arrived. Next.", [$"{lowercase}.", $"{prefix.Surname} arrived.", "Next."]));
+        $"{lowercase}.\n{Surname} arrived. Next.", [$"{lowercase}.", $"{Surname} arrived.", "Next."]));
 }
 
-cases = [..cases, ..ruleCases, ..nameBindingCases];
+cases = [.. cases, .. ruleCases, .. nameBindingCases];
 
 // Verify sentence boundaries and completion flags with EarlySplit disabled.
 var behaviorCases = new (string Category, string Name, string Input, string[] Expected,
@@ -675,33 +675,33 @@ if (selectedCases.Length == 0 &&
 int failures = 0;
 var categoryResults = new Dictionary<string, (int Passed, int Total)>();
 
-foreach (var test in selectedCases)
+foreach (var (Category, Name, Input, Expected, Finished) in selectedCases)
 {
-    var chunks = chunker.Split(test.Input, earlySplit: false);
+    var chunks = chunker.Split(Input, earlySplit: false);
     var actual = chunks.Select(chunk => chunk.Text).ToArray();
-    bool textsMatch = actual.SequenceEqual(test.Expected);
-    bool finalFlagsMatch = chunks.Select(chunk => chunk.IsSentenceFinished).SequenceEqual(test.Finished);
+    bool textsMatch = actual.SequenceEqual(Expected);
+    bool finalFlagsMatch = chunks.Select(chunk => chunk.IsSentenceFinished).SequenceEqual(Finished);
     bool passed = textsMatch && finalFlagsMatch;
 
-    categoryResults.TryGetValue(test.Category, out var result);
-    categoryResults[test.Category] = (result.Passed + (passed ? 1 : 0), result.Total + 1);
+    categoryResults.TryGetValue(Category, out var result);
+    categoryResults[Category] = (result.Passed + (passed ? 1 : 0), result.Total + 1);
 
     if (passed)
     {
         if (!failuresOnly)
         {
-            Console.WriteLine($"PASS [{test.Category}] {test.Name}");
+            Console.WriteLine($"PASS [{Category}] {Name}");
         }
 
         continue;
     }
 
     failures++;
-    Console.Error.WriteLine($"FAIL [{test.Category}] {test.Name}");
-    Console.Error.WriteLine($"  Input:    {test.Input.Replace("\r", "\\r").Replace("\n", "\\n")}");
-    Console.Error.WriteLine($"  Expected: {string.Join(" | ", test.Expected)}");
+    Console.Error.WriteLine($"FAIL [{Category}] {Name}");
+    Console.Error.WriteLine($"  Input:    {Input.Replace("\r", "\\r").Replace("\n", "\\n")}");
+    Console.Error.WriteLine($"  Expected: {string.Join(" | ", Expected)}");
     Console.Error.WriteLine($"  Actual:   {string.Join(" | ", actual)}");
-    Console.Error.WriteLine($"  Flags expected: {string.Join(", ", test.Finished)}");
+    Console.Error.WriteLine($"  Flags expected: {string.Join(", ", Finished)}");
     Console.Error.WriteLine($"  Flags actual:   {string.Join(", ", chunks.Select(chunk => chunk.IsSentenceFinished))}");
 }
 
@@ -713,22 +713,22 @@ if (selectedEmergencyCases)
     var boundedChunker = new TextChunker(new ChunkerSettings { MaxChunkLength = 80 });
     int passedCount = 0;
 
-    foreach (var test in emergencyCases)
+    foreach (var (Name, Input, Protected, EarlySplit) in emergencyCases)
     {
-        var chunks = boundedChunker.Split(test.Input, earlySplit: test.EarlySplit);
+        var chunks = boundedChunker.Split(Input, earlySplit: EarlySplit);
         bool passed = chunks.Count > 1 &&
-                      chunks.Count(chunk => chunk.Text.Contains(test.Protected, StringComparison.Ordinal)) == 1 &&
-                      !chunks.Any(chunk => chunk.Text.Contains(test.Protected + "-", StringComparison.Ordinal));
+                      chunks.Count(chunk => chunk.Text.Contains(Protected, StringComparison.Ordinal)) == 1 &&
+                      !chunks.Any(chunk => chunk.Text.Contains(Protected + "-", StringComparison.Ordinal));
         if (passed)
         {
             passedCount++;
-            if (!failuresOnly) Console.WriteLine($"PASS [{category}] {test.Name}");
+            if (!failuresOnly) Console.WriteLine($"PASS [{category}] {Name}");
             continue;
         }
 
         failures++;
-        Console.Error.WriteLine($"FAIL [{category}] {test.Name}");
-        Console.Error.WriteLine($"  Protected: {test.Protected}");
+        Console.Error.WriteLine($"FAIL [{category}] {Name}");
+        Console.Error.WriteLine($"  Protected: {Protected}");
         Console.Error.WriteLine($"  Actual:    {string.Join(" | ", chunks.Select(chunk => chunk.Text))}");
     }
 
@@ -753,20 +753,20 @@ if (string.IsNullOrWhiteSpace(categoryFilter) ||
             ["First,", "continues without a terminal"], [false, false])
     };
     int passedCount = 0;
-    foreach (var test in earlyCases)
+    foreach (var (Name, Input, Texts, Finished) in earlyCases)
     {
-        var actual = chunker.Split(test.Input, earlySplit: true);
-        bool passed = actual.Select(c => c.Text).SequenceEqual(test.Texts) &&
-            actual.Select(c => c.IsSentenceFinished).SequenceEqual(test.Finished);
+        var actual = chunker.Split(Input, earlySplit: true);
+        bool passed = actual.Select(c => c.Text).SequenceEqual(Texts) &&
+            actual.Select(c => c.IsSentenceFinished).SequenceEqual(Finished);
         if (passed)
         {
             passedCount++;
-            if (!failuresOnly) Console.WriteLine($"PASS [{category}] {test.Name}");
+            if (!failuresOnly) Console.WriteLine($"PASS [{category}] {Name}");
             continue;
         }
 
         failures++;
-        Console.Error.WriteLine($"FAIL [{category}] {test.Name}");
+        Console.Error.WriteLine($"FAIL [{category}] {Name}");
         Console.Error.WriteLine($"  Actual: {string.Join(" | ", actual.Select(c => $"{c.Text} ({c.IsSentenceFinished})"))}");
     }
 
@@ -893,22 +893,22 @@ if (selectedRulesConfiguration)
     categoryResults[category] = (rulesPassed, rulesTotal);
 }
 
-foreach (var test in selectedAdditionalCases)
+foreach (var (Category, Name, Check) in selectedAdditionalCases)
 {
     bool passed = false;
     try
     {
-        test.Check();
+        Check();
         passed = true;
-        if (!failuresOnly) Console.WriteLine($"PASS [{test.Category}] {test.Name}");
+        if (!failuresOnly) Console.WriteLine($"PASS [{Category}] {Name}");
     }
     catch (Exception error)
     {
         failures++;
-        Console.Error.WriteLine($"FAIL [{test.Category}] {test.Name}: {error.Message}");
+        Console.Error.WriteLine($"FAIL [{Category}] {Name}: {error.Message}");
     }
-    categoryResults.TryGetValue(test.Category, out var result);
-    categoryResults[test.Category] = (result.Passed + (passed ? 1 : 0), result.Total + 1);
+    categoryResults.TryGetValue(Category, out var result);
+    categoryResults[Category] = (result.Passed + (passed ? 1 : 0), result.Total + 1);
 }
 
 Console.WriteLine();

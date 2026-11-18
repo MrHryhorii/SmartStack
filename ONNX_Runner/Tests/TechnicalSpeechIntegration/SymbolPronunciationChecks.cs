@@ -42,12 +42,12 @@ internal static class SymbolPronunciationChecks
     {
         foreach (string voice in new[] { "en-us", "en" })
         {
-            foreach (var fixture in EnglishDescriptions)
+            foreach (var (Symbol, Names) in EnglishDescriptions)
             {
-                check($"Complete symbol description ({voice}): {fixture.Symbol}", () =>
+                check($"Complete symbol description ({voice}): {Symbol}", () =>
                 {
-                    string[] expected = ReadDescriptions(bridge, fixture.Names, voice);
-                    string actual = ReadSymbol(bridge, fixture.Symbol, voice);
+                    string[] expected = ReadDescriptions(bridge, Names, voice);
+                    string actual = ReadSymbol(bridge, Symbol, voice);
                     Require(expected.Any(ipa => SameSpokenContent(ipa, actual)),
                         $"Expected a complete spoken description: {string.Join(" / ", expected)}; actual: {actual}");
                 });
@@ -74,18 +74,18 @@ internal static class SymbolPronunciationChecks
             });
         }
 
-        foreach (var fixture in new[]
+        foreach (var (Voice, Symbols) in new[]
         {
             (Voice: "fr", Symbols: "∞€£±×÷°"),
             (Voice: "es", Symbols: "€£°")
         })
         {
-            foreach (char symbol in fixture.Symbols)
+            foreach (char symbol in Symbols)
             {
-                check($"Existing localized name preserved ({fixture.Voice}): {symbol}", () =>
+                check($"Existing localized name preserved ({Voice}): {symbol}", () =>
                 {
-                    string expected = WithoutLanguageLabels(bridge.ReadNativeCharacterForTest(symbol, fixture.Voice));
-                    Require(ReadSymbol(bridge, symbol, fixture.Voice) == expected,
+                    string expected = WithoutLanguageLabels(bridge.ReadNativeCharacterForTest(symbol, Voice));
+                    Require(ReadSymbol(bridge, symbol, Voice) == expected,
                         "A working local character name was replaced by English pronunciation.");
                 });
             }
@@ -94,22 +94,22 @@ internal static class SymbolPronunciationChecks
         var fallbackDescriptions = EnglishDescriptions.Where(fixture => "≤≥√∑∫→←".Contains(fixture.Symbol)).ToArray();
         foreach (string voice in new[] { "fr", "es", "uk" })
         {
-            foreach (var fixture in fallbackDescriptions)
+            foreach (var (Symbol, Names) in fallbackDescriptions)
             {
-                check($"Complete existing English fallback ({voice}): {fixture.Symbol}", () =>
+                check($"Complete existing English fallback ({voice}): {Symbol}", () =>
                 {
-                    string literal = bridge.ReadNativeCharacterForTest(fixture.Symbol, voice);
+                    string literal = bridge.ReadNativeCharacterForTest(Symbol, voice);
                     // Newer dictionaries can add local descriptions. The English fallback contract
                     // applies only where the native character path actually selects English.
                     if (!literal.Contains("(en)", StringComparison.Ordinal))
                     {
-                        Require(ReadSymbol(bridge, fixture.Symbol, voice).Length > 0,
+                        Require(ReadSymbol(bridge, Symbol, voice).Length > 0,
                             "The local dictionary returned no pronunciation.");
                         return;
                     }
 
-                    string[] expected = ReadDescriptions(bridge, fixture.Names, "en");
-                    string actual = ReadSymbol(bridge, fixture.Symbol, voice);
+                    string[] expected = ReadDescriptions(bridge, Names, "en");
+                    string actual = ReadSymbol(bridge, Symbol, voice);
                     Require(expected.Any(ipa => SameSpokenContent(ipa, actual)),
                         $"The English fallback lost part of the name. Expected: {string.Join(" / ", expected)}; actual: {actual}");
                 });
@@ -137,13 +137,13 @@ internal static class SymbolPronunciationChecks
         {
             var phonemizer = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(englishConfig), englishConfig,
                 useDetector ? detector : null, adapter);
-            foreach (var fixture in EnglishDescriptions)
+            foreach (var (Symbol, Names) in EnglishDescriptions)
             {
-                check($"Complete symbol name reaches Piper IDs ({useDetector}): x{fixture.Symbol}y", () =>
+                check($"Complete symbol name reaches Piper IDs ({useDetector}): x{Symbol}y", () =>
                 {
-                    string[] expected = ReadDescriptions(bridge, fixture.Names, "en-us").Select(ipa =>
+                    string[] expected = ReadDescriptions(bridge, Names, "en-us").Select(ipa =>
                         phonemizer.GetPhonemes($"x [[{ipa}]] y", "en-us")).ToArray();
-                    string input = $"x{fixture.Symbol}y";
+                    string input = $"x{Symbol}y";
                     string actual = phonemizer.GetPhonemes(input, "en-us");
                     Require(expected.Any(ipa => SameSpokenContent(ipa, actual)),
                         $"A complete native name did not reach the adapted stream. Actual: {actual}; expected: {string.Join(" / ", expected)}");

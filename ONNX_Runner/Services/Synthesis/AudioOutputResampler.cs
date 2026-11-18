@@ -38,9 +38,9 @@ internal sealed class AudioOutputResampler : IDisposable
         Span<float> output = _output.AsSpan(0, _blockLength);
         while (!samples.IsEmpty)
         {
-            var result = _resampler.Process(samples, output);
-            WriteConverted(output[..result.Written], manager, volume);
-            samples = samples[result.Consumed..];
+            var (Consumed, Written) = _resampler.Process(samples, output);
+            WriteConverted(output[..Written], manager, volume);
+            samples = samples[Consumed..];
         }
     }
 

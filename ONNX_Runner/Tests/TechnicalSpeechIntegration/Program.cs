@@ -138,16 +138,16 @@ var automaticFixtures = new (string Text, string Language)[]
     ("La variable user_name contiene un valor válido en build_output.", "es"),
     ("Dr. Morgan and J. R. R. Tolkien checked user_name before opening build_output.", "en")
 };
-foreach (var fixture in automaticFixtures)
+foreach (var (Text, Language) in automaticFixtures)
 {
-    Check($"Native automatic language matches declared prose: {fixture.Language}; {fixture.Text}", () =>
+    Check($"Native automatic language matches declared prose: {Language}; {Text}", () =>
     {
         var automatic = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config, rules), config,
             detector, adapter);
         var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config, rules), config,
             fallbackMapper: adapter);
-        string expected = reference.GetPhonemes(fixture.Text, fixture.Language);
-        string actual = automatic.GetPhonemes(fixture.Text);
+        string expected = reference.GetPhonemes(Text, Language);
+        string actual = automatic.GetPhonemes(Text);
         Require(actual == expected, $"Automatic language changed native pronunciation. Expected: {expected}; actual: {actual}");
         Require(tensorMapper.PhonemesToIds(actual).SequenceEqual(tensorMapper.PhonemesToIds(expected)),
             "Correct native pronunciation did not produce the reference tensor IDs.");
@@ -165,7 +165,7 @@ var scriptOnlyPhonemizer = new UnifiedPhonemizer(bridge, new DynamicPunctuationM
     config, scriptOnlyDetector, adapter);
 var explicitReference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config, rules),
     config, fallbackMapper: adapter);
-foreach (var fixture in new (string Text, string Language, string? Forced)[]
+foreach (var (Text, Language, Forced) in new (string Text, string Language, string? Forced)[]
 {
     ("The variable user_name contains build_output.", "en-us", null),
     ("Dr. Morgan and J. R. R. Tolkien checked config.prod.json.", "en-us", null),
@@ -177,10 +177,10 @@ foreach (var fixture in new (string Text, string Language, string? Forced)[]
     ("La variable user_name contient une valeur valide.", "fr", "fr")
 })
 {
-    Check($"Native model/script routing matches explicit reference: {fixture.Language}; {fixture.Text}", () =>
+    Check($"Native model/script routing matches explicit reference: {Language}; {Text}", () =>
     {
-        string expected = explicitReference.GetPhonemes(fixture.Text, fixture.Language);
-        string actual = scriptOnlyPhonemizer.GetPhonemes(fixture.Text, fixture.Forced);
+        string expected = explicitReference.GetPhonemes(Text, Language);
+        string actual = scriptOnlyPhonemizer.GetPhonemes(Text, Forced);
         Require(actual.Length > 0 && actual == expected, "Routing without Lingua changed native pronunciation.");
         Require(tensorMapper.PhonemesToIds(actual).SequenceEqual(tensorMapper.PhonemesToIds(expected)),
             "Routing without Lingua changed the reference tensor IDs.");

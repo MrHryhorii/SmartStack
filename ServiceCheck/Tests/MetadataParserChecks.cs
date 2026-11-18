@@ -208,7 +208,7 @@ internal static class MetadataParserChecks
             result.ServiceIdentityMatched &&
             result.SynthesisReady == true &&
             result.Voices is { Complete: true } voices &&
-            voices.Ids.SequenceEqual(new[] { "piper_base", "alloy" }),
+            voices.Ids.SequenceEqual(["piper_base", "alloy"]),
             "Status identity, readiness, or voice evidence is incomplete.");
 
         Require(
@@ -345,7 +345,7 @@ internal static class MetadataParserChecks
         Require(
             result.State == MetadataDocumentState.Recognized &&
             result.Voices is { Complete: true } voices &&
-            voices.Ids.SequenceEqual(new[] { "piper_base", "alloy" }) &&
+            voices.Ids.SequenceEqual(["piper_base", "alloy"]) &&
             !result.ServiceIdentityMatched &&
             result.Service is null &&
             result.SynthesisReady is null &&
@@ -392,7 +392,7 @@ internal static class MetadataParserChecks
         Require(
             partial.State == MetadataDocumentState.Recognized &&
             partial.Voices is { Complete: false } retained &&
-            retained.Ids.SequenceEqual(new[] { "piper_base", "alloy" }) &&
+            retained.Ids.SequenceEqual(["piper_base", "alloy"]) &&
             partial.Warnings.Any(warning =>
                 warning.Code == "metadata_field_invalid"),
             "Malformed voice entries were retained or their coverage loss was hidden.");
@@ -481,7 +481,7 @@ internal static class MetadataParserChecks
 
         Require(
             voice.Voices is { Complete: false } voices &&
-            voices.Ids.SequenceEqual(new[] { "piper_base" }),
+            voices.Ids.SequenceEqual(["piper_base"]),
             "An oversized voice ID was retained or silently marked complete.");
     }
 

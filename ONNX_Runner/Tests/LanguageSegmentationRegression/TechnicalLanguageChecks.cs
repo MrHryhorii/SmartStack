@@ -72,24 +72,25 @@ internal static class TechnicalLanguageChecks
                 "The variable contains the requested output", [])
         };
 
-        foreach (var fixture in fixtures)
-        foreach (bool early in new[] { false, true })
-        {
-            yield return ($"Automatic technical language: {fixture.Name}; early={early}", () =>
+        foreach (var (Name, Input, Language, Analysis, Technical) in fixtures)
+            foreach (bool early in new[] { false, true })
             {
-                logger.Phrases.Clear();
-                var chunks = chunker.Split(fixture.Input, early);
-                Require(chunks.Count == 1, "An in-sentence technical token created a sentence cut.");
-                var tokens = detector.ProcessTextToLanguageTokens(chunks[0].Text);
-                Require(string.Concat(tokens.Select(t => t.Text)) == fixture.Input, "Source text was lost or reordered.");
-                Require(tokens.Where(t => !t.IsPunctuationOrSpace).All(t => t.DetectedLanguage == fixture.Language),
-                    $"Wrong language: {Describe(tokens)}");
-                Require(tokens.Where(t => t.IsTechnical).Select(t => t.Text).SequenceEqual(fixture.Technical),
-                    "The technical speech parts differ from the fixture.");
-                Require(logger.Phrases.Select(Words).SequenceEqual([fixture.Analysis]),
-                    $"Unexpected analysis boundaries: {string.Join(" | ", logger.Phrases)}");
-            });
-        }
+                yield return ($"Automatic technical language: {Name}; early={early}", () =>
+                {
+                    logger.Phrases.Clear();
+                    var chunks = chunker.Split(Input, early);
+                    Require(chunks.Count == 1, "An in-sentence technical token created a sentence cut.");
+                    var tokens = detector.ProcessTextToLanguageTokens(chunks[0].Text);
+                    Require(string.Concat(tokens.Select(t => t.Text)) == Input, "Source text was lost or reordered.");
+                    Require(tokens.Where(t => !t.IsPunctuationOrSpace).All(t => t.DetectedLanguage == Language),
+                        $"Wrong language: {Describe(tokens)}");
+                    Require(tokens.Where(t => t.IsTechnical).Select(t => t.Text).SequenceEqual(Technical),
+                        "The technical speech parts differ from the fixture.");
+                    Require(logger.Phrases.Select(Words).SequenceEqual([Analysis]),
+                        $"Unexpected analysis boundaries: {string.Join(" | ", logger.Phrases)}");
+                }
+                );
+            }
 
         var boundaryCases = new (string Name, string Input, string[] Analysis, (string Text, string Language)[] Anchors)[]
         {
@@ -119,23 +120,24 @@ internal static class TechnicalLanguageChecks
                 [("дані_значення", "uk"), ("build_output", "en-us"), ("зберігає результат", "uk")])
         };
 
-        foreach (var fixture in boundaryCases)
-        foreach (bool early in new[] { false, true })
-        {
-            yield return ($"Automatic technical boundary: {fixture.Name}; early={early}", () =>
+        foreach (var (Name, Input, Analysis, Anchors) in boundaryCases)
+            foreach (bool early in new[] { false, true })
             {
-                logger.Phrases.Clear();
-                var tokens = chunker.Split(fixture.Input, early)
-                    .SelectMany(chunk => detector.ProcessTextToLanguageTokens(chunk.Text)).ToArray();
-                foreach (var anchor in fixture.Anchors)
+                yield return ($"Automatic technical boundary: {Name}; early={early}", () =>
                 {
-                    Require(tokens.Any(t => t.Text.Contains(anchor.Text, StringComparison.Ordinal) &&
-                        t.DetectedLanguage == anchor.Language), $"Missing language anchor {anchor}: {Describe(tokens)}");
+                    logger.Phrases.Clear();
+                    var tokens = chunker.Split(Input, early)
+                        .SelectMany(chunk => detector.ProcessTextToLanguageTokens(chunk.Text)).ToArray();
+                    foreach (var anchor in Anchors)
+                    {
+                        Require(tokens.Any(t => t.Text.Contains(anchor.Text, StringComparison.Ordinal) &&
+                            t.DetectedLanguage == anchor.Language), $"Missing language anchor {anchor}: {Describe(tokens)}");
+                    }
+                    Require(logger.Phrases.Select(Words).SequenceEqual(Analysis),
+                        $"Unexpected analysis boundaries: {string.Join(" | ", logger.Phrases)}");
                 }
-                Require(logger.Phrases.Select(Words).SequenceEqual(fixture.Analysis),
-                    $"Unexpected analysis boundaries: {string.Join(" | ", logger.Phrases)}");
-            });
-        }
+                );
+            }
 
         yield return ("Automatic technical language reaches ordinary eSpeak calls", () =>
         {
@@ -147,7 +149,8 @@ internal static class TechnicalLanguageChecks
             Require(bridge.Calls.All(c => c.Voice == "en-us"), "An ordinary English fragment used a foreign voice.");
             Require(bridge.CharacterCalls.Count == 1 && bridge.CharacterCalls[0] == ('_', "en-us"),
                 "Shared language analysis changed symbol naming or its cache.");
-        });
+        }
+        );
 
         foreach (string text in new[] { "user_name build_output", "_ $ ^", "123 user_name 456",
             "français_utilisateur données_sortie" })
@@ -160,7 +163,8 @@ internal static class TechnicalLanguageChecks
                 Require(logger.Phrases.Count == 0, "Technical syntax was sent for phrase-level language detection.");
                 Require(tokens.Where(t => !t.IsPunctuationOrSpace).All(t => t.DetectedLanguage == "en-us"),
                     "A context-free technical part lost the configured model language.");
-            });
+            }
+            );
         }
 
         foreach (string language in new[] { "en", "fr", "es", "uk" })
@@ -175,7 +179,8 @@ internal static class TechnicalLanguageChecks
                 Require(tokens.Where(t => !t.IsPunctuationOrSpace).All(t => t.DetectedLanguage == expected),
                     "Automatic context replaced the forced language.");
                 Require(logger.Phrases.Count == 0, "A forced language still invoked local detection.");
-            });
+            }
+            );
         }
 
         yield return ("Technical language analysis uses request-local pending parts", () =>
@@ -190,7 +195,8 @@ internal static class TechnicalLanguageChecks
                     tokens.Where(t => !t.IsPunctuationOrSpace).All(t => t.DetectedLanguage == "en-us");
             });
             Require(passed, "Concurrent language analysis mixed request buffers or languages.");
-        });
+        }
+        );
     }
 
     /// <summary>Creates competing Latin and Cyrillic language candidates for context regression checks.</summary>

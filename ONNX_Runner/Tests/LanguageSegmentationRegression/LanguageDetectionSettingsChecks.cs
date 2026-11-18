@@ -23,7 +23,8 @@ internal static class LanguageDetectionSettingsChecks
                 settings.ReliabilityProbabilityThreshold == 0.50, "Missing settings changed the previous thresholds.");
             Require(settings.MaxBonusMultiplier == 0.60 && settings.MixedLanguageOverrideThreshold == 0.85,
                 "Adding local thresholds changed other defaults.");
-        });
+        }
+        );
 
         yield return ("Detector settings: JSON binds all three thresholds", () =>
         {
@@ -33,14 +34,16 @@ internal static class LanguageDetectionSettingsChecks
                 """);
             Require(settings.LocalWinnerProbabilityFloor == 0.71 && settings.LocalWinnerMarginFloor == 0.19 &&
                 settings.ReliabilityProbabilityThreshold == 0.83, "The configuration binder ignored a threshold.");
-        });
+        }
+        );
 
         yield return ("Detector settings: partial JSON retains omitted thresholds", () =>
         {
             var settings = ReadSettings("""{ "LocalWinnerMarginFloor": 0.19 }""");
             Require(settings.LocalWinnerMarginFloor == 0.19 && settings.LocalWinnerProbabilityFloor == 0.50 &&
                 settings.ReliabilityProbabilityThreshold == 0.50, "Partial configuration changed omitted defaults.");
-        });
+        }
+        );
 
         var defaults = Create(ReadSettings("{}"));
         var explicitDefaults = Create(ReadSettings("""
@@ -62,7 +65,8 @@ internal static class LanguageDetectionSettingsChecks
                 Require(omitted.Select(Decision).SequenceEqual(supplied.Select(Decision)),
                     "Explicit defaults changed language, reliability, or structural token decisions.");
                 Require(string.Concat(supplied.Select(token => token.Text)) == input, "Source text changed.");
-            });
+            }
+            );
         }
 
         yield return ("Detector settings: configured probability floor changes local versus sentence priority", () =>
@@ -73,7 +77,8 @@ internal static class LanguageDetectionSettingsChecks
                 "The declared French word did not retain authoritative local pronunciation.");
             Require(FindWord(strict, MixedSentence).DetectedLanguage == "en-us",
                 "Raising the probability floor did not allow the English sentence context to participate.");
-        });
+        }
+        );
 
         yield return ("Detector settings: configured margin floor changes local versus sentence priority", () =>
         {
@@ -83,7 +88,8 @@ internal static class LanguageDetectionSettingsChecks
                 "The declared French word did not retain authoritative local pronunciation.");
             Require(FindWord(strict, MixedSentence).DetectedLanguage == "en-us",
                 "Raising the margin floor did not allow the English sentence context to participate.");
-        });
+        }
+        );
 
         // Independent Lingua scores supply exact boundary values; expected language comes from
         // the explicitly French fixture. No production decision determines the expected branch.
@@ -96,59 +102,63 @@ internal static class LanguageDetectionSettingsChecks
         {
             Require(confidence > 0.50 && confidence < 1.0 && margin > 0.08,
                 "The pinned Lingua fixture no longer supplies the declared French confidence boundaries.");
-        });
+        }
+        );
 
-        foreach (var fixture in new[]
+        foreach (var (Name, Value, Reliable) in new[]
         {
             (Name: "below", Value: Math.BitDecrement(confidence), Reliable: true),
             (Name: "equal", Value: confidence, Reliable: true),
             (Name: "above", Value: Math.BitIncrement(confidence), Reliable: false)
         })
         {
-            yield return ($"Detector settings: probability floor is inclusive ({fixture.Name})", () =>
+            yield return ($"Detector settings: probability floor is inclusive ({Name})", () =>
             {
                 var settings = BoundarySettings();
-                settings.LocalWinnerProbabilityFloor = fixture.Value;
+                settings.LocalWinnerProbabilityFloor = Value;
                 var word = FindWord(Create(settings), ForeignWord);
                 Require(word.DetectedLanguage == "fr" && word.Probability == confidence &&
-                    word.IsReliable == fixture.Reliable, "The local probability boundary used the wrong comparison.");
-            });
+                    word.IsReliable == Reliable, "The local probability boundary used the wrong comparison.");
+            }
+            );
         }
 
-        foreach (var fixture in new[]
+        foreach (var (Name, Value, Reliable) in new[]
         {
             (Name: "below", Value: Math.BitDecrement(margin), Reliable: true),
             (Name: "equal", Value: margin, Reliable: true),
             (Name: "above", Value: Math.BitIncrement(margin), Reliable: false)
         })
         {
-            yield return ($"Detector settings: margin floor is inclusive ({fixture.Name})", () =>
+            yield return ($"Detector settings: margin floor is inclusive ({Name})", () =>
             {
                 var settings = BoundarySettings();
                 settings.LocalWinnerProbabilityFloor = 0.0;
-                settings.LocalWinnerMarginFloor = fixture.Value;
+                settings.LocalWinnerMarginFloor = Value;
                 var word = FindWord(Create(settings), ForeignWord);
-                Require(word.DetectedLanguage == "fr" && word.IsReliable == fixture.Reliable,
+                Require(word.DetectedLanguage == "fr" && word.IsReliable == Reliable,
                     "The local margin boundary used the wrong comparison.");
-            });
+            }
+            );
         }
 
-        foreach (var fixture in new[]
+        foreach (var (Name, Value, Reliable) in new[]
         {
             (Name: "below", Value: Math.BitDecrement(confidence), Reliable: true),
             (Name: "equal", Value: confidence, Reliable: false),
             (Name: "above", Value: Math.BitIncrement(confidence), Reliable: false)
         })
         {
-            yield return ($"Detector settings: reliability threshold is strict ({fixture.Name})", () =>
+            yield return ($"Detector settings: reliability threshold is strict ({Name})", () =>
             {
                 var settings = BoundarySettings();
-                settings.ReliabilityProbabilityThreshold = fixture.Value;
+                settings.ReliabilityProbabilityThreshold = Value;
                 var word = FindWord(Create(settings), ForeignWord);
                 Require(word.DetectedLanguage == "fr" && word.Probability == confidence &&
-                    word.IsReliable == fixture.Reliable,
+                    word.IsReliable == Reliable,
                     "The reliability boundary changed the selected language or used an inclusive comparison.");
-            });
+            }
+            );
         }
 
         foreach (var fixture in new[] { (Threshold: 0.50, Language: "fr"), (Threshold: 1.01, Language: "en-us") })
@@ -164,7 +174,8 @@ internal static class LanguageDetectionSettingsChecks
                 Require(tokens.Single(token => token.IsTechnical).DetectedLanguage == fixture.Language,
                     "The technical-only phrase ignored the configured reliability gate.");
                 Require(string.Concat(tokens.Select(token => token.Text)) == input, "Source text changed.");
-            });
+            }
+            );
         }
 
         yield return ("Detector settings: authoritative local winner stays reliable", () =>
@@ -173,7 +184,8 @@ internal static class LanguageDetectionSettingsChecks
             var word = FindWord(Create(settings), ForeignWord);
             Require(word.DetectedLanguage == "fr" && word.IsReliable,
                 "The ambiguous-result threshold weakened an authoritative local winner.");
-        });
+        }
+        );
 
         yield return ("Detector settings: forced language bypasses configured statistical thresholds", () =>
         {
@@ -182,7 +194,8 @@ internal static class LanguageDetectionSettingsChecks
             Require(tokens.Where(token => !token.IsPunctuationOrSpace)
                 .All(token => token.DetectedLanguage == "es" && token.IsReliable),
                 "Statistical tuning overrode a forced language.");
-        });
+        }
+        );
 
         yield return ("Detector settings: high thresholds preserve script-capability routing", () =>
         {
@@ -191,7 +204,8 @@ internal static class LanguageDetectionSettingsChecks
                 token.DetectedLanguage == "ja" && token.IsReliable), "Kana lost its explicit script route.");
             Require(detector.ProcessTextToLanguageTokens("漢字").Any(token =>
                 token.DetectedLanguage == "cmn" && token.IsReliable), "Han lost its explicit script route.");
-        });
+        }
+        );
 
         yield return ("Detector settings: reliable neighbors do not cross incompatible scripts", () =>
         {
@@ -200,7 +214,8 @@ internal static class LanguageDetectionSettingsChecks
             var tokens = Create(settings).ProcessTextToLanguageTokens("bonjour, дані_значення");
             Require(tokens.Single(token => token.IsTechnical).DetectedLanguage == "uk",
                 "A reliable French neighbor overrode Cyrillic script fallback.");
-        });
+        }
+        );
 
         yield return ("Detector settings: cached thresholds change only after detector recreation", () =>
         {
@@ -217,7 +232,8 @@ internal static class LanguageDetectionSettingsChecks
                 "Changing the settings object changed an existing detector's cached thresholds.");
             Require(FindWord(Create(settings), MixedSentence).DetectedLanguage == "fr",
                 "A newly created detector did not read the changed thresholds.");
-        });
+        }
+        );
     }
 
     /// <summary>Binds phonemizer settings through the real JSON configuration provider.</summary>

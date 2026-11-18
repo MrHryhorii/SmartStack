@@ -95,14 +95,14 @@ internal static class SharedRulesChecks
                 ["Doc\u0327. Kaya arrived", "Next"], ["Doc\u0327. Kaya arrived.", "Next."], false)
         };
 
-        foreach (var fixture in fixtures)
+        foreach (var (Name, Input, Chunks, Finished, Cores, Rendered, Early) in fixtures)
         {
-            yield return ($"Shared rules pipeline: {fixture.Name}", () =>
+            yield return ($"Shared rules pipeline: {Name}", () =>
             {
                 Require(ReferenceEquals(chunker.Rules, mapper.Rules), "Consumers use different catalogs.");
-                var chunks = chunker.Split(fixture.Input, fixture.Early);
-                Require(chunks.Select(c => c.Text).SequenceEqual(fixture.Chunks), "Sentence chunks differ from the fixture.");
-                Require(chunks.Select(c => c.IsSentenceFinished).SequenceEqual(fixture.Finished), "Completion flags differ.");
+                var chunks = chunker.Split(Input, Early);
+                Require(chunks.Select(c => c.Text).SequenceEqual(Chunks), "Sentence chunks differ from the fixture.");
+                Require(chunks.Select(c => c.IsSentenceFinished).SequenceEqual(Finished), "Completion flags differ.");
 
                 var bridge = new EspeakWrapper();
                 var phonemizer = new UnifiedPhonemizer(bridge, mapper, Config(), detector);
@@ -114,39 +114,42 @@ internal static class SharedRulesChecks
                     rendered.Add(phonemizer.GetPhonemes(chunk.Text, "en"));
                 }
 
-                Require(rendered.SequenceEqual(fixture.Rendered), $"Punctuation result: {string.Join(" | ", rendered)}");
-                Require(bridge.Calls.Select(c => c.Text).SequenceEqual(fixture.Cores),
+                Require(rendered.SequenceEqual(Rendered), $"Punctuation result: {string.Join(" | ", rendered)}");
+                Require(bridge.Calls.Select(c => c.Text).SequenceEqual(Cores),
                     $"Native bridge inputs: {string.Join(" | ", bridge.Calls.Select(c => c.Text))}");
                 Require(bridge.Calls.All(c => c.Voice == "en-us"), "Forced language inheritance was lost.");
-            });
+            }
+            );
         }
 
         foreach (bool early in new[] { false, true })
-        foreach (bool automaticTokens in new[] { false, true })
-        {
-            yield return ($"Quoted continuation pipeline; early={early}; tokenizer={automaticTokens}", () =>
+            foreach (bool automaticTokens in new[] { false, true })
             {
-                var bridge = new EspeakWrapper();
-                var phonemizer = new UnifiedPhonemizer(bridge, mapper, Config(), automaticTokens ? detector : null);
-                var chunks = chunker.Split("\"Really...?!\" he replied. Next.", early);
-                Require(chunks.Select(c => c.IsSentenceFinished).SequenceEqual(early ? [false, true, true] : [true, true]),
-                    "A quoted early cut changed the semantic completion flags.");
-                string[] rendered = chunks.Select(c => phonemizer.GetPhonemes(c.Text, "en").Trim()).ToArray();
-                Require(rendered.SequenceEqual(early ? ["Really...?!", "he replied.", "Next."] : ["Really...?! he replied.", "Next."]),
-                    $"Quoted continuation payloads: {string.Join(" | ", rendered)}");
-            });
-            yield return ($"Quoted emergency pipeline; early={early}; tokenizer={automaticTokens}", () =>
-            {
-                var bounded = new TextChunker(new ChunkerSettings { MaxChunkLength = 7 }, rules);
-                var bridge = new EspeakWrapper();
-                var phonemizer = new UnifiedPhonemizer(bridge, mapper, Config(), automaticTokens ? detector : null);
-                var chunks = bounded.Split("\"Hello.\" Next.", early);
-                string[] rendered = chunks.Select(c => phonemizer.GetPhonemes(c.Text, "en")).ToArray();
-                Require(rendered.All(value => !string.IsNullOrWhiteSpace(value)), "A generated closing suffix lost its phoneme payload.");
-                Require(chunks.Count(c => c.IsSentenceFinished) == 2, "A spoken sentence lost its completion flag.");
-                Require(chunks.Where(c => c.IsSentenceFinished).All(c => c.Text.Contains('.')), "Completion moved away from its terminal.");
-            });
-        }
+                yield return ($"Quoted continuation pipeline; early={early}; tokenizer={automaticTokens}", () =>
+                {
+                    var bridge = new EspeakWrapper();
+                    var phonemizer = new UnifiedPhonemizer(bridge, mapper, Config(), automaticTokens ? detector : null);
+                    var chunks = chunker.Split("\"Really...?!\" he replied. Next.", early);
+                    Require(chunks.Select(c => c.IsSentenceFinished).SequenceEqual(early ? [false, true, true] : [true, true]),
+                        "A quoted early cut changed the semantic completion flags.");
+                    string[] rendered = chunks.Select(c => phonemizer.GetPhonemes(c.Text, "en").Trim()).ToArray();
+                    Require(rendered.SequenceEqual(early ? ["Really...?!", "he replied.", "Next."] : ["Really...?! he replied.", "Next."]),
+                        $"Quoted continuation payloads: {string.Join(" | ", rendered)}");
+                }
+                );
+                yield return ($"Quoted emergency pipeline; early={early}; tokenizer={automaticTokens}", () =>
+                {
+                    var bounded = new TextChunker(new ChunkerSettings { MaxChunkLength = 7 }, rules);
+                    var bridge = new EspeakWrapper();
+                    var phonemizer = new UnifiedPhonemizer(bridge, mapper, Config(), automaticTokens ? detector : null);
+                    var chunks = bounded.Split("\"Hello.\" Next.", early);
+                    string[] rendered = chunks.Select(c => phonemizer.GetPhonemes(c.Text, "en")).ToArray();
+                    Require(rendered.All(value => !string.IsNullOrWhiteSpace(value)), "A generated closing suffix lost its phoneme payload.");
+                    Require(chunks.Count(c => c.IsSentenceFinished) == 2, "A spoken sentence lost its completion flag.");
+                    Require(chunks.Where(c => c.IsSentenceFinished).All(c => c.Text.Contains('.')), "Completion moved away from its terminal.");
+                }
+                );
+            }
 
         yield return ("Shared rules pipeline: defaults remain independent", () =>
         {
@@ -154,7 +157,8 @@ internal static class SharedRulesChecks
             Require(defaults.Split("Read z. Morgan spoke. Next.").Select(c => c.Text)
                 .SequenceEqual(["Read z.", "Morgan spoke.", "Next."]), "Custom abbreviation leaked into defaults.");
             Require(!TextChunkerRules.Default.CommonAbbreviations.Contains("zzq"), "Default catalog was mutated.");
-        });
+        }
+        );
 
         yield return ("Shared rules pipeline: concurrent consumers share immutable rules", () =>
         {
@@ -166,7 +170,8 @@ internal static class SharedRulesChecks
                     bridge.Calls.Select(c => c.Text).SequenceEqual(["Archon. Morgan arrived"]);
             });
             Require(passed, "Concurrent requests changed the pipeline result.");
-        });
+        }
+        );
     }
 
     /// <summary>Creates a detector using the supplied chunker's rule instance.</summary>
@@ -180,7 +185,12 @@ internal static class SharedRulesChecks
         Espeak = new EspeakConfig { Voice = "en-us" },
         PhonemeIdMap = new Dictionary<string, int[]>
         {
-            ["."] = [1], ["?"] = [2], ["!"] = [3], [","] = [4], [" "] = [5], [")"] = [6]
+            ["."] = [1],
+            ["?"] = [2],
+            ["!"] = [3],
+            [","] = [4],
+            [" "] = [5],
+            [")"] = [6]
         }
     };
 

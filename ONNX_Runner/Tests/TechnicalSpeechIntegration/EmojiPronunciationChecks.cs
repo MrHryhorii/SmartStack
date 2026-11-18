@@ -32,11 +32,11 @@ internal static class EmojiPronunciationChecks
         foreach (string voice in new[] { "en-us", "en", "en-gb-x-rp" })
             for (int index = 0; index < English.Length; index++)
             {
-                var fixture = English[index];
+                var (Emoji, Name) = English[index];
                 check($"Complete native emoji description ({voice}): fixture {index}", () =>
                 {
-                    Require(bridge.TryGetIpaPhonemes(fixture.Name, voice, out string expected), "Reference voice is unavailable.");
-                    Require(bridge.TryGetEmojiPhonemes(fixture.Emoji, voice, out string actual) && Spoken(expected) == Spoken(actual),
+                    Require(bridge.TryGetIpaPhonemes(Name, voice, out string expected), "Reference voice is unavailable.");
+                    Require(bridge.TryGetEmojiPhonemes(Emoji, voice, out string actual) && Spoken(expected) == Spoken(actual),
                         $"Expected complete name: {expected}; actual: {actual}");
                 });
             }
@@ -63,11 +63,11 @@ internal static class EmojiPronunciationChecks
                 var reference = new UnifiedPhonemizer(bridge, new DynamicPunctuationMapper(config), config, fallbackMapper: adapter);
                 for (int index = 0; index < English.Length; index++)
                 {
-                    var fixture = English[index];
+                    var (Emoji, Name) = English[index];
                     check($"Emoji inventory and punctuation ({useDetector}, {read}): fixture {index}", () =>
                     {
-                        string actual = pipeline.GetPhonemes(fixture.Emoji + "?", "en-us");
-                        string expected = read ? reference.GetPhonemes(fixture.Name, config.Espeak.Voice) + "?" : "?";
+                        string actual = pipeline.GetPhonemes(Emoji + "?", "en-us");
+                        string expected = read ? reference.GetPhonemes(Name, config.Espeak.Voice) + "?" : "?";
                         Require(Spoken(expected) == Spoken(actual) && actual.EndsWith('?'),
                             $"Expected spelling with a separate question mark: {expected}; actual: {actual}");
                         for (int position = 0; position < actual.Length;)
@@ -77,7 +77,7 @@ internal static class EmojiPronunciationChecks
                             Require(config.PhonemeIdMap.ContainsKey(phoneme), $"Emoji phoneme is not representable by the model: {phoneme}");
                             position += length;
                         }
-                        Require(pipeline.GetPhonemes(fixture.Emoji + "?", "en-us") == actual, "The cached name changed output.");
+                        Require(pipeline.GetPhonemes(Emoji + "?", "en-us") == actual, "The cached name changed output.");
                     });
                 }
 
@@ -135,8 +135,8 @@ internal static class EmojiPronunciationChecks
             Require(bridge.TryGetIpaPhonemes("Ordinary text remains readable.", "en-us", out string expected), "Reference voice unavailable.");
             Parallel.For(0, 8, iteration =>
             {
-                foreach (var fixture in English)
-                    Require(bridge.TryGetEmojiPhonemes(fixture.Emoji, "en", out string name) && name.Length > 0,
+                foreach (var (Emoji, Name) in English)
+                    Require(bridge.TryGetEmojiPhonemes(Emoji, "en", out string name) && name.Length > 0,
                         "Concurrent emoji transcription lost the model voice.");
                 bridge.TryGetCharacterPhonemes('_', "en-us", out _);
                 Require(bridge.TryGetIpaPhonemes("Ordinary text remains readable.", "en-us", out string actual) && actual == expected,

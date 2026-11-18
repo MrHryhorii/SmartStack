@@ -53,9 +53,9 @@ public sealed class SpatialFilterKernel
 
     private static void ValidateCoefficients(in SpatialBiquad filter)
     {
-        var c = filter.Coefficients;
-        if (!float.IsFinite(c.B0) || !float.IsFinite(c.B1) || !float.IsFinite(c.B2)
-            || !float.IsFinite(c.A1) || !float.IsFinite(c.A2))
+        var (B0, B1, B2, A1, A2) = filter.Coefficients;
+        if (!float.IsFinite(B0) || !float.IsFinite(B1) || !float.IsFinite(B2)
+            || !float.IsFinite(A1) || !float.IsFinite(A2))
             throw new ArgumentException("Filter parameters produce nonfinite coefficients.");
     }
 
