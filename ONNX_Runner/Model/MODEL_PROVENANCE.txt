@@ -8,8 +8,8 @@ Voice files:
   en_US-hfc_female-medium.onnx
   en_US-hfc_female-medium.onnx.json
 Model and original model card:
-  https://huggingface.co/rhasspy/piper-voices/tree/main/en/en_US/hfc_female/medium
-  https://huggingface.co/rhasspy/piper-voices/blob/main/en/en_US/hfc_female/medium/MODEL_CARD
+  https://huggingface.co/rhasspy/piper-voices/tree/v1.0.0/en/en_US/hfc_female/medium
+  https://huggingface.co/rhasspy/piper-voices/blob/v1.0.0/en/en_US/hfc_female/medium/MODEL_CARD
 Language: English (US); one speaker; medium quality; 22,050 Hz.
 
 Training-data attribution:

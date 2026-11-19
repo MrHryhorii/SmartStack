@@ -755,8 +755,8 @@ The normal model paths above remain the primary source. These settings only cont
 
 ```json
 "ModelSettings": {
-  "FallbackModelUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx",
-  "FallbackConfigUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
+  "FallbackModelUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx",
+  "FallbackConfigUrl": "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0/en/en_US/hfc_female/medium/en_US-hfc_female-medium.onnx.json",
   "AutoDownloadFallbackModel": false
 }
 ```
