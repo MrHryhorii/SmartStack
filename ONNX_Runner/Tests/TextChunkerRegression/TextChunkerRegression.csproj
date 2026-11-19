@@ -16,5 +16,8 @@
     <Compile Include="../../Models/Text/TextChunkerDefaults.cs" Link="TextChunkerDefaults.cs" />
     <Compile Include="../../Models/Text/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
     <Compile Include="../../Services/Text/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
+    <Compile Include="../../Services/Text/Phonemization/Adaptation/*.cs" Link="Adaptation/%(Filename)%(Extension)" />
+    <Compile Include="../../Services/Text/Phonemization/PhonemeDecompositionCatalog.cs" Link="PhonemeDecompositionCatalog.cs" />
+    <Compile Include="../../Models/Inference/PiperConfig.cs" Link="PiperConfig.cs" />
   </ItemGroup>
 </Project>

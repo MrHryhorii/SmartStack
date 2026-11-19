@@ -29,5 +29,7 @@
     <Compile Include="../../Models/Text/UnicodeEmojiData.cs" Link="UnicodeEmojiData.cs" />
     <Compile Include="../../Services/Text/EmojiTextRecognizer.cs" Link="EmojiTextRecognizer.cs" />
     <Compile Include="../../Models/Text/TextChunk.cs" Link="TextChunk.cs" />
+    <Compile Include="../../Services/Text/Phonemization/Adaptation/*.cs" Link="Adaptation/%(Filename)%(Extension)" />
+    <Compile Include="../../Services/Text/Phonemization/PhonemeDecompositionCatalog.cs" Link="PhonemeDecompositionCatalog.cs" />
   </ItemGroup>
 </Project>

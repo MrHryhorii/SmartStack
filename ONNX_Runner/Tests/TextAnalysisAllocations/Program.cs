@@ -2,6 +2,7 @@ global using Microsoft.Extensions.Logging;
 
 using ONNX_Runner.Services.Text;
 using ONNX_Runner.Services.Text.Phonemization;
+using ONNX_Runner.Services.Text.Phonemization.Adaptation;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -67,6 +68,19 @@ var inventory = new PhonemeInventory(inventoryConfig.PhonemeIdMap);
 var tensorMapper = new PiperPhonemizer(inventoryConfig, NullLogger<PiperPhonemizer>.Instance);
 var modelChunker = new TextChunker(new ChunkerSettings { MaxChunkLength = 64 }, phonemeIdMap: inventoryConfig.PhonemeIdMap);
 string largeTensorInput = new('a', 1024);
+var adaptationConfig = new PiperConfig
+{
+    PhonemeIdMap = new() { ["_"] = [0], ["^"] = [1], ["$"] = [2], [" "] = [3],
+        ["t"] = [10], ["s"] = [11], ["k"] = [12], ["j"] = [13], ["w"] = [14], ["h"] = [15] }
+};
+var adapter = new PhonemeAdapter("missing-allocation-test.csv", adaptationConfig);
+var adaptedTensorMapper = new PiperPhonemizer(adaptationConfig, NullLogger<PiperPhonemizer>.Instance);
+var adaptedSequence = adapter.Adapt("ʦ");
+var nativeSequence = new PhonemeSequence("a");
+string manyAdaptations = new('ʦ', 24);
+string unlistedAdaptations = string.Concat(Enumerable.Repeat("kʲʷʰ", 24));
+var preparedChunker = new TextChunker(new ChunkerSettings { MaxChunkLength = 64 },
+    phonemeIdMap: adaptationConfig.PhonemeIdMap, phonemeAdapter: adapter);
 
 var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
 {
@@ -97,6 +111,15 @@ var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
     ("phoneme/native-language-label", () => PhonemeLanguageLabels.TryFind("(123)(fr-ca) text".AsSpan(), 0, out _, out int n) ? n : 0, 0),
     // Only the returned long[6] is allocated: 24 bytes of array header plus 48 bytes of IDs.
     ("phoneme/complete-tensor", () => tensorMapper.PhonemesToIds("a", true, false).Length, 72),
+    ("phoneme/native-typed-tensor", () => tensorMapper.PhonemesToIds(nativeSequence, true, false).Length, 72),
+    ("phoneme/prepared-lookup", () => adapter.TryGetPlan("ʦ".AsSpan(), out _) ? 1 : 0, 0),
+    ("phoneme/prepared-unit", () => adapter.ReadLength("kʲʷʰa".AsSpan()), 0),
+    // One long[6] holds the joined components, the outer padding and the sentence controls.
+    ("phoneme/prepared-tensor", () => adaptedTensorMapper.PhonemesToIds(adaptedSequence, true, false).Length, 72),
+    // Only output text and compact retained group metadata survive; temporary arrays are pooled.
+    ("phoneme/adapt-single-group", () => adapter.Adapt("ʦ").Text.Length, 240),
+    ("phoneme/adapt-many-groups", () => adapter.Adapt(manyAdaptations).Text.Length, 800),
+    ("phoneme/adapt-unlisted-groups", () => adapter.Adapt(unlistedAdaptations).Text.Length, 1800),
     // The shared pool is warmed before measurement; only the returned long[3075] remains allocated.
     ("phoneme/pooled-tensor", () => tensorMapper.PhonemesToIds(largeTensorInput, true, false).Length, 24_624),
     ("boundary/lowercase-letter", () => chunker.IsIntraSentencePeriod("Letter z. Continue.".AsSpan(), 8) ? 1 : 0, 0),
@@ -114,6 +137,7 @@ var scenarios = new (string Name, Func<int> Run, long? ByteBudget)[]
     ("chunker/single-bracket-ipa", () => chunker.Split("Say [həˈloʊ] now.").Count, 96),
     ("chunker/short-explicit-ipa", () => chunker.Split("Say [[həˈloʊ]] now.").Count, 96),
     ("chunker/model-short-ipa", () => modelChunker.Split("Say [[aɪe\u0303]] now.").Count, 96),
+    ("chunker/prepared-short-ipa", () => preparedChunker.Split("Say [[kʲʷʰ]] now.").Count, 96),
     ("chunker/model-long-ipa", () => modelChunker.Split(longPhonemeBlock).Count, null),
     ("chunker/long-ipa", () => boundedChunker.Split(longPhonemeBlock).Count, null),
     ("chunker/early", () => chunker.Split(reference, earlySplit: true).Count, null),

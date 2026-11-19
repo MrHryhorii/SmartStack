@@ -225,12 +225,12 @@ internal static class AudioGenerationPipeline
 
                     // Generate the base voice phonemes first. A non-empty text chunk can become
                     // empty after normalization (for example, a standalone closing quote).
-                    string phonemes = ctx.Phonemizer.GetPhonemes(chunk, request.Language);
+                    var phonemes = ctx.Phonemizer.GetSequence(chunk, request.Language);
                     // Never invoke Piper with an empty phoneme stream. The wrapper IDs alone can
                     // produce a short voiced artifact even though there is no pronounceable input.
                     // Deliberately do NOT reject punctuation-only phonemes here: supported sequences
                     // such as ?, !, ?!, ⁉, and ‽ must remain available to the acoustic model.
-                    if (string.IsNullOrWhiteSpace(phonemes))
+                    if (string.IsNullOrWhiteSpace(phonemes.Text))
                     {
                         continue;
                     }

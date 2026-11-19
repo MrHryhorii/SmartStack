@@ -1,4 +1,5 @@
 using ONNX_Runner.Services.Text.Phonemization;
+using ONNX_Runner.Services.Text.Phonemization.Adaptation;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using NAudio.Wave;
@@ -257,7 +258,10 @@ public partial class PiperRunner : IDisposable
 /// Runs Piper inference and returns pooled mono PCM with its valid sample count.
 /// The caller must return Buffer to ArrayPool&lt;float&gt;.Shared; session routing is handled here.
 /// </summary>
-    public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, bool isContinuation = false, bool isFinished = true, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
+    public (float[] Buffer, int Length) SynthesizeAudioRaw(string phonemes, bool isContinuation = false, bool isFinished = true, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null) =>
+        SynthesizeAudioRaw(new PhonemeSequence(phonemes), isContinuation, isFinished, speed, requestNoiseScale, requestNoiseW);
+
+    public (float[] Buffer, int Length) SynthesizeAudioRaw(PhonemeSequence phonemes, bool isContinuation = false, bool isFinished = true, float speed = 1.0f, float? requestNoiseScale = null, float? requestNoiseW = null)
     {
         float safeSpeed = Math.Clamp(speed, 0.1f, 10.0f);
 

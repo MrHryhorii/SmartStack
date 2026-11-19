@@ -1,56 +1,24 @@
 namespace ONNX_Runner.Services.Text.Phonemization;
 
-/// <summary>Shared IPA decomposition rules resolved against each model at startup.</summary>
+/// <summary>IPA symbol definitions, independent of languages and model inventories.</summary>
 internal static class PhonemeDecompositionCatalog
 {
-    // Rules to break down complex IPA symbols into simpler phoneme sequences that a model
-    // is more likely to support. These rules are resolved against the actual model inventory
-    // once at startup; they are never interpreted dynamically during synthesis.
-    internal static readonly IReadOnlyDictionary<string, string> Rules =
-        new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            // Affricates (Ligatures and combined symbols)
-            {"t͡s", "ts"}, {"t͡ʃ", "tʃ"}, {"d͡z", "dz"}, {"d͡ʒ", "dʒ"},
-            {"ʦ", "ts"},  {"ʧ", "tʃ"},  {"ʣ", "dz"},  {"ʤ", "dʒ"},
-            {"p͡f", "pf"}, {"k͡x", "kx"}, {"t͡ɕ", "tɕ"}, {"d͡ʑ", "dʑ"},
+    internal static readonly IReadOnlyDictionary<char, string> Symbols = new Dictionary<char, string>
+    {
+        ['ʦ'] = "ts", ['ʧ'] = "tʃ", ['ʣ'] = "dz", ['ʤ'] = "dʒ", ['ʨ'] = "tɕ", ['ʥ'] = "dʑ",
+        ['ɚ'] = "ə˞", ['ɝ'] = "ɜ˞"
+    };
 
-            // Palatalization (Soft consonants - critical for Slavic languages)
-            // Decomposed into "Hard consonant + Jot [j]"
-            {"pʲ", "pj"}, {"bʲ", "bj"}, {"mʲ", "mj"}, {"fʲ", "fj"}, {"vʲ", "vj"},
-            {"tʲ", "tj"}, {"dʲ", "dj"}, {"nʲ", "nj"}, {"lʲ", "lj"}, {"rʲ", "rj"},
-            {"sʲ", "sj"}, {"zʲ", "zj"}, {"kʲ", "kj"}, {"gʲ", "gj"}, {"xʲ", "xj"},
-
-            // Aspiration (Common in Asian, Indian, and Germanic languages)
-            // Decomposed into "Main sound + h"
-            {"pʰ", "ph"}, {"tʰ", "th"}, {"kʰ", "kh"}, {"cʰ", "ch"}, {"qʰ", "qh"},
-            {"bʱ", "bh"}, {"dʱ", "dh"}, {"gʱ", "gh"},
-
-            // Labialization (Rounded consonants)
-            // Decomposed into "Main sound + w"
-            {"kʷ", "kw"}, {"gʷ", "gw"}, {"xʷ", "xw"}, {"sʷ", "sw"}, {"zʷ", "zw"},
-
-            // Nasalized Vowels (French, Polish, Portuguese)
-            // Mapped to "Vowel + n" as the best approximation for nasal quality.
-            {"ã", "an"}, {"ẽ", "en"}, {"ĩ", "in"}, {"õ", "on"}, {"ũ", "un"},
-            {"ɛ̃", "ɛn"}, {"ɔ̃", "ɔn"}, {"œ̃", "œn"}, {"æ̃", "æn"},
-
-            // Length marks (Gemination)
-            // Doubling the sound if the model doesn't support the duration marker ː.
-            {"aː", "aa"}, {"eː", "ee"}, {"iː", "ii"}, {"oː", "oo"}, {"uː", "uu"},
-            {"sː", "ss"}, {"mː", "mm"}, {"nː", "nn"},
-
-            // Velar Nasal (e.g., "ng" in "singing")
-            {"ŋ", "ng"},
-
-            // Syllabic consonants (e.g., "button", "bottle")
-            // Decomposed into Schwa [ə] + consonant.
-            {"n̩", "ən"}, {"l̩", "əl"}, {"m̩", "əm"},
-
-            // Rhotic vowels (American "er" as in "bird")
-            {"ɚ", "ər"}, {"ɝ", "ɜr"},
-
-            // Diphthongs. These rules are activated only when the source sequence cannot
-            // already be emitted directly by the loaded model.
-            {"aɪ", "ai"}, {"aʊ", "au"}, {"eɪ", "ei"}, {"oʊ", "ou"}, {"ɔɪ", "ɔi"}
-        };
+    internal static readonly string[] Nasals = ["n", "m", "ŋ", "ɲ"];
+    internal static readonly string[] LabialNasals = ["m", "ɱ", "n", "ŋ"];
+    internal static readonly string[] VelarNasals = ["ŋ", "ɴ", "ɲ", "n", "m"];
+    internal static readonly string[] Palatals = ["j", "ʝ"];
+    internal static readonly string[] Labials = ["w", "ʋ"];
+    internal static readonly string[] Velars = ["ɰ", "ɣ"];
+    internal static readonly string[] Pharyngeals = ["ʕ", "ħ"];
+    internal static readonly string[] VoicelessAspiration = ["h", "ɦ"];
+    internal static readonly string[] VoicedAspiration = ["ɦ", "h"];
+    internal static readonly string[] Laterals = ["l", "ɭ", "ʎ"];
+    internal static readonly string[] Rhotics = ["ɹ", "r", "ɾ"];
+    internal static readonly string[] Schwas = ["ə", "ɘ", "ɜ"];
 }

@@ -218,7 +218,12 @@ if (piperConfig != null && piperModelPath != null)
     var phonemizer = new PiperPhonemizer(piperConfig, bootstrapLoggerFactory.CreateLogger<PiperPhonemizer>());
     builder.Services.AddSingleton<IPhonemizer>(phonemizer);
 
-    var textChunker = new TextChunker(chunkerConfig, chunkerRules, piperConfig.PhonemeIdMap);
+    string phoibleDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PHOIBLE"));
+    string phoiblePath = Path.Combine(phoibleDirectory, "phoible.csv");
+    var fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
+    builder.Services.AddSingleton(fallbackMapper);
+
+    var textChunker = new TextChunker(chunkerConfig, chunkerRules, piperConfig.PhonemeIdMap, fallbackMapper.Adapter);
     builder.Services.AddSingleton(textChunker);
     var runner = new PiperRunner(
      piperModelPath,
@@ -391,10 +396,6 @@ if (piperConfig != null && piperModelPath != null)
     // PHONEMIZER & LANGUAGE DETECTION SETUP
     // =================================================================
     MixedLanguagePhonemizer? mixedPhonemizer = null;
-    string phoibleDirectory = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "PHOIBLE"));
-    string phoiblePath = Path.Combine(phoibleDirectory, "phoible.csv");
-    var fallbackMapper = new PhonemeFallbackMapper(phoiblePath, piperConfig);
-    builder.Services.AddSingleton(fallbackMapper);
 
     if (phonemizerConfig != null && phonemizerConfig.UseLanguageDetector)
     {

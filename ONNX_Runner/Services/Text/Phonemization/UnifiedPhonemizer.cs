@@ -1,4 +1,5 @@
 using ONNX_Runner.Models.Text;
+using ONNX_Runner.Services.Text.Phonemization.Adaptation;
 using ONNX_Runner.Services.Text;
 using System.Buffers;
 using System.Collections.Concurrent;
@@ -20,16 +21,13 @@ public partial class UnifiedPhonemizer
     private readonly PiperConfig _piperConfig;
     private readonly MixedLanguagePhonemizer? _mixedPhonemizer;
     private readonly PhonemeFallbackMapper? _fallbackMapper;
-    private readonly ConcurrentDictionary<char, string> _technicalCharacterCache = new();
+    private readonly ConcurrentDictionary<char, PhonemeSequence> _technicalCharacterCache = new();
 
     // Cached model language metadata avoids splitting/normalizing the same eSpeak code per request.
     private readonly string _modelEspeakVoice;
     private readonly string _modelEspeakCode;
     private readonly string _canonicalModelEspeakCode;
     private readonly string[] _modelEspeakParts;
-
-    private readonly PhonemeInventory _inventory;
-
     /// <summary>Connects native phonemization, model punctuation/phoneme adaptation, and optional language routing.</summary>
     public UnifiedPhonemizer(
         EspeakWrapper espeakWrapper,
@@ -55,8 +53,6 @@ public partial class UnifiedPhonemizer
         _modelEspeakParts = _modelEspeakCode.Split(
             ['-', '_'],
             StringSplitOptions.RemoveEmptyEntries);
-
-        _inventory = new PhonemeInventory(_piperConfig.PhonemeIdMap ?? []);
     }
 
     // Mirrors MixedLanguagePhonemizer's own forced-language resolution (smart inheritance +
@@ -107,95 +103,104 @@ public partial class UnifiedPhonemizer
     /// Foreign IPA is preserved whenever the loaded model supports it and otherwise adapted
     /// through model-specific complex-sequence rules and PHOIBLE nearest-neighbor fallbacks.
     /// </summary>
-    public string GetPhonemes(string text, string? forcedLanguage = null)
+    public string GetPhonemes(string text, string? forcedLanguage = null) => ProcessText(text, forcedLanguage, false).Text;
+
+    /// <summary>Retains prepared group encodings for the synthesis path without embedding metadata in IPA.</summary>
+    public PhonemeSequence GetSequence(string text, string? forcedLanguage = null) => ProcessText(text, forcedLanguage, true);
+
+    private PhonemeSequence ProcessText(string text, string? forcedLanguage, bool captureAdaptations)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
-            return string.Empty;
+            return new(string.Empty);
         }
 
-        var finalPhonemes = new StringBuilder(Math.Max(64, text.Length * 2));
-        var tokens = new List<TextChunk>(8);
-
-        // Pre-process raw IPA blocks (Green Channel) and apply smart mode selection.
-        foreach (var (segmentText, isRaw) in SplitRawPhonemeBlocks(text))
+        var finalPhonemes = new PhonemeOutput(Math.Max(64, text.Length * 2), captureAdaptations);
+        try
         {
-            if (isRaw)
+            var tokens = new List<TextChunk>(8);
+
+            // Pre-process raw IPA blocks (Green Channel) and apply smart mode selection.
+            foreach (var (segmentText, isRaw) in SplitRawPhonemeBlocks(text))
             {
-                tokens.Add(new TextChunk
+                if (isRaw)
                 {
-                    Text = segmentText,
-                    DetectedLanguage = "raw",
-                    IsRawPhonemes = true
-                });
+                    tokens.Add(new TextChunk
+                    {
+                        Text = segmentText,
+                        DetectedLanguage = "raw",
+                        IsRawPhonemes = true
+                    });
 
-                continue;
-            }
+                    continue;
+                }
 
-            if (string.IsNullOrEmpty(segmentText))
-            {
-                continue;
-            }
-
-            // Language segmentation must see the original orthography. Normalizing punctuation
-            // first would destroy structural evidence inside URLs, paths, emails, code-like tokens,
-            // and abbreviations before the mixed-language tokenizer can protect them. Raw IPA blocks
-            // were already extracted above and remain completely untouched.
-            if (string.IsNullOrWhiteSpace(segmentText))
-            {
-                tokens.Add(new TextChunk
+                if (string.IsNullOrEmpty(segmentText))
                 {
-                    Text = segmentText,
-                    DetectedLanguage = _modelEspeakCode,
-                    IsPunctuationOrSpace = true
-                });
-                continue;
+                    continue;
+                }
+
+                // Language segmentation must see the original orthography. Normalizing punctuation
+                // first would destroy structural evidence inside URLs, paths, emails, code-like tokens,
+                // and abbreviations before the mixed-language tokenizer can protect them. Raw IPA blocks
+                // were already extracted above and remain completely untouched.
+                if (string.IsNullOrWhiteSpace(segmentText))
+                {
+                    tokens.Add(new TextChunk
+                    {
+                        Text = segmentText,
+                        DetectedLanguage = _modelEspeakCode,
+                        IsPunctuationOrSpace = true
+                    });
+                    continue;
+                }
+
+                // Pass forcedLanguage to the detector. If the detector is disabled, resolve the
+                // language locally using the same smart-inheritance rule.
+                if (_mixedPhonemizer != null)
+                {
+                    tokens.AddRange(
+                        _mixedPhonemizer.ProcessTextToLanguageTokens(
+                            segmentText,
+                            forcedLanguage));
+
+                    continue;
+                }
+
+                AddFallbackTokens(segmentText, ResolveFallbackLanguage(forcedLanguage), tokens);
             }
 
-            // Pass forcedLanguage to the detector. If the detector is disabled, resolve the
-            // language locally using the same smart-inheritance rule.
-            if (_mixedPhonemizer != null)
+            bool previousTechnicalSpeech = false;
+            for (int tokenIndex = 0; tokenIndex < tokens.Count; tokenIndex++)
             {
-                tokens.AddRange(
-                    _mixedPhonemizer.ProcessTextToLanguageTokens(
-                        segmentText,
-                        forcedLanguage));
+                TextChunk chunk = tokens[tokenIndex];
 
-                continue;
+                if (chunk.IsRawPhonemes)
+                {
+                    // Green channel: bypass eSpeak entirely for pre-written IPA, but still validate
+                    // it against the current model so unsupported foreign sounds are adapted safely.
+                    AppendValidatedPhonemes(chunk.Text, ref finalPhonemes);
+                    previousTechnicalSpeech = false;
+                    continue;
+                }
+
+                if (TryAppendEmojiChunk(chunk, tokenIndex, tokens, ref finalPhonemes, ref previousTechnicalSpeech)) continue;
+                AppendTextChunk(chunk, tokenIndex, tokens, ref finalPhonemes, ref previousTechnicalSpeech);
             }
 
-            AddFallbackTokens(segmentText, ResolveFallbackLanguage(forcedLanguage), tokens);
+            return finalPhonemes.Build();
         }
-
-        bool previousTechnicalSpeech = false;
-        for (int tokenIndex = 0; tokenIndex < tokens.Count; tokenIndex++)
-        {
-            TextChunk chunk = tokens[tokenIndex];
-
-            if (chunk.IsRawPhonemes)
-            {
-                // Green channel: bypass eSpeak entirely for pre-written IPA, but still validate
-                // it against the current model so unsupported foreign sounds are adapted safely.
-                AppendValidatedPhonemes(chunk.Text, finalPhonemes);
-                previousTechnicalSpeech = false;
-                continue;
-            }
-
-            if (TryAppendEmojiChunk(chunk, tokenIndex, tokens, finalPhonemes, ref previousTechnicalSpeech)) continue;
-            AppendTextChunk(chunk, tokenIndex, tokens, finalPhonemes, ref previousTechnicalSpeech);
-        }
-
-        return finalPhonemes.ToString();
+        finally { finalPhonemes.Dispose(); }
     }
 
     /// <summary>Appends a chunk using technical named reading or ordinary punctuation-aware phonemization.</summary>
     private void AppendTextChunk(TextChunk chunk, int tokenIndex, List<TextChunk> tokens,
-        StringBuilder finalPhonemes, ref bool previousTechnicalSpeech)
+        ref PhonemeOutput finalPhonemes, ref bool previousTechnicalSpeech)
     {
         if (chunk.IsTechnical &&
             TechnicalTextRecognizer.ShouldSpeak(chunk.Text.AsSpan(), _punctuationMapper.Rules))
         {
-            AppendTechnicalPhonemes(chunk.Text, chunk.DetectedLanguage, finalPhonemes);
+            AppendTechnicalPhonemes(chunk.Text, chunk.DetectedLanguage, ref finalPhonemes);
             previousTechnicalSpeech = true;
             return;
         }
@@ -216,7 +221,7 @@ public partial class UnifiedPhonemizer
                 normalizedText,
                 tokenIndex,
                 tokens,
-                finalPhonemes);
+                finalPhonemes.Builder);
 
             return;
         }
@@ -240,11 +245,11 @@ public partial class UnifiedPhonemizer
             if (rawPhonemes != null)
             {
                 // A silent quote can abut a technical name without source whitespace.
-                if (previousTechnicalSpeech) EspeakPhonemePartJoiner.Separate(finalPhonemes, rawPhonemes);
+                if (previousTechnicalSpeech) EspeakPhonemePartJoiner.Separate(finalPhonemes.Builder, rawPhonemes);
                 previousTechnicalSpeech = false;
                 if (_fallbackMapper != null)
                 {
-                    AppendValidatedPhonemes(rawPhonemes, finalPhonemes);
+                    AppendValidatedPhonemes(rawPhonemes, ref finalPhonemes);
                 }
                 else
                 {
@@ -258,7 +263,7 @@ public partial class UnifiedPhonemizer
 
     // Splits a protected token without allocating a list of parts or spelling names.
     // Number/version/time/IP exceptions are handled before this method.
-    private void AppendTechnicalPhonemes(string text, string detectedLanguage, StringBuilder output)
+    private void AppendTechnicalPhonemes(string text, string detectedLanguage, ref PhonemeOutput output)
     {
         int start = 0;
 
@@ -272,10 +277,10 @@ public partial class UnifiedPhonemizer
 
             if (index > start)
             {
-                AppendTechnicalPart(text[start..index], detectedLanguage, output);
+                AppendTechnicalPart(text[start..index], detectedLanguage, ref output);
             }
 
-            if (!_technicalCharacterCache.TryGetValue(character, out string? phonemes))
+            if (!_technicalCharacterCache.TryGetValue(character, out PhonemeSequence phonemes))
             {
                 if (!_espeakWrapper.TryGetCharacterPhonemes(character, _modelEspeakVoice, out string nativeIpa))
                 {
@@ -283,23 +288,22 @@ public partial class UnifiedPhonemizer
                         $"Failed to select configured eSpeak voice '{_modelEspeakVoice}' for technical symbol.");
                 }
 
-                var adapted = new StringBuilder(nativeIpa.Length);
-                AppendValidatedPhonemes(nativeIpa, adapted);
-                phonemes = _technicalCharacterCache.GetOrAdd(character, adapted.ToString());
+                phonemes = _technicalCharacterCache.GetOrAdd(character, AdaptPhonemes(nativeIpa));
             }
 
-            EspeakPhonemePartJoiner.Append(output, phonemes);
+            EspeakPhonemePartJoiner.Separate(output.Builder, phonemes.Text);
+            output.Append(phonemes);
             start = index + 1;
         }
 
         if (start < text.Length)
         {
-            AppendTechnicalPart(text[start..], detectedLanguage, output);
+            AppendTechnicalPart(text[start..], detectedLanguage, ref output);
         }
     }
 
     /// <summary>Phonemizes a technical text fragment in its selected language and appends validated model-compatible phonemes.</summary>
-    private void AppendTechnicalPart(string text, string language, StringBuilder output)
+    private void AppendTechnicalPart(string text, string language, ref PhonemeOutput output)
     {
         string? phonemes = TryGetIpaPhonemesSafely(text, language);
         if (string.IsNullOrWhiteSpace(phonemes))
@@ -307,8 +311,8 @@ public partial class UnifiedPhonemizer
             return;
         }
 
-        EspeakPhonemePartJoiner.Separate(output, phonemes);
-        AppendValidatedPhonemes(phonemes, output);
+        EspeakPhonemePartJoiner.Separate(output.Builder, phonemes);
+        AppendValidatedPhonemes(phonemes, ref output);
     }
 
     // The same structural classification is used without creating a statistical detector.
@@ -555,121 +559,12 @@ public partial class UnifiedPhonemizer
         return 1;
     }
 
-    /// <summary>
-    /// Validates an IPA stream against the loaded model without assuming that one Unicode
-    /// grapheme equals one phoneme. Exact model sequences win first, then active complex
-    /// fallback rules, then ordinary PHOIBLE nearest-neighbor fallback for one IPA unit.
-    /// Unknown content is preserved rather than deleted silently.
-    /// </summary>
-    private void AppendValidatedPhonemes(string phonemes, StringBuilder output)
+    private void AppendValidatedPhonemes(string phonemes, ref PhonemeOutput output)
     {
-        if (_fallbackMapper == null || string.IsNullOrEmpty(phonemes))
-        {
-            output.Append(phonemes);
-            return;
-        }
-
-        ReadOnlySpan<char> input = phonemes.AsSpan();
-        int index = 0;
-
-        while (index < input.Length)
-        {
-            ReadOnlySpan<char> remaining = input[index..];
-
-            // 1. Preserve a multi-character model token exactly when the model explicitly knows it.
-            // This includes true multi-phoneme tokens and supplementary-plane scalar values.
-            if (_inventory.TryMatch(remaining, out int supportedLength, out _) && supportedLength > 1)
-            {
-                output.Append(remaining[..supportedLength]);
-                index += supportedLength;
-                continue;
-            }
-
-            // 2. Apply complex IPA fallback rules only when startup analysis determined that
-            // the current model cannot represent that source sequence directly.
-            if (TryFindSequenceFallback(
-                remaining,
-                out int sequenceLength,
-                out string? sequenceFallback))
-            {
-                output.Append(sequenceFallback);
-                index += sequenceLength;
-                continue;
-            }
-
-            // 3. Resolve exactly one IPA unit: one Unicode scalar plus trailing combining marks.
-            // Do NOT consume a supported base symbol before checking the full unit. Otherwise a
-            // sequence such as ɛ̃ could become "ɛ" + orphaned combining tilde and bypass its fallback.
-            int unitLength = PhonemeFallbackMapper.GetPhonemeUnitLength(remaining);
-            ReadOnlySpan<char> unit = remaining[..unitLength];
-
-            if (_inventory.CanEncode(unit))
-            {
-                output.Append(unit);
-                index += unitLength;
-                continue;
-            }
-
-            if (_fallbackMapper.TryGetClosestPhoneme(unit, out string? fallback) &&
-                !string.IsNullOrEmpty(fallback))
-            {
-                output.Append(fallback);
-            }
-            else
-            {
-                // CRITICAL: Never silently drop an unknown phoneme. Preserving the source is safer
-                // than creating an unexplained gap and lets downstream diagnostics expose the issue.
-                output.Append(unit);
-            }
-
-            index += unitLength;
-        }
+        if (_fallbackMapper == null) { output.Append(phonemes); return; }
+        _fallbackMapper.Adapter.Append(phonemes.AsSpan(), ref output);
     }
 
-    // Finds the longest active complex IPA sequence with a precomputed fallback.
-    private bool TryFindSequenceFallback(
-        ReadOnlySpan<char> input,
-        out int matchedLength,
-        out string? fallback)
-    {
-        matchedLength = 0;
-        fallback = null;
-
-        if (_fallbackMapper == null || _fallbackMapper.MaxSequenceLength <= 0)
-        {
-            return false;
-        }
-
-        int maxLength = Math.Min(
-            _fallbackMapper.MaxSequenceLength,
-            input.Length);
-
-        for (int length = maxLength; length > 0; length--)
-        {
-            if (SplitsSurrogatePair(input, length))
-            {
-                continue;
-            }
-
-            if (!_fallbackMapper.TryGetSequenceFallback(input[..length], out string candidate))
-            {
-                continue;
-            }
-
-            matchedLength = length;
-            fallback = candidate;
-            return true;
-        }
-
-        return false;
-    }
-
-    // Checks whether a candidate UTF-16 length would split a surrogate pair.
-    private static bool SplitsSurrogatePair(ReadOnlySpan<char> input, int length)
-    {
-        return length > 0 &&
-               length < input.Length &&
-               char.IsHighSurrogate(input[length - 1]) &&
-               char.IsLowSurrogate(input[length]);
-    }
+    private PhonemeSequence AdaptPhonemes(string phonemes) =>
+        _fallbackMapper?.Adapter.Adapt(phonemes) ?? new(phonemes);
 }

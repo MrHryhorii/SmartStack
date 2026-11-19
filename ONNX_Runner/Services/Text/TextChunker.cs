@@ -2,6 +2,7 @@ using System.Globalization;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Text;
 using ONNX_Runner.Services.Text.Phonemization;
+using ONNX_Runner.Services.Text.Phonemization.Adaptation;
 
 namespace ONNX_Runner.Services.Text;
 
@@ -10,12 +11,13 @@ namespace ONNX_Runner.Services.Text;
 /// Boundary heuristics deliberately preserve ambiguous uppercase initials and uncased letters.
 /// </summary>
 public partial class TextChunker(ChunkerSettings settings, TextChunkerRules? rules = null,
-    Dictionary<string, int[]>? phonemeIdMap = null)
+    Dictionary<string, int[]>? phonemeIdMap = null, PhonemeAdapter? phonemeAdapter = null)
 {
     public TextChunkerRules Rules { get; } = rules ?? TextChunkerRules.Default;
 
     private readonly int _maxLength = settings.EffectiveMaxChunkLength;
     private readonly PhonemeInventory? _phonemeInventory = phonemeIdMap is { Count: > 0 } ? new(phonemeIdMap) : null;
+    private readonly PhonemeAdapter? _phonemeAdapter = phonemeAdapter;
     private const string EmergencyGlue = "-";
 
     /// <summary>

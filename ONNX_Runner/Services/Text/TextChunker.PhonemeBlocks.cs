@@ -125,12 +125,12 @@ public partial class TextChunker
     private int NextPhonemeElementEnd(ReadOnlySpan<char> text, int start)
     {
         int end = NextIpaElementEnd(text, start);
-        if (_phonemeInventory == null) return end;
+        if (_phonemeInventory == null && _phonemeAdapter == null) return end;
         int cursor = start;
         while (cursor < end)
         {
-            int length = _phonemeInventory.TryMatch(text[cursor..], out int matched, out _)
-                ? matched : PhonemeInventory.ScalarLength(text[cursor..]);
+            int length = _phonemeAdapter?.ReadLength(text[cursor..]) ??
+                (_phonemeInventory!.TryMatch(text[cursor..], out int matched, out _) ? matched : PhonemeInventory.ScalarLength(text[cursor..]));
             int tokenEnd = cursor + length;
             while (end < tokenEnd) end = NextIpaElementEnd(text, end);
             cursor = tokenEnd;

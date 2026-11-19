@@ -38,5 +38,6 @@
     <Compile Include="../../Services/Text/Phonemization/UnifiedPhonemizer.Emojis.cs" Link="UnifiedPhonemizer.Emojis.cs" />
     <Compile Include="../../Services/Text/Phonemization/EspeakWrapper.Emojis.cs" Link="EspeakWrapper.Emojis.cs" />
     <Compile Include="../../Models/Text/TextChunk.cs" Link="TextChunk.cs" />
+    <Compile Include="../../Services/Text/Phonemization/Adaptation/*.cs" Link="Adaptation/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

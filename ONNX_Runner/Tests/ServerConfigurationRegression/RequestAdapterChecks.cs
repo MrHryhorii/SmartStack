@@ -118,7 +118,8 @@ internal static class RequestAdapterChecks
             {
                 const string text = "A long ordinary sentence contains words and continues through the final clause.";
                 var chunks = new ONNX_Runner.Services.Text.TextChunker(new ChunkerSettings { MaxChunkLength = limit }).Split(text);
-                Require(chunks.Count > 1 && chunks.All(chunk => chunk.Text.TrimEnd('-').Length <= limit), "Positive limit was silently replaced.");
+                // An attached terminal period stays with its carrier even at a one-character cap.
+                Require(chunks.Count > 1 && chunks.All(chunk => chunk.Text.TrimEnd('-', '.').Length <= limit), "Positive limit was silently replaced.");
                 Require(chunks.Count(chunk => chunk.IsSentenceFinished) == 1 && chunks[^1].IsSentenceFinished, "Emergency cuts became sentence boundaries.");
             });
         }
