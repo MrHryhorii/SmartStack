@@ -153,6 +153,15 @@ public sealed class TextChunkerRules
             .Concat(IntroductoryAbbreviations).ToFrozenSet(StringComparer.OrdinalIgnoreCase);
     }
 
+    /// <summary>Prefers the host content root, then rules deployed beside the application.</summary>
+    public static TextChunkerRules LoadForApplication(string contentRootPath, string applicationDirectory)
+    {
+        string contentPath = Path.Combine(contentRootPath, "TextChunkerRules.json");
+        if (File.Exists(contentPath)) return LoadOrDefault(contentPath);
+
+        return LoadOrDefault(Path.Combine(applicationDirectory, "TextChunkerRules.json"));
+    }
+
     /// <summary>Missing JSON selects the complete built-in catalog without creating a file.</summary>
     public static TextChunkerRules LoadOrDefault(string path)
     {
@@ -227,7 +236,9 @@ public sealed class TextChunkerRules
                 throw new ArgumentException($"Technical markers must be individual BMP punctuation or symbol characters: '{value}'.");
             var mark = new Rune(value[0]);
             punctuation.TryGetValue(mark, out var existing);
-            punctuation[mark] = new PunctuationEntry(existing.Kind, existing.Roles | PunctuationRole.TechnicalToken);
+            // Explicit technical markers also protect the token from emergency size cuts.
+            punctuation[mark] = new PunctuationEntry(existing.Kind,
+                existing.Roles | PunctuationRole.TechnicalToken | PunctuationRole.TechnicalMarker);
         }
     }
 

@@ -181,8 +181,8 @@ var corsConfig = builder.Configuration.GetSection("CorsSettings").Get<CorsSettin
 var phonemizerConfig = builder.Configuration.GetSection("PhonemizerSettings").Get<PhonemizerSettings>() ?? new PhonemizerSettings();
 var chunkerConfig = builder.Configuration.GetSection("ChunkerSettings").Get<ChunkerSettings>() ?? new ChunkerSettings();
 // Optional additions are merged into one immutable catalog before services are created.
-var chunkerRules = TextChunkerRules.LoadOrDefault(
-    Path.Combine(builder.Environment.ContentRootPath, "TextChunkerRules.json"));
+var chunkerRules = TextChunkerRules.LoadForApplication(
+    builder.Environment.ContentRootPath, AppContext.BaseDirectory);
 builder.Services.AddSingleton(chunkerRules);
 var hardwareConfig = builder.Configuration.GetSection("HardwareSettings").Get<HardwareSettings>() ?? new HardwareSettings();
 var dspConfig = builder.Configuration.GetSection("DspSettings").Get<DspSettings>() ?? new DspSettings();

@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="../../TextChunkerRules.example.json" Link="TextChunkerRules.example.json" CopyToOutputDirectory="PreserveNewest" />
     <Compile Include="../../Services/Text/TextChunker*.cs" Link="%(Filename)%(Extension)" />
     <Compile Include="../../Services/Text/TechnicalTextRecognizer.cs" Link="TechnicalTextRecognizer.cs" />
     <Compile Include="../../Services/Text/SingleBracketPhonemeRecognizer.cs" Link="SingleBracketPhonemeRecognizer.cs" />
