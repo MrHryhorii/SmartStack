@@ -27,6 +27,7 @@ public sealed class PhonemeAdapter
                 group => group.OrderByDescending(pair => pair.Key.Length).ThenBy(pair => pair.Key, StringComparer.Ordinal).ToArray());
         MaxSourceLength = _plans.Count == 0 ? 0 : _plans.Keys.Max(source => source.Length);
         Console.WriteLine($"[INFO] Prepared {_plans.Count} phoneme adaptation plans for the loaded model.");
+        Console.WriteLine();
     }
 
     public PhonemeSequence Adapt(string phonemes)

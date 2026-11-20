@@ -18,6 +18,7 @@ internal static class ServerIdentity
         if (Console.IsOutputRedirected)
         {
             Console.WriteLine($"{Name} v{Version}");
+            Console.WriteLine();
             return;
         }
 
@@ -26,6 +27,7 @@ internal static class ServerIdentity
         {
             Console.ForegroundColor = ConsoleColor.Magenta;
             Console.WriteLine($"{Name} v{Version}");
+            Console.WriteLine();
         }
         finally
         {

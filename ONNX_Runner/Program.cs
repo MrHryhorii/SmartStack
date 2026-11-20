@@ -173,6 +173,7 @@ else
     Console.WriteLine("[WARNING] Install your distribution's libmp3lame runtime package or set TSUBAKI_LAME_LIBRARY.");
     Console.ResetColor();
 }
+Console.WriteLine();
 // Read configuration sections from appsettings.json
 var apiConfig = builder.Configuration.GetSection("ApiSettings").Get<ApiSettings>() ?? new ApiSettings();
 var startupConfig = builder.Configuration.GetSection("StartupSettings").Get<StartupSettings>() ?? new StartupSettings();
@@ -369,6 +370,7 @@ if (piperConfig != null && piperModelPath != null)
                         Console.ResetColor();
                     }
                 }
+                if (voiceFiles.Length > 0) Console.WriteLine();
                 // Register cloner services
                 builder.Services.AddSingleton(_ => openVoice);
                 builder.Services.AddSingleton(audioProc);

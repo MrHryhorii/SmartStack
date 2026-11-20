@@ -350,6 +350,7 @@ public partial class OpenVoiceRunner : IDisposable
     /// <summary>Logs model configuration and tensor metadata during startup, before pooled sessions can be used concurrently.</summary>
     private void PrintModelMetadata()
     {
+        _logger.LogInformation("\n");
         _logger.LogInformation("=========================================");
         _logger.LogInformation("       OPENVOICE MODELS INSPECTION       ");
         _logger.LogInformation("=========================================");
@@ -377,6 +378,7 @@ public partial class OpenVoiceRunner : IDisposable
         {
             InspectSession("TONE COLOR CONVERTER", _sharedColorSession);
         }
+        _logger.LogInformation("\n");
     }
 
     // Logs ONNX input and output metadata for one session.
@@ -588,6 +590,7 @@ public partial class OpenVoiceRunner : IDisposable
             }
             // If we reach this point without exceptions, the warmup is successful.
             _logger.LogInformation("[AUTO-BASE] OpenVoice warmup complete. System is fully ready.");
+            _logger.LogInformation("\n");
         }
         catch (Exception ex)
         {

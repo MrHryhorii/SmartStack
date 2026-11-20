@@ -144,6 +144,7 @@ public class BaseVoiceGenerator(
 
         Console.WriteLine("[AUTO-BASE] Dynamic base footprint successfully calculated and stored in memory.");
         Console.ResetColor();
+        Console.WriteLine();
     }
 
     /// <summary>Chooses a reference passage by exact voice code, progressively shorter parent codes, then the fallback.</summary>

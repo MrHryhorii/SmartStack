@@ -54,6 +54,13 @@ public sealed class CleanConsoleFormatter : ConsoleFormatter
             return;
         }
 
+        // Keep startup section breaks in the logger queue without timestamp or level prefixes.
+        if (message == "\n" && logEntry.Exception == null)
+        {
+            textWriter.WriteLine();
+            return;
+        }
+
         string level = logEntry.LogLevel switch
         {
             LogLevel.Information => "info",
