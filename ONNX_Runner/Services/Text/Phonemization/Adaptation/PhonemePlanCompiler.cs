@@ -20,6 +20,8 @@ internal sealed class PhonemePlanCompiler
     private readonly int[] _padding;
     private readonly PhonemeInventory _inventory;
 
+    internal PhonemeInventory Inventory => _inventory;
+
     internal Dictionary<string, PhonemePlan> Plans { get; } = new(StringComparer.Ordinal);
     internal Dictionary<string, PhonemePlan> NativePlans { get; } = new(StringComparer.Ordinal);
     internal Dictionary<(IpaModifier Modifier, bool Voiced), PhonemePlan?> Modifiers { get; } = [];
@@ -29,7 +31,7 @@ internal sealed class PhonemePlanCompiler
     {
         _catalog = catalog;
         _inventory = new(config.PhonemeIdMap);
-        _native = config.PhonemeIdMap.Where(pair => pair.Key.Length > 0 && pair.Value is { Length: > 0 })
+        _native = _inventory.Tokens
             .ToDictionary(pair => pair.Key, pair => new NativePhoneme(pair.Key, pair.Value), StringComparer.Ordinal);
         _nativeLengths = _native.Keys.Select(key => key.Length).Distinct().OrderDescending().ToArray();
         _padding = _native.TryGetValue("_", out var pad) ? pad.Ids : [0];
@@ -49,15 +51,18 @@ internal sealed class PhonemePlanCompiler
         char[] modifiers = ['\u0303', 'ʲ', 'ʷ', 'ˠ', 'ˤ', 'ʰ', 'ʱ', 'ː', 'ˑ', '\u0329', '\u032F', 'ⁿ', 'ᵐ', 'ᵑ', 'ˡ', '˞', '\u032C', '\u0325'];
         var bases = sources.SelectMany(source => source.EnumerateRunes()).Where(rune => rune.IsBmp &&
             char.IsLetter((char)rune.Value) && IpaReader.Modifier((char)rune.Value) == IpaModifier.None &&
-            !IpaReader.IsBoundary((char)rune.Value)).Select(rune => (char)rune.Value).Distinct().ToArray();
+            !IpaReader.IsBoundary((char)rune.Value)).Select(rune => (char)rune.Value).ToHashSet();
         foreach (char value in bases)
         {
-            if (catalog.IsVoiced(value.ToString())) VoicedBases.Add(value);
             foreach (char modifier in modifiers) sources.Add(string.Concat(value, modifier));
         }
         foreach (string source in sources.ToArray())
         {
-            sources.Add(source.Normalize(NormalizationForm.FormC));
+            string composed = source.Normalize(NormalizationForm.FormC);
+            sources.Add(composed);
+            if (composed.Length == 1 && char.IsLetter(composed[0]) &&
+                IpaReader.Modifier(composed[0]) == IpaModifier.None && !IpaReader.IsBoundary(composed[0]))
+                bases.Add(composed[0]);
             sources.Add(source.Normalize(NormalizationForm.FormD));
             if (source.Contains('ɡ')) sources.Add(source.Replace('ɡ', 'g'));
             if (!IpaReader.HasBase(source)) continue;
@@ -69,6 +74,9 @@ internal sealed class PhonemePlanCompiler
                 sources.Add(source.Insert(first, "\u035C"));
             }
         }
+        // Unlisted modifier combinations must classify composed and decomposed bases identically.
+        foreach (char value in bases)
+            if (catalog.IsVoiced(value.ToString())) VoicedBases.Add(value);
         foreach (string source in sources.OrderBy(source => source, StringComparer.Ordinal))
         {
             Solution? solution = Resolve(source);
@@ -153,8 +161,8 @@ internal sealed class PhonemePlanCompiler
             if (rest != null) Consider(ref best, mark == null ? Changed(rest, 24, true) : Join(mark, rest, 2));
         }
 
-        // Explore every legal partition. A native suffix can beat a longer native prefix.
-        for (int split = 1; split < source.Length; split++)
+        // Prefer longer prefixes on ties; a better suffix can still win on cost.
+        for (int split = source.Length - 1; split > 0; split--)
         {
             if (!IpaReader.CanSplit(source, split)) continue;
             Solution? left = Resolve(source[..split]), right = Resolve(source[split..]);

@@ -51,33 +51,7 @@ public partial class PiperPhonemizer(PiperConfig config, ILogger<PiperPhonemizer
             lastWasSpace = true;
         }
 
-        while (!phonemes.IsEmpty)
-        {
-            bool normalizeSpace = phonemes[0] is '\r' or '\n' ||
-                (char.IsWhiteSpace(phonemes[0]) && phonemes[0] != ' ' &&
-                 !_inventory.TryMatch(phonemes, out _, out _));
-            if (normalizeSpace)
-            {
-                int length = phonemes.StartsWith("\r\n", StringComparison.Ordinal) ? 2 : PhonemeInventory.ScalarLength(phonemes);
-                phonemes = phonemes[length..];
-                if (lastWasSpace) continue;
-                output.Append(_spaceIds);
-                output.Append(_padIds);
-                lastWasSpace = true;
-                continue;
-            }
-            if (!_inventory.TryMatch(phonemes, out int consumed, out var ids))
-            {
-                phonemes = phonemes[PhonemeInventory.ScalarLength(phonemes)..];
-                continue;
-            }
-
-            // Padding separates phonemes, never the IDs belonging to one model token.
-            output.Append(ids);
-            output.Append(_padIds);
-            lastWasSpace = ids.AsSpan().SequenceEqual(_spaceIds);
-            phonemes = phonemes[consumed..];
-        }
+        AppendPhonemes(phonemes, ref output, ref lastWasSpace);
         if (isFinished && !lastWasSpace)
         {
             output.Append(_spaceIds);
@@ -203,7 +177,7 @@ public partial class PiperPhonemizer(PiperConfig config, ILogger<PiperPhonemizer
     }
 
     private static int[] GetServiceIds(PiperConfig config, string token, int fallback) =>
-        config.PhonemeIdMap.TryGetValue(token, out var ids) && ids is { Length: > 0 } ? ids : [fallback];
+        config.PhonemeIdMap.TryGetValue(token, out var ids) && ids is { Length: > 0 } ? ids.ToArray() : [fallback];
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "Input Phonemes: {Phonemes}")]
     private static partial void LogInputPhonemes(ILogger logger, string phonemes);

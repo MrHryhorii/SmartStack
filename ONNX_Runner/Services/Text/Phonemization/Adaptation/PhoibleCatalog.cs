@@ -58,9 +58,10 @@ internal sealed class PhoibleCatalog
 
     internal bool IsVoiced(string source)
     {
-        sbyte value = TryGet(source, out var profile) ? Value(profile, "periodicGlottalSource") : (sbyte)0;
+        string canonical = IpaReader.Canonical(source);
+        sbyte value = Profiles.TryGetValue(canonical, out var profile) ? Value(profile, "periodicGlottalSource") : (sbyte)0;
         if (value != 0) return value > 0;
-        return source.EnumerateRunes().Any(rune => "aeiouyɑɐɒæəɘɜɞɛɤɨɪɯɵœøɔʊʉʌɶɚɝbdɡgvzʒðʑɣʁɦmnŋɲɳɴrlɹɾɽʎɭjwʋ".Contains(rune.ToString(), StringComparison.Ordinal));
+        return canonical.EnumerateRunes().Any(rune => "aeiouyɑɐɒæəɘɜɞɛɤɨɪɯɵœøɔʊʉʌɶɚɝbdɡgvzʒðʑɣʁɦmnŋɲɳɴrlɹɾɽʎɭjwʋ".Contains(rune.ToString(), StringComparison.Ordinal));
     }
 
     internal sbyte Value(PhonemeProfile profile, string name)

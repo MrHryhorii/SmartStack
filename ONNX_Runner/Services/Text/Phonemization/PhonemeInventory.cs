@@ -9,11 +9,14 @@ internal sealed class PhonemeInventory
     private readonly Dictionary<string, int[]> _map;
     private readonly int[] _lengths;
 
+    internal IEnumerable<KeyValuePair<string, int[]>> Tokens => _map;
+
     internal PhonemeInventory(Dictionary<string, int[]> map)
     {
-        _map = map;
-        _lengths = map.Where(pair => pair.Key.Length > 0 && pair.Value is { Length: > 0 })
-            .Select(pair => pair.Key.Length).Distinct().OrderDescending().ToArray();
+        // Prepared readers own their IDs; later configuration edits cannot change a live inventory.
+        _map = map.Where(pair => pair.Key.Length > 0 && pair.Value is { Length: > 0 })
+            .ToDictionary(pair => pair.Key, pair => pair.Value.ToArray(), StringComparer.Ordinal);
+        _lengths = _map.Keys.Select(key => key.Length).Distinct().OrderDescending().ToArray();
     }
 
     internal bool TryMatch(ReadOnlySpan<char> input, out int length, out int[] ids)

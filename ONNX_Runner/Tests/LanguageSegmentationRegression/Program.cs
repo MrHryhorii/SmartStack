@@ -168,7 +168,7 @@ int additionalTotal = 0;
 foreach (var (Name, Check) in SharedRulesChecks.Cases().Concat(TechnicalSpeechChecks.Cases())
     .Concat(TechnicalLanguageChecks.Cases()).Concat(LanguageDetectionSettingsChecks.Cases())
     .Concat(ScriptOnlyLanguageChecks.Cases()).Concat(EmojiChecks.Cases()).Concat(SingleBracketPhonemeChecks.Cases()).Concat(LongPhonemeChecks.Cases()).Concat(ModelInventoryChecks.Cases())
-    .Concat(PhonemeAdaptationChecks.Cases()))
+    .Concat(PhonemeAdaptationChecks.Cases()).Concat(PhonemeArchitectureChecks.Cases()))
 {
     additionalTotal++;
     try

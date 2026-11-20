@@ -21,7 +21,7 @@ public sealed class PhonemeAdapter
         _native = compiler.NativePlans;
         _modifiers = compiler.Modifiers;
         _voiced = compiler.VoicedBases;
-        _inventory = new(config.PhonemeIdMap);
+        _inventory = compiler.Inventory;
         _starts = _plans.Where(pair => pair.Key.Length > 1 && !pair.Key.Any(char.IsWhiteSpace))
             .GroupBy(pair => Prefix(pair.Key.AsSpan())).ToDictionary(group => group.Key,
                 group => group.OrderByDescending(pair => pair.Key.Length).ThenBy(pair => pair.Key, StringComparer.Ordinal).ToArray());
