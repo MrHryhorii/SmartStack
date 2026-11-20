@@ -13,6 +13,7 @@ using Microsoft.Extensions.Logging.Console;
 
 // Set console output encoding to UTF-8 to properly display international characters and phonemes in logs and diagnostics.
 Console.OutputEncoding = System.Text.Encoding.UTF8;
+ServerIdentity.WriteBanner();
 
 string? portableContentRoot = null;
 #pragma warning disable IL3000 // The bundled entry assembly has an empty location.
@@ -62,37 +63,6 @@ using var bootstrapLoggerFactory = LoggerFactory.Create(lb =>
     lb.AddConsoleFormatter<CleanConsoleFormatter, ConsoleFormatterOptions>();
 });
 
-// Native dependencies are resolved by the platform loader.
-NativeLibraryResolver.Initialize();
-
-var nativeAudioDependencies =
-    NativeAudioDependencies.Detect();
-if (nativeAudioDependencies.EspeakAvailable)
-{
-    Console.WriteLine(
-        $"[SYSTEM] eSpeak NG loaded: {nativeAudioDependencies.EspeakLoadedFrom}");
-}
-else
-{
-    Console.ForegroundColor = ConsoleColor.Red;
-    Console.WriteLine(
-        "[ERROR] eSpeak NG was not found. TTS cannot initialize until the system library is installed.");
-    Console.ResetColor();
-}
-if (nativeAudioDependencies.Mp3Available)
-{
-    Console.WriteLine(
-        $"[SYSTEM] MP3 encoding enabled: {nativeAudioDependencies.LameLoadedFrom}");
-}
-else
-{
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.WriteLine(
-        "[WARNING] LAME was not found. MP3 and b64_json are disabled; WAV, Opus, AAC, FLAC, and PCM remain available.");
-    Console.WriteLine(
-        "[WARNING] Install your distribution's libmp3lame runtime package or set TSUBAKI_LAME_LIBRARY.");
-    Console.ResetColor();
-}
 // Add Swagger support for API documentation and easy testing
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddOpenApi();
@@ -105,6 +75,7 @@ var modelConfig = builder.Configuration.GetSection("ModelSettings").Get<ModelSet
 // =================================================================
 PiperConfig? piperConfig = null;
 string? piperModelPath = null;
+bool usingFallbackModel = false;
 string modelDirectory = ModelLoader.GetModelDirectoryPath(modelConfig);
 bool hasExactModelPaths =
     !string.IsNullOrWhiteSpace(modelConfig.ExactModelFilePath) &&
@@ -122,20 +93,6 @@ try
     var (onnxPath, config) = ModelLoader.LoadFromDirectory(modelConfig, isSingleFile ? AppContext.BaseDirectory : null);
     piperModelPath = onnxPath;
     piperConfig = config;
-
-    Console.ForegroundColor = ConsoleColor.Green;
-    Console.WriteLine("=========================================");
-    Console.WriteLine("        MODEL LOADED SUCCESSFULLY        ");
-    Console.WriteLine("=========================================");
-    Console.ResetColor();
-    Console.WriteLine($"Model Path:      {onnxPath}");
-    Console.WriteLine($"Sample Rate:     {config.Audio.SampleRate} Hz");
-    Console.WriteLine($"Espeak Voice:    {config.Espeak.Voice}");
-    Console.WriteLine($"Noise Scale:     {config.Inference.NoiseScale}");
-    Console.WriteLine($"Length Scale:    {config.Inference.LengthScale}");
-    Console.WriteLine($"Noise W:         {config.Inference.NoiseW}");
-    Console.WriteLine($"Total Phonemes:  {config.PhonemeIdMap.Count} unique sounds mapped");
-    Console.WriteLine("=========================================\n");
 }
 catch (Exception ex)
 {
@@ -151,16 +108,7 @@ if (piperConfig == null || piperModelPath == null)
     {
         piperModelPath = fallbackModelPath;
         piperConfig = fallbackConfig;
-
-        Console.ForegroundColor = ConsoleColor.Green;
-        Console.WriteLine("=========================================");
-        Console.WriteLine("      FALLBACK MODEL LOADED SUCCESSFULLY ");
-        Console.WriteLine("=========================================");
-        Console.ResetColor();
-        Console.WriteLine($"Model Path:      {fallbackModelPath}");
-        Console.WriteLine($"Sample Rate:     {fallbackConfig.Audio.SampleRate} Hz");
-        Console.WriteLine($"Espeak Voice:    {fallbackConfig.Espeak.Voice}");
-        Console.WriteLine("=========================================\n");
+        usingFallbackModel = true;
     }
 }
 
@@ -168,6 +116,61 @@ if (piperConfig == null || piperModelPath == null)
 {
     Console.ForegroundColor = ConsoleColor.Red;
     Console.WriteLine("[ERROR] Piper model is unavailable. The server will start, but TTS endpoints cannot synthesize audio.");
+    Console.ResetColor();
+}
+else
+{
+    // Reject an incompatible frontend before loading native libraries or ONNX sessions.
+    if (!string.Equals(piperConfig.PhonemeType?.Trim(), PiperConfig.SupportedPhonemeType,
+        StringComparison.OrdinalIgnoreCase))
+    {
+        string unsupportedType = piperConfig.PhonemeType is null ? "<null>" : $"'{piperConfig.PhonemeType}'";
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine($"[WARNING] Unsupported phoneme_type: {unsupportedType}. Supported phoneme_type: espeak. Server startup stopped.");
+        Console.ResetColor();
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    Console.ForegroundColor = ConsoleColor.Green;
+    Console.WriteLine("=========================================");
+    Console.WriteLine(usingFallbackModel
+        ? "      FALLBACK MODEL LOADED SUCCESSFULLY "
+        : "        MODEL LOADED SUCCESSFULLY        ");
+    Console.WriteLine("=========================================");
+    Console.ResetColor();
+    Console.WriteLine($"Model Path:      {piperModelPath}");
+    Console.WriteLine($"Sample Rate:     {piperConfig.Audio.SampleRate} Hz");
+    Console.WriteLine($"Espeak Voice:    {piperConfig.Espeak.Voice}");
+    Console.WriteLine($"Noise Scale:     {piperConfig.Inference.NoiseScale}");
+    Console.WriteLine($"Length Scale:    {piperConfig.Inference.LengthScale}");
+    Console.WriteLine($"Noise W:         {piperConfig.Inference.NoiseW}");
+    Console.WriteLine($"Total Phonemes:  {piperConfig.PhonemeIdMap.Count} unique sounds mapped");
+    Console.WriteLine("=========================================\n");
+}
+
+// Native dependencies are resolved only after the selected model passes compatibility checks.
+NativeLibraryResolver.Initialize();
+var nativeAudioDependencies = NativeAudioDependencies.Detect();
+if (nativeAudioDependencies.EspeakAvailable)
+{
+    Console.WriteLine($"[SYSTEM] eSpeak NG loaded: {nativeAudioDependencies.EspeakLoadedFrom}");
+}
+else
+{
+    Console.ForegroundColor = ConsoleColor.Red;
+    Console.WriteLine("[ERROR] eSpeak NG was not found. TTS cannot initialize until the system library is installed.");
+    Console.ResetColor();
+}
+if (nativeAudioDependencies.Mp3Available)
+{
+    Console.WriteLine($"[SYSTEM] MP3 encoding enabled: {nativeAudioDependencies.LameLoadedFrom}");
+}
+else
+{
+    Console.ForegroundColor = ConsoleColor.Yellow;
+    Console.WriteLine("[WARNING] LAME was not found. MP3 and b64_json are disabled; WAV, Opus, AAC, FLAC, and PCM remain available.");
+    Console.WriteLine("[WARNING] Install your distribution's libmp3lame runtime package or set TSUBAKI_LAME_LIBRARY.");
     Console.ResetColor();
 }
 // Read configuration sections from appsettings.json

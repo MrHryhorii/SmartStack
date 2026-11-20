@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <Compile Include="../../Models/Inference/PiperConfig.cs" Link="Production/PiperConfig.cs" />
+    <Compile Include="../../Models/Configuration/ModelSettings.cs" Link="Production/ModelSettings.cs" />
+    <Compile Include="../../Services/Inference/PiperSpeakerSelector.cs" Link="Production/PiperSpeakerSelector.cs" />
+    <Compile Include="../../Services/Infrastructure/ServerIdentity.cs" Link="Production/ServerIdentity.cs" />
+  </ItemGroup>
+</Project>

@@ -7,6 +7,12 @@ namespace ONNX_Runner.Models.Inference;
 /// </summary>
 public class PiperConfig
 {
+    public const string SupportedPhonemeType = "espeak";
+
+    /// <summary>Missing metadata retains the legacy eSpeak phonemization path.</summary>
+    [JsonPropertyName("phoneme_type")]
+    public string? PhonemeType { get; set; } = SupportedPhonemeType;
+
     [JsonPropertyName("audio")]
     public AudioConfig Audio { get; set; } = new();
 
@@ -22,6 +28,10 @@ public class PiperConfig
     /// </summary>
     [JsonPropertyName("num_speakers")]
     public int NumSpeakers { get; set; } = 1;
+
+    /// <summary>Optional default speaker ID for multi-speaker models.</summary>
+    [JsonPropertyName("default_speaker_id")]
+    public int? DefaultSpeakerId { get; set; }
 
     /// <summary>
     /// Maps the model-specific speaker name/identifier to the internal ONNX speaker ID (sid).

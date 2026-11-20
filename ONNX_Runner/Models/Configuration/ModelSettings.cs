@@ -41,7 +41,8 @@ public class ModelSettings
     /// <summary>
     /// Preferred speaker key for multi-speaker Piper models.
     /// Must match a key from the model's speaker_id_map.
-    /// If empty or not found, the first available speaker is used.
+    /// If empty or invalid, the model's valid default_speaker_id is used,
+    /// followed by the lowest valid mapped speaker ID or zero.
     /// Ignored for single-speaker models.
     /// </summary>
     public string Speaker { get; set; } = string.Empty;

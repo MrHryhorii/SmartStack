@@ -3,7 +3,6 @@ using ONNX_Runner.Services.Inference;
 using ONNX_Runner.Services.Text.Phonemization;
 using ONNX_Runner.Services.Infrastructure;
 using System.Net;
-using System.Reflection;
 using ONNX_Runner.Models.Audio;
 using ONNX_Runner.Models.Configuration;
 using ONNX_Runner.Models.Inference;
@@ -34,12 +33,6 @@ public class LocalHostOnlyFilter : IEndpointFilter
 /// </summary>
 public static class InfoEndpoints
 {
-    private const string ServiceName = "Tsubaki TTS Engine";
-    private static readonly string ServiceVersion =
-        typeof(InfoEndpoints).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion.Split('+', 2)[0]
-        ?? typeof(InfoEndpoints).Assembly.GetName().Version?.ToString(3)
-        ?? "unknown";
     private static readonly string[] SupportedStreamFormats = ["audio", "sse"];
     /// <summary>
     /// Returns voices usable by the initialized synthesis pipeline.
@@ -178,8 +171,8 @@ public static class InfoEndpoints
 
         return Results.Ok(new
         {
-            service = ServiceName,
-            version = ServiceVersion,
+            service = ServerIdentity.Name,
+            version = ServerIdentity.Version,
             status = synthesisReady ? "ready" : "degraded",
             synthesisReady,
             model = piperConfig == null ? null : new
@@ -292,8 +285,8 @@ public static class InfoEndpoints
         return Results.Ok(new
         {
             status = "ok",
-            service = ServiceName,
-            version = ServiceVersion,
+            service = ServerIdentity.Name,
+            version = ServerIdentity.Version,
             synthesisReady = IsSynthesisReady(services, nativeAudioDependencies),
             timestamp = DateTimeOffset.UtcNow
         });

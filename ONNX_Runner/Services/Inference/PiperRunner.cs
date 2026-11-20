@@ -67,7 +67,7 @@ public partial class PiperRunner : IDisposable
 
         _phonemizer = phonemizer;
         _config = config;
-        _speakerId = ResolveSpeakerId(config, modelSettings, logger);
+        _speakerId = PiperSpeakerSelector.Resolve(config, modelSettings, logger);
 
         var initResult = InitializeSession(modelPath, onnxSettings, hwSettings, logger, openVoiceEnabled);
 
@@ -80,44 +80,6 @@ public partial class PiperRunner : IDisposable
             _sessionGate = new SemaphoreSlim(ConcurrencyCapacity, ConcurrencyCapacity);
     }
 
-
-    /// <summary>
-    /// Resolves the configured Piper speaker once at startup.
-    /// Single-speaker models do not receive a sid input.
-    /// </summary>
-    private static long? ResolveSpeakerId(PiperConfig config, ModelSettings modelSettings, ILogger<PiperRunner> logger)
-    {
-        if (config.NumSpeakers <= 1)
-        {
-            LogSingleSpeakerModel(logger);
-            return null;
-        }
-
-        if (config.SpeakerIdMap.Count == 0)
-        {
-            LogEmptySpeakerMap(logger, config.NumSpeakers);
-            return 0;
-        }
-
-        string requestedSpeaker = modelSettings.Speaker.Trim();
-
-        if (!string.IsNullOrEmpty(requestedSpeaker))
-        {
-            if (config.SpeakerIdMap.TryGetValue(requestedSpeaker, out int configuredId))
-            {
-                LogConfiguredSpeaker(logger, requestedSpeaker, configuredId);
-                return configuredId;
-            }
-
-            LogSpeakerNotFound(logger, requestedSpeaker);
-        }
-
-        var fallback = config.SpeakerIdMap.OrderBy(static pair => pair.Value).First();
-
-        LogFallbackSpeaker(logger, fallback.Key, fallback.Value);
-
-        return fallback.Value;
-    }
 
     /// <summary>
     /// Dynamically selects the best available hardware based on compile-time flags.
@@ -446,26 +408,6 @@ public partial class PiperRunner : IDisposable
         _sessionGate?.Dispose();
         GC.SuppressFinalize(this);
     }
-
-    /// <summary>Logs that speaker selection is unnecessary for a single-speaker model.</summary>
-    [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Single-speaker model detected. Speaker selection is not required.")]
-    private static partial void LogSingleSpeakerModel(ILogger logger);
-
-    /// <summary>Reports a missing speaker map and the fallback to speaker ID zero.</summary>
-    [LoggerMessage(Level = LogLevel.Warning, Message = "[PIPER] Model reports {SpeakerCount} speakers but speaker_id_map is empty. Falling back to sid=0.")]
-    private static partial void LogEmptySpeakerMap(ILogger logger, int speakerCount);
-
-    /// <summary>Logs the configured speaker name and resolved model ID.</summary>
-    [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Multi-speaker model detected. Using configured speaker '{Speaker}' (sid={SpeakerId}).")]
-    private static partial void LogConfiguredSpeaker(ILogger logger, string speaker, int speakerId);
-
-    /// <summary>Reports an unknown configured speaker before selecting an available fallback.</summary>
-    [LoggerMessage(Level = LogLevel.Warning, Message = "[PIPER] Configured speaker '{Speaker}' was not found in speaker_id_map. Falling back to the first available speaker.")]
-    private static partial void LogSpeakerNotFound(ILogger logger, string speaker);
-
-    /// <summary>Logs the fallback speaker name and model ID.</summary>
-    [LoggerMessage(Level = LogLevel.Information, Message = "[PIPER] Using fallback speaker '{Speaker}' (sid={SpeakerId}).")]
-    private static partial void LogFallbackSpeaker(ILogger logger, string speaker, int speakerId);
 
     /// <summary>Logs successful Piper loading on the selected CUDA device.</summary>
     [LoggerMessage(Level = LogLevel.Information, Message = "[HARDWARE] Piper Model loaded successfully on GPU (CUDA, Device ID: {DeviceId})")]
