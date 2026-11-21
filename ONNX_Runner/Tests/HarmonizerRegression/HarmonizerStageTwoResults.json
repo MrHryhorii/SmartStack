@@ -1,0 +1,3183 @@
+{
+  "BaselineCommit": "1489a835462b98b2b9ed58063a860b3ba7631ffc",
+  "Date": "2026-11-21",
+  "Cpu": "AMD EPYC 9V74",
+  "OverlayBase": {
+    "Archive": "ONNX_Runner-Harmonizer-Local-Power-Correction-Changed-Files-20261121.zip",
+    "Sha256": "ABDB329038E2FE99BAC829658873D51A70C60648565EAF844B866F3BBD0BC3E3"
+  },
+  "Revision": "Continuous clean-reference confidence replaces thresholded activity control",
+  "Control": {
+    "ReferenceLevelWeight": "P^2 / (P^2 + (1e-8)^2)",
+    "HalfReferenceWeightRmsDbFS": -80,
+    "ActivityConfidence": "Continuously smoothed AC activity / (AC activity + 1e-12)",
+    "Recoverability": "Processed hop power / (processed hop power + 1e-12)",
+    "TargetGain": "Nominal gain + combined confidence * (bounded measured gain - nominal gain)",
+    "MaximumGain": 4,
+    "HopMs": 2,
+    "GainRiseMs": 6,
+    "GainFallMs": 2,
+    "MaximumRiseDbPerSecond": 480
+  },
+  "Validation": {
+    "Passed": 879,
+    "Failed": 0,
+    "Suites": [
+      {
+        "Name": "HarmonizerRegression",
+        "Passed": 351
+      },
+      {
+        "Name": "StreamingGainRegression",
+        "Passed": 33
+      },
+      {
+        "Name": "SignalPipelineRegression",
+        "Passed": 128
+      },
+      {
+        "Name": "EffectResourceRegression",
+        "Passed": 367
+      }
+    ],
+    "Pcm": {
+      "Cases": 240,
+      "DurationsPreserved": true,
+      "LatenciesPreserved": true,
+      "ReadyPrefixesPreserved": true,
+      "SilenceIdentical": 40,
+      "ChangedCases": 137,
+      "Passed": true
+    },
+    "LevelEvidence": [
+      {
+        "Rate": 8000,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.855138732682434,
+        "NewLateDipDb": -0.6194458273393395,
+        "Recovery20MsDb": 1.8780981670689179
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.694907142091033,
+        "NewLateDipDb": -0.09625538455240236,
+        "Recovery20MsDb": 1.8673680181598582
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.328006821916604,
+        "NewLateDipDb": -0.001003020923022352,
+        "Recovery20MsDb": 2.1259647656889036
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.864222247110295,
+        "NewLateDipDb": -0.5455163372921737,
+        "Recovery20MsDb": 1.7069677206445175
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.683280308871057,
+        "NewLateDipDb": -0.06689440583121271,
+        "Recovery20MsDb": 1.6342231892585144
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.325576517638886,
+        "NewLateDipDb": -0.0008823957645039768,
+        "Recovery20MsDb": 1.9400098560789478
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.8581544862278045,
+        "NewLateDipDb": -0.789282611043104,
+        "Recovery20MsDb": 1.444057203275633
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.684854011983884,
+        "NewLateDipDb": -0.19453900286263506,
+        "Recovery20MsDb": 1.4921090486285835
+      },
+      {
+        "Rate": 8000,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.325440216104289,
+        "NewLateDipDb": -0.011380456894332083,
+        "Recovery20MsDb": 1.496907073217105
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.854110150133693,
+        "NewLateDipDb": -0.6202708642024211,
+        "Recovery20MsDb": 1.8904258496450843
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.693900296446152,
+        "NewLateDipDb": -0.09847056300359397,
+        "Recovery20MsDb": 1.8901979557031976
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.328268297158557,
+        "NewLateDipDb": -0.0010449202557659058,
+        "Recovery20MsDb": 2.1306328427253343
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.863426191216989,
+        "NewLateDipDb": -0.536487918622413,
+        "Recovery20MsDb": 1.6936688446210155
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.68199833794063,
+        "NewLateDipDb": -0.06489055728605606,
+        "Recovery20MsDb": 1.646416315132368
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.325829773165925,
+        "NewLateDipDb": -0.0008710314143504227,
+        "Recovery20MsDb": 1.9520418670998085
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.858791911835388,
+        "NewLateDipDb": -0.7938104603961353,
+        "Recovery20MsDb": 1.4728761192676245
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.685683902665661,
+        "NewLateDipDb": -0.19578594593249607,
+        "Recovery20MsDb": 1.5189927891217367
+      },
+      {
+        "Rate": 16000,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.326297303256125,
+        "NewLateDipDb": -0.011460357253072147,
+        "Recovery20MsDb": 1.5235936671224806
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.861769242511434,
+        "NewLateDipDb": -0.24132600460992357,
+        "Recovery20MsDb": 1.787231514725061
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.70503015784819,
+        "NewLateDipDb": -0.030545329366448895,
+        "Recovery20MsDb": 1.9189420396786012
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.339625452838823,
+        "NewLateDipDb": -0.00030271201198941517,
+        "Recovery20MsDb": 1.8853834922025337
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.870424367438271,
+        "NewLateDipDb": -0.5638576270192681,
+        "Recovery20MsDb": 1.7581759914126702
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.695002391059187,
+        "NewLateDipDb": -0.06291725679143638,
+        "Recovery20MsDb": 1.8386127720378342
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.3391928578294054,
+        "NewLateDipDb": -0.0008241133751468853,
+        "Recovery20MsDb": 1.8888263967715737
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.867317378853254,
+        "NewLateDipDb": -0.793836759907061,
+        "Recovery20MsDb": 1.622089302068148
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.698469384070899,
+        "NewLateDipDb": -0.1956459415972645,
+        "Recovery20MsDb": 1.6749603285661152
+      },
+      {
+        "Rate": 22050,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.339450537645637,
+        "NewLateDipDb": -0.01042235558473218,
+        "Recovery20MsDb": 1.643696935481842
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.853787740793926,
+        "NewLateDipDb": -0.6207911791438874,
+        "Recovery20MsDb": 1.895880865319245
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.693536219143704,
+        "NewLateDipDb": -0.09917513890102815,
+        "Recovery20MsDb": 1.8978082369591474
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.328354791781022,
+        "NewLateDipDb": -0.0010592390424457852,
+        "Recovery20MsDb": 2.1321634660453395
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.863120407495641,
+        "NewLateDipDb": -0.5332307287307513,
+        "Recovery20MsDb": 1.689690833409455
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.6816023042523245,
+        "NewLateDipDb": -0.0642682491736129,
+        "Recovery20MsDb": 1.6525605512866728
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.325914510355965,
+        "NewLateDipDb": -0.0008671744626971771,
+        "Recovery20MsDb": 1.9559378075225977
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.859007365870856,
+        "NewLateDipDb": -0.7952517796293074,
+        "Recovery20MsDb": 1.4854481099444816
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.685958109581289,
+        "NewLateDipDb": -0.19618025203877204,
+        "Recovery20MsDb": 1.531028156463051
+      },
+      {
+        "Rate": 24000,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.3265793723398325,
+        "NewLateDipDb": -0.011485535445653821,
+        "Recovery20MsDb": 1.5355736563440134
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.8537548095773015,
+        "NewLateDipDb": -0.24628887703438435,
+        "Recovery20MsDb": 1.8061709434662885
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.6934771096859915,
+        "NewLateDipDb": -0.031274208815759506,
+        "Recovery20MsDb": 1.9155384993024727
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.328433372199091,
+        "NewLateDipDb": -0.0003174487834548727,
+        "Recovery20MsDb": 1.8869028970645192
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.863088090849429,
+        "NewLateDipDb": -0.563704701077304,
+        "Recovery20MsDb": 1.7624182399615382
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.681540825334021,
+        "NewLateDipDb": -0.06287465164977483,
+        "Recovery20MsDb": 1.8460520048977844
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.325992030999657,
+        "NewLateDipDb": -0.000844946596218789,
+        "Recovery20MsDb": 1.8895376831024882
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.859205488518528,
+        "NewLateDipDb": -0.7965193455299822,
+        "Recovery20MsDb": 1.6248097774353853
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.686190064308491,
+        "NewLateDipDb": -0.19545661738439082,
+        "Recovery20MsDb": 1.6795969490351723
+      },
+      {
+        "Rate": 44100,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.326814794056462,
+        "NewLateDipDb": -0.010423483420254252,
+        "Recovery20MsDb": 1.6499127297357852
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.853751644787426,
+        "NewLateDipDb": -0.623375447440483,
+        "Recovery20MsDb": 1.8961567302805937
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.69347132004782,
+        "NewLateDipDb": -0.10017878477694962,
+        "Recovery20MsDb": 1.9091180751345025
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.328440991497857,
+        "NewLateDipDb": -0.0010737036980266125,
+        "Recovery20MsDb": 2.1348479629474197
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.863084917638868,
+        "NewLateDipDb": -0.5315022641647162,
+        "Recovery20MsDb": 1.6889859777448766
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.681534966066226,
+        "NewLateDipDb": -0.06390970909145782,
+        "Recovery20MsDb": 1.6556627160875081
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.325999566378218,
+        "NewLateDipDb": -0.0008634171782387936,
+        "Recovery20MsDb": 1.9609075548999968
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.859224708260068,
+        "NewLateDipDb": -0.7968365014235708,
+        "Recovery20MsDb": 1.495758057025115
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.686212552692009,
+        "NewLateDipDb": -0.1966161408315709,
+        "Recovery20MsDb": 1.5415324342845658
+      },
+      {
+        "Rate": 48000,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.3268376142183085,
+        "NewLateDipDb": -0.011513438061830538,
+        "Recovery20MsDb": 1.546097286041531
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.853733989928043,
+        "NewLateDipDb": -0.6246736907056862,
+        "Recovery20MsDb": 1.896298477848678
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.693438493827837,
+        "NewLateDipDb": -0.10068305787989815,
+        "Recovery20MsDb": 1.913333973527601
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.328484003620019,
+        "NewLateDipDb": -0.0010809947237440845,
+        "Recovery20MsDb": 2.1361528319411565
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.863066703622584,
+        "NewLateDipDb": -0.5306607589068048,
+        "Recovery20MsDb": 1.6886042135014876
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.681502015661392,
+        "NewLateDipDb": -0.06381008995149504,
+        "Recovery20MsDb": 1.6572370980704538
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.326042227365836,
+        "NewLateDipDb": -0.0008954952325515757,
+        "Recovery20MsDb": 1.963415989371903
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.859333429010489,
+        "NewLateDipDb": -0.7976288600904033,
+        "Recovery20MsDb": 1.5009403951151374
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.6863396319380595,
+        "NewLateDipDb": -0.1968340328204564,
+        "Recovery20MsDb": 1.5468177209184435
+      },
+      {
+        "Rate": 96000,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.326966553790563,
+        "NewLateDipDb": -0.011527401878843577,
+        "Recovery20MsDb": 1.5513928108778383
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 120,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.853725263103042,
+        "NewLateDipDb": -0.6253243143236641,
+        "Recovery20MsDb": 1.8963705199937186
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 120,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.693421985494789,
+        "NewLateDipDb": -0.10093579930801637,
+        "Recovery20MsDb": 1.9154363180502185
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 120,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.328505480863175,
+        "NewLateDipDb": -0.001084655231153997,
+        "Recovery20MsDb": 2.1367960731178206
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 180,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.863057473490814,
+        "NewLateDipDb": -0.53037098254559,
+        "Recovery20MsDb": 1.688884717703464
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 180,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.681485735499381,
+        "NewLateDipDb": -0.06376231168622998,
+        "Recovery20MsDb": 1.6580444979354325
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 180,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.32606358725128,
+        "NewLateDipDb": -0.0009042555229587709,
+        "Recovery20MsDb": 1.9647387269057635
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 1000,
+        "DurationMs": 40,
+        "OldLateDipDb": -5.859387788132384,
+        "NewLateDipDb": -0.7980250832781426,
+        "Recovery20MsDb": 1.503537526191532
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 1000,
+        "DurationMs": 60,
+        "OldLateDipDb": -5.686403121069183,
+        "NewLateDipDb": -0.1969429758703978,
+        "Recovery20MsDb": 1.5494677372204988
+      },
+      {
+        "Rate": 192000,
+        "Frequency": 1000,
+        "DurationMs": 100,
+        "OldLateDipDb": -5.32703098138513,
+        "NewLateDipDb": -0.011534376846039735,
+        "Recovery20MsDb": 1.5540481175917038
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262945
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815866
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.0098516938329152
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086775
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.499750079695397
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.99004950592607
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 8000,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262945
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815866
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.0098516938329152
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086775
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.499750079695397
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.99004950592607
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 16000,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262945
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815866
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.0098516938329152
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086775
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.499750079695397
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.99004950592607
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 22050,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262945
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815866
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.0098516938329152
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086775
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.499750079695397
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.99004950592607
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 24000,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262945
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815857
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.0098516938329152
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086775
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.499750079695396
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.99004950592607
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 44100,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262945
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815855
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.0098516938329152
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086775
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.4997500796953958
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9900495059260699
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 48000,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262934
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815848
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.0098516938329152
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086764
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.4997500796953953
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9900495059260699
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 96000,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 0,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-12,
+        "Gain": 1.126032500610494
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-11,
+        "Gain": 1.1260330681212452
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-10,
+        "Gain": 1.1261156955858318
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-9,
+        "Gain": 1.134642560834398
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 4e-9,
+        "Gain": 1.2464292329262925
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-8,
+        "Gain": 1.5627978280815846
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 2e-8,
+        "Gain": 1.8250317663563278
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9913035915765174
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 0.000001,
+        "Gain": 1.9999082426236727
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 0.5,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999475619497
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 0,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 1e-12,
+        "Gain": 1
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 1e-11,
+        "Gain": 1.000000649349949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 1e-10,
+        "Gain": 1.0000951922987935
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 1e-9,
+        "Gain": 1.009851693832915
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 4e-9,
+        "Gain": 1.1377588210086753
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 1e-8,
+        "Gain": 1.4997500796953949
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 2e-8,
+        "Gain": 1.7998000683482016
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 1e-7,
+        "Gain": 1.9900495059260699
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 0.000001,
+        "Gain": 1.999895010539418
+      },
+      {
+        "Kind": "ReferenceLevelCurve",
+        "Rate": 192000,
+        "Amount": 1,
+        "ReferencePower": 0.0001,
+        "Gain": 1.9999999399999995
+      }
+    ]
+  },
+  "Benchmark": {
+    "Runtime": ".NET 10.0.0",
+    "Architecture": "X64",
+    "Rounds": 15,
+    "WarmupRounds": 2,
+    "BlockSamples": 1024,
+    "Input": "Repeated mono speech WAV",
+    "InputSha256": "A87B7E7351E88903CC47C1A0AA1D9F9F903B6D039734675CAB509E06FA981DE0",
+    "TieredCompilation": "0",
+    "OriginalSha256": "67C4FEE3C53B74345B64F3A5DCCB5A10F6561B9C43A7AE9880592236294B7334",
+    "PreviousSha256": "C603520C22D77A73DFDBC7E74FDBD3E029AA35521F15665D0CB0ED3BECE97F91",
+    "CurrentSha256": "385F877DC9DB1E0F3CC7202021C5D59FC0C511740BE6456D0AF28EF22C6C383A",
+    "Method": "Isolated copies of the actual processors, rotated order, warmed code, construction excluded. CompleteProcessor includes native pitch shifting and completion. MixAndCorrectionOnly invokes the actual renderer with prepared harmony buffers; its inputs are synthetic. Timing and allocation samples exclude input preparation.",
+    "Results": [
+      {
+        "Scope": "CompleteProcessor",
+        "Rate": 22050,
+        "Amount": 0.25,
+        "AudioSeconds": 16,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 181.4074,
+            "P25Ms": 180.489,
+            "P75Ms": 184.1615,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              181.8138,
+              180.489,
+              183.535,
+              181.0617,
+              181.3843,
+              179.8996,
+              181.4074,
+              177.5302,
+              187.6772,
+              188.5499,
+              179.0805,
+              174.8068,
+              188.5982,
+              185.7868,
+              184.1615
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 179.5472,
+            "P25Ms": 177.662,
+            "P75Ms": 181.1419,
+            "TimeReductionPercent": 1.0254267466486944,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              179.9032,
+              185.5233,
+              194.0808,
+              181.1419,
+              179.5472,
+              179.9621,
+              177.5343,
+              177.2289,
+              179.2615,
+              177.662,
+              177.4993,
+              171.7279,
+              183.3708,
+              190.6162,
+              179.1322
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 177.948,
+            "P25Ms": 177.1753,
+            "P75Ms": 179.4509,
+            "TimeReductionPercent": 1.9069784363813125,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              181.3556,
+              179.9202,
+              187.2887,
+              177.6886,
+              179.2442,
+              179.374,
+              177.3413,
+              181.0639,
+              177.948,
+              176.8339,
+              175.7867,
+              172.1627,
+              176.5931,
+              179.4509,
+              177.1753
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "CompleteProcessor",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "AudioSeconds": 16,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 179.7325,
+            "P25Ms": 176.6774,
+            "P75Ms": 181.3312,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              202.8157,
+              198.7289,
+              174.599,
+              177.7057,
+              176.2057,
+              176.6774,
+              178.5439,
+              176.0442,
+              181.344,
+              180.16,
+              179.7449,
+              184.0196,
+              176.5315,
+              181.3312,
+              179.7325
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 178.5834,
+            "P25Ms": 176.7004,
+            "P75Ms": 182.1031,
+            "TimeReductionPercent": 0.6393390177068525,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              202.3295,
+              207.4966,
+              217.9608,
+              172.0812,
+              181.4269,
+              189.1799,
+              176.5135,
+              174.1583,
+              176.9096,
+              182.1031,
+              178.5834,
+              176.7004,
+              173.5563,
+              181.3779,
+              177.1319
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 177.0606,
+            "P25Ms": 175.5175,
+            "P75Ms": 182.5852,
+            "TimeReductionPercent": 1.4865981389008631,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              182.5852,
+              233.6015,
+              172.9781,
+              173.2268,
+              176.4121,
+              177.0606,
+              175.5175,
+              174.7842,
+              183.225,
+              185.6108,
+              179.2449,
+              180.1048,
+              173.231,
+              183.6746,
+              176.5236
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "CompleteProcessor",
+        "Rate": 22050,
+        "Amount": 1,
+        "AudioSeconds": 16,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 181.2072,
+            "P25Ms": 180.1487,
+            "P75Ms": 186.9027,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              181.2072,
+              179.7859,
+              193.1295,
+              181.5695,
+              189.5114,
+              184.3819,
+              179.3779,
+              177.4683,
+              180.985,
+              188.1028,
+              186.9027,
+              192.5381,
+              180.1487,
+              181.0824,
+              178.2304
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 179.3856,
+            "P25Ms": 177.3283,
+            "P75Ms": 181.583,
+            "TimeReductionPercent": 1.0052580692157864,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              179.1998,
+              187.1016,
+              182.2973,
+              179.6618,
+              186.9236,
+              175.594,
+              177.3283,
+              175.0401,
+              174.198,
+              191.5465,
+              179.135,
+              179.9972,
+              179.3856,
+              181.583,
+              177.0376
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 179.9121,
+            "P25Ms": 178.0241,
+            "P75Ms": 180.1552,
+            "TimeReductionPercent": 0.7147067003960061,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              177.1415,
+              180.1181,
+              191.3144,
+              179.5767,
+              174.8734,
+              177.3626,
+              178.0241,
+              182.8155,
+              180.1022,
+              208.4018,
+              180.1552,
+              179.9121,
+              182.4041,
+              178.4253,
+              176.5373
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "CompleteProcessor",
+        "Rate": 48000,
+        "Amount": 0.25,
+        "AudioSeconds": 16,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 364.3164,
+            "P25Ms": 360.347,
+            "P75Ms": 365.8227,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              360.347,
+              368.0996,
+              364.6002,
+              363.1966,
+              367.3494,
+              364.3164,
+              362.2041,
+              355.8808,
+              356.895,
+              357.6483,
+              358.508,
+              382.2812,
+              365.8227,
+              364.4262,
+              371.258
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 359.7472,
+            "P25Ms": 356.2028,
+            "P75Ms": 362.8717,
+            "TimeReductionPercent": 1.2541845494740245,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              366.5427,
+              363.9037,
+              362.8717,
+              358.6834,
+              365.6797,
+              368.9982,
+              353.8143,
+              352.5762,
+              348.4735,
+              357.4108,
+              356.2028,
+              351.9731,
+              361.7135,
+              362.1596,
+              359.7472
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 361.1497,
+            "P25Ms": 354.4338,
+            "P75Ms": 365.2344,
+            "TimeReductionPercent": 0.869216977330689,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              357.0812,
+              369.8217,
+              372.5756,
+              361.1497,
+              367.1048,
+              361.8439,
+              356.4255,
+              348.9244,
+              350.1083,
+              354.4338,
+              353.8688,
+              353.3103,
+              365.2344,
+              361.4488,
+              371.5971
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "CompleteProcessor",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "AudioSeconds": 16,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 367.3783,
+            "P25Ms": 362.979,
+            "P75Ms": 369.819,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              371.9666,
+              369.4754,
+              358.7287,
+              359.385,
+              367.247,
+              364.3641,
+              362.0119,
+              362.408,
+              367.3783,
+              362.979,
+              369.5159,
+              371.1821,
+              382.3461,
+              369.819,
+              380.8061
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 364.8119,
+            "P25Ms": 363.0265,
+            "P75Ms": 369.7127,
+            "TimeReductionPercent": 0.6985714725121328,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              367.9486,
+              363.2829,
+              353.7294,
+              361.9783,
+              355.6802,
+              370.5627,
+              363.0265,
+              364.4904,
+              389.757,
+              366.9804,
+              377.5486,
+              369.7127,
+              364.8119,
+              360.5373,
+              385.9925
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 369.2258,
+            "P25Ms": 361.8766,
+            "P75Ms": 375.162,
+            "TimeReductionPercent": -0.502887622921655,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              399.0742,
+              392.1015,
+              354.4593,
+              362.2789,
+              361.1379,
+              356.8297,
+              356.2214,
+              388.9845,
+              373.0365,
+              369.2258,
+              371.1174,
+              380.6211,
+              366.8039,
+              361.8766,
+              375.162
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "CompleteProcessor",
+        "Rate": 48000,
+        "Amount": 1,
+        "AudioSeconds": 16,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 371.904,
+            "P25Ms": 364.2492,
+            "P75Ms": 377.4308,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              382.2895,
+              377.4308,
+              373.9329,
+              379.3713,
+              366.9047,
+              361.8081,
+              361.3297,
+              363.084,
+              396.9448,
+              364.2492,
+              367.2043,
+              371.904,
+              387.7367,
+              372.4383,
+              364.0992
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 372.201,
+            "P25Ms": 366.7044,
+            "P75Ms": 377.1958,
+            "TimeReductionPercent": -0.07985931853382588,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              375.3019,
+              377.7764,
+              373.0206,
+              366.5364,
+              366.7515,
+              366.7044,
+              378.9553,
+              361.0864,
+              368.4753,
+              363.8655,
+              364.1458,
+              372.201,
+              377.1958,
+              380.6313,
+              379.4514
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 370.8228,
+            "P25Ms": 364.3404,
+            "P75Ms": 375.0662,
+            "TimeReductionPercent": 0.2907201858544206,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              373.9668,
+              375.0662,
+              369.6589,
+              370.8228,
+              364.6014,
+              361.9943,
+              361.3376,
+              358.7675,
+              363.0375,
+              364.3404,
+              380.4962,
+              372.1695,
+              376.2195,
+              376.9621,
+              385.9313
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "MixAndCorrectionOnly",
+        "Rate": 22050,
+        "Amount": 0.25,
+        "AudioSeconds": 128,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 28.4287,
+            "P25Ms": 28.0689,
+            "P75Ms": 28.7096,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              29.5073,
+              29.3707,
+              28.5642,
+              28.5746,
+              32.8687,
+              28.7096,
+              31.1567,
+              28.23,
+              28.1602,
+              28.4287,
+              27.8052,
+              27.4021,
+              27.3734,
+              27.155,
+              28.0689
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 13.9939,
+            "P25Ms": 13.7831,
+            "P75Ms": 14.2749,
+            "TimeReductionPercent": 50.77544875425186,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              13.7826,
+              14.4064,
+              14.2056,
+              13.9939,
+              13.5721,
+              14.2749,
+              14.7278,
+              14.4618,
+              14.315,
+              13.3667,
+              14.1063,
+              13.8923,
+              13.7831,
+              13.5715,
+              13.7889
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 14.2403,
+            "P25Ms": 14.0186,
+            "P75Ms": 14.5426,
+            "TimeReductionPercent": 49.908719005793444,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              14.1546,
+              14.1162,
+              13.6836,
+              14.462,
+              14.9035,
+              15.0282,
+              14.0186,
+              14.2403,
+              14.5474,
+              14.5426,
+              14.9297,
+              13.7396,
+              13.9618,
+              14.0155,
+              14.3593
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "MixAndCorrectionOnly",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "AudioSeconds": 128,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 28.0941,
+            "P25Ms": 28.0011,
+            "P75Ms": 28.3959,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              28.3959,
+              27.5967,
+              28.0941,
+              28.6747,
+              29.286,
+              28.535,
+              28.3563,
+              27.9486,
+              27.5085,
+              28.0011,
+              28.5902,
+              27.7307,
+              28.114,
+              28.0509,
+              28.0519
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 13.7461,
+            "P25Ms": 13.4867,
+            "P75Ms": 14.0318,
+            "TimeReductionPercent": 51.0712213596449,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              13.8502,
+              13.7461,
+              18.3542,
+              13.877,
+              14.0861,
+              14.0318,
+              13.4717,
+              13.5713,
+              15.674,
+              13.7091,
+              13.4662,
+              13.4867,
+              13.4564,
+              13.3784,
+              15.4692
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 14.037,
+            "P25Ms": 13.9485,
+            "P75Ms": 14.2647,
+            "TimeReductionPercent": 50.03577263553558,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              15.6855,
+              13.622,
+              13.7814,
+              14.0291,
+              14.931,
+              14.1446,
+              15.1253,
+              13.9975,
+              14.2647,
+              14.037,
+              13.9485,
+              14.1743,
+              15.5585,
+              13.6469,
+              13.9002
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "MixAndCorrectionOnly",
+        "Rate": 22050,
+        "Amount": 1,
+        "AudioSeconds": 128,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 17.3924,
+            "P25Ms": 17.0321,
+            "P75Ms": 17.8035,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              17.0421,
+              20.9282,
+              17.5585,
+              17.3924,
+              16.9338,
+              17.707,
+              16.8614,
+              17.8406,
+              16.9948,
+              16.8898,
+              17.8035,
+              19.3776,
+              20.2417,
+              17.0321,
+              17.1783
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 13.2922,
+            "P25Ms": 13.2383,
+            "P75Ms": 13.4941,
+            "TimeReductionPercent": 23.57466479611784,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              13.327,
+              13.5687,
+              13.2383,
+              13.6407,
+              14.477,
+              13.2578,
+              13.1546,
+              13.2922,
+              13.1985,
+              13.4941,
+              13.486,
+              13.5739,
+              13.2573,
+              13.1497,
+              13.1702
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 13.5706,
+            "P25Ms": 13.4359,
+            "P75Ms": 13.7361,
+            "TimeReductionPercent": 21.97396564016466,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              13.592,
+              13.7011,
+              13.3203,
+              13.3475,
+              13.3432,
+              13.7534,
+              13.8291,
+              13.5231,
+              13.5706,
+              13.4893,
+              13.3483,
+              13.4359,
+              14.7013,
+              14.2913,
+              13.7361
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "MixAndCorrectionOnly",
+        "Rate": 48000,
+        "Amount": 0.25,
+        "AudioSeconds": 128,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 63.7612,
+            "P25Ms": 62.8845,
+            "P75Ms": 64.9563,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              58.5421,
+              65.5622,
+              63.5684,
+              62.7484,
+              65.5596,
+              63.7656,
+              65.6007,
+              63.7612,
+              62.8845,
+              63.0702,
+              64.9563,
+              65.0525,
+              62.6192,
+              62.2417,
+              63.9659
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 29.0768,
+            "P25Ms": 28.8289,
+            "P75Ms": 29.5869,
+            "TimeReductionPercent": 54.39734509388154,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              27.9088,
+              28.8296,
+              30.2947,
+              28.912,
+              28.0683,
+              28.8289,
+              30.851,
+              29.0768,
+              30.0138,
+              29.1184,
+              29.1502,
+              29.5869,
+              28.355,
+              28.3369,
+              30.4759
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 29.9196,
+            "P25Ms": 29.1329,
+            "P75Ms": 30.7398,
+            "TimeReductionPercent": 53.075538101541376,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              27.8901,
+              33.3568,
+              32.1446,
+              29.9196,
+              29.0823,
+              29.0801,
+              30.5441,
+              30.7398,
+              29.2295,
+              30.1335,
+              31.3341,
+              29.4903,
+              29.1329,
+              28.6083,
+              32.26
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "MixAndCorrectionOnly",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "AudioSeconds": 128,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 62.6427,
+            "P25Ms": 62.0435,
+            "P75Ms": 63.9878,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              67.6391,
+              63.9878,
+              62.0435,
+              61.1821,
+              62.9949,
+              64.0816,
+              62.5415,
+              62.6427,
+              60.0229,
+              61.6913,
+              61.7156,
+              64.0968,
+              62.9763,
+              64.2525,
+              62.2193
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 29.2533,
+            "P25Ms": 28.758,
+            "P75Ms": 29.8183,
+            "TimeReductionPercent": 53.30134237508919,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              29.6658,
+              31.7077,
+              29.253,
+              29.5495,
+              28.758,
+              32.5639,
+              28.1711,
+              28.6035,
+              28.9594,
+              30.3554,
+              28.7472,
+              30.3051,
+              28.6755,
+              29.8183,
+              29.2533
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 29.4938,
+            "P25Ms": 29.0336,
+            "P75Ms": 29.7984,
+            "TimeReductionPercent": 52.91741894905552,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              28.9498,
+              29.0336,
+              33.4928,
+              29.7984,
+              30.3713,
+              30.4194,
+              29.4435,
+              29.5212,
+              28.9976,
+              29.4938,
+              29.122,
+              28.3925,
+              28.531,
+              29.6492,
+              35.3509
+            ]
+          }
+        ]
+      },
+      {
+        "Scope": "MixAndCorrectionOnly",
+        "Rate": 48000,
+        "Amount": 1,
+        "AudioSeconds": 128,
+        "Measurements": [
+          {
+            "Version": "Original",
+            "MedianMs": 38.1411,
+            "P25Ms": 37.8292,
+            "P75Ms": 38.9923,
+            "TimeReductionPercent": 0,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              37.6433,
+              38.6478,
+              37.773,
+              37.824,
+              37.874,
+              39.7418,
+              38.9923,
+              38.0141,
+              38.6636,
+              37.8292,
+              37.5156,
+              39.6381,
+              38.1411,
+              39.845,
+              40.5003
+            ]
+          },
+          {
+            "Version": "Previous",
+            "MedianMs": 28.7152,
+            "P25Ms": 28.4076,
+            "P75Ms": 29.3244,
+            "TimeReductionPercent": 24.713235853187253,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              29.631,
+              29.6105,
+              27.7931,
+              31.0486,
+              28.4227,
+              28.7145,
+              28.3722,
+              28.7152,
+              28.4076,
+              29.0236,
+              29.3244,
+              29.2971,
+              28.159,
+              36.9234,
+              27.7643
+            ]
+          },
+          {
+            "Version": "Current",
+            "MedianMs": 29.1499,
+            "P25Ms": 28.8294,
+            "P75Ms": 29.4148,
+            "TimeReductionPercent": 23.57352042809463,
+            "MaximumManagedBytes": 0,
+            "SamplesMs": [
+              29.2538,
+              29.1655,
+              32.4601,
+              28.5755,
+              29.5596,
+              28.2921,
+              28.8294,
+              28.3395,
+              29.0748,
+              28.4711,
+              29.0257,
+              29.1499,
+              29.4148,
+              29.5526,
+              32.6349
+            ]
+          }
+        ]
+      }
+    ],
+    "SpeechPcm": [
+      {
+        "Version": "Original",
+        "Rate": 22050,
+        "Amount": 0.25,
+        "Samples": 352800,
+        "Sha256": "7FB31D57F8178DEA6CAC6398275324ACD1E3854CD6FE8CE93B12EC876CA94166",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.28766602839082517,
+          "P10Db": -0.5519340448075057,
+          "P90Db": 0.3458270679529669,
+          "MinimumDb": -1.9717959617749496,
+          "MaximumDb": 1.997080040662058
+        }
+      },
+      {
+        "Version": "Previous",
+        "Rate": 22050,
+        "Amount": 0.25,
+        "Samples": 352800,
+        "Sha256": "F635BAEAE9537E22579ACF3E71DB3BE5213DD2410C757D672F1C8EE72C969F4A",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.17400365093402306,
+          "P10Db": -0.24134219390705275,
+          "P90Db": 0.3031293999226226,
+          "MinimumDb": -1.5651700675526992,
+          "MaximumDb": 1.9020660282322035
+        }
+      },
+      {
+        "Version": "Current",
+        "Rate": 22050,
+        "Amount": 0.25,
+        "Samples": 352800,
+        "Sha256": "21AA07EADC4BEF9BADCF33F0D3C85AECC7118573F4049E0DD09C77A74621EFEB",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.17400349828141146,
+          "P10Db": -0.24134219390705275,
+          "P90Db": 0.3031293998558269,
+          "MinimumDb": -1.5651739227654862,
+          "MaximumDb": 1.9020043054033247
+        }
+      },
+      {
+        "Version": "Original",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "Samples": 352800,
+        "Sha256": "EBDC1DEDE99C19780784C7F84A3FA88FC67549B9C9483FC8E01A3B068D35A031",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.589369331671608,
+          "P10Db": -1.1427803964861967,
+          "P90Db": 0.664302852885364,
+          "MinimumDb": -3.6598345271216854,
+          "MaximumDb": 3.5963107430549854
+        }
+      },
+      {
+        "Version": "Previous",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "Samples": 352800,
+        "Sha256": "DAC952F3E5217180EC220BC1DDDC04867FCA8B75005F858DBB0E1415CC8B8913",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.3903893194250365,
+          "P10Db": -0.670704732599744,
+          "P90Db": 0.5079803585890843,
+          "MinimumDb": -3.7367197770418374,
+          "MaximumDb": 3.0865884530556076
+        }
+      },
+      {
+        "Version": "Current",
+        "Rate": 22050,
+        "Amount": 0.5,
+        "Samples": 352800,
+        "Sha256": "C5213442F454EFC0D2A8CCA02FF10370B5C2AAA6B0BEBA789E71E969B1579999",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.3903893041321267,
+          "P10Db": -0.670704732599744,
+          "P90Db": 0.5079803585890843,
+          "MinimumDb": -3.7367255567481816,
+          "MaximumDb": 3.0865867831439644
+        }
+      },
+      {
+        "Version": "Original",
+        "Rate": 22050,
+        "Amount": 1,
+        "Samples": 352800,
+        "Sha256": "523D3FB53E0C477833BCF5D800D7FFBACD97BA70BFA8728CBD4E5DDEE58051A5",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 1.120450557379485,
+          "P10Db": -2.306640329007841,
+          "P90Db": 1.1522253412527774,
+          "MinimumDb": -5.89600152926299,
+          "MaximumDb": 4.987179154256608
+        }
+      },
+      {
+        "Version": "Previous",
+        "Rate": 22050,
+        "Amount": 1,
+        "Samples": 352800,
+        "Sha256": "605943FC8CA4DF1C828C3D5C5BA09C5F603C4122064A147953971FB579435679",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.811004614260543,
+          "P10Db": -1.4906178916871715,
+          "P90Db": 0.7579511312747627,
+          "MinimumDb": -3.8959710074954796,
+          "MaximumDb": 4.833751944890308
+        }
+      },
+      {
+        "Version": "Current",
+        "Rate": 22050,
+        "Amount": 1,
+        "Samples": 352800,
+        "Sha256": "5C214409EBDD7F0D3D1EFEEA0B6EBD0A76BE02190ABFD53B7DE78D49374655CF",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 408,
+          "MeanAbsoluteDb": 0.8110046322761415,
+          "P10Db": -1.4906178916871715,
+          "P90Db": 0.7579511312747627,
+          "MinimumDb": -3.8959710074954796,
+          "MaximumDb": 4.833751900947819
+        }
+      },
+      {
+        "Version": "Original",
+        "Rate": 48000,
+        "Amount": 0.25,
+        "Samples": 768000,
+        "Sha256": "DAC2EFD7951CB517894AF62EE6E75A7782A95690F6C31F71A799A1C1D670C139",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.306500054573463,
+          "P10Db": -0.5589995172475373,
+          "P90Db": 0.31038033794511116,
+          "MinimumDb": -1.230833437597346,
+          "MaximumDb": 2.703932070985704
+        }
+      },
+      {
+        "Version": "Previous",
+        "Rate": 48000,
+        "Amount": 0.25,
+        "Samples": 768000,
+        "Sha256": "9E5EF9E103F81B96FB89D3F1F741F7FC463F1D49896E1643A85F0A5CA6F76D79",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.17907231615954994,
+          "P10Db": -0.2244821680115008,
+          "P90Db": 0.3038337691691015,
+          "MinimumDb": -0.9477188594403073,
+          "MaximumDb": 1.714233813571259
+        }
+      },
+      {
+        "Version": "Current",
+        "Rate": 48000,
+        "Amount": 0.25,
+        "Samples": 768000,
+        "Sha256": "FD45AD8207296449EAA685ACFCC4B9EBC9073C6BE4D96E21E3C1578F3A70D942",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.17907224882257267,
+          "P10Db": -0.2244821680115008,
+          "P90Db": 0.3038337691691015,
+          "MinimumDb": -0.9477190150528993,
+          "MaximumDb": 1.7142334357682374
+        }
+      },
+      {
+        "Version": "Original",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "Samples": 768000,
+        "Sha256": "5CC84D1094898412156D0EA8D22186ED30BF2F80C1BDFE2ABA6E1799DD5408D4",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.636100667709947,
+          "P10Db": -1.1991257583214339,
+          "P90Db": 0.6259624587337748,
+          "MinimumDb": -3.026221299528485,
+          "MaximumDb": 4.705437073190051
+        }
+      },
+      {
+        "Version": "Previous",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "Samples": 768000,
+        "Sha256": "FB24E8E88B9ADE916F72F15E7E52CA6141D11DEE305E7F339E4B3714A46B705C",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.39703238873309565,
+          "P10Db": -0.6554632870221556,
+          "P90Db": 0.541618625776524,
+          "MinimumDb": -1.7615297625508348,
+          "MaximumDb": 3.018863752153083
+        }
+      },
+      {
+        "Version": "Current",
+        "Rate": 48000,
+        "Amount": 0.5,
+        "Samples": 768000,
+        "Sha256": "0F22B78E8683B2B109E3B6F0FC3E8F2165BE369E36F4C8BCE6613BBB825F2B7E",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.39703239576757343,
+          "P10Db": -0.6554632870221556,
+          "P90Db": 0.5416186212386677,
+          "MinimumDb": -1.7615305551632172,
+          "MaximumDb": 3.018863739928586
+        }
+      },
+      {
+        "Version": "Original",
+        "Rate": 48000,
+        "Amount": 1,
+        "Samples": 768000,
+        "Sha256": "57A12D06F018D1D8512D49FC8D51B7FD192A28E7C7AD6C95CECB412C4C4B4254",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 1.33215114398581,
+          "P10Db": -2.9093652224338578,
+          "P90Db": 1.094352897336482,
+          "MinimumDb": -8.133372072094666,
+          "MaximumDb": 6.376797497102052
+        }
+      },
+      {
+        "Version": "Previous",
+        "Rate": 48000,
+        "Amount": 1,
+        "Samples": 768000,
+        "Sha256": "D20586D57E01A75BA3EC4455A63F9D7FAB02281B4042804268DE4B0EDE7C10D6",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.8332375774683494,
+          "P10Db": -1.4837682119842595,
+          "P90Db": 0.920648244165197,
+          "MinimumDb": -5.501840640749489,
+          "MaximumDb": 4.419236175000608
+        }
+      },
+      {
+        "Version": "Current",
+        "Rate": 48000,
+        "Amount": 1,
+        "Samples": 768000,
+        "Sha256": "FF5800AAC8D5B92C78EACCB7A37F52C5FA63BD8CD609FE90BDD5E86A604F5CBC",
+        "Levels": {
+          "WindowMs": 20,
+          "ReferenceFloorDbBelowPeakWindow": 20,
+          "ActiveWindows": 401,
+          "MeanAbsoluteDb": 0.8332375662753252,
+          "P10Db": -1.4837682119842595,
+          "P90Db": 0.920648244165197,
+          "MinimumDb": -5.5018442915478625,
+          "MaximumDb": 4.419236068002037
+        }
+      }
+    ]
+  }
+}

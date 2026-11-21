@@ -9,12 +9,12 @@ internal sealed class HarmonizerProcessor : IDisposable
     private const int ProcessingBlock = 1024;
     private static readonly double VoiceWeight = 1 / Math.Sqrt(3);
     private readonly Stretch _third, _fifth;
-    private readonly WindowedPowerMatcher _level;
-    private readonly int _sampleRate, _inputLatency, _outputLatency;
-    private readonly float[] _thirdOutput, _fifthOutput, _dry, _history, _silence, _tail;
-    private StreamingPowerMatchedMixer? _mixer;
+    private readonly HarmonizerLevelMatcher _level;
+    private readonly int _inputLatency, _outputLatency;
+    private readonly float[] _thirdOutput, _fifthOutput, _history, _silence, _tail;
     private int _historyPosition, _priming, _pending, _tailPosition, _tailLength;
-    private float _amount = 1;
+    private float _preparedAmount = float.NaN;
+    private double _dryWeight = VoiceWeight, _harmonyWeight = VoiceWeight;
     private bool _finishing, _disposed;
 
     internal int LatencySamples { get; }
@@ -24,7 +24,6 @@ internal sealed class HarmonizerProcessor : IDisposable
     {
         ArgumentOutOfRangeException.ThrowIfLessThan(sampleRate, 8000);
         ArgumentOutOfRangeException.ThrowIfGreaterThan(sampleRate, 192000);
-        _sampleRate = sampleRate;
         _third = CreateVoice(sampleRate, 4);
         try
         {
@@ -38,11 +37,10 @@ internal sealed class HarmonizerProcessor : IDisposable
             int capacity = Math.Max(ProcessingBlock, _outputLatency);
             _thirdOutput = new float[capacity];
             _fifthOutput = new float[capacity];
-            _dry = new float[capacity];
             _silence = new float[capacity];
             _history = new float[LatencySamples];
             _tail = new float[LatencySamples];
-            _level = new WindowedPowerMatcher(sampleRate);
+            _level = new HarmonizerLevelMatcher(sampleRate);
         }
         catch
         {
@@ -59,9 +57,14 @@ internal sealed class HarmonizerProcessor : IDisposable
         if (_finishing) throw new InvalidOperationException("The harmonizer is already being completed.");
         if (!float.IsFinite(amount) || amount < 0 || amount > 1)
             throw new ArgumentOutOfRangeException(nameof(amount));
-        _amount = amount;
-        if (amount < 1) _mixer ??= new StreamingPowerMatchedMixer(_sampleRate);
-        _mixer?.Prepare(amount);
+        if (_preparedAmount != amount)
+        {
+            _preparedAmount = amount;
+            // Interpolate voice contributions before the request-local scalar level correction.
+            _harmonyWeight = VoiceWeight * amount;
+            _dryWeight = 1d - amount + _harmonyWeight;
+            _level.Prepare(_dryWeight, _harmonyWeight);
+        }
         int written = 0;
         for (int offset = 0; offset < samples.Length; offset += ProcessingBlock)
         {
@@ -98,15 +101,12 @@ internal sealed class HarmonizerProcessor : IDisposable
             if (++_historyPosition == _history.Length) _historyPosition = 0;
             if (_priming > 0) { _priming--; continue; }
 
-            // Retain profile B's accumulation order and scalar voice-power correction.
-            float wet = (float)(VoiceWeight * reference);
-            wet += (float)(VoiceWeight * _thirdOutput[i]);
-            wet += (float)(VoiceWeight * _fifthOutput[i]);
-            _dry[written] = reference;
+            // Retain profile B's voice accumulation; correct its local power after summing.
+            float wet = (float)(_dryWeight * reference);
+            wet += (float)(_harmonyWeight * _thirdOutput[i]);
+            wet += (float)(_harmonyWeight * _fifthOutput[i]);
             destination[written++] = _level.Process(reference, wet);
         }
-        if (_amount < 1 && written > 0)
-            _mixer!.Mix(_dry.AsSpan(0, written), destination[..written], _amount);
         return written;
     }
 

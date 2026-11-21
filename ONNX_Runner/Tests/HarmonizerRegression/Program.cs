@@ -23,9 +23,14 @@ internal static class HarmonizerRegression
 
     private static int Main(string[] args)
     {
+        if (args is ["--benchmark", string original, string stageOne, string output])
+            return HarmonizerBenchmark.Run(original, stageOne, output);
+        if (args is ["--benchmark", string originalWithSpeech, string stageOneWithSpeech, string outputWithSpeech, string speech])
+            return HarmonizerBenchmark.Run(originalWithSpeech, stageOneWithSpeech, outputWithSpeech, speech);
+
         foreach (int rate in new[] { 8000, 16000, 22050, 24000, 44100, 48000, 96000, 192000 })
         foreach (int length in new[] { 1, 17, rate / 5 })
-        foreach (float amount in new[] { .25f, 1f })
+        foreach (float amount in new[] { .01f, .25f, .5f, .75f, 1f })
             Check($"Duration and chunk independence: {rate} Hz, {length} frames, {amount}", () =>
             {
                 float[] source = Voice(rate, length);
@@ -35,17 +40,18 @@ internal static class HarmonizerRegression
                 Require(whole.All(float.IsFinite), "Non-finite output.");
             });
 
-        foreach (int rate in new[] { 16000, 22050, 48000 })
-            Check($"The selected B profile is preserved at {rate} Hz", () =>
+        foreach (int rate in new[] { 8000, 16000, 22050, 24000, 44100, 48000, 96000, 192000 })
+            Check($"Selected harmony voices retain their alignment with the new level correction at {rate} Hz", () =>
             {
                 float[] source = Voice(rate, rate + 17);
-                float[] full = ReferenceB(source, rate);
+                float[] full = ReferenceB(source, rate, NewLevel(rate).Process);
                 float[] actual = Render(source, rate, 1, 257, 17);
-                Require(Same(full, actual), "The streaming processor changed selected profile B.");
-                float[] half = (float[])full.Clone();
-                new StreamingPowerMatchedMixer(rate).Mix(source, half, .5f);
-                Require(Same(half, Render(source, rate, .5f, 113, 7)), "Intensity changed the wet character or dry alignment.");
+                Require(Same(full, actual), "Level correction changed voice synthesis or dry alignment.");
+                Require(!Same(ReferenceB(source, rate), actual), "Full intensity still uses the old level correction.");
             });
+
+        ProceduralIntensityChecks.Run(Check);
+        HarmonizerLevelChecks.Run(Check);
 
         Check("All bypasses preserve PCM and avoid native state", () =>
         {
@@ -143,7 +149,8 @@ internal static class HarmonizerRegression
         });
 
         Console.WriteLine($"Harmonizer: {_checks - _failures}/{_checks} checks passed.");
-        if (args.Length > 0) File.WriteAllText(args[0], JsonSerializer.Serialize(new { Passed = _checks - _failures, Failed = _failures, Evidence }, new JsonSerializerOptions { WriteIndented = true }));
+        if (args.Length > 0) File.WriteAllText(args[0], JsonSerializer.Serialize(new { Passed = _checks - _failures, Failed = _failures, Evidence,
+            LevelEvidence = HarmonizerLevelChecks.Evidence }, new JsonSerializerOptions { WriteIndented = true }));
         return _failures == 0 ? 0 : 1;
     }
 
@@ -179,7 +186,7 @@ internal static class HarmonizerRegression
         return output.ToArray();
     }
 
-    internal static float[] ReferenceB(float[] input, int rate)
+    internal static float[] ReferenceB(float[] input, int rate, Func<float, float, float>? correction = null)
     {
         float[] output = new float[input.Length];
         foreach (int semitones in new[] { 0, 4, 7 })
@@ -202,8 +209,19 @@ internal static class HarmonizerRegression
             for (int i = 0; i < output.Length; i++) output[i] += (float)(voice[i] * (1 / Math.Sqrt(3)));
         }
         var level = new WindowedPowerMatcher(rate);
-        for (int i = 0; i < output.Length; i++) output[i] = level.Process(input[i], output[i]);
+        correction ??= level.Process;
+        for (int i = 0; i < output.Length; i++) output[i] = correction(input[i], output[i]);
         return output;
+    }
+
+    internal static (Func<float, float, float> Process, Func<double> Gain) NewLevel(int rate, float amount = 1)
+    {
+        Type type = typeof(AudioEffectsEngine).Assembly.GetType("ONNX_Runner.Services.Audio.Levels.HarmonizerLevelMatcher")!;
+        object level = Activator.CreateInstance(type, Hidden, null, [rate], null)!;
+        double harmony = amount * (1 / Math.Sqrt(3));
+        type.GetMethod("Prepare", Hidden)!.Invoke(level, [1d - amount + harmony, harmony]);
+        return (type.GetMethod("Process", Hidden)!.CreateDelegate<Func<float, float, float>>(level),
+            type.GetProperty("Gain", Hidden)!.GetMethod!.CreateDelegate<Func<double>>(level));
     }
 
     private static byte[] Chain(float amount, int targetRate, bool profiles, int block)
