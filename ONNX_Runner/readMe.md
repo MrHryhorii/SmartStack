@@ -1,4 +1,4 @@
-# Tsubaki TTS Engine v1.0.10
+# Tsubaki TTS Engine v1.0.11
 
 Production-grade local Text-to-Speech engine for AI agents, companions, VTubers, and OpenAI-compatible applications.
 
@@ -60,7 +60,7 @@ Dashboard features:
 
 ## Download
 
-**[Tsubaki TTS Engine packaged builds (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.10)**
+**[Tsubaki TTS Engine packaged builds (GitHub Releases)](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.11)**
 
 Direct Plug-and-Play binary downloads for Windows and Linux. Includes pre-configured base models and cloneable voices.
 
@@ -126,7 +126,7 @@ Tsubaki is designed for:
 
 Download the build for your OS from:
 
-[GitHub Releases](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.10)
+[GitHub Releases](https://github.com/MrHryhorii/SmartStack/releases/tag/tsubakitts-v1.0.11)
 
 Extract the complete ZIP. For a first run, the CPU build is the simplest choice.
 
