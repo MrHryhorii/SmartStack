@@ -20,4 +20,4 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-Source: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.29.0/License
+Source: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.32.0/License

@@ -72,9 +72,9 @@ ThirdPartyNotices.txt in THIRD_PARTY_LICENSES/DirectML/ with the build.
 https://www.nuget.org/packages/Microsoft.AI.DirectML/1.15.4
 
 Conditional builds (each publish records its current restore graph):
-  CPU: Microsoft.ML.OnnxRuntime 1.31.1 (MIT) and its managed bindings.
-  CUDA: Microsoft.ML.OnnxRuntime.Gpu 1.29.0 (MIT); the package declares
-    Microsoft.ML.OnnxRuntime.Gpu.Linux, .Gpu.Windows and .Managed 1.29.0
+  CPU: Microsoft.ML.OnnxRuntime 1.32.0 (MIT) and its managed bindings.
+  CUDA: Microsoft.ML.OnnxRuntime.Gpu 1.32.0 (MIT); the package declares
+    Microsoft.ML.OnnxRuntime.Gpu.Linux, .Gpu.Windows and .Managed 1.32.0
     as dependencies. Check which native files are actually published.
   WebGPU: Microsoft.ML.OnnxRuntime 1.31.1 (MIT) plus
     Microsoft.ML.OnnxRuntime.EP.WebGpu 0.5.0 (MIT). Its package LICENSE was
@@ -82,14 +82,16 @@ Conditional builds (each publish records its current restore graph):
     many upstream notices. Windows includes a WebGPU provider and dxcompiler.dll;
     Linux includes a WebGPU provider. Match the shipped native
     files against the package notices before release.
-  NuGet pages: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.31.1
-  https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.Gpu/1.29.0
+  NuGet pages: https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.32.0
+  https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.Gpu/1.32.0
+  https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime/1.31.1
   https://www.nuget.org/packages/Microsoft.ML.OnnxRuntime.EP.WebGpu/0.5.0
 The Linux CUDA graph also includes the Windows GPU package as a restore
 dependency, but its linux-x64 target does not select native assets from it.
 The actual publish folders and package build targets require a separate check.
-The GPU.Linux 1.29.0 package LICENSE was inspected and is MIT; its
-ThirdPartyNotices.txt has the same SHA-256 as the WebGPU 0.3.0 notice file.
+The GPU 1.32.0, GPU.Linux 1.32.0 and GPU.Windows 1.32.0 package LICENSE files
+were inspected and contain the same MIT text as the included ONNX Runtime
+license. Their ThirdPartyNotices.txt files have identical SHA-256 hashes.
 The ONNX Runtime package MIT license is included, but its native binaries
 also have separate upstream ThirdPartyNotices.txt obligations. CUDA/cuDNN,
 GPU drivers and other separately supplied runtimes retain their own terms.
